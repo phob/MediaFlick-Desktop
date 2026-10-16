@@ -5,8 +5,8 @@ import SettingsNumberField from "@/components/SettingsNumberField"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { useSourceDraft } from "@/hooks/use-source-draft"
-import { api, type ViewingSettings as ViewingDraft } from "@/lib/api"
-import { accountKey, useStatus } from "@/lib/queries"
+import { api, viewingSettingsWrite, type Library, type StartupDestination, type ViewingSettings as ViewingDraft } from "@/lib/api"
+import { accountKey, useLibraries, useStatus } from "@/lib/queries"
 import { queryKeys } from "@/lib/query-client"
 import { isSettingsNumberValid } from "@/lib/settings-numbers"
 import { DEFAULT_VIEWING, useViewing } from "@/lib/viewing"
@@ -19,6 +19,7 @@ import {
   SettingsLoading,
   SettingsRow,
   SignInRequired,
+  type SelectOption,
 } from "./shared"
 
 const POSTER_WIDTHS = [
@@ -41,9 +42,32 @@ function posterWidthOptions(current: number) {
   ]
 }
 
+type StartupOption = Exclude<StartupDestination, { library: string }> | `library:${string}`
+
+function startupOption(destination: StartupDestination): StartupOption {
+  return typeof destination === "object" ? `library:${destination.library}` : destination
+}
+
+function startupDestination(option: StartupOption): StartupDestination {
+  if (option === "home" || option === "calendar" || option === "last") return option
+  return { library: option.slice("library:".length) }
+}
+
+function startupOptions(destination: StartupDestination, libraries: readonly Library[]): SelectOption<StartupOption>[] {
+  const unlisted = typeof destination === "object" && !libraries.some((library) => library.id === destination.library)
+  return [
+    { value: "home", label: "Home" },
+    ...(unlisted ? [{ value: startupOption(destination), label: "Saved library" }] : []),
+    ...libraries.map((library) => ({ value: startupOption({ library: library.id }), label: library.name })),
+    { value: "calendar", label: "Releases" },
+    { value: "last", label: "Last browsing page" },
+  ]
+}
+
 export default function ViewingSettings() {
   const cache = useQueryClient()
   const query = useViewing()
+  const libraries = useLibraries()
   const { data: status } = useStatus()
   const account = accountKey(status)
   const [draft, setDraft, , acceptSaved] = useSourceDraft(query.data, account)
@@ -51,7 +75,7 @@ export default function ViewingSettings() {
   const [subtitleText, setSubtitleText, , acceptSubtitles] =
     useSourceDraft(query.data?.subtitleLanguages.join(", "), account)
   const save = useMutation({
-    mutationFn: api.saveViewing,
+    mutationFn: (submitted: ViewingDraft) => api.saveViewing(viewingSettingsWrite(submitted, query.data)),
     onSuccess: (saved, submitted) => {
       cache.setQueryData(queryKeys.viewing(account), saved)
       acceptSaved(saved, submitted)
@@ -228,21 +252,15 @@ export default function ViewingSettings() {
           <SelectField
             id="settings-startup-destination"
             label="Startup destination"
-            value={draft.startupDestination}
-            onValueChange={(value) => update("startupDestination", value)}
-            options={[
-              { value: "home", label: "Home" },
-              { value: "movies", label: "Movies" },
-              { value: "series", label: "Series" },
-              { value: "calendar", label: "Releases" },
-              { value: "last", label: "Last browsing page" },
-            ]}
+            value={startupOption(draft.startupDestination)}
+            onValueChange={(value) => update("startupDestination", startupDestination(value))}
+            options={startupOptions(draft.startupDestination, libraries.data?.libraries ?? [])}
           />
         </SettingsRow>
         <SettingsRow
           controlId="settings-remember-library-filters"
           title="Remember library filters"
-          description="Movies and Series each reopen with the sort and filters you last used there. Search results and Favorites are not affected."
+          description="Each library reopens with the sort and filters you last used there. Search results and Favorites are not affected."
         >
           <Switch
             id="settings-remember-library-filters"
@@ -255,7 +273,7 @@ export default function ViewingSettings() {
         <SettingsRow
           controlId="settings-hide-watched-by-default"
           title="Hide watched by default"
-          description="Movies and Series open showing only unwatched titles. Change the Watch status filter to see the rest. Remembered library filters take priority."
+          description="Movies and TV shows libraries open showing only unwatched titles. Change the Watch status filter to see the rest. Remembered library filters take priority."
         >
           <Switch
             id="settings-hide-watched-by-default"

@@ -7,7 +7,9 @@
 use serde_json::{Value, json};
 
 use crate::app::urls::encode_path_segment;
-use crate::library::{CatalogKind, MAX_CHILD_PAGE_LIMIT};
+use crate::library::browse::{ChildPage, LivePage, LiveQuery};
+use crate::library::libraries::{LiveShape, LiveSort};
+use crate::library::{CatalogKind, MAX_CHILD_PAGE_LIMIT, SortDirection};
 use crate::preferences::StreamingQuality;
 
 use super::client::{ApiError, JellyfinClient};
@@ -272,6 +274,111 @@ pub fn fetch_live_children(
         "/Items",
         &live_children_query(user_id, parent_id, start_index, limit),
     )
+}
+
+pub fn fetch_item_type(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+) -> Result<Option<String>, ApiError> {
+    let response: ItemsResponse = client.get_json(
+        "/Items",
+        &[
+            user_query(user_id),
+            ("ids", item_id.to_string()),
+            ("Fields", String::new()),
+            ("EnableUserData", "false".to_string()),
+            ("EnableImages", "false".to_string()),
+        ],
+    )?;
+    Ok(response
+        .items
+        .into_iter()
+        .next()
+        .and_then(|item| item.item_type))
+}
+
+pub fn fetch_playlist_items(
+    client: &JellyfinClient,
+    user_id: &str,
+    playlist_id: &str,
+    page: ChildPage,
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json(
+        &format!("/Playlists/{}/Items", encode_path_segment(playlist_id)),
+        &[
+            user_query(user_id),
+            ("Fields", LIVE_CHILD_FIELDS.to_string()),
+            ("EnableUserData", "true".to_string()),
+            ("EnableImages", "true".to_string()),
+            ("StartIndex", page.offset().to_string()),
+            ("Limit", page.limit().to_string()),
+        ],
+    )
+}
+
+fn live_page_query(user_id: &str, page: &LivePage) -> Vec<(&'static str, String)> {
+    let mut query = vec![
+        user_query(user_id),
+        ("parentId", page.parent().as_str().to_string()),
+    ];
+    if let LiveShape::Recursive { item_types } = page.shape() {
+        query.push(("Recursive", "true".to_string()));
+        query.push(("IncludeItemTypes", item_types.join(",")));
+    }
+    if page.favorites_only() {
+        query.push(("Filters", "IsFavorite".to_string()));
+    }
+    let sort_by = match page.sort() {
+        LiveSort::Name => "SortName",
+        LiveSort::DateAdded => "DateCreated,SortName",
+        LiveSort::ReleaseDate => "ProductionYear,PremiereDate,SortName",
+    };
+    let sort_order = match page.direction() {
+        SortDirection::Ascending => "Ascending",
+        SortDirection::Descending => "Descending",
+    };
+    query.extend([
+        ("Fields", LIVE_CHILD_FIELDS.to_string()),
+        ("EnableUserData", "true".to_string()),
+        ("EnableImages", "true".to_string()),
+        ("StartIndex", page.page().offset().to_string()),
+        ("Limit", page.page().limit().to_string()),
+        ("SortBy", sort_by.to_string()),
+        ("SortOrder", sort_order.to_string()),
+    ]);
+    query
+}
+
+/// `/Items/Latest` answers a bare array, so its total is the number of items
+/// it returned.
+pub fn fetch_live(
+    client: &JellyfinClient,
+    user_id: &str,
+    query: &LiveQuery,
+) -> Result<ItemsResponse, ApiError> {
+    match query {
+        LiveQuery::Page(page) => client.get_json("/Items", &live_page_query(user_id, page)),
+        LiveQuery::Latest { parent, limit } => {
+            let items: Vec<BaseItemDto> = client.get_json(
+                "/Items/Latest",
+                &[
+                    user_query(user_id),
+                    ("parentId", parent.as_str().to_string()),
+                    ("Fields", LIVE_CHILD_FIELDS.to_string()),
+                    ("EnableUserData", "true".to_string()),
+                    ("EnableImages", "true".to_string()),
+                    ("GroupItems", "true".to_string()),
+                    ("Limit", limit.to_string()),
+                ],
+            )?;
+            Ok(ItemsResponse {
+                total_record_count: i64::try_from(items.len()).unwrap_or(i64::MAX),
+                items,
+                start_index: 0,
+            })
+        }
+    }
 }
 
 pub const ABOUT_FIELDS: &str = "Overview,Tags,Studios,People,CriticRating";

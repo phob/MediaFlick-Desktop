@@ -1,6 +1,9 @@
 use std::io;
 
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
+
+use crate::library::libraries::{LibraryId, LibraryKind, LibraryRegistry, MediaLibrary};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,15 +25,88 @@ pub enum SubtitleMode {
     ForeignAudio,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum StartupDestination {
     #[default]
     Home,
-    Movies,
-    Series,
+    #[serde(rename = "movies")]
+    LegacyMovies,
+    #[serde(rename = "series")]
+    LegacySeries,
     Calendar,
     Last,
+    Library(LibraryId),
+}
+
+impl StartupDestination {
+    pub fn is_legacy(&self) -> bool {
+        matches!(self, Self::LegacyMovies | Self::LegacySeries)
+    }
+}
+
+pub fn startup_view(stored: &StartupDestination, registry: &LibraryRegistry) -> StartupDestination {
+    let first_of = |libraries: &[MediaLibrary], kind| {
+        libraries
+            .iter()
+            .find(|library| library.kind() == kind)
+            .map_or(StartupDestination::Home, |library| {
+                StartupDestination::Library(library.id.clone())
+            })
+    };
+    match (stored, registry) {
+        (stored, LibraryRegistry::Unknown) if stored.is_legacy() => StartupDestination::Home,
+        (StartupDestination::LegacyMovies, LibraryRegistry::Known(libraries)) => {
+            first_of(libraries, LibraryKind::Movies)
+        }
+        (StartupDestination::LegacySeries, LibraryRegistry::Known(libraries)) => {
+            first_of(libraries, LibraryKind::Shows)
+        }
+        (StartupDestination::Library(id), LibraryRegistry::Known(libraries))
+            if !libraries.iter().any(|library| library.id == *id) =>
+        {
+            StartupDestination::Home
+        }
+        _ => stored.clone(),
+    }
+}
+
+pub struct ViewingWrite {
+    settings: ViewingSettings,
+    startup_destination: Option<StartupDestination>,
+}
+
+impl<'de> Deserialize<'de> for ViewingWrite {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let body = serde_json::Value::deserialize(deserializer)?;
+        let startup_destination = body
+            .get("startupDestination")
+            .map(StartupDestination::deserialize)
+            .transpose()
+            .map_err(D::Error::custom)?;
+        if startup_destination
+            .as_ref()
+            .is_some_and(StartupDestination::is_legacy)
+        {
+            return Err(D::Error::custom(
+                "choose a library instead of Movies or Series as the startup destination",
+            ));
+        }
+        let settings = ViewingSettings::deserialize(body).map_err(D::Error::custom)?;
+        Ok(Self {
+            settings,
+            startup_destination,
+        })
+    }
+}
+
+impl ViewingWrite {
+    pub fn apply(self, stored: StartupDestination) -> ViewingSettings {
+        ViewingSettings {
+            startup_destination: self.startup_destination.unwrap_or(stored),
+            ..self.settings
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,7 +290,183 @@ impl PlayerComfort {
 
 #[cfg(test)]
 mod tests {
-    use super::PlayerComfort;
+    use super::{PlayerComfort, StartupDestination, ViewingSettings, ViewingWrite, startup_view};
+    use crate::jellyfin::api::model::UserViewDto;
+    use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
+
+    const MOVIES_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const MOVIES_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const SHOWS: &str = "cccccccccccccccccccccccccccccccc";
+    const MIXED: &str = "dddddddddddddddddddddddddddddddd";
+    const GONE: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+
+    fn known(views: &[(&str, Option<&str>)]) -> LibraryRegistry {
+        LibraryRegistry::Known(
+            views
+                .iter()
+                .filter_map(|(id, collection_type)| {
+                    MediaLibrary::from_view(&UserViewDto {
+                        id: (*id).into(),
+                        collection_type: collection_type.map(str::to_string),
+                        ..Default::default()
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn library(id: &str) -> StartupDestination {
+        StartupDestination::Library(LibraryId::parse(id).expect("test id"))
+    }
+
+    #[test]
+    fn legacy_destinations_open_the_first_library_of_their_kind_in_server_order() {
+        let registry = known(&[
+            (MIXED, None),
+            (SHOWS, Some("tvshows")),
+            (MOVIES_A, Some("movies")),
+            (MOVIES_B, Some("movies")),
+        ]);
+        assert_eq!(
+            startup_view(&StartupDestination::LegacyMovies, &registry),
+            library(MOVIES_A)
+        );
+        assert_eq!(
+            startup_view(&StartupDestination::LegacySeries, &registry),
+            library(SHOWS)
+        );
+    }
+
+    #[test]
+    fn legacy_destinations_open_home_without_a_library_of_their_kind_or_a_known_list() {
+        let shows_only = known(&[(MIXED, None), (SHOWS, Some("tvshows"))]);
+        assert_eq!(
+            startup_view(&StartupDestination::LegacyMovies, &shows_only),
+            StartupDestination::Home
+        );
+        assert_eq!(
+            startup_view(&StartupDestination::LegacySeries, &known(&[])),
+            StartupDestination::Home
+        );
+        for legacy in [
+            StartupDestination::LegacyMovies,
+            StartupDestination::LegacySeries,
+        ] {
+            assert_eq!(
+                startup_view(&legacy, &LibraryRegistry::Unknown),
+                StartupDestination::Home
+            );
+        }
+    }
+
+    #[test]
+    fn a_library_destination_opens_home_only_when_a_known_list_lacks_it() {
+        let registry = known(&[(SHOWS, Some("tvshows"))]);
+        assert_eq!(startup_view(&library(SHOWS), &registry), library(SHOWS));
+        assert_eq!(
+            startup_view(&library(GONE), &registry),
+            StartupDestination::Home
+        );
+        assert_eq!(
+            startup_view(&library(GONE), &LibraryRegistry::Unknown),
+            library(GONE)
+        );
+    }
+
+    #[test]
+    fn other_destinations_pass_through() {
+        for registry in [LibraryRegistry::Unknown, known(&[(SHOWS, Some("tvshows"))])] {
+            for destination in [
+                StartupDestination::Home,
+                StartupDestination::Calendar,
+                StartupDestination::Last,
+            ] {
+                assert_eq!(startup_view(&destination, &registry), destination);
+            }
+        }
+    }
+
+    fn write(body: &str) -> Result<ViewingWrite, serde_json::Error> {
+        serde_json::from_str(body)
+    }
+
+    #[test]
+    fn a_write_without_a_startup_destination_keeps_the_stored_one() -> Result<(), serde_json::Error>
+    {
+        for stored in [
+            StartupDestination::Home,
+            StartupDestination::LegacyMovies,
+            StartupDestination::LegacySeries,
+            StartupDestination::Calendar,
+            StartupDestination::Last,
+            library(GONE),
+        ] {
+            let saved = write(r#"{"previewDelayMs":900}"#)?.apply(stored.clone());
+            assert_eq!(saved.startup_destination, stored);
+            assert_eq!(saved.preview_delay_ms, 900);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_write_stores_the_startup_destination_it_names() -> Result<(), serde_json::Error> {
+        let cases = [
+            (r#""home""#.to_string(), StartupDestination::Home),
+            (r#""calendar""#.to_string(), StartupDestination::Calendar),
+            (r#""last""#.to_string(), StartupDestination::Last),
+            (format!(r#"{{"library":"{GONE}"}}"#), library(GONE)),
+        ];
+        for (destination, expected) in cases {
+            for stored in [StartupDestination::LegacyMovies, library(SHOWS)] {
+                let saved = write(&format!(
+                    r#"{{"startupDestination":{destination},"textScale":120}}"#
+                ))?
+                .apply(stored);
+                assert_eq!(saved.startup_destination, expected);
+                assert_eq!(saved.text_scale, 120);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_write_rejects_a_legacy_null_or_malformed_startup_destination() {
+        for destination in [
+            r#""movies""#.to_string(),
+            r#""series""#.to_string(),
+            "null".to_string(),
+            format!(r#"{{"library":"{}"}}"#, SHOWS.to_uppercase()),
+            r#"{"library":"../etc"}"#.to_string(),
+        ] {
+            assert!(write(&format!(r#"{{"startupDestination":{destination}}}"#)).is_err());
+        }
+        assert!(write(r#"{"previewDelay":900}"#).is_err());
+    }
+
+    #[test]
+    fn startup_destination_wire_forms() -> Result<(), serde_json::Error> {
+        let parse = |destination: &str| {
+            serde_json::from_str::<ViewingSettings>(&format!(
+                r#"{{"startupDestination":{destination}}}"#
+            ))
+            .map(|settings| settings.startup_destination)
+        };
+        assert_eq!(parse(r#""movies""#)?, StartupDestination::LegacyMovies);
+        assert_eq!(parse(r#""series""#)?, StartupDestination::LegacySeries);
+        assert_eq!(
+            parse(&format!(r#"{{"library":"{SHOWS}"}}"#))?,
+            library(SHOWS)
+        );
+        assert!(parse(&format!(r#"{{"library":"{}"}}"#, SHOWS.to_uppercase())).is_err());
+        assert!(parse(&format!(r#"{{"library":" {SHOWS}"}}"#)).is_err());
+        assert!(parse(r#"{"library":"../etc"}"#).is_err());
+        assert!(parse(r#"{"library":""}"#).is_err());
+        assert_eq!(
+            serde_json::to_value(library(SHOWS))?,
+            serde_json::json!({ "library": SHOWS })
+        );
+        Ok(())
+    }
 
     #[test]
     fn combinations_allow_disabling_and_reject_equivalent_conflicts() {

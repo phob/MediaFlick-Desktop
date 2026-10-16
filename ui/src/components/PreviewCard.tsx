@@ -22,7 +22,7 @@ import {
   type ItemSummary,
 } from "@/lib/api"
 import { formatRemaining, formatRuntime } from "@/lib/format"
-import { detailNavigationState } from "@/lib/navigation"
+import { useDetailNavigationState } from "@/hooks/use-detail-navigation-state"
 import { PreviewContext, createExpandedStore, type PreviewApi, type PreviewTarget } from "@/lib/preview"
 import { useItem, useNextUp, usePlay, useSetFavorite, useSetPlayed } from "@/lib/queries"
 
@@ -227,7 +227,7 @@ function PreviewPanel({
 }) {
   const { item, rect } = target
   const navigate = useNavigate()
-  const location = useLocation()
+  const detailState = useDetailNavigationState()
   const panel = useRef<HTMLDivElement>(null)
   const pointerInside = useRef(false)
   const focusInside = useRef(false)
@@ -293,7 +293,6 @@ function PreviewPanel({
   ].filter(Boolean)
 
   const detailPath = `/item/${encodeURIComponent(item.id)}`
-  const detailState = detailNavigationState(location)
   const goToDetail = () => navigate(detailPath, { state: detailState })
 
   return (
@@ -330,9 +329,12 @@ function PreviewPanel({
         pointerInside.current = false
         if (!focusInside.current) onRelease()
       }}
+      // A press focuses the control it lands on, and Chromium only sometimes
+      // blurs a toggle that its pending request disables. Only keyboard focus
+      // may keep the panel open after the pointer leaves.
       onFocusCapture={() => {
-        focusInside.current = true
-        onHold()
+        focusInside.current = !pressStartedInside.current
+        if (focusInside.current) onHold()
       }}
       onBlurCapture={(event) => {
         const next = event.relatedTarget

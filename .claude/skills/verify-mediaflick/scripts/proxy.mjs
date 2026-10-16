@@ -2,24 +2,30 @@
 // controlled way. It forwards every request to `upstream` (including its path
 // prefix, such as `/stable`), streaming bodies both ways with their headers
 // (so ranged video requests work) and passing WebSocket upgrades (the app's
-// `/socket`) through. Two hooks change what the app sees:
+// `/socket`) through. Three hooks change what the app sees:
 // - `fail(url, method)` drops the connection of each request it selects, which
-//   the app sees as an unreachable server; `heal()` stops failing.
+//   the app sees as an unreachable server; `heal()` stops failing and
+//   `resumeFailing()` starts again.
 // - `answer(url, method)` returns `{ status, body }` to answer a request
 //   itself with JSON instead of forwarding it, or null to forward it.
+// - `delay(url, method)` returns how many milliseconds to hold a request
+//   before forwarding it, so a slow server can be watched.
+// `cutSockets()` drops every open WebSocket and refuses new upgrades until
+// `restoreSockets()`, as a lost network would.
 // The app accepts `http://127.0.0.1:<port>` as a server address, so a drive
 // signs in to `proxy.url`.
 
 import http from "node:http"
 import https from "node:https"
 
-export function startProxy({ upstream, fail = () => false, answer = () => null, log }) {
+export function startProxy({ upstream, fail = () => false, answer = () => null, delay = () => 0, log }) {
   const base = new URL(upstream)
   const prefix = base.pathname.replace(/\/+$/, "")
   const transport = base.protocol === "https:" ? https : http
-  const stats = { forwarded: 0, failed: 0, answered: [], streams: [], upgrades: 0 }
+  const stats = { forwarded: 0, failed: 0, delayed: 0, answered: [], streams: [], upgrades: 0, refusedUpgrades: 0 }
   const upgraded = new Set()
   let failing = true
+  let socketsCut = false
 
   const target = (request, url) => ({
     protocol: base.protocol,
@@ -49,6 +55,17 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
       request.resume()
       return
     }
+    const held = delay(url, method)
+    if (held > 0) {
+      stats.delayed++
+      request.pause()
+      setTimeout(() => forward(request, response, url, method), held)
+      return
+    }
+    forward(request, response, url, method)
+  })
+
+  const forward = (request, response, url, method) => {
     stats.forwarded++
     const stream = /^\/(Videos|Audio)\//i.test(url.pathname) ? { at: new Date().toISOString(), path: url.pathname, range: request.headers.range ?? null, status: null, bytes: 0, firstByteMs: null, durationMs: null, end: null } : null
     const started = Date.now()
@@ -82,10 +99,16 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
       response.end()
     })
     request.pipe(outbound)
-  })
+  }
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url ?? "/", "http://proxy.invalid")
+    if (socketsCut) {
+      stats.refusedUpgrades++
+      log(`proxy: refused the upgrade of ${url.pathname} while sockets are cut`)
+      socket.destroy()
+      return
+    }
     upgraded.add(socket)
     socket.on("close", () => upgraded.delete(socket))
     socket.on("error", () => socket.destroy())
@@ -134,6 +157,20 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
         heal() {
           failing = false
           log(`proxy: healed after ${stats.failed} failed requests`)
+        },
+        resumeFailing() {
+          failing = true
+          log("proxy: failing selected requests again")
+        },
+        cutSockets() {
+          socketsCut = true
+          const open = upgraded.size
+          for (const socket of upgraded) socket.destroy()
+          log(`proxy: cut ${open} open WebSockets; refusing upgrades`)
+        },
+        restoreSockets() {
+          socketsCut = false
+          log(`proxy: restored WebSocket upgrades after refusing ${stats.refusedUpgrades}`)
         },
         close: () => new Promise((done) => {
           for (const socket of upgraded) socket.destroy()

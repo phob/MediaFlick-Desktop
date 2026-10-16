@@ -4,16 +4,17 @@ use std::time::{Duration, Instant};
 use crate::jellyfin::api::items::{self, PAGE_SIZE};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::{Session, SessionScope};
-use crate::library::catalog_libraries::META_SWEEP_OWED;
+use crate::library::catalog_libraries::{META_SWEEP_OWED, MembershipReplaced};
 use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
 
-use super::libraries::{membership_pass, refresh_libraries};
+use super::libraries::{catalog_library_ids, membership_pass, refresh_libraries};
 use super::{
-    IDENTITY_PAGE_SIZE, IDENTITY_SWEEP_INTERVAL, MAX_BOOTSTRAP_PAGES, MAX_IDENTITY_PAGES,
-    MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL,
-    META_CATALOG_READY, META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP, META_LAST_SYNC,
-    META_LATEST_FAILURE, META_WATERMARK, META_WATERMARK_IDS, REBOOTSTRAP_INTERVAL, SyncHandle,
-    SyncPhase, SyncReport, Trigger, best_effort, cancelled, commit, now_unix, storage_error,
+    IDENTITY_PAGE_SIZE, IDENTITY_SWEEP_INTERVAL, MAX_BOOTSTRAP_PAGES, MAX_CONFIRM_AGE,
+    MAX_IDENTITY_PAGES, MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET,
+    META_BOOTSTRAP_TOTAL, META_CATALOG_READY, META_EMPTY_SWEEP_AT, META_LAST_BOOTSTRAP,
+    META_LAST_IDENTITY_SWEEP, META_LAST_SYNC, META_LATEST_FAILURE, META_WATERMARK,
+    META_WATERMARK_IDS, MIN_CONFIRM_GAP, REBOOTSTRAP_INTERVAL, SyncHandle, SyncPhase, SyncReport,
+    Trigger, best_effort, cancelled, commit, first_catalog_download, now_unix, storage_error,
 };
 
 pub fn run_cycle(
@@ -34,15 +35,13 @@ pub(super) fn run_cycle_inner(
     let scope = session.scope()?;
     let client = scope.client();
     let user_id = scope.user_id();
-    let initial_catalog = meta(library, META_BOOTSTRAP_DONE)?.as_deref() != Some("1")
-        && meta(library, META_LAST_BOOTSTRAP)?.is_none();
+    let initial_catalog = first_catalog_download(library).map_err(|error| storage_error(&error))?;
     let recovering_ownership = meta(library, META_LATEST_FAILURE)?.as_deref() == Some("1");
     let mut report = SyncReport::default();
-    let mut membership_changed = false;
+    let mut walked = MembershipReplaced::default();
 
     let result = (|| -> Result<(), ApiError> {
-        let no_catalog_library =
-            refresh_libraries_finding_no_catalog_library(library, session, &scope)?;
+        let listed = list_libraries(library, session, &scope, control)?;
         if full_bootstrap_due(library)? {
             restart_bootstrap(library, session, &scope)?;
         }
@@ -52,9 +51,11 @@ pub(super) fn run_cycle_inner(
             control.set_phase(SyncPhase::Catalog);
         }
         if initial_catalog {
-            membership_changed |= walk_membership(library, session, &scope, true, control)?;
+            walk_membership(library, session, &scope, true, control, &mut walked)?;
         }
         report.bootstrapped = bootstrap(library, session, &scope, client, user_id, control)?;
+        walked.walk_landed |= initial_catalog
+            && !first_catalog_download(library).map_err(|error| storage_error(&error))?;
         cancelled(control, session, &scope)?;
         if let Some(control) = control {
             control.set_phase(SyncPhase::Reconciling);
@@ -79,7 +80,7 @@ pub(super) fn run_cycle_inner(
                 library,
                 session,
                 &scope,
-                no_catalog_library,
+                listed.no_catalog_library,
                 control,
                 &mut report,
             )?
@@ -88,40 +89,43 @@ pub(super) fn run_cycle_inner(
         };
         if !initial_catalog {
             let owe_all = report.changed() || swept || trigger == Trigger::Requested;
-            membership_changed |= walk_membership(library, session, &scope, owe_all, control)?;
+            walk_membership(library, session, &scope, owe_all, control, &mut walked)?;
         }
         Ok(())
     })();
 
-    if let Err(error) = &result {
-        let _ = commit(session, &scope, || {
-            library
-                .set_meta(META_LATEST_FAILURE, "1")
-                .map_err(|storage| storage_error(&storage))
-        });
-        session.note_scoped_error(&scope, error);
-        if !report.changes.is_empty()
-            && session.scope_is_current(&scope)
-            && let Some(control) = control
-        {
-            control.shell().library_changed(report.changes.clone());
-        }
+    if result.is_err() {
+        record_failure(library, session, &scope);
     }
-    result?;
-
-    report.elapsed_ms = started.elapsed().as_millis() as u64;
-    record_success(library, session, &scope, &report)?;
-    if let Some(control) = control {
-        if recovering_ownership {
+    let result = result.and_then(|()| {
+        report.elapsed_ms = started.elapsed().as_millis() as u64;
+        record_success(library, session, &scope, &report)
+    });
+    let succeeded = result.is_ok();
+    let completed = succeeded
+        && (initial_catalog
+            || report.changed()
+            || recovering_ownership
+            || walked.membership_changed);
+    announce_outcome(session, &scope, control, &result, |control| {
+        if succeeded && recovering_ownership {
             control.shell().collections_changed();
         }
         if !report.changes.is_empty() {
             control.shell().library_changed(report.changes.clone());
         }
-        if initial_catalog || report.changed() || recovering_ownership || membership_changed {
-            control.announce_cycle_completed();
+        if walked.walk_landed {
+            tracing::debug!(target: "library.sync", "announced settled library memberships");
+            control.shell().library_memberships_settled();
         }
-    }
+        if completed {
+            control.announce_cycle_completed();
+        } else if walked.membership_changed {
+            control.shell().library_sync_completed();
+        }
+    });
+    result?;
+
     if (initial_catalog || report.changed())
         && let Err(error) = library.optimize()
     {
@@ -147,6 +151,14 @@ fn restart_bootstrap(
             .map_err(|error| storage_error(&error))?;
         Ok(())
     })
+}
+
+fn record_failure(library: &Library, session: &Session, scope: &SessionScope) {
+    let _ = commit(session, scope, || {
+        library
+            .set_meta(META_LATEST_FAILURE, "1")
+            .map_err(|storage| storage_error(&storage))
+    });
 }
 
 fn record_success(
@@ -176,45 +188,89 @@ fn sweep_identity(
     control: Option<&SyncHandle>,
     report: &mut SyncReport,
 ) -> Result<bool, ApiError> {
-    let (refreshed, deletion_changes) = identity_sweep(
-        library,
-        session,
-        scope,
-        no_catalog_library,
-        control,
-        &mut report.changes,
-    )?;
-    report.user_data_refreshed = refreshed;
+    let (walk, failure) = match walk_identity(library, session, scope, control, &mut report.changes)
+    {
+        Ok(walk) => (walk, None),
+        Err(error) => (
+            IdentityWalk {
+                refreshed: 0,
+                seen: HashSet::new(),
+                answer: IdentityAnswer::Incomplete,
+            },
+            Some(error),
+        ),
+    };
+    let observed_at = meta(library, META_EMPTY_SWEEP_AT)?.and_then(|at| at.parse::<u64>().ok());
+    let verdict = sweep_verdict(walk.answer, no_catalog_library, observed_at, now_unix());
+    let deletion_changes = commit(session, scope, || {
+        apply_sweep_verdict(library, verdict, &walk.seen)
+    })?;
+    report.user_data_refreshed = walk.refreshed;
     let deletion_ran = deletion_changes.is_some();
     if let Some(deletion_changes) = deletion_changes {
         report.deleted = deletion_changes.item_ids.len();
         report.changes.merge(deletion_changes);
     }
-    commit(session, scope, || {
-        if deletion_ran {
-            library
-                .set_meta(META_SWEEP_OWED, "0")
-                .map_err(|error| storage_error(&error))?;
-        }
-        touch(library, META_LAST_IDENTITY_SWEEP)
-    })?;
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    commit(session, scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
     Ok(deletion_ran)
 }
 
-fn refresh_libraries_finding_no_catalog_library(
+fn list_libraries(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
-) -> Result<bool, ApiError> {
-    let listed = best_effort(
-        "the library list",
-        refresh_libraries(library, session, scope),
-    )?;
-    Ok(listed.is_some_and(|libraries| {
-        libraries
-            .iter()
-            .all(|entry| entry.catalog_title().is_none())
-    }))
+    control: Option<&SyncHandle>,
+) -> Result<ListedLibraries, ApiError> {
+    let refreshed = refresh_libraries(library, session, scope);
+    let Some(listed) = best_effort("the library list", refreshed)? else {
+        return Ok(ListedLibraries {
+            no_catalog_library: false,
+        });
+    };
+    if listed.changed {
+        announce(session, scope, control, |control| {
+            tracing::debug!(target: "library.sync", "announced a changed library list");
+            control.shell().libraries_changed();
+        });
+    }
+    Ok(ListedLibraries {
+        no_catalog_library: listed.lists_no_catalog_library(),
+    })
+}
+
+struct ListedLibraries {
+    no_catalog_library: bool,
+}
+
+fn announce(
+    session: &Session,
+    scope: &SessionScope,
+    control: Option<&SyncHandle>,
+    send: impl FnOnce(&SyncHandle),
+) {
+    if let Some(control) = control
+        && session.scope_is_current(scope)
+    {
+        send(control);
+    }
+}
+
+/// Announces before noting a failure: a rejected token expires the session,
+/// which would silence any later announcement.
+fn announce_outcome<T>(
+    session: &Session,
+    scope: &SessionScope,
+    control: Option<&SyncHandle>,
+    result: &Result<T, ApiError>,
+    send: impl FnOnce(&SyncHandle),
+) {
+    announce(session, scope, control, send);
+    if let Err(error) = result {
+        session.note_scoped_error(scope, error);
+    }
 }
 
 fn walk_membership(
@@ -223,7 +279,8 @@ fn walk_membership(
     scope: &SessionScope,
     owe_all: bool,
     control: Option<&SyncHandle>,
-) -> Result<bool, ApiError> {
+    walked_so_far: &mut MembershipReplaced,
+) -> Result<(), ApiError> {
     let owed = if owe_all {
         commit(session, scope, || {
             library
@@ -233,8 +290,9 @@ fn walk_membership(
     } else {
         Ok(())
     };
-    let walked = owed.and_then(|()| membership_pass(library, session, scope, control));
-    Ok(best_effort("library membership", walked)?.unwrap_or(false))
+    let pass = owed.and_then(|()| membership_pass(library, session, scope, control, walked_so_far));
+    best_effort("library membership", pass)?;
+    Ok(())
 }
 
 fn bootstrap(
@@ -249,6 +307,7 @@ fn bootstrap(
         return Ok(0);
     }
 
+    let catalog_libraries = catalog_library_ids(library)?;
     let phase_started = Instant::now();
     let mut offset = meta(library, META_BOOTSTRAP_OFFSET)?
         .and_then(|value| value.parse::<i64>().ok())
@@ -297,7 +356,9 @@ fn bootstrap(
         if !page_changes.is_empty()
             && let Some(control) = control
         {
-            control.shell().catalog_changed(page_changes);
+            control
+                .shell()
+                .catalog_changed(page_changes, catalog_libraries.clone());
         }
         tracing::debug!(
             target: "library.sync",
@@ -497,20 +558,81 @@ fn incremental(
     Ok(written)
 }
 
+struct IdentityWalk {
+    refreshed: usize,
+    seen: HashSet<String>,
+    answer: IdentityAnswer,
+}
+
+#[derive(Clone, Copy)]
+enum IdentityAnswer {
+    Incomplete,
+    Listed,
+    EmptyCountingZero,
+    EmptyNotCountedZero,
+}
+
+#[derive(Clone, Copy)]
+enum SweepVerdict {
+    Delete,
+    ObserveEmpty(u64),
+    ForgetEmpty,
+    Wait,
+}
+
+/// An emptied catalog library can stay listed, and only the daily rebootstrap restores deleted
+/// titles, so an empty zero-count answer deletes once an earlier one in the window agrees.
+fn sweep_verdict(
+    answer: IdentityAnswer,
+    no_catalog_library: bool,
+    observed_at: Option<u64>,
+    now: u64,
+) -> SweepVerdict {
+    match answer {
+        IdentityAnswer::Incomplete | IdentityAnswer::EmptyNotCountedZero => {
+            SweepVerdict::ForgetEmpty
+        }
+        IdentityAnswer::Listed => SweepVerdict::Delete,
+        IdentityAnswer::EmptyCountingZero if no_catalog_library => SweepVerdict::Delete,
+        IdentityAnswer::EmptyCountingZero => match observed_at.and_then(|at| now.checked_sub(at)) {
+            Some(age) if age < MIN_CONFIRM_GAP.as_secs() => SweepVerdict::Wait,
+            Some(age) if age <= MAX_CONFIRM_AGE.as_secs() => SweepVerdict::Delete,
+            _ => SweepVerdict::ObserveEmpty(now),
+        },
+    }
+}
+
+fn apply_sweep_verdict(
+    library: &Library,
+    verdict: SweepVerdict,
+    seen: &HashSet<String>,
+) -> Result<Option<LibraryChangeBatch>, ApiError> {
+    let written = match verdict {
+        SweepVerdict::Wait => return Ok(None),
+        SweepVerdict::ObserveEmpty(at) => library
+            .set_meta(META_EMPTY_SWEEP_AT, &at.to_string())
+            .map(|()| None),
+        SweepVerdict::ForgetEmpty => library.set_meta(META_EMPTY_SWEEP_AT, "").map(|()| None),
+        SweepVerdict::Delete => library
+            .retain_ids_setting_meta(seen, &[(META_SWEEP_OWED, "0"), (META_EMPTY_SWEEP_AT, "")])
+            .map(Some),
+    };
+    written.map_err(|error| storage_error(&error))
+}
+
 /// One identity-only pass over the library that both mirrors watch state and
-/// drops items the server no longer reports.
+/// collects the ids the server still reports.
 ///
 /// These used to be two sweeps requesting the identical pages on different
 /// schedules, which meant deletions were only noticed once a day. Folding them
 /// together makes deletions as fresh as watch state for no extra requests.
-fn identity_sweep(
+fn walk_identity(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
-    no_catalog_library: bool,
     control: Option<&SyncHandle>,
     changes: &mut LibraryChangeBatch,
-) -> Result<(usize, Option<LibraryChangeBatch>), ApiError> {
+) -> Result<IdentityWalk, ApiError> {
     let mut offset = 0;
     let mut refreshed = 0;
     let mut seen = HashSet::new();
@@ -554,26 +676,28 @@ fn identity_sweep(
             break false;
         }
     };
-    if truncated {
+    let answer = if truncated {
         // `seen` is what decides which items still exist, so a partial one must
-        // never reach `retain_ids` — everything past the cap would be deleted.
+        // never reach `retain_ids_setting_meta` — everything past the cap would be deleted.
         tracing::warn!(
             target: "library.sync",
             pages,
             offset,
             "stopped the identity sweep at the page cap; skipping the deletion pass"
         );
-        return Ok((refreshed, None));
-    }
-    if seen.is_empty() && !(no_catalog_library && counted_zero) {
-        return Ok((refreshed, None));
-    }
-    let deletion_changes = commit(session, scope, || {
-        library
-            .retain_ids(&seen)
-            .map_err(|error| storage_error(&error))
-    })?;
-    Ok((refreshed, Some(deletion_changes)))
+        IdentityAnswer::Incomplete
+    } else if !seen.is_empty() {
+        IdentityAnswer::Listed
+    } else if counted_zero {
+        IdentityAnswer::EmptyCountingZero
+    } else {
+        IdentityAnswer::EmptyNotCountedZero
+    };
+    Ok(IdentityWalk {
+        refreshed,
+        seen,
+        answer,
+    })
 }
 
 fn advance_watermark_with_ids(

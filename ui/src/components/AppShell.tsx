@@ -7,7 +7,6 @@ import { PreviewProvider } from "@/components/PreviewCard"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { usePlaybackEventsBridge } from "@/lib/playback-events"
-import { useLibraryMetadataBridge } from "@/lib/library-events"
 import { usePlayerState, useSettings } from "@/lib/queries"
 import { RouteScrollContext } from "@/lib/route-scroll"
 import { sidebarShouldBeOpen, sidebarShouldOverlayContent } from "@/lib/sidebar-state"
@@ -184,7 +183,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       player.data?.active,
   )
   usePlaybackEventsBridge()
-  useLibraryMetadataBridge()
 
   useLayoutEffect(() => {
     document.documentElement.toggleAttribute("data-libmpv-playback", integratedPlayback)

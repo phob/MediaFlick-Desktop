@@ -1,11 +1,12 @@
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::jellyfin::api::model::UserViewDto;
 
 use super::SortKey;
 use super::model::TitleKind;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String")]
 pub struct LibraryId(String);
 
 impl LibraryId {
@@ -14,8 +15,20 @@ impl LibraryId {
         crate::app::ids::valid_opaque_id(raw).then(|| Self(raw.to_ascii_lowercase()))
     }
 
+    pub fn canonical(raw: &str) -> Option<Self> {
+        Self::parse(raw).filter(|id| id.as_str() == raw)
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl TryFrom<String> for LibraryId {
+    type Error = &'static str;
+
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        Self::canonical(&raw).ok_or("invalid library id")
     }
 }
 
@@ -36,6 +49,8 @@ pub enum LibraryKind {
     Mixed,
 }
 
+pub const PLAYLIST_TYPE: &str = "Playlist";
+
 impl LibraryKind {
     pub fn from_collection_type(value: Option<&str>) -> Self {
         match value.map(str::to_ascii_lowercase).as_deref() {
@@ -55,14 +70,19 @@ impl LibraryKind {
     }
 
     pub fn profile(self) -> LibraryProfile {
+        use LiveLatest::{Grouped, Newest};
+        let recursive = |item_types: &'static [&'static str]| LiveShape::Recursive { item_types };
         match self {
             Self::Movies => LibraryProfile::catalog(TitleKind::Movie, &MOVIE_BROWSE),
             Self::Shows => LibraryProfile::catalog(TitleKind::Series, &SHOW_BROWSE),
-            Self::Music | Self::MusicVideos | Self::Books | Self::BoxSets | Self::Trailers => {
-                LibraryProfile::live(&LIVE_RECURSIVE_BROWSE)
-            }
-            Self::HomeVideos | Self::Photos | Self::Playlists | Self::LiveTv | Self::Mixed => {
-                LibraryProfile::live(&LIVE_FOLDER_BROWSE)
+            Self::Music => LibraryProfile::live(recursive(&["MusicAlbum"]), Grouped),
+            Self::MusicVideos => LibraryProfile::live(recursive(&["MusicVideo"]), Grouped),
+            Self::Books => LibraryProfile::live(recursive(&["Book", "AudioBook"]), Grouped),
+            Self::BoxSets => LibraryProfile::live(recursive(&["BoxSet"]), Newest),
+            Self::Trailers => LibraryProfile::live(recursive(&["Trailer"]), Grouped),
+            Self::HomeVideos | Self::Photos => LibraryProfile::live(LiveShape::Folder, Grouped),
+            Self::Playlists | Self::LiveTv | Self::Mixed => {
+                LibraryProfile::live(LiveShape::Folder, Newest)
             }
         }
     }
@@ -81,18 +101,79 @@ impl LibraryProfile {
         }
     }
 
-    const fn live(browse: &'static BrowseCapabilities) -> Self {
+    const fn live(shape: LiveShape, latest: LiveLatest) -> Self {
         Self {
-            grid: GridSource::Live,
-            browse,
+            grid: GridSource::Live { shape, latest },
+            browse: match shape {
+                LiveShape::Recursive { .. } => &LIVE_RECURSIVE_BROWSE,
+                LiveShape::Folder => &LIVE_FOLDER_BROWSE,
+            },
         }
     }
 }
 
 pub enum GridSource {
-    Catalog { title: TitleKind },
-    Live,
+    Catalog {
+        title: TitleKind,
+    },
+    Live {
+        shape: LiveShape,
+        latest: LiveLatest,
+    },
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveShape {
+    Recursive { item_types: &'static [&'static str] },
+    Folder,
+}
+
+/// Where "Latest in <library>" comes from. The table follows jellyfin-web,
+/// which asks `/Items/Latest` for every library except the view types it
+/// excludes: `playlists`, `livetv`, `boxsets`, `channels` and `folders`.
+/// Measured with the test servers: music (Grouped, demo), playlists (Newest,
+/// demo) and box sets (Newest, own server); the other kinds are unmeasured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveLatest {
+    /// Jellyfin's `/Items/Latest`, which groups new tracks into their album.
+    Grouped,
+    /// The library's own grid, newest first. `/Items/Latest` answers nothing
+    /// for box sets and playlists.
+    Newest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveSort {
+    Name,
+    DateAdded,
+    ReleaseDate,
+}
+
+impl LiveSort {
+    const ALL: [Self; 3] = [Self::Name, Self::DateAdded, Self::ReleaseDate];
+
+    const fn key(self) -> SortKey {
+        match self {
+            Self::Name => SortKey::Name,
+            Self::DateAdded => SortKey::DateAdded,
+            Self::ReleaseDate => SortKey::ReleaseDate,
+        }
+    }
+
+    pub fn from_key(key: SortKey) -> Option<Self> {
+        Self::ALL.into_iter().find(|sort| sort.key() == key)
+    }
+}
+
+const LIVE_SORT_KEYS: [SortKey; LiveSort::ALL.len()] = {
+    let mut keys = [SortKey::Name; LiveSort::ALL.len()];
+    let mut index = 0;
+    while index < keys.len() {
+        keys[index] = LiveSort::ALL[index].key();
+        index += 1;
+    }
+    keys
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterKey {
@@ -193,13 +274,13 @@ pub static CROSS_LIBRARY_BROWSE: BrowseCapabilities = BrowseCapabilities {
 };
 
 pub static LIVE_RECURSIVE_BROWSE: BrowseCapabilities = BrowseCapabilities {
-    sorts: &[SortKey::Name, SortKey::DateAdded, SortKey::ReleaseDate],
+    sorts: &LIVE_SORT_KEYS,
     filters: &[FilterKey::Favorite],
     letter_index: false,
 };
 
 pub static LIVE_FOLDER_BROWSE: BrowseCapabilities = BrowseCapabilities {
-    sorts: &[SortKey::Name, SortKey::DateAdded, SortKey::ReleaseDate],
+    sorts: &LIVE_SORT_KEYS,
     filters: &[],
     letter_index: false,
 };
@@ -210,7 +291,27 @@ pub struct MediaLibrary {
     pub name: String,
     pub(super) collection_type: Option<String>,
     pub primary_image_tag: Option<String>,
-    pub membership_pending: bool,
+    pub membership: Membership,
+}
+
+/// Where a catalog library's stored membership stands. A library walked once
+/// keeps its titles while a re-walk is owed, so only `Unwalked` is unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Membership {
+    Unwalked,
+    Owed,
+    Current,
+}
+
+impl Membership {
+    pub(super) fn parse(stored: &str) -> Option<Self> {
+        match stored {
+            "unwalked" => Some(Self::Unwalked),
+            "owed" => Some(Self::Owed),
+            "current" => Some(Self::Current),
+            _ => None,
+        }
+    }
 }
 
 impl MediaLibrary {
@@ -220,7 +321,7 @@ impl MediaLibrary {
             name: view.name.clone().unwrap_or_default(),
             collection_type: view.collection_type.clone(),
             primary_image_tag: view.primary_image_tag().map(str::to_string),
-            membership_pending: false,
+            membership: Membership::Unwalked,
         })
     }
 
@@ -231,7 +332,7 @@ impl MediaLibrary {
     pub fn catalog_title(&self) -> Option<TitleKind> {
         match self.kind().profile().grid {
             GridSource::Catalog { title } => Some(title),
-            GridSource::Live => None,
+            GridSource::Live { .. } => None,
         }
     }
 }

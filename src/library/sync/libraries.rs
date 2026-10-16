@@ -2,7 +2,8 @@ use std::collections::HashSet;
 
 use crate::jellyfin::api::{ApiError, items};
 use crate::jellyfin::session::{Session, SessionScope};
-use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
+use crate::library::catalog_libraries::MembershipReplaced;
+use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary, Membership};
 use crate::library::{Library, TitleKind};
 
 use super::{
@@ -10,11 +11,24 @@ use super::{
     storage_error,
 };
 
+pub(super) struct LibraryList {
+    pub(super) libraries: Vec<MediaLibrary>,
+    pub(super) changed: bool,
+}
+
+impl LibraryList {
+    pub(super) fn lists_no_catalog_library(&self) -> bool {
+        self.libraries
+            .iter()
+            .all(|entry| entry.catalog_title().is_none())
+    }
+}
+
 pub(super) fn refresh_libraries(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
-) -> Result<Vec<MediaLibrary>, ApiError> {
+) -> Result<LibraryList, ApiError> {
     let views = items::fetch_user_views(scope.client(), scope.user_id())?;
     let mut seen = HashSet::new();
     let libraries = views
@@ -28,12 +42,27 @@ pub(super) fn refresh_libraries(
         })
         .filter(|parsed| seen.insert(parsed.id.clone()))
         .collect::<Vec<_>>();
-    commit(session, scope, || {
+    let replaced = commit(session, scope, || {
         library
             .replace_libraries(&libraries)
             .map_err(|error| storage_error(&error))
     })?;
-    Ok(libraries)
+    Ok(LibraryList {
+        libraries,
+        changed: replaced.listing_changed,
+    })
+}
+
+pub(super) fn catalog_library_ids(library: &Library) -> Result<Vec<String>, ApiError> {
+    let registry = library.libraries().map_err(|error| storage_error(&error))?;
+    let LibraryRegistry::Known(libraries) = registry else {
+        return Ok(Vec::new());
+    };
+    Ok(libraries
+        .iter()
+        .filter(|entry| entry.catalog_title().is_some())
+        .map(|entry| entry.id.as_str().to_string())
+        .collect())
 }
 
 pub(super) fn membership_pass(
@@ -41,26 +70,26 @@ pub(super) fn membership_pass(
     session: &Session,
     scope: &SessionScope,
     control: Option<&SyncHandle>,
-) -> Result<bool, ApiError> {
+    walked_so_far: &mut MembershipReplaced,
+) -> Result<(), ApiError> {
     let registry = library.libraries().map_err(|error| storage_error(&error))?;
     let LibraryRegistry::Known(libraries) = registry else {
-        return Ok(false);
+        return Ok(());
     };
     let due = libraries
         .into_iter()
-        .filter(|entry| entry.membership_pending)
+        .filter(|entry| entry.membership != Membership::Current)
         .filter_map(|entry| Some((entry.catalog_title()?, entry.id)));
-    let mut changed = false;
     for (title, id) in due {
-        let walked = refresh_membership(library, session, scope, &id, title, control);
-        let rate_limited = matches!(walked, Err(ApiError::RateLimited { .. }));
+        let walk = refresh_membership(library, session, scope, &id, title, control);
+        let rate_limited = matches!(walk, Err(ApiError::RateLimited { .. }));
         let step = format!("the membership of library {}", id.as_str());
-        changed |= best_effort(&step, walked)?.unwrap_or(false);
+        walked_so_far.merge(best_effort(&step, walk)?.unwrap_or_default());
         if rate_limited {
             break;
         }
     }
-    Ok(changed)
+    Ok(())
 }
 
 fn refresh_membership(
@@ -70,9 +99,9 @@ fn refresh_membership(
     library_id: &LibraryId,
     title: TitleKind,
     control: Option<&SyncHandle>,
-) -> Result<bool, ApiError> {
+) -> Result<MembershipReplaced, ApiError> {
     let Some(ids) = member_ids(session, scope, library_id, title, control)? else {
-        return Ok(false);
+        return Ok(MembershipReplaced::default());
     };
     if ids.is_empty() {
         tracing::debug!(target: "library.sync", library = library_id.as_str(), "the server listed no titles in a library; keeping its membership");

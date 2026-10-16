@@ -7,10 +7,13 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::app::ids::valid_opaque_id;
 use crate::integrations::letterboxd::{ExternalProfile, MAX_CONNECTED_PROFILES};
+use crate::library::libraries::LibraryId;
 
 use super::{AppearanceSettings, ViewingSettings};
 
 const MAX_HOME_ELEMENTS: usize = 512;
+const MAX_BROWSING_PAGES: usize = 256;
+const LEGACY_BROWSING_PAGES: [&str; 2] = ["Movie", "Series"];
 const PREFERRED_HOME_GENRES: [&str; 12] = [
     "Action",
     "Comedy",
@@ -373,11 +376,17 @@ impl AccountConfigurationService {
         })
     }
 
-    pub fn save_viewing(&self, key: &AccountKey, viewing: &ViewingSettings) -> io::Result<()> {
-        viewing.validate()?;
+    pub fn save_viewing_with(
+        &self,
+        key: &AccountKey,
+        change: impl FnOnce(&ViewingSettings) -> ViewingSettings,
+    ) -> io::Result<ViewingSettings> {
         self.mutate(|document| {
-            account_mut(document, key).viewing = viewing.clone();
-            Ok(())
+            let account = account_mut(document, key);
+            let viewing = change(&account.viewing);
+            viewing.validate()?;
+            account.viewing = viewing.clone();
+            Ok(viewing)
         })
     }
 
@@ -393,12 +402,24 @@ impl AccountConfigurationService {
     }
 
     pub fn save_browsing(&self, key: &AccountKey, page: &str, route: &str) -> io::Result<()> {
-        validate_browsing_route(page, route)?;
-        self.mutate(|document| {
-            account_mut(document, key)
-                .browsing
-                .insert(page.to_string(), route.to_string());
-            Ok(())
+        let prunes_legacy = matches!(
+            validate_browsing_route(page, route)?,
+            BrowsingPage::Library(_)
+        );
+        self.mutate_if_changed(|document| {
+            let browsing = &mut account_mut(document, key).browsing;
+            let prune_due = prunes_legacy
+                && LEGACY_BROWSING_PAGES
+                    .iter()
+                    .any(|legacy| browsing.contains_key(*legacy));
+            if !prune_due && browsing.get(page).is_some_and(|saved| saved == route) {
+                return Ok(false);
+            }
+            if prune_due {
+                browsing.retain(|page, _| !LEGACY_BROWSING_PAGES.contains(&page.as_str()));
+            }
+            browsing.insert(page.to_string(), route.to_string());
+            Ok(true)
         })
     }
 
@@ -609,6 +630,28 @@ impl AccountConfigurationService {
         drop(current);
         Ok(result)
     }
+
+    /// Like [`Self::mutate`], but `change` answers whether it changed the
+    /// document, and an unchanged one is not written. Deciding under the same
+    /// lock keeps another save from landing between the check and the write.
+    fn mutate_if_changed(
+        &self,
+        change: impl FnOnce(&mut AccountConfigurationFile) -> io::Result<bool>,
+    ) -> io::Result<()> {
+        let mut current = self
+            .document
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut next = current.clone();
+        if !change(&mut next)? {
+            return Ok(());
+        }
+        validate_document(&mut next)?;
+        save_document(&self.path, &next)?;
+        *current = next;
+        drop(current);
+        Ok(())
+    }
 }
 
 pub fn accounts_file_path() -> PathBuf {
@@ -659,8 +702,13 @@ fn validate_document(document: &mut AccountConfigurationFile) -> io::Result<()> 
         }
         account.appearance.sanitize();
         account.viewing.validate()?;
+        if account.browsing.len() > MAX_BROWSING_PAGES {
+            return Err(invalid_data(
+                "account configuration remembers too many browsing pages",
+            ));
+        }
         for (page, route) in &account.browsing {
-            validate_browsing_route(page, route)?;
+            validate_stored_browsing(page, route)?;
         }
         if let Some(home) = &mut account.home {
             home.insert_missing_built_ins();
@@ -695,24 +743,61 @@ fn scrub_backup(path: &Path) -> io::Result<()> {
     replace_backup_with_primary(path)
 }
 
-fn validate_browsing_route(page: &str, route: &str) -> io::Result<()> {
-    let path = route.split('?').next().unwrap_or(route);
-    if !["last", "Movie", "Series"].contains(&page)
-        || route.len() > 2048
-        || !([
-            "/",
-            "/calendar",
-            "/library",
-            "/discover",
-            "/requests",
-            "/collections",
-        ]
-        .contains(&path)
-            || path.starts_with("/collections/"))
-    {
-        return Err(invalid_data("invalid browsing destination"));
+enum BrowsingPage {
+    Last,
+    Library(LibraryId),
+}
+
+impl BrowsingPage {
+    fn parse(page: &str) -> Option<Self> {
+        if page == "last" {
+            return Some(Self::Last);
+        }
+        LibraryId::canonical(page.strip_prefix("library:")?).map(Self::Library)
     }
-    Ok(())
+}
+
+fn validate_browsing_route(page: &str, route: &str) -> io::Result<BrowsingPage> {
+    BrowsingPage::parse(page)
+        .filter(|page| {
+            let own_library = match page {
+                BrowsingPage::Library(id) => Some(id),
+                BrowsingPage::Last => None,
+            };
+            route_fits(own_library, route)
+        })
+        .ok_or_else(|| invalid_data("invalid browsing destination"))
+}
+
+fn validate_stored_browsing(page: &str, route: &str) -> io::Result<()> {
+    if LEGACY_BROWSING_PAGES.contains(&page) && route_fits(None, route) {
+        return Ok(());
+    }
+    validate_browsing_route(page, route).map(drop)
+}
+
+fn route_fits(own_library: Option<&LibraryId>, route: &str) -> bool {
+    let (path, _query) = route.split_once('?').unwrap_or((route, ""));
+    let library = path
+        .strip_prefix("/library/")
+        .and_then(LibraryId::canonical);
+    route.len() <= 2048
+        && match own_library {
+            Some(id) => library.as_ref() == Some(id),
+            None => {
+                library.is_some()
+                    || [
+                        "/",
+                        "/calendar",
+                        "/library",
+                        "/discover",
+                        "/requests",
+                        "/collections",
+                    ]
+                    .contains(&path)
+                    || path.starts_with("/collections/")
+            }
+        }
 }
 
 fn invalid_data(message: impl Into<String>) -> io::Error {
@@ -720,210 +805,4 @@ fn invalid_data(message: impl Into<String>) -> io::Error {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    use super::*;
-    use crate::preferences::AppearanceAccent;
-
-    static TEST_PATH_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-    fn test_path(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "mediaflick-accounts-{label}-{}-{}.json",
-            std::process::id(),
-            TEST_PATH_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ))
-    }
-
-    fn key(server: &str, user: &str) -> AccountKey {
-        AccountKey::new(server, user).expect("valid account")
-    }
-
-    fn profile() -> ExternalProfile {
-        ExternalProfile {
-            id: "0123456789abcdef".to_string(),
-            provider: "letterboxd".to_string(),
-            profile_key: "alice".to_string(),
-            display_name: "Alice".to_string(),
-            canonical_url: "https://letterboxd.com/alice/".to_string(),
-            enabled: true,
-            verification_status: "verified".to_string(),
-            created_at: 1,
-            last_checked_at: Some(2),
-            jellyfin_server_id: String::new(),
-            jellyfin_user_id: String::new(),
-        }
-    }
-
-    fn cleanup(path: &Path) {
-        let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(super::super::json_file::backup_path(path));
-        if let (Some(parent), Some(name)) = (path.parent(), path.file_name())
-            && let Ok(entries) = std::fs::read_dir(parent)
-        {
-            let prefix = format!("{}.broken-", name.to_string_lossy());
-            for entry in entries.filter_map(Result::ok) {
-                if entry.file_name().to_string_lossy().starts_with(&prefix) {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn saved_home_gains_a_new_built_in_after_its_predecessor() {
-        let path = test_path("home-new-built-in");
-        let alice = key("server", "alice");
-        let service = AccountConfigurationService::open(path.clone()).expect("open");
-        let mut home = HomeSettings::fresh(&["Drama".to_owned()]);
-        home.elements.rotate_left(1);
-        service.save_home(&alice, &home).expect("save home");
-        drop(service);
-        let new = HomeElementId::BuiltIn {
-            id: HomeBuiltIn::RecentlyAddedShows,
-        };
-        let predecessor = HomeElementId::BuiltIn {
-            id: HomeBuiltIn::RecentlyAdded,
-        };
-        let mut document: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).expect("read account settings"))
-                .expect("parse account settings");
-        document["accounts"][0]["home"]["elements"]
-            .as_array_mut()
-            .expect("saved Home elements")
-            .retain(|element| element["id"] != "recentlyAddedShows");
-        std::fs::write(&path, document.to_string()).expect("write older Home");
-
-        let reopened = AccountConfigurationService::open(path.clone()).expect("reopen");
-        let elements = reopened.home(&alice).expect("home").elements;
-        let position = |id: &HomeElementId| {
-            elements
-                .iter()
-                .position(|element| &element.element == id)
-                .expect("Home element")
-        };
-        assert_eq!(position(&new), position(&predecessor) + 1);
-        assert!(elements[position(&new)].enabled);
-        let user_order = elements
-            .iter()
-            .filter(|element| element.element != new)
-            .collect::<Vec<_>>();
-        let saved_order = home
-            .elements
-            .iter()
-            .filter(|element| element.element != new)
-            .collect::<Vec<_>>();
-        assert_eq!(user_order, saved_order);
-        cleanup(&path);
-    }
-
-    #[test]
-    fn browsing_survives_reopen_and_rejects_external_destinations() {
-        let path = test_path("browsing-round-trip");
-        let alice = key("server", "alice");
-        let bob = key("server", "bob");
-        let service = AccountConfigurationService::open(path.clone()).expect("open");
-        service
-            .save_browsing(&alice, "Movie", "/library?kind=Movie&sort=year")
-            .expect("save browsing");
-        assert!(
-            service
-                .save_browsing(&alice, "last", "https://example.com")
-                .is_err()
-        );
-        drop(service);
-        let reopened = AccountConfigurationService::open(path).expect("reopen");
-        assert!(reopened.browsing(&bob).is_empty());
-        assert_eq!(
-            reopened.browsing(&alice)["Movie"],
-            "/library?kind=Movie&sort=year"
-        );
-    }
-
-    #[test]
-    fn account_settings_are_isolated_and_survive_reopen() {
-        let path = test_path("round-trip");
-        let alice = key("server", "alice");
-        let bob = key("server", "bob");
-        let service = AccountConfigurationService::open(path.clone()).expect("open");
-        let appearance = AppearanceSettings {
-            accent: AppearanceAccent::Violet,
-            ..AppearanceSettings::default()
-        };
-        service
-            .save_appearance(&alice, &appearance)
-            .expect("save appearance");
-        service
-            .save_letterboxd_profile(&alice, &profile())
-            .expect("save profile");
-        let home = HomeSettings::fresh(&["Action".to_owned(), "Comedy".to_owned()]);
-        service.save_home(&alice, &home).expect("save home");
-
-        assert_eq!(service.appearance(&bob), AppearanceSettings::default());
-        assert!(service.letterboxd_profiles(&bob).is_empty());
-        assert_eq!(service.home(&bob), None);
-        drop(service);
-
-        let reopened = AccountConfigurationService::open(path.clone()).expect("reopen");
-        assert_eq!(reopened.appearance(&alice), appearance);
-        assert_eq!(reopened.home(&alice), Some(home));
-        let profiles = reopened.letterboxd_profiles(&alice);
-        assert_eq!(profiles.len(), 1);
-        assert_eq!(profiles[0].jellyfin_server_id, "server");
-        assert_eq!(profiles[0].jellyfin_user_id, "alice");
-        cleanup(&path);
-    }
-
-    #[test]
-    fn signed_out_legacy_appearance_waits_for_the_next_account() {
-        let path = test_path("pending-appearance");
-        let appearance = AppearanceSettings {
-            accent: AppearanceAccent::Violet,
-            ..AppearanceSettings::default()
-        };
-        let alice = key("server", "alice");
-        let service = AccountConfigurationService::open(path.clone()).expect("open");
-
-        service
-            .import_legacy_appearance(None, &appearance)
-            .expect("stage signed-out appearance");
-        drop(service);
-
-        let reopened = AccountConfigurationService::open(path.clone()).expect("reopen");
-        assert_eq!(reopened.appearance(&alice), AppearanceSettings::default());
-        reopened
-            .claim_legacy_appearance(&alice)
-            .expect("claim appearance");
-        assert_eq!(reopened.appearance(&alice), appearance);
-        reopened
-            .claim_legacy_appearance(&key("server", "bob"))
-            .expect("idempotent retry");
-        assert_eq!(reopened.appearance(&alice), appearance);
-        cleanup(&path);
-    }
-
-    #[test]
-    fn adding_the_same_letterboxd_username_preserves_its_identity() {
-        let path = test_path("profile-upsert");
-        let alice = key("server", "alice");
-        let service = AccountConfigurationService::open(path.clone()).expect("open");
-        let original = service
-            .save_letterboxd_profile(&alice, &profile())
-            .expect("save original profile");
-        let mut replacement = profile();
-        replacement.id = "fedcba9876543210".to_string();
-        replacement.display_name = "Alice Updated".to_string();
-        replacement.created_at = 99;
-
-        let updated = service
-            .save_letterboxd_profile(&alice, &replacement)
-            .expect("update profile");
-
-        assert_eq!(updated.id, original.id);
-        assert_eq!(updated.created_at, original.created_at);
-        assert_eq!(updated.display_name, "Alice Updated");
-        assert_eq!(service.letterboxd_profiles(&alice), vec![updated]);
-        cleanup(&path);
-    }
-}
+mod tests;

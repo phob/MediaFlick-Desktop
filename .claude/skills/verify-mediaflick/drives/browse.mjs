@@ -21,7 +21,7 @@ export default async function browse(ctx) {
   await ctx.snapshot("01-home")
 
   await ctx.press({ role: "link", name: "Movies" })
-  await ctx.until(async () => (await ctx.pathname()) === "/library?kind=Movie", "the Movies library")
+  await ctx.until(async () => /^\/library\/[0-9a-f]+$/.test(await ctx.pathname()), "the Movies library")
   await ctx.find({ role: "heading", name: "Movies" })
   await ctx.find({ role: "combobox", name: "Sort by" })
   await ctx.until(async () => (await ctx.count(CARD)) > 0, "movie cards in the grid", 30000)

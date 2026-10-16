@@ -11,6 +11,7 @@ use crate::jellyfin::session::Session;
 use crate::jellyfin::socket::{self, SocketHandle};
 use crate::library::Library;
 use crate::library::LibraryChangeBatch;
+use crate::library::browse::ChildrenSources;
 use crate::library::sync::{self, SyncHandle};
 use crate::playback::PlaybackCoordinator;
 use crate::preferences::{
@@ -42,6 +43,7 @@ pub struct Services {
     pub preferences: Arc<PreferencesService>,
     pub shell: Arc<ShellBridge>,
     pub home_watched: Mutex<HashMap<AccountKey, Option<crate::library::ItemDetail>>>,
+    pub children_sources: ChildrenSources,
     playback: RwLock<Option<Arc<PlaybackCoordinator>>>,
 }
 
@@ -64,12 +66,28 @@ pub enum ShellRequest {
         item_ids: Vec<String>,
         context_ids: Vec<String>,
     },
-    /// A bootstrap page changed local catalog projections only.
-    CatalogChanged {
+    /// Items and folders the server changed that only Jellyfin serves.
+    LiveChanged {
         item_ids: Vec<String>,
         context_ids: Vec<String>,
     },
+    /// The event stream was lost and is back, so any page Jellyfin serves
+    /// directly may have missed changes.
+    LiveResynced,
+    /// A bootstrap page changed local catalog projections only, so of the
+    /// library grids only those of the catalog-tier libraries can change.
+    CatalogChanged {
+        item_ids: Vec<String>,
+        context_ids: Vec<String>,
+        library_ids: Vec<String>,
+    },
     CollectionsChanged,
+    /// The account's library list changed: a library was added, removed,
+    /// renamed or moved, or the list was read for the first time.
+    LibrariesChanged,
+    /// A library's membership walk landed. After its first walk a library no
+    /// longer reports its membership pending; its titles may not have changed.
+    LibraryMembershipsSettled,
     SessionExpired,
 }
 
@@ -112,10 +130,25 @@ impl ShellBridge {
         });
     }
 
-    pub fn catalog_changed(&self, changes: LibraryChangeBatch) {
+    pub fn live_changed(&self, item_ids: Vec<String>, context_ids: Vec<String>) {
+        if item_ids.is_empty() && context_ids.is_empty() {
+            return;
+        }
+        let _ = self.request(ShellRequest::LiveChanged {
+            item_ids,
+            context_ids,
+        });
+    }
+
+    pub fn live_resynced(&self) {
+        let _ = self.request(ShellRequest::LiveResynced);
+    }
+
+    pub fn catalog_changed(&self, changes: LibraryChangeBatch, library_ids: Vec<String>) {
         let _ = self.request(ShellRequest::CatalogChanged {
             item_ids: changes.item_ids,
             context_ids: changes.context_ids,
+            library_ids,
         });
     }
 
@@ -125,6 +158,14 @@ impl ShellBridge {
 
     pub fn collections_changed(&self) {
         let _ = self.request(ShellRequest::CollectionsChanged);
+    }
+
+    pub fn libraries_changed(&self) {
+        let _ = self.request(ShellRequest::LibrariesChanged);
+    }
+
+    pub fn library_memberships_settled(&self) {
+        let _ = self.request(ShellRequest::LibraryMembershipsSettled);
     }
 
     /// Refreshes aggregate watch-state projections once after a full catalog
@@ -251,6 +292,7 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
         preferences,
         shell,
         home_watched: Mutex::new(HashMap::new()),
+        children_sources: ChildrenSources::default(),
         playback: RwLock::new(None),
     });
     connect_app_hooks(&services);
@@ -509,6 +551,7 @@ pub(crate) mod test_support {
                 preferences,
                 shell,
                 home_watched: Mutex::new(HashMap::new()),
+                children_sources: ChildrenSources::default(),
                 playback: RwLock::new(None),
                 library,
                 session,

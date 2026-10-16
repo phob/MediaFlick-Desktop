@@ -1,4 +1,4 @@
-// The library beyond Movies: the Series view, Sort: Rating, the Genre and
+// The library beyond Movies: the Shows library, Sort: Rating, the Genre and
 // Watch status filters (the menu closes on a pick and is named after its
 // trigger), chips and Clear all, a one-character search that never commits,
 // clearing a search, and signing out from a library page. Read-only.
@@ -6,6 +6,7 @@
 const DEMO = "https://demo.jellyfin.org/stable"
 const USER_MENU = { role: "button", name: "D demo demo.jellyfin.org" }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const LIBRARY_ROUTE = /^\/library\/[0-9a-f]+$/
 const itemCount = (ctx) => ctx.app.evaluate(`(() => { const m = document.body.innerText.match(/^([\\d,]+) items?$/m); return m ? m[1] : null })()`)
 
 export default async function libraryFilters(ctx) {
@@ -13,11 +14,11 @@ export default async function libraryFilters(ctx) {
   await ctx.signIn({ server: DEMO, username: "demo" })
 
   await ctx.press({ role: "link", name: "Movies" })
-  await ctx.until(async () => (await ctx.pathname()) === "/library?kind=Movie", "the Movies library")
+  await ctx.until(async () => LIBRARY_ROUTE.test(await ctx.pathname()), "the Movies library")
   await ctx.hover({ css: '[data-sidebar="sidebar"]' })
-  await ctx.press({ role: "link", name: "Series" })
-  await ctx.until(async () => (await ctx.pathname()) === "/library?kind=Series", "the Series library")
-  await ctx.find({ role: "heading", name: "Series" })
+  await ctx.press({ role: "link", name: "Shows" })
+  await ctx.until(async () => LIBRARY_ROUTE.test(await ctx.pathname()), "the Shows library")
+  await ctx.find({ role: "heading", name: "Shows" })
   results.seriesCount = await ctx.until(() => itemCount(ctx), "the Series count", 30000)
   await ctx.park()
   await ctx.screenshot("01-series")
@@ -65,20 +66,21 @@ export default async function libraryFilters(ctx) {
   await ctx.until(async () => (await ctx.pathname()) === "/library?search=night%20of%20the%20living", "the search route")
   await ctx.fill({ role: "textbox", name: "Search the library" }, "")
   await ctx.until(async () => (await ctx.pathname()) === "/library", "clearing the search to go to /library")
-  await ctx.find({ role: "heading", name: "Movies" })
+  await ctx.find({ role: "heading", name: "Library" })
 
   await ctx.press({ role: "link", name: "Movies" })
-  await ctx.until(async () => (await ctx.pathname()) === "/library?kind=Movie", "the Movies library")
+  await ctx.until(async () => LIBRARY_ROUTE.test(await ctx.pathname()), "the Movies library")
+  const moviesRoute = await ctx.pathname()
   await ctx.park()
   await ctx.hover(USER_MENU)
   await ctx.press(USER_MENU)
   await ctx.press({ role: "menuitem", name: "Sign out" })
   await ctx.until(async () => (await ctx.find({ role: "textbox", name: "Server" })).properties.value, "the remembered server")
   results.signOut = { path: await ctx.pathname(), title: await ctx.app.evaluate("document.title") }
-  ctx.check(results.signOut.path === "/library?kind=Movie", "the sign-in form appears on the library page")
+  ctx.check(results.signOut.path === moviesRoute, "the sign-in form appears on the library page")
   await ctx.screenshot("06-signed-out")
   await ctx.signIn({ username: "demo" })
   results.signInAgain = await ctx.pathname()
-  ctx.check(results.signInAgain === "/library?kind=Movie", "signing in again stays on the library page")
+  ctx.check(results.signInAgain === moviesRoute, "signing in again stays on the library page")
   await ctx.writeEvidence("library-filters.json", results)
 }

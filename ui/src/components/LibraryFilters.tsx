@@ -34,20 +34,21 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { useTouchInput } from "@/hooks/use-touch-input"
+import type { BrowseCapabilities, LibraryFilterId } from "@/lib/api"
+import type { ListingSource } from "@/lib/libraries"
 import {
   activeLibraryFilterCount,
   CLEARED_LIBRARY_FILTERS,
   librarySortLabel,
-  librarySortsFor,
   newShuffleSeed,
+  offersFilter,
   RELEASE_DECADES,
   SERIES_STATUSES,
-  seriesStatusApplies,
+  sortsFor,
   WATCH_FILTERS,
   type LibraryFilterState,
-  type TitleKind,
 } from "@/lib/library-filters"
-import { useGenres, useOfficialRatings } from "@/lib/queries"
+import { useGenres, useLibraryOptions, useOfficialRatings } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 const ANY = "__any__"
@@ -59,7 +60,7 @@ interface FilterOptions {
   genresLoading: boolean
   ratings: string[]
   ratingsLoading: boolean
-  seriesStatus: boolean
+  offered: (filter: LibraryFilterId) => boolean
 }
 
 function watchFilter(value: string) {
@@ -74,7 +75,9 @@ interface LibraryFiltersProps {
   value: LibraryFilterState
   onChange: (patch: Partial<LibraryFilterState>) => void
   total: number | null
-  kinds: readonly TitleKind[]
+  capabilities: BrowseCapabilities
+  source: ListingSource
+  tvShowsLibrary?: boolean
 }
 
 function currentValue(value: string, fallback: string) {
@@ -117,7 +120,7 @@ function FiltersButton({
 function DesktopFilters({
   value,
   onChange,
-  options: { genres, genresLoading, ratings, ratingsLoading, seriesStatus: showSeriesStatus },
+  options: { genres, genresLoading, ratings, ratingsLoading, offered },
 }: {
   value: LibraryFilterState
   onChange: LibraryFiltersProps["onChange"]
@@ -135,114 +138,122 @@ function DesktopFilters({
         <DropdownMenuLabel>Filter library</DropdownMenuLabel>
         <DropdownMenuSeparator />
 
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger className="min-h-9">
-            <span>Genre</span>
-            <span className="ml-auto max-w-28 truncate text-xs text-muted-foreground">
-              {currentValue(value.genre, "Any")}
-            </span>
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="max-h-80 w-56 overflow-y-auto">
-            <DropdownMenuRadioGroup
-              value={value.genre || ANY}
-              onValueChange={(genre) => onChange({ genre: genre === ANY ? "" : genre })}
-            >
-              <DropdownMenuRadioItem value={ANY} className="min-h-9">
-                Any genre
-              </DropdownMenuRadioItem>
-              {genres.map((genre) => (
-                <DropdownMenuRadioItem key={genre} value={genre} className="min-h-9">
-                  {genre}
+        {offered("genre") && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="min-h-9">
+              <span>Genre</span>
+              <span className="ml-auto max-w-28 truncate text-xs text-muted-foreground">
+                {currentValue(value.genre, "Any")}
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-80 w-56 overflow-y-auto">
+              <DropdownMenuRadioGroup
+                value={value.genre || ANY}
+                onValueChange={(genre) => onChange({ genre: genre === ANY ? "" : genre })}
+              >
+                <DropdownMenuRadioItem value={ANY} className="min-h-9">
+                  Any genre
                 </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-            {genresLoading && (
-              <DropdownMenuItem disabled className="min-h-9">
-                Loading genres…
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+                {genres.map((genre) => (
+                  <DropdownMenuRadioItem key={genre} value={genre} className="min-h-9">
+                    {genre}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              {genresLoading && (
+                <DropdownMenuItem disabled className="min-h-9">
+                  Loading genres…
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
 
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger className="min-h-9">
-            <span>Release decade</span>
-            <span className="ml-auto text-xs text-muted-foreground">
-              {currentValue(value.decade, "Any")}
-            </span>
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="max-h-80 w-44 overflow-y-auto">
-            <DropdownMenuRadioGroup
-              value={value.decade || ANY}
-              onValueChange={(decade) => onChange({ decade: decade === ANY ? "" : decade })}
-            >
-              <DropdownMenuRadioItem value={ANY} className="min-h-9">
-                Any decade
-              </DropdownMenuRadioItem>
-              {RELEASE_DECADES.map((decade) => (
-                <DropdownMenuRadioItem
-                  key={decade.value}
-                  value={String(decade.value)}
-                  className="min-h-9"
-                >
-                  {decade.label}
+        {offered("decade") && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="min-h-9">
+              <span>Release decade</span>
+              <span className="ml-auto text-xs text-muted-foreground">
+                {currentValue(value.decade, "Any")}
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-80 w-44 overflow-y-auto">
+              <DropdownMenuRadioGroup
+                value={value.decade || ANY}
+                onValueChange={(decade) => onChange({ decade: decade === ANY ? "" : decade })}
+              >
+                <DropdownMenuRadioItem value={ANY} className="min-h-9">
+                  Any decade
                 </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+                {RELEASE_DECADES.map((decade) => (
+                  <DropdownMenuRadioItem
+                    key={decade.value}
+                    value={String(decade.value)}
+                    className="min-h-9"
+                  >
+                    {decade.label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
 
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger className="min-h-9">
-            <span>Watch status</span>
-            <span className="ml-auto max-w-28 truncate text-xs text-muted-foreground">
-              {watchedLabel}
-            </span>
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="w-52">
-            <DropdownMenuRadioGroup
-              value={value.watched || ANY}
-              onValueChange={(watched) => onChange({ watched: watchFilter(watched) })}
-            >
-              {WATCHED.map((option) => (
-                <DropdownMenuRadioItem key={option.id} value={option.id} className="min-h-9">
-                  {option.label}
+        {offered("watched") && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="min-h-9">
+              <span>Watch status</span>
+              <span className="ml-auto max-w-28 truncate text-xs text-muted-foreground">
+                {watchedLabel}
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-52">
+              <DropdownMenuRadioGroup
+                value={value.watched || ANY}
+                onValueChange={(watched) => onChange({ watched: watchFilter(watched) })}
+              >
+                {WATCHED.map((option) => (
+                  <DropdownMenuRadioItem key={option.id} value={option.id} className="min-h-9">
+                    {option.label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
+
+        {offered("parental") && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="min-h-9">
+              <span>Parental rating</span>
+              <span className="ml-auto max-w-28 truncate text-xs text-muted-foreground">
+                {currentValue(value.parental, "Any")}
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-80 w-48 overflow-y-auto">
+              <DropdownMenuRadioGroup
+                value={value.parental || ANY}
+                onValueChange={(parental) => onChange({ parental: parental === ANY ? "" : parental })}
+              >
+                <DropdownMenuRadioItem value={ANY} className="min-h-9">
+                  Any rating
                 </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+                {ratings.map((rating) => (
+                  <DropdownMenuRadioItem key={rating} value={rating} className="min-h-9">
+                    {rating}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              {ratingsLoading && (
+                <DropdownMenuItem disabled className="min-h-9">
+                  Loading ratings…
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
 
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger className="min-h-9">
-            <span>Parental rating</span>
-            <span className="ml-auto max-w-28 truncate text-xs text-muted-foreground">
-              {currentValue(value.parental, "Any")}
-            </span>
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="max-h-80 w-48 overflow-y-auto">
-            <DropdownMenuRadioGroup
-              value={value.parental || ANY}
-              onValueChange={(parental) => onChange({ parental: parental === ANY ? "" : parental })}
-            >
-              <DropdownMenuRadioItem value={ANY} className="min-h-9">
-                Any rating
-              </DropdownMenuRadioItem>
-              {ratings.map((rating) => (
-                <DropdownMenuRadioItem key={rating} value={rating} className="min-h-9">
-                  {rating}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-            {ratingsLoading && (
-              <DropdownMenuItem disabled className="min-h-9">
-                Loading ratings…
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-
-        {showSeriesStatus && (
+        {offered("seriesStatus") && (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className="min-h-9">
               <span>Series status</span>
@@ -268,27 +279,29 @@ function DesktopFilters({
           </DropdownMenuSub>
         )}
 
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger className="min-h-9">
-            <span>Favorites</span>
-            <span className="ml-auto text-xs text-muted-foreground">
-              {value.favorite ? "Only" : "Any"}
-            </span>
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="w-52">
-            <DropdownMenuRadioGroup
-              value={value.favorite ? "favorite" : ANY}
-              onValueChange={(favorite) => onChange({ favorite: favorite === "favorite" })}
-            >
-              <DropdownMenuRadioItem value={ANY} className="min-h-9">
-                All titles
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="favorite" className="min-h-9">
-                <Heart aria-hidden="true" /> Favorites only
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+        {offered("favorite") && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="min-h-9">
+              <span>Favorites</span>
+              <span className="ml-auto text-xs text-muted-foreground">
+                {value.favorite ? "Only" : "Any"}
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-52">
+              <DropdownMenuRadioGroup
+                value={value.favorite ? "favorite" : ANY}
+                onValueChange={(favorite) => onChange({ favorite: favorite === "favorite" })}
+              >
+                <DropdownMenuRadioItem value={ANY} className="min-h-9">
+                  All titles
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="favorite" className="min-h-9">
+                  <Heart aria-hidden="true" /> Favorites only
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
 
         <DropdownMenuSeparator />
         <DropdownMenuItem
@@ -348,7 +361,7 @@ function TouchGroup({
 function TouchFilters({
   value,
   onChange,
-  options: { genres, genresLoading, ratings, ratingsLoading, seriesStatus: showSeriesStatus },
+  options: { genres, genresLoading, ratings, ratingsLoading, offered },
 }: {
   value: LibraryFilterState
   onChange: LibraryFiltersProps["onChange"]
@@ -369,56 +382,64 @@ function TouchFilters({
           </SheetDescription>
         </SheetHeader>
         <div className="space-y-6 overflow-y-auto px-4 py-5">
-          <TouchGroup
-            label="Genre"
-            value={value.genre || ANY}
-            onValueChange={(genre) => onChange({ genre: genre === ANY ? "" : genre })}
-          >
-            <TouchChoice value={ANY}>Any genre</TouchChoice>
-            {genres.map((genre) => (
-              <TouchChoice key={genre} value={genre}>{genre}</TouchChoice>
-            ))}
-            {genresLoading && (
-              <p className="px-3 py-2 text-sm text-muted-foreground">Loading genres…</p>
-            )}
-          </TouchGroup>
+          {offered("genre") && (
+            <TouchGroup
+              label="Genre"
+              value={value.genre || ANY}
+              onValueChange={(genre) => onChange({ genre: genre === ANY ? "" : genre })}
+            >
+              <TouchChoice value={ANY}>Any genre</TouchChoice>
+              {genres.map((genre) => (
+                <TouchChoice key={genre} value={genre}>{genre}</TouchChoice>
+              ))}
+              {genresLoading && (
+                <p className="px-3 py-2 text-sm text-muted-foreground">Loading genres…</p>
+              )}
+            </TouchGroup>
+          )}
 
-          <TouchGroup
-            label="Release decade"
-            value={value.decade || ANY}
-            onValueChange={(decade) => onChange({ decade: decade === ANY ? "" : decade })}
-          >
-            <TouchChoice value={ANY}>Any decade</TouchChoice>
-            {RELEASE_DECADES.map((decade) => (
-              <TouchChoice key={decade.value} value={String(decade.value)}>{decade.label}</TouchChoice>
-            ))}
-          </TouchGroup>
+          {offered("decade") && (
+            <TouchGroup
+              label="Release decade"
+              value={value.decade || ANY}
+              onValueChange={(decade) => onChange({ decade: decade === ANY ? "" : decade })}
+            >
+              <TouchChoice value={ANY}>Any decade</TouchChoice>
+              {RELEASE_DECADES.map((decade) => (
+                <TouchChoice key={decade.value} value={String(decade.value)}>{decade.label}</TouchChoice>
+              ))}
+            </TouchGroup>
+          )}
 
-          <TouchGroup
-            label="Watch status"
-            value={value.watched || ANY}
-            onValueChange={(watched) => onChange({ watched: watchFilter(watched) })}
-          >
-            {WATCHED.map((option) => (
-              <TouchChoice key={option.id} value={option.id}>{option.label}</TouchChoice>
-            ))}
-          </TouchGroup>
+          {offered("watched") && (
+            <TouchGroup
+              label="Watch status"
+              value={value.watched || ANY}
+              onValueChange={(watched) => onChange({ watched: watchFilter(watched) })}
+            >
+              {WATCHED.map((option) => (
+                <TouchChoice key={option.id} value={option.id}>{option.label}</TouchChoice>
+              ))}
+            </TouchGroup>
+          )}
 
-          <TouchGroup
-            label="Parental rating"
-            value={value.parental || ANY}
-            onValueChange={(parental) => onChange({ parental: parental === ANY ? "" : parental })}
-          >
-            <TouchChoice value={ANY}>Any rating</TouchChoice>
-            {ratings.map((rating) => (
-              <TouchChoice key={rating} value={rating}>{rating}</TouchChoice>
-            ))}
-            {ratingsLoading && (
-              <p className="px-3 py-2 text-sm text-muted-foreground">Loading ratings…</p>
-            )}
-          </TouchGroup>
+          {offered("parental") && (
+            <TouchGroup
+              label="Parental rating"
+              value={value.parental || ANY}
+              onValueChange={(parental) => onChange({ parental: parental === ANY ? "" : parental })}
+            >
+              <TouchChoice value={ANY}>Any rating</TouchChoice>
+              {ratings.map((rating) => (
+                <TouchChoice key={rating} value={rating}>{rating}</TouchChoice>
+              ))}
+              {ratingsLoading && (
+                <p className="px-3 py-2 text-sm text-muted-foreground">Loading ratings…</p>
+              )}
+            </TouchGroup>
+          )}
 
-          {showSeriesStatus && (
+          {offered("seriesStatus") && (
             <TouchGroup
               label="Series status"
               value={value.seriesStatus || ANY}
@@ -431,14 +452,16 @@ function TouchFilters({
             </TouchGroup>
           )}
 
-          <TouchGroup
-            label="Favorites"
-            value={value.favorite ? "favorite" : ANY}
-            onValueChange={(favorite) => onChange({ favorite: favorite === "favorite" })}
-          >
-            <TouchChoice value={ANY}>All titles</TouchChoice>
-            <TouchChoice value="favorite">Favorites only</TouchChoice>
-          </TouchGroup>
+          {offered("favorite") && (
+            <TouchGroup
+              label="Favorites"
+              value={value.favorite ? "favorite" : ANY}
+              onValueChange={(favorite) => onChange({ favorite: favorite === "favorite" })}
+            >
+              <TouchChoice value={ANY}>All titles</TouchChoice>
+              <TouchChoice value="favorite">Favorites only</TouchChoice>
+            </TouchGroup>
+          )}
         </div>
         <SheetFooter className="flex-row border-t">
           <Button
@@ -518,18 +541,38 @@ function ActiveFilters({
   )
 }
 
-export function LibraryFilters({ value, onChange, total, kinds }: LibraryFiltersProps) {
-  const genres = useGenres()
-  const ratings = useOfficialRatings(kinds.join(","))
+export function LibraryFilters({
+  value,
+  onChange,
+  total,
+  capabilities,
+  source,
+  tvShowsLibrary = false,
+}: LibraryFiltersProps) {
+  const offered = (filter: LibraryFilterId) => offersFilter(capabilities, filter)
+  const libraryId = source.scope === "library" ? source.libraryId : null
+  const listsOptions = offered("genre") || offered("parental")
+  const libraryOptions = useLibraryOptions(listsOptions ? libraryId : null)
+  const titleViewOptions = listsOptions && source.scope === "titles"
+  const genres = useGenres(titleViewOptions)
+  const ratings = useOfficialRatings(source.scope === "titles" ? source.query.kind ?? "" : "", titleViewOptions)
   const touchInput = useTouchInput()
-  const options: FilterOptions = {
-    genres: genres.data?.genres ?? [],
-    genresLoading: genres.isPending,
-    ratings: ratings.data?.officialRatings ?? [],
-    ratingsLoading: ratings.isPending,
-    seriesStatus: seriesStatusApplies(kinds),
-  }
-  const sorts = librarySortsFor(kinds)
+  const options: FilterOptions = libraryId === null
+    ? {
+        genres: genres.data?.genres ?? [],
+        genresLoading: genres.isPending,
+        ratings: ratings.data?.officialRatings ?? [],
+        ratingsLoading: ratings.isPending,
+        offered,
+      }
+    : {
+        genres: libraryOptions.data?.genres ?? [],
+        genresLoading: libraryOptions.isPending,
+        ratings: libraryOptions.data?.officialRatings ?? [],
+        ratingsLoading: libraryOptions.isPending,
+        offered,
+      }
+  const sorts = sortsFor(capabilities)
   const fieldClass = cn(
     "border-edge bg-field shadow-none hover:bg-field-hover",
     touchInput && "min-h-11",
@@ -556,7 +599,7 @@ export function LibraryFilters({ value, onChange, total, kinds }: LibraryFilters
           <SelectContent>
             {sorts.map((sort) => (
               <SelectItem key={sort.id} value={sort.id}>
-                Sort: {librarySortLabel(sort, kinds)}
+                Sort: {librarySortLabel(sort, tvShowsLibrary)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -588,11 +631,11 @@ export function LibraryFilters({ value, onChange, total, kinds }: LibraryFilters
           </Button>
         )}
 
-        {touchInput ? (
+        {capabilities.filters.length > 0 && (touchInput ? (
           <TouchFilters value={value} onChange={onChange} options={options} />
         ) : (
           <DesktopFilters value={value} onChange={onChange} options={options} />
-        )}
+        ))}
 
         {total !== null && (
           <span className="ml-auto text-sm text-muted-foreground" aria-live="polite">

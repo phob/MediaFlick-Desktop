@@ -4,6 +4,7 @@
 //   just verify sidebar-stable-icons
 const DEMO = "https://demo.jellyfin.org/stable"
 const MOVIES = { role: "link", name: "Movies" }
+const LIBRARY_ROUTE = /^\/library\/[0-9a-f]+$/
 const sidebarState = (ctx) => ctx.app.evaluate(`document.querySelector('[data-slot="sidebar"]')?.dataset.state ?? null`)
 
 const ICONS = `(() => {
@@ -39,7 +40,7 @@ async function settledIcons(ctx, description) {
 export default async function sidebarStableIcons(ctx) {
   await ctx.signIn({ server: DEMO, username: "demo" })
   await ctx.press(MOVIES)
-  await ctx.until(async () => (await ctx.pathname()) === "/library?kind=Movie", "the Movies library")
+  await ctx.until(async () => LIBRARY_ROUTE.test(await ctx.pathname()), "the Movies library")
   await ctx.park()
   await ctx.until(async () => (await sidebarState(ctx)) === "collapsed", "the sidebar collapsed off Home")
   const collapsed = await settledIcons(ctx, "collapsed icons at rest")

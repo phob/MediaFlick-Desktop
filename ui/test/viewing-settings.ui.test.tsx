@@ -10,7 +10,7 @@ import { ViewingSync } from "@/components/ViewingSync"
 import Library from "@/routes/Library"
 import Settings from "@/routes/Settings"
 import { TestProviders } from "./test-utils"
-import { appStatus, itemSummary, playerSnapshot } from "./support/fixtures"
+import { appStatus, itemSummary, librariesResponse, playerSnapshot, SHOWS_LIBRARY_ID } from "./support/fixtures"
 
 const queryClient = createQueryClient()
 
@@ -25,7 +25,7 @@ function seed(viewing: ViewingSettings = DEFAULT_VIEWING) {
 
 test("language edits: Discard restores the text and Save persists ordered, normalized codes", async () => {
   seed()
-  const save = vi.spyOn(api, "saveViewing").mockImplementation(async (value) => value)
+  const save = vi.spyOn(api, "saveViewing").mockImplementation(async (value) => ({...DEFAULT_VIEWING, ...value}))
   render(<TestProviders client={queryClient} initialEntries={["/settings/viewing"]}>
     <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
   </TestProviders>)
@@ -35,7 +35,7 @@ test("language edits: Discard restores the text and Save persists ordered, norma
   expect((input as HTMLInputElement).value).toBe("")
   fireEvent.change(input, {target:{value:"EN, de"}})
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
-  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({audioLanguages:["en", "de"]}), expect.anything()))
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({audioLanguages:["en", "de"]})))
 })
 
 test("spoiler protection removes episode titles and image URLs without hiding watched episodes", () => {
@@ -80,10 +80,10 @@ test("continuous playback stops at the episode limit while explicit next remains
 function LocationProbe() { const location = useLocation(); return <output aria-label="Location">{location.pathname + location.search}</output> }
 
 test.each([
-  ["/", "/library?kind=Series"],
+  ["/", `/library/${SHOWS_LIBRARY_ID}`],
   ["/item/explicit", "/item/explicit"],
 ])("startup selection honors an explicit route: %s", async (initial, expected) => {
-  seed({...DEFAULT_VIEWING, startupDestination:"series"})
+  seed({...DEFAULT_VIEWING, startupDestination:{library:SHOWS_LIBRARY_ID}})
   queryClient.setQueryData(queryKeys.browsing("server:user"), {})
   vi.spyOn(api, "browsing").mockResolvedValue({})
   vi.spyOn(api, "saveBrowsing").mockResolvedValue({saved:true})
@@ -91,15 +91,18 @@ test.each([
   await waitFor(() => expect(screen.getByLabelText("Location").textContent).toBe(expected))
 })
 
-test("remembered Series filters take precedence over the hide-watched default", () => {
+test("a library's remembered filters take precedence over the hide-watched default", () => {
   seed({...DEFAULT_VIEWING, rememberFilters:true, hideWatched:true})
-  queryClient.setQueryData(queryKeys.browsing("server:user"), {Series:"/library?kind=Series&sort=year&watched=watched&filters=true", Movie:"/library?kind=Movie&sort=rating"})
-  queryClient.setQueryData(queryKeys.genres, {genres:[]})
+  queryClient.setQueryData(queryKeys.libraries, librariesResponse())
+  queryClient.setQueryData(queryKeys.browsing("server:user"), {
+    [`library:${SHOWS_LIBRARY_ID}`]: `/library/${SHOWS_LIBRARY_ID}?sort=year&watched=watched&filters=true`,
+    Series: "/library?kind=Series&sort=rating",
+  })
   vi.spyOn(api, "browsing").mockResolvedValue({})
-  render(<TestProviders client={queryClient} initialEntries={["/library?kind=Series"]}>
-    <Library components={{ItemGrid:({source}) => <output aria-label="Library query">{JSON.stringify(source.scope === "titles" ? source.query : null)}</output>}} />
+  render(<TestProviders client={queryClient} initialEntries={[`/library/${SHOWS_LIBRARY_ID}`]}>
+    <Routes><Route path="/library/:libraryId" element={<Library components={{ItemGrid:({source}) => <output aria-label="Library query">{JSON.stringify(source.scope === "library" ? source.query : null)}</output>}} />} /></Routes>
   </TestProviders>)
-  expect(JSON.parse(screen.getByLabelText("Library query").textContent ?? "{}")).toMatchObject({kind:"Series", sort:"year", watched:"watched"})
+  expect(JSON.parse(screen.getByLabelText("Library query").textContent ?? "{}")).toMatchObject({sort:"year", watched:"watched"})
 })
 
 test.each([true, false])("countdown only starts another episode when one exists: %s", async (hasNext) => {
@@ -116,16 +119,16 @@ test.each([true, false])("countdown only starts another episode when one exists:
 
 test("Viewing Reset preserves the Appearance-owned preview delay", async () => {
   seed({...DEFAULT_VIEWING, previewDelayMs:850})
-  const save = vi.spyOn(api, "saveViewing").mockImplementation(async (value) => value)
+  const save = vi.spyOn(api, "saveViewing").mockImplementation(async (value) => ({...DEFAULT_VIEWING, ...value}))
   render(<TestProviders client={queryClient} initialEntries={["/settings/viewing"]}>
     <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
   </TestProviders>)
   fireEvent.pointerDown(screen.getByRole("combobox", {name:"Poster width"}), {button:0, ctrlKey:false, pointerType:"mouse"})
   fireEvent.click(await screen.findByRole("option", {name:"Large — 200 px"}))
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
-  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({posterSize:200, previewDelayMs:850}), expect.anything()))
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({posterSize:200, previewDelayMs:850})))
   await waitFor(() => expect((screen.getByRole("button", {name:"Save"}) as HTMLButtonElement).disabled).toBe(true))
   fireEvent.click(screen.getByRole("button", {name:"Restore defaults"}))
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
-  await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({posterSize:168, previewDelayMs:850}), expect.anything()))
+  await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({posterSize:168, previewDelayMs:850})))
 })

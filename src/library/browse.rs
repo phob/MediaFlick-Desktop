@@ -1,12 +1,18 @@
+use std::collections::VecDeque;
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
 use serde::Serialize;
 
 use crate::jellyfin::api::model::{BaseItemDto, ItemsResponse};
 
-use super::libraries::{BrowseCapabilities, FilterKey, LibraryId, LibraryRegistry, MediaLibrary};
+use super::libraries::{
+    BrowseCapabilities, FilterKey, GridSource, LibraryId, LibraryRegistry, LiveLatest, LiveShape,
+    LiveSort, MediaLibrary, PLAYLIST_TYPE,
+};
 use super::model::is_synced_kind;
 use super::{
-    CatalogKind, DEFAULT_PAGE_SIZE, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort,
-    ItemSummary, KindFilter, Library, MAX_CHILD_PAGE_LIMIT, TitleDetail, TitleKind,
+    DEFAULT_PAGE_SIZE, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort, ItemSummary,
+    KindFilter, Library, MAX_CHILD_PAGE_LIMIT, SortDirection, TitleDetail, TitleKind,
 };
 
 #[derive(Debug)]
@@ -14,7 +20,6 @@ pub enum BrowseError {
     RegistryUnknown,
     UnknownLibrary,
     Unsupported(String),
-    LiveLibrary,
     Storage(rusqlite::Error),
 }
 
@@ -31,14 +36,67 @@ pub struct FilterOptions {
     pub official_ratings: Vec<String>,
 }
 
+pub enum Grid {
+    Cached(ItemPage),
+    Live(LiveQuery),
+}
+
+pub enum LiveQuery {
+    Page(LivePage),
+    Latest { parent: LibraryId, limit: i64 },
+}
+
+pub struct LivePage {
+    parent: LibraryId,
+    shape: LiveShape,
+    sort: LiveSort,
+    direction: SortDirection,
+    favorites_only: bool,
+    page: ChildPage,
+}
+
+impl LivePage {
+    pub fn parent(&self) -> &LibraryId {
+        &self.parent
+    }
+
+    pub fn shape(&self) -> LiveShape {
+        self.shape
+    }
+
+    pub fn sort(&self) -> LiveSort {
+        self.sort
+    }
+
+    pub fn direction(&self) -> SortDirection {
+        self.direction
+    }
+
+    pub fn favorites_only(&self) -> bool {
+        self.favorites_only
+    }
+
+    pub fn page(&self) -> ChildPage {
+        self.page
+    }
+}
+
 pub fn library_page(
     library: &Library,
     id: &LibraryId,
     query: &ItemQuery,
-) -> Result<ItemPage, BrowseError> {
+) -> Result<Grid, BrowseError> {
     let entry = registered(library, id)?;
-    let query = catalog_query(&entry, query)?;
-    Ok(library.query(&query)?)
+    let profile = entry.kind().profile();
+    check(query, profile.browse)?;
+    match profile.grid {
+        GridSource::Catalog { title } => Ok(Grid::Cached(
+            library.query(&catalog_query(&entry, title, query))?,
+        )),
+        GridSource::Live { shape, .. } => Ok(Grid::Live(LiveQuery::Page(checked_live_page(
+            entry.id, shape, query,
+        )?))),
+    }
 }
 
 pub fn library_letters(
@@ -47,40 +105,68 @@ pub fn library_letters(
     query: &ItemQuery,
 ) -> Result<Vec<(String, i64)>, BrowseError> {
     let entry = registered(library, id)?;
-    if !entry.kind().profile().browse.letter_index {
-        return Err(BrowseError::Unsupported(
-            "this library has no letter index".to_string(),
-        ));
+    let profile = entry.kind().profile();
+    let GridSource::Catalog { title } = profile.grid else {
+        return Err(no_letter_index());
+    };
+    if !profile.browse.letter_index {
+        return Err(no_letter_index());
     }
-    let query = catalog_query(&entry, query)?;
-    Ok(library.letter_index(&query)?)
+    check(query, profile.browse)?;
+    Ok(library.letter_index(&catalog_query(&entry, title, query))?)
 }
 
 pub fn library_options(library: &Library, id: &LibraryId) -> Result<FilterOptions, BrowseError> {
-    let title = catalog_title(&registered(library, id)?)?;
-    Ok(FilterOptions {
-        genres: library.genres(Some(id))?,
-        official_ratings: library.official_ratings(&[title.into()], Some(id))?,
-    })
+    let entry = registered(library, id)?;
+    match entry.kind().profile().grid {
+        GridSource::Catalog { title } => Ok(FilterOptions {
+            genres: library.genres(Some(id))?,
+            official_ratings: library.official_ratings(&[title.into()], Some(id))?,
+        }),
+        GridSource::Live { .. } => Ok(FilterOptions {
+            genres: Vec::new(),
+            official_ratings: Vec::new(),
+        }),
+    }
 }
 
-pub fn latest(
-    library: &Library,
-    id: &LibraryId,
-    limit: i64,
-) -> Result<Vec<ItemSummary>, BrowseError> {
-    let title = catalog_title(&registered(library, id)?)?;
-    let sort = match title {
-        TitleKind::Movie => ItemSort::DateAdded,
-        TitleKind::Series => ItemSort::EpisodeAdded,
-    };
-    Ok(library.query_page(&ItemQuery {
-        kinds: KindFilter::one(title),
-        library: Some(id.clone()),
-        sort,
-        limit,
-        ..ItemQuery::default()
-    })?)
+pub fn latest(library: &Library, id: &LibraryId, limit: i64) -> Result<Grid, BrowseError> {
+    let entry = registered(library, id)?;
+    match entry.kind().profile().grid {
+        GridSource::Catalog { title } => {
+            let sort = match title {
+                TitleKind::Movie => ItemSort::DateAdded,
+                TitleKind::Series => ItemSort::EpisodeAdded,
+            };
+            let items = library.query_page(&ItemQuery {
+                kinds: KindFilter::one(title),
+                library: Some(entry.id),
+                sort,
+                limit,
+                ..ItemQuery::default()
+            })?;
+            let total = i64::try_from(items.len()).unwrap_or(i64::MAX);
+            Ok(Grid::Cached(ItemPage { items, total }))
+        }
+        GridSource::Live {
+            latest: LiveLatest::Grouped,
+            ..
+        } => Ok(Grid::Live(LiveQuery::Latest {
+            parent: entry.id,
+            limit,
+        })),
+        GridSource::Live {
+            shape,
+            latest: LiveLatest::Newest,
+        } => Ok(Grid::Live(LiveQuery::Page(LivePage {
+            parent: entry.id,
+            shape,
+            sort: LiveSort::DateAdded,
+            direction: SortDirection::Descending,
+            favorites_only: false,
+            page: ChildPage::first(limit),
+        }))),
+    }
 }
 
 pub fn cached_title(library: &Library, item_id: &str) -> rusqlite::Result<Option<TitleDetail>> {
@@ -133,15 +219,48 @@ pub fn write_live_title(
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChildrenSource {
-    Catalog(CatalogKind),
-    Live,
+    Folder,
+    /// The owner's manual order, which only the playlist route keeps.
+    Playlist,
 }
 
-pub fn children_source(library: &Library, item_id: &str) -> rusqlite::Result<ChildrenSource> {
-    Ok(library
-        .catalog_kind(item_id)?
-        .map_or(ChildrenSource::Live, ChildrenSource::Catalog))
+impl ChildrenSource {
+    pub fn of(item_type: &str) -> Self {
+        if item_type == PLAYLIST_TYPE {
+            Self::Playlist
+        } else {
+            Self::Folder
+        }
+    }
+}
+
+const REMEMBERED_SOURCES: usize = 256;
+
+#[derive(Default)]
+pub struct ChildrenSources(Mutex<VecDeque<(u64, String, ChildrenSource)>>);
+
+impl ChildrenSources {
+    pub fn get(&self, scope: u64, item_id: &str) -> Option<ChildrenSource> {
+        self.entries()
+            .iter()
+            .find(|(entry_scope, id, _)| *entry_scope == scope && id == item_id)
+            .map(|(_, _, source)| *source)
+    }
+
+    pub fn remember(&self, scope: u64, item_id: &str, source: ChildrenSource) {
+        let mut entries = self.entries();
+        entries.retain(|(entry_scope, id, _)| *entry_scope == scope && id != item_id);
+        if entries.len() == REMEMBERED_SOURCES {
+            entries.pop_front();
+        }
+        entries.push_back((scope, item_id.to_string(), source));
+    }
+
+    fn entries(&self) -> MutexGuard<'_, VecDeque<(u64, String, ChildrenSource)>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,18 +271,27 @@ pub struct ChildPage {
 
 impl ChildPage {
     pub fn new(offset: Option<i64>, limit: Option<i64>) -> Result<Option<Self>, &'static str> {
-        if offset.is_some_and(|offset| offset < 0) {
-            return Err("offset must not be negative");
-        }
         if offset.is_none() && limit.is_none() {
             return Ok(None);
         }
-        Ok(Some(Self {
-            offset: offset.unwrap_or(0),
-            limit: limit
-                .unwrap_or(DEFAULT_PAGE_SIZE)
-                .clamp(1, MAX_CHILD_PAGE_LIMIT),
-        }))
+        Self::at(offset.unwrap_or(0), limit.unwrap_or(DEFAULT_PAGE_SIZE)).map(Some)
+    }
+
+    fn at(offset: i64, limit: i64) -> Result<Self, &'static str> {
+        if offset < 0 {
+            return Err("offset must not be negative");
+        }
+        Ok(Self {
+            offset,
+            ..Self::first(limit)
+        })
+    }
+
+    pub fn first(limit: i64) -> Self {
+        Self {
+            offset: 0,
+            limit: limit.clamp(1, MAX_CHILD_PAGE_LIMIT),
+        }
     }
 
     pub fn offset(self) -> i64 {
@@ -197,9 +325,22 @@ pub fn catalog_children_page(children: Vec<ItemSummary>, page: Option<ChildPage>
     ItemPage { items, total }
 }
 
-pub fn live_children_page(response: &ItemsResponse) -> ItemPage {
+pub fn live_page(response: &ItemsResponse) -> ItemPage {
     ItemPage {
         items: response.items.iter().map(ItemSummary::from_dto).collect(),
+        total: response.total_record_count,
+    }
+}
+
+pub fn playlist_page(response: &ItemsResponse, page: ChildPage) -> ItemPage {
+    ItemPage {
+        items: (page.offset..)
+            .zip(&response.items)
+            .map(|(index, dto)| ItemSummary {
+                playlist_index: Some(index),
+                ..ItemSummary::from_dto(dto)
+            })
+            .collect(),
         total: response.total_record_count,
     }
 }
@@ -214,19 +355,47 @@ fn registered(library: &Library, id: &LibraryId) -> Result<MediaLibrary, BrowseE
         .ok_or(BrowseError::UnknownLibrary)
 }
 
-fn catalog_title(entry: &MediaLibrary) -> Result<TitleKind, BrowseError> {
-    entry.catalog_title().ok_or(BrowseError::LiveLibrary)
-}
-
-fn catalog_query(entry: &MediaLibrary, query: &ItemQuery) -> Result<ItemQuery, BrowseError> {
-    let title = catalog_title(entry)?;
-    check(query, entry.kind().profile().browse)?;
-    Ok(ItemQuery {
+fn catalog_query(entry: &MediaLibrary, title: TitleKind, query: &ItemQuery) -> ItemQuery {
+    ItemQuery {
         search: None,
         kinds: KindFilter::one(title),
         library: Some(entry.id.clone()),
         ..query.clone()
+    }
+}
+
+fn checked_live_page(
+    parent: LibraryId,
+    shape: LiveShape,
+    query: &ItemQuery,
+) -> Result<LivePage, BrowseError> {
+    let sort = LiveSort::from_key(query.sort.key()).ok_or_else(|| {
+        BrowseError::Unsupported(format!(
+            "this library cannot sort by {}",
+            query.sort.key().id()
+        ))
+    })?;
+    if query.favorite == Some(false) {
+        return Err(BrowseError::Unsupported(
+            "this library can only filter to favorites".to_string(),
+        ));
+    }
+    let page = ChildPage::at(query.offset, query.limit)
+        .map_err(|message| BrowseError::Unsupported(message.to_string()))?;
+    Ok(LivePage {
+        parent,
+        shape,
+        sort,
+        direction: query
+            .direction
+            .unwrap_or_else(|| query.sort.natural_direction()),
+        favorites_only: query.favorite == Some(true),
+        page,
     })
+}
+
+fn no_letter_index() -> BrowseError {
+    BrowseError::Unsupported("this library has no letter index".to_string())
 }
 
 fn check(query: &ItemQuery, browse: &BrowseCapabilities) -> Result<(), BrowseError> {

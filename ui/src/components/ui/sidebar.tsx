@@ -5,6 +5,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import type { CSSVariableProperties } from "@/lib/style"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Tooltip,
   TooltipContent,
@@ -266,6 +267,26 @@ function SidebarMenuButton({
   )
 }
 
+function SidebarMenuSkeleton({
+  className,
+  showIcon = false,
+  ...props
+}: React.ComponentProps<"div"> & {
+  showIcon?: boolean
+}) {
+  return (
+    <div
+      data-slot="sidebar-menu-skeleton"
+      data-sidebar="menu-skeleton"
+      className={cn("flex h-8 items-center gap-2 rounded-md px-2", className)}
+      {...props}
+    >
+      {showIcon && <Skeleton className="size-4 rounded-md" data-sidebar="menu-skeleton-icon" />}
+      <Skeleton className="h-4 max-w-[70%] flex-1 group-data-[collapsible=icon]:hidden" data-sidebar="menu-skeleton-text" />
+    </div>
+  )
+}
+
 export {
   Sidebar,
   SidebarContent,
@@ -279,5 +300,6 @@ export {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSkeleton,
   SidebarProvider,
 }

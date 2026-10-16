@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use rusqlite::{Connection, OpenFlags};
 
-pub const SCHEMA_VERSION: i32 = 21;
+pub const SCHEMA_VERSION: i32 = 22;
 
 const MAX_IDLE_CONNECTIONS: usize = 4;
 
@@ -552,7 +552,8 @@ CREATE TABLE libraries (
     collection_type   TEXT,
     position          INTEGER NOT NULL,
     primary_image_tag TEXT,
-    membership_owed   INTEGER NOT NULL DEFAULT 0
+    membership        TEXT NOT NULL DEFAULT 'unwalked'
+                      CHECK (membership IN ('unwalked', 'owed', 'current'))
 );
 
 CREATE TABLE item_libraries (

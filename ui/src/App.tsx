@@ -8,6 +8,7 @@ import { SeerrGate } from "@/components/seerr/SeerrGate"
 import { WindowTitleSync } from "@/components/WindowTitleSync"
 import { RatingsProvider } from "@/lib/ratings"
 import { TechnicalProvider } from "@/lib/technical"
+import { useLibraryMetadataBridge } from "@/lib/library-events"
 import { useBillboard, useHome, useSettings, useStatusPulse } from "@/lib/queries"
 import { startupScreenReady } from "@/lib/startup"
 import Discover from "@/routes/Discover"
@@ -37,6 +38,7 @@ export default function App() {
   const settings = useSettings()
   const viewing = useViewing()
   const location = useLocation()
+  useLibraryMetadataBridge()
   const bootstrap = status?.authenticated ? status.bootstrap : null
   const catalogLoading = bootstrap?.state === "loading"
   const showingSettings = location.pathname === "/settings" || location.pathname.startsWith("/settings/")
@@ -77,6 +79,7 @@ export default function App() {
               <Route path="/settings/*" element={<Settings />} />
               <Route path="/" element={<Home />} />
               <Route path="/library" element={<Library />} />
+              <Route path="/library/:libraryId" element={<Library />} />
               <Route path="/collections" element={<Collections />} />
               <Route element={<CollectionModeRoute mode="mediaFlick" />}>
                 <Route path="/collections/franchises" element={<FranchiseCollections />} />

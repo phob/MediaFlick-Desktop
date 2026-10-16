@@ -132,7 +132,7 @@ export function DetailHero({
       }
       genres={item.genres.map((genre) => ({
         label: genre,
-        to: genreRoute(genre, item.kind),
+        to: genreRoute(genre, item),
       }))}
       overview={
         aboutPending ? (

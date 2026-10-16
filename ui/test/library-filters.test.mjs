@@ -3,10 +3,18 @@ import test from "node:test"
 import { api, PAGE_SIZE } from "../src/lib/api.ts"
 import {
   libraryItemQuery,
-  libraryKind,
+  libraryQuery,
   readLibraryFilters,
+  sortsFor,
   writeLibraryFilters,
 } from "../src/lib/library-filters.ts"
+
+const TITLES = {
+  sorts: ["name", "year", "added", "rating", "played", "random"],
+  filters: ["genre", "decade", "watched", "parental", "favorite"],
+  letterIndex: true,
+}
+const MUSIC = { sorts: ["name", "added", "year"], filters: ["favorite"], letterIndex: false }
 
 test("every library filter round-trips in the URL", () => {
   const previous = new URLSearchParams("kind=Movie&search=matrix")
@@ -16,9 +24,9 @@ test("every library filter round-trips in the URL", () => {
     decade: "1990",
     watched: "unwatched",
     favorite: true,
-  })
+  }, TITLES)
 
-  assert.deepEqual(readLibraryFilters(written), {
+  assert.deepEqual(readLibraryFilters(written, TITLES), {
     sort: "year",
     order: "desc",
     seed: "",
@@ -30,7 +38,7 @@ test("every library filter round-trips in the URL", () => {
     favorite: true,
   })
 
-  const query = libraryItemQuery(written)
+  const query = libraryItemQuery(written, TITLES)
   assert.deepEqual(query, {
     search: "matrix",
     kind: "Movie",
@@ -48,7 +56,7 @@ test("every library filter round-trips in the URL", () => {
 
 test("invalid URL filter enums do not become API filters", () => {
   const params = new URLSearchParams("sort=chaos&decade=1995&watched=maybe")
-  assert.deepEqual(readLibraryFilters(params), {
+  assert.deepEqual(readLibraryFilters(params, TITLES), {
     sort: "name",
     order: "asc",
     seed: "",
@@ -59,9 +67,9 @@ test("invalid URL filter enums do not become API filters", () => {
     seriesStatus: "",
     favorite: false,
   })
-  assert.deepEqual(libraryItemQuery(params), {
+  assert.deepEqual(libraryItemQuery(params, TITLES), {
     search: "",
-    kind: "Movie",
+    kind: "",
     favorite: undefined,
     genre: "",
     decade: undefined,
@@ -74,15 +82,29 @@ test("invalid URL filter enums do not become API filters", () => {
   })
 })
 
-test("search, global Favorites, and mixed Home genre links span kinds", () => {
-  assert.equal(libraryKind(new URLSearchParams("search=matrix")), "")
-  assert.equal(libraryKind(new URLSearchParams("favorite=true")), "")
-  assert.equal(libraryKind(new URLSearchParams("kind=Series&favorite=true")), "Series")
-  assert.equal(libraryKind(new URLSearchParams("kind=Movie%2CSeries&genre=Drama")), "Movie,Series")
-  assert.equal(
-    libraryItemQuery(new URLSearchParams("kind=Movie%2CSeries&genre=Drama")).kind,
-    "Movie,Series",
-  )
+test("the title view keeps catalog kinds from old links and lists both without one", () => {
+  assert.equal(libraryItemQuery(new URLSearchParams("search=matrix"), TITLES).kind, "")
+  assert.equal(libraryItemQuery(new URLSearchParams("kind=Series&favorite=true"), TITLES).kind, "Series")
+  assert.equal(libraryItemQuery(new URLSearchParams("kind=Movie%2CSeries&genre=Drama"), TITLES).kind, "Movie,Series")
+  assert.equal(libraryItemQuery(new URLSearchParams("kind=MusicAlbum"), TITLES).kind, "")
+})
+
+test("a library offers and sends only what its capabilities list", () => {
+  assert.deepEqual(sortsFor(MUSIC).map((sort) => sort.id), ["name", "added", "year"])
+  const params = new URLSearchParams("sort=random&genre=Rock&watched=unwatched&favorite=true")
+  assert.deepEqual(libraryQuery(params, MUSIC), {
+    favorite: true,
+    genre: "",
+    decade: undefined,
+    sort: "name",
+    order: undefined,
+    seed: undefined,
+    watched: "",
+    parental: "",
+    seriesStatus: "",
+  })
+  const written = writeLibraryFilters(params, { sort: "added" }, MUSIC)
+  assert.equal(written.toString(), "sort=added&favorite=true")
 })
 
 test("the items API sends decade and page bounds to the server", async () => {

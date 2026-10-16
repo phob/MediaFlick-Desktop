@@ -1,4 +1,4 @@
-import type { JsonObject } from "../json.ts"
+import { sameJson, type JsonObject } from "../json.ts"
 
 export const CATALOG_KINDS = ["Movie", "Series", "Season", "Episode"] as const
 export type CatalogKind = (typeof CATALOG_KINDS)[number]
@@ -37,6 +37,11 @@ export interface ItemSummary {
    * grid queries do not, and offline rows have none.
    */
   overview?: string | null
+  /**
+   * A playlist's children carry the slot each item fills, counted from zero.
+   * The same item can fill two slots.
+   */
+  playlistIndex?: number
 }
 
 export interface Person {
@@ -376,6 +381,8 @@ export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWri
   }
 }
 
+export type StartupDestination = "home" | "calendar" | "last" | { library: string }
+
 export interface ViewingSettings {
   spoilerProtection: boolean
   nextEpisode: "off" | "ask" | "auto"
@@ -389,9 +396,18 @@ export interface ViewingSettings {
   textScale: number
   posterSize: number
   previewDelayMs: number
-  startupDestination: "home" | "movies" | "series" | "calendar" | "last"
+  startupDestination: StartupDestination
   rememberFilters: boolean
   hideWatched: boolean
+}
+
+export type ViewingSettingsWrite = Omit<ViewingSettings, "startupDestination"> & {
+  startupDestination?: StartupDestination
+}
+
+export function viewingSettingsWrite(settings: ViewingSettings, source: ViewingSettings | undefined): ViewingSettingsWrite {
+  const { startupDestination, ...others } = settings
+  return source && sameJson(startupDestination, source.startupDestination) ? others : settings
 }
 
 export interface PlayerComfort {
@@ -1246,7 +1262,7 @@ export interface Library {
   name: string
   kind: LibraryKind
   imageTag: string | null
-  /** True while a movies or TV shows library owes a membership walk or one is running, so its grid may lack titles. A full walk (a refresh, new titles, a deletion sweep, the first fill) sets it for every catalog library until that library's walk lands. */
+  /** True while a movies or TV shows library's titles are not known yet: during the first catalog download, and until the library's first membership walk lands. A later walk keeps the stored titles, so it never sets this. */
   membershipPending: boolean
   browse: BrowseCapabilities
 }
@@ -1258,6 +1274,8 @@ export interface LibrariesResponse {
   libraries: Library[]
   crossLibrary: BrowseCapabilities
 }
+
+export type BrowsingPage = "last" | `library:${string}`
 
 export interface LibraryQuery {
   genre?: string

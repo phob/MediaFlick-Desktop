@@ -21,16 +21,16 @@ import {
   readCastSearch,
   writeResolvedCastPerson,
 } from "@/lib/cast-search"
+import { useBrowseScope, type BrowseScope } from "@/hooks/use-browse-scope"
+import { browsingKey, libraryPath, type BrowseSource } from "@/lib/libraries"
 import {
-  libraryItemQuery,
-  libraryKind,
-  libraryViewKinds,
+  offersFilter,
   readLibraryFilters,
   REMEMBERED_LIBRARY_PARAMS,
   type LibraryFilterState,
   writeLibraryFilters,
 } from "@/lib/library-filters"
-import { useItemLetters, useItems, usePersonResolution } from "@/lib/queries"
+import { useBrowseLetters, useItems, usePersonResolution } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 const SEARCH_PERSON_ROW_LIMIT = 12
@@ -129,6 +129,48 @@ function CastCandidates({
 }
 
 export default function Library({ components }: LibraryProps = {}) {
+  const scope = useBrowseScope()
+  switch (scope.status) {
+    case "loading":
+      return (
+        <div className="flex h-full min-h-0 flex-col" aria-busy="true">
+          <div className="px-6 pt-8 pb-5 sm:px-10 lg:px-14">
+            <Skeleton className="h-9 w-56 rounded-md" />
+          </div>
+        </div>
+      )
+    case "failed":
+      return (
+        <div className="p-6 sm:p-10 lg:p-14">
+          <PageErrorState
+            title="Could not load your libraries"
+            description={scope.error.message}
+            action={<Button variant="outline" onClick={scope.retry}>Try again</Button>}
+          />
+        </div>
+      )
+    case "missing":
+      return (
+        <div className="p-6 sm:p-10 lg:p-14">
+          <PageErrorState
+            title="Library not available"
+            description="This library is no longer on your server, or your account cannot see it."
+            action={<Button variant="outline" asChild><Link to="/">Go home</Link></Button>}
+          />
+        </div>
+      )
+    case "ready":
+      return <BrowsePage key={scope.library?.id ?? "titles"} scope={scope} components={components} />
+  }
+}
+
+function BrowsePage({
+  scope,
+  components,
+}: {
+  scope: Extract<BrowseScope, { status: "ready" }>
+  components?: Partial<LibraryComponents>
+}) {
   const [castScroller, setCastScroller] = useState<HTMLDivElement | null>(null)
   useScrollRestoration(castScroller, "cast-search")
   const [gridScroller, setGridScroller] = useState<HTMLDivElement | null>(null)
@@ -140,16 +182,16 @@ export default function Library({ components }: LibraryProps = {}) {
   const viewing = useViewing()
   const history = useBrowsing()
   const preferences = viewing.data ?? DEFAULT_VIEWING
-  const kindKey = libraryKind(routeParams)
-  const plainLibrary = ["Movie", "Series"].includes(kindKey) && !routeParams.has("search") && !routeParams.has("mode") && !routeParams.has("favorite")
+  const { browse, library } = scope
+  const rememberKey = library ? browsingKey(library.id) : null
   const explicitFilters = REMEMBERED_LIBRARY_PARAMS.some((key) => routeParams.has(key))
   const params = new URLSearchParams(routeParams)
-  if (plainLibrary && !explicitFilters) {
-    const remembered = preferences.rememberFilters ? history.data?.[kindKey] : undefined
+  if (rememberKey && !explicitFilters) {
+    const remembered = preferences.rememberFilters ? history.data?.[rememberKey] : undefined
     if (remembered) {
       const saved = new URLSearchParams(remembered.split("?")[1])
       for (const key of REMEMBERED_LIBRARY_PARAMS) { const value = saved.get(key); if (value !== null) params.set(key, value) }
-    } else if (preferences.hideWatched) params.set("watched", "unwatched")
+    } else if (preferences.hideWatched && offersFilter(browse, "watched")) params.set("watched", "unwatched")
   }
   const [total, setTotal] = useState<number | null>(null)
 
@@ -177,44 +219,28 @@ export default function Library({ components }: LibraryProps = {}) {
     setParams((previous) => writeResolvedCastPerson(previous, resolved), { replace: true })
   }, [castPerson, resolved, setParams])
 
-  const search = params.get("search") ?? ""
-  const filters = readLibraryFilters(params)
-  const favorite = filters.favorite
-  const kind = libraryKind(params)
+  const search = library ? "" : params.get("search") ?? ""
+  const filters = readLibraryFilters(params, browse)
 
   const updateFilters = (patch: Partial<LibraryFilterState>) => {
-    const next = writeLibraryFilters(params, patch)
+    const next = writeLibraryFilters(params, patch, browse)
     next.set("filters", "true")
     setParams(next, {replace:false})
-    if (plainLibrary && preferences.rememberFilters) {
-      const route = `/library?${next}`
-      void api.saveBrowsing(kindKey, route).then(() => { void history.refetch() }).catch((error: Error) => toast.error(`Could not remember library filters: ${error.message}`))
+    if (library && rememberKey && preferences.rememberFilters) {
+      void api.saveBrowsing(rememberKey, libraryPath(library.id, next)).then(() => { void history.refetch() }).catch((error: Error) => toast.error(`Could not remember library filters: ${error.message}`))
     }
   }
 
-  const query = castPerson && jellyfinPersonId
-    ? { personId: jellyfinPersonId }
-    : libraryItemQuery(params)
-  const globalFavoritesView = favorite && !params.has("kind")
-  const alphabetical = !castPerson && !search && filters.sort === "name"
-  const railQuery = alphabetical ? libraryItemQuery(params) : null
-  const letters = useItemLetters(railQuery ?? {}, railQuery !== null)
-  const letterIndex = railQuery ? letters.data?.letters : undefined
-  useScrollRestoration(gridScroller, `grid:${JSON.stringify(query)}`, total !== null)
+  const listing = scope.source(params)
+  const source: BrowseSource = castPerson && jellyfinPersonId
+    ? { scope: "titles", query: { personId: jellyfinPersonId } }
+    : listing
+  const alphabetical = browse.letterIndex && !castPerson && !search && filters.sort === "name"
+  const letters = useBrowseLetters(listing, alphabetical)
+  const letterIndex = alphabetical ? letters.data?.letters : undefined
+  useScrollRestoration(gridScroller, `grid:${JSON.stringify(source)}`, total !== null)
 
-  const title = castPerson
-    ? personName
-    : search
-      ? `Results for “${search}”`
-      : globalFavoritesView
-        ? "Favorites"
-        : kind === "Series"
-          ? "Series"
-          : kind === "Movie"
-            ? "Movies"
-            : kind === "Movie,Series"
-              ? "Movies & Series"
-            : "Library"
+  const title = castPerson ? personName : scope.title
   const castDiscover = castPerson ? (
     <CastDiscovery
       personName={personName}
@@ -231,7 +257,7 @@ export default function Library({ components }: LibraryProps = {}) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
-        eyebrow={castPerson ? "Person" : search ? "Search" : "Library"}
+        eyebrow={castPerson ? "Person" : scope.eyebrow}
         title={title}
       />
       {!castPerson && (
@@ -239,7 +265,9 @@ export default function Library({ components }: LibraryProps = {}) {
           value={filters}
           onChange={updateFilters}
           total={total}
-          kinds={libraryViewKinds(params)}
+          capabilities={browse}
+          source={listing}
+          tvShowsLibrary={library?.kind === "shows"}
         />
       )}
       {castPerson && (
@@ -282,9 +310,10 @@ export default function Library({ components }: LibraryProps = {}) {
             >
               <Grid
                 ref={grid}
-                source={{ scope: "titles", query }}
+                source={source}
                 scroller={gridScroller}
                 onTotal={setTotal}
+                emptyIsPending={Boolean(library?.membershipPending) && !castPerson}
                 empty={
                   castPerson
                     ? `No Jellyfin titles credit ${personName}.`

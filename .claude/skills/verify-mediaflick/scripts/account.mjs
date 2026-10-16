@@ -159,6 +159,19 @@ export async function resetUserData(account, itemId, { played = false, positionT
   if (!response.ok) throw new Error(`resetting user data of ${itemId} answered HTTP ${response.status}`)
 }
 
+export async function playlistWrite(account, method, apiPath, body) {
+  if (!/^\/(Playlists|Items\/[0-9a-f]{32}$)/.test(apiPath)) throw new Error(`playlistWrite only writes playlists, not ${apiPath}`)
+  const response = await fetch(`${account.serverUrl}${apiPath}`, {
+    method,
+    headers: { Authorization: `MediaBrowser Token="${account.token}"`, "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(20000),
+  })
+  if (!response.ok) throw new Error(`${method} ${apiPath} answered HTTP ${response.status}`)
+  const text = await response.text()
+  return text ? JSON.parse(text) : null
+}
+
 export async function removeFavorite(account, itemId) {
   const response = await fetch(`${account.serverUrl}/UserFavoriteItems/${encodeURIComponent(itemId)}?userId=${account.userId}`, {
     method: "DELETE",

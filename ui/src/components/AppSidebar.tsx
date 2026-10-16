@@ -12,7 +12,6 @@ import {
   RefreshCw,
   Search,
   Settings,
-  Tv,
 } from "lucide-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useCallback, useEffect, type ComponentProps } from "react"
@@ -38,12 +37,12 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSkeleton,
 } from "@/components/ui/sidebar"
 import { useSidebar } from "@/components/ui/sidebar-context"
 import { useLiveSearch } from "@/hooks/use-live-search"
 import { api } from "@/lib/api"
-import { titleBrowseKind } from "@/lib/libraries"
-import { libraryKind, libraryKindPath } from "@/lib/library-filters"
+import { libraryIcon, libraryIdFromPath, libraryPath } from "@/lib/libraries"
 import { useLocalDate } from "@/lib/local-date"
 import { isSidebarRouteActive, librarySearchFromLocation, readDetailNavigationState } from "@/lib/navigation"
 import {
@@ -53,6 +52,7 @@ import {
   useCollectionSettings,
   useCompanion,
   useItem,
+  useLibraries,
   useLogout,
   useStatus,
   useSyncProgress,
@@ -61,8 +61,6 @@ import { SYNC_FAILURES } from "@/lib/sync-failure"
 
 const NAV = [
   { title: "Home", to: "/", icon: House },
-  { title: "Movies", to: libraryKindPath("Movie"), icon: Film },
-  { title: "Series", to: libraryKindPath("Series"), icon: Tv },
   { title: "Favorites", to: "/library?favorite=true", icon: Heart },
 ]
 
@@ -271,31 +269,24 @@ export function AppSidebar({ onUserMenuOpenChange, ...props }: AppSidebarProps =
     detailId = undefined
   }
   const detail = useItem(detailId)
+  const libraries = useLibraries()
   const detailOrigin = readDetailNavigationState(location.state)
   const originUrl = detailOrigin?.from.startsWith("/library")
     ? new URL(detailOrigin.from, "https://mediaflick.invalid")
     : null
-  const activeLibraryNav = (title: string) => {
-    if (location.pathname === "/library") {
-      if (title === "Movies") return libraryKind(libraryParams) === "Movie"
-      if (title === "Series") return libraryKind(libraryParams) === "Series"
-      return (
-        title === "Favorites"
-        && libraryParams.get("favorite") === "true"
-        && !libraryParams.has("kind")
-      )
-    }
-    if (!detailId) return false
-    if (
-      title === "Favorites"
-      && originUrl?.searchParams.get("favorite") === "true"
+  const activeLibraryId = detailId === undefined
+    ? libraryIdFromPath(location.pathname)
+    : originUrl
+      ? libraryIdFromPath(originUrl.pathname)
+      : detail.data?.layout === "title"
+        ? detail.data.libraryId
+        : null
+  const favoritesActive = location.pathname === "/library"
+    ? libraryParams.get("favorite") === "true" && !libraryParams.has("kind")
+    : detailId !== undefined
+      && originUrl?.pathname === "/library"
+      && originUrl.searchParams.get("favorite") === "true"
       && !originUrl.searchParams.has("kind")
-    ) return true
-    if (detail.data?.layout !== "title") return false
-    if (title === "Movies") return titleBrowseKind(detail.data.kind) === "Movie"
-    if (title === "Series") return titleBrowseKind(detail.data.kind) === "Series"
-    return false
-  }
   const { data: companion } = useCompanion()
   const { data: collectionSettings } = useCollectionSettings()
   const companionSeerr =
@@ -360,11 +351,7 @@ export function AppSidebar({ onUserMenuOpenChange, ...props }: AppSidebarProps =
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton
                     asChild
-                    isActive={
-                      item.title === "Home"
-                        ? location.pathname === "/"
-                        : activeLibraryNav(item.title)
-                    }
+                    isActive={item.title === "Home" ? location.pathname === "/" : favoritesActive}
                     tooltip={item.title}
                   >
                     <Link to={item.to}>
@@ -404,6 +391,37 @@ export function AppSidebar({ onUserMenuOpenChange, ...props }: AppSidebarProps =
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Libraries</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {libraries.data?.known
+                ? libraries.data.libraries.map((library) => {
+                    const Icon = libraryIcon(library.kind)
+                    return (
+                      <SidebarMenuItem key={library.id}>
+                        <SidebarMenuButton
+                          asChild
+                          isActive={activeLibraryId === library.id}
+                          tooltip={library.name}
+                        >
+                          <Link to={libraryPath(library.id)}>
+                            <Icon />
+                            <span>{library.name}</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )
+                  })
+                : !libraries.isError && Array.from({ length: 2 }, (_, index) => (
+                    <SidebarMenuItem key={index}>
+                      <SidebarMenuSkeleton showIcon />
+                    </SidebarMenuItem>
+                  ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
