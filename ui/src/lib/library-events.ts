@@ -94,6 +94,9 @@ export function useLibraryMetadataBridge() {
     }
 
     window.addEventListener("mediaflick-desktop-shell", receive)
+    // main.tsx primes these from /api/startup before this listener exists, so
+    // a libraries-changed announced in between would otherwise be lost.
+    invalidateLibrariesChanged(queryClient)
     return () => {
       window.removeEventListener("mediaflick-desktop-shell", receive)
       catalog.cancel()
