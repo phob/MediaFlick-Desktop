@@ -80,10 +80,10 @@ impl LibraryKind {
             Self::Books => LibraryProfile::live(recursive(&["Book", "AudioBook"]), Grouped),
             Self::BoxSets => LibraryProfile::live(recursive(&["BoxSet"]), Newest),
             Self::Trailers => LibraryProfile::live(recursive(&["Trailer"]), Grouped),
-            Self::HomeVideos | Self::Photos => LibraryProfile::live(LiveShape::Folder, Grouped),
-            Self::Playlists | Self::LiveTv | Self::Mixed => {
-                LibraryProfile::live(LiveShape::Folder, Newest)
+            Self::HomeVideos | Self::Photos | Self::Mixed => {
+                LibraryProfile::live(LiveShape::Folder, Grouped)
             }
+            Self::Playlists | Self::LiveTv => LibraryProfile::live(LiveShape::Folder, Newest),
         }
     }
 }
@@ -128,14 +128,22 @@ pub enum LiveShape {
     Folder,
 }
 
-/// Where "Latest in <library>" comes from. The table follows jellyfin-web,
-/// which asks `/Items/Latest` for every library except the view types it
-/// excludes: `playlists`, `livetv`, `boxsets`, `channels` and `folders`.
-/// Measured with the test servers: music (Grouped, demo), playlists (Newest,
-/// demo) and box sets (Newest, own server); the other kinds are unmeasured.
+/// Where "Latest in <library>" comes from for a live library. Measured against
+/// the demo server, the account server and local Jellyfin 10.11.11 and 12.2.0:
+/// `/Items/Latest` wins wherever it answers, because the newest-first `/Items`
+/// query lists folders, albums, series and seasons first (Jellyfin dates them
+/// at scan time) and has no working filter for them.
+///
+/// Grouped, measured: music (demo); music videos, books, mixed, and home
+/// videos holding videos or photos (local). Newest, measured: box sets
+/// (account) and playlists (demo), where `/Items/Latest` answers nothing.
+/// Unmeasured: live TV (Newest, as jellyfin-web leaves it out of Latest),
+/// trailers (Grouped, as jellyfin-web), and photos, a library type Jellyfin
+/// 10.11 and later no longer creates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiveLatest {
-    /// Jellyfin's `/Items/Latest`, which groups new tracks into their album.
+    /// Jellyfin's `/Items/Latest`, which groups new tracks into their album,
+    /// episodes into their series and photos into their album.
     Grouped,
     /// The library's own grid, newest first. `/Items/Latest` answers nothing
     /// for box sets and playlists.
