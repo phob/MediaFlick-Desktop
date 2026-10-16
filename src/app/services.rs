@@ -71,6 +71,9 @@ pub enum ShellRequest {
         item_ids: Vec<String>,
         context_ids: Vec<String>,
     },
+    /// The event stream was lost and is back, so any page Jellyfin serves
+    /// directly may have missed changes.
+    LiveResynced,
     /// A bootstrap page changed local catalog projections only.
     CatalogChanged {
         item_ids: Vec<String>,
@@ -127,6 +130,10 @@ impl ShellBridge {
             item_ids,
             context_ids,
         });
+    }
+
+    pub fn live_resynced(&self) {
+        let _ = self.request(ShellRequest::LiveResynced);
     }
 
     pub fn catalog_changed(&self, changes: LibraryChangeBatch) {

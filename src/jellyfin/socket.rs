@@ -11,7 +11,8 @@
 //! The socket is an acceleration layer only — dropped connections lose
 //! events, so every successful (re)connect asks the sync worker for one
 //! requested cycle to reconcile the gap, and the periodic sweeps remain the
-//! backstop.
+//! backstop. The sync covers only the cache, so a reconnect for the same
+//! session also tells every open page Jellyfin serves directly to refetch.
 
 use std::io::ErrorKind;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -147,6 +148,7 @@ pub fn spawn(
 
 fn run(library: &Arc<Library>, session: &Arc<Session>, sync: &SyncHandle, handle: &SocketHandle) {
     let mut backoff = RECONNECT_MIN;
+    let mut lost_generation = None;
     while !handle.is_stopped() {
         if !session.is_authenticated() {
             if !handle.wait(IDLE_INTERVAL) {
@@ -160,6 +162,13 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, sync: &SyncHandle, handle
                 tracing::info!(target: "jellyfin.socket", "listening for Jellyfin server events");
                 announce_capabilities(session, &scope);
                 sync.request();
+                if lost_generation == Some(scope.generation()) && session.scope_is_current(&scope) {
+                    tracing::info!(
+                        target: "jellyfin.socket",
+                        "the event stream reconnected; refreshing open pages Jellyfin serves directly"
+                    );
+                    handle.shell.live_resynced();
+                }
                 let connected_at = Instant::now();
                 match listen(&mut socket, library, session, sync, handle, &scope) {
                     Disconnect::Stopped => return,
@@ -182,6 +191,7 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, sync: &SyncHandle, handle
                         );
                     }
                 }
+                lost_generation = Some(scope.generation());
                 if connected_at.elapsed() >= STABLE_CONNECTION {
                     backoff = RECONNECT_MIN;
                 }
