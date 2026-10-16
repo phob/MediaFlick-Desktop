@@ -32,7 +32,7 @@ fn libraries(services: &Arc<Services>) -> Handled {
         LibraryRegistry::Unknown => (false, [].as_slice()),
         LibraryRegistry::Known(libraries) => (true, libraries.as_slice()),
     };
-    let downloading = sync::catalog_downloading(&services.library).unwrap_or_else(|error| {
+    let downloading = sync::first_catalog_download(&services.library).unwrap_or_else(|error| {
         tracing::warn!(target: "library.sync", "could not read catalog progress: {error}");
         true
     });

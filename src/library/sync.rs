@@ -98,8 +98,10 @@ fn read_bootstrap_progress(library: &Library) -> rusqlite::Result<BootstrapProgr
     })
 }
 
-pub fn catalog_downloading(library: &Library) -> rusqlite::Result<bool> {
-    Ok(!flag(library, META_BOOTSTRAP_DONE)?)
+/// The daily re-download keeps the titles it replaces, so only the first one
+/// leaves a library short of titles.
+pub fn first_catalog_download(library: &Library) -> rusqlite::Result<bool> {
+    Ok(!flag(library, META_BOOTSTRAP_DONE)? && library.meta(META_LAST_BOOTSTRAP)?.is_none())
 }
 
 pub fn ownership_available(library: &Library) -> bool {
