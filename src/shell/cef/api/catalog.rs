@@ -1003,6 +1003,151 @@ fn live_children(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::jellyfin::api::model::UserViewDto;
+    use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
+
+    const MOVIES: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const SHOWS: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const MUSIC: &str = "cccccccccccccccccccccccccccccccc";
+    const GONE: &str = "dddddddddddddddddddddddddddddddd";
+
+    fn known(views: &[(&str, &str)]) -> LibraryRegistry {
+        LibraryRegistry::Known(
+            views
+                .iter()
+                .filter_map(|(id, collection_type)| {
+                    MediaLibrary::from_view(&UserViewDto {
+                        id: (*id).into(),
+                        collection_type: Some((*collection_type).into()),
+                        ..Default::default()
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn server_libraries() -> LibraryRegistry {
+        known(&[(MOVIES, "movies"), (SHOWS, "tvshows"), (MUSIC, "music")])
+    }
+
+    fn library(id: &str, enabled: bool) -> HomeElement {
+        HomeElement {
+            element: HomeElementId::Library {
+                id: LibraryId::canonical(id).expect("test id"),
+            },
+            enabled,
+        }
+    }
+
+    fn genre(id: &str, enabled: bool) -> HomeElement {
+        HomeElement {
+            element: HomeElementId::Genre { id: id.into() },
+            enabled,
+        }
+    }
+
+    fn built_ins() -> Vec<HomeElement> {
+        HomeSettings::fresh(&[]).elements
+    }
+
+    fn with_elements(elements: Vec<HomeElement>) -> HomeSettings {
+        HomeSettings {
+            elements,
+            ..HomeSettings::fresh(&[])
+        }
+    }
+
+    #[test]
+    fn known_libraries_join_after_the_built_ins_in_server_order_and_enabled() {
+        let mut settings = HomeSettings::fresh(&["Action".to_owned()]);
+        reconcile_home_elements(&mut settings, &["Action".to_owned()], &[], &server_libraries());
+
+        let mut expected = built_ins();
+        expected.extend([
+            library(MOVIES, true),
+            library(SHOWS, true),
+            library(MUSIC, true),
+            genre("Action", true),
+        ]);
+        assert_eq!(settings.elements, expected);
+    }
+
+    #[test]
+    fn new_libraries_follow_the_last_saved_library_and_gone_ones_leave() {
+        let mut elements = built_ins();
+        elements.extend([
+            genre("Action", true),
+            library(SHOWS, false),
+            library(GONE, true),
+            genre("Drama", false),
+        ]);
+        let mut settings = with_elements(elements);
+        let genres = ["Action".to_owned(), "Drama".to_owned()];
+        reconcile_home_elements(&mut settings, &genres, &[], &server_libraries());
+
+        let mut expected = built_ins();
+        expected.extend([
+            genre("Action", true),
+            library(SHOWS, false),
+            library(MOVIES, true),
+            library(MUSIC, true),
+            genre("Drama", false),
+        ]);
+        assert_eq!(settings.elements, expected);
+    }
+
+    #[test]
+    fn an_unknown_registry_keeps_saved_libraries_and_adds_none() {
+        let mut elements = built_ins();
+        elements.extend([
+            genre("Action", true),
+            library(SHOWS, false),
+            library(GONE, true),
+        ]);
+        let mut settings = with_elements(elements.clone());
+        reconcile_home_elements(
+            &mut settings,
+            &["Action".to_owned()],
+            &[],
+            &LibraryRegistry::Unknown,
+        );
+        assert_eq!(settings.elements, elements);
+    }
+
+    #[test]
+    fn defaults_enable_every_library_and_keep_saved_ones_the_registry_lacks() {
+        let genres = ["Action".to_owned()];
+        let saved = HomeSettings::fresh(&genres);
+        let defaults = home_defaults(&saved, &genres, &[], &server_libraries());
+        let mut expected = built_ins();
+        expected.extend([
+            library(MOVIES, true),
+            library(SHOWS, true),
+            library(MUSIC, true),
+            genre("Action", true),
+        ]);
+        assert_eq!(defaults.elements, expected);
+
+        let mut elements = built_ins();
+        elements.extend([
+            library(SHOWS, false),
+            genre("Action", false),
+            genre("Gone", true),
+        ]);
+        let defaults = home_defaults(
+            &with_elements(elements),
+            &genres,
+            &[],
+            &LibraryRegistry::Unknown,
+        );
+        let mut expected = built_ins();
+        expected.extend([
+            genre("Action", true),
+            library(SHOWS, true),
+            genre("Gone", false),
+        ]);
+        assert_eq!(defaults.elements, expected);
+    }
 
     #[test]
     fn calendar_dates_are_strict_iso_days() {
