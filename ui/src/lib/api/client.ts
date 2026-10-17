@@ -29,6 +29,7 @@ import type {
   BrowsingPage,
   LibrariesResponse,
   LibraryFilterOptions,
+  LibraryLatest,
   LibraryQuery,
   LetterboxdProfile,
   LetterboxdReviewsResponse,
@@ -264,7 +265,7 @@ export const api = {
   libraryOptions: (id: string) =>
     request<LibraryFilterOptions>(`/api/libraries/${encodeURIComponent(id)}/options`),
   libraryLatest: (id: string, limit?: number) =>
-    request<{ items: ItemSummary[] }>(
+    request<LibraryLatest>(
       `/api/libraries/${encodeURIComponent(id)}/latest${queryString({ limit })}`,
     ),
   item: (id: string) => request<AnyItemDetail>(`/api/item/${encodeURIComponent(id)}`),

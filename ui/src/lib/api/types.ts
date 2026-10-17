@@ -1290,6 +1290,12 @@ export interface LibraryQuery {
   seed?: number
 }
 
+/** A library's newest titles and the library sort that lists them in the same order. */
+export interface LibraryLatest {
+  items: ItemSummary[]
+  sort: LibrarySortId
+}
+
 export interface LibraryFilterOptions {
   genres: string[]
   officialRatings: string[]

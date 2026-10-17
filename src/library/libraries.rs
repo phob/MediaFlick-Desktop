@@ -160,7 +160,7 @@ pub enum LiveSort {
 impl LiveSort {
     const ALL: [Self; 3] = [Self::Name, Self::DateAdded, Self::ReleaseDate];
 
-    const fn key(self) -> SortKey {
+    pub(super) const fn key(self) -> SortKey {
         match self {
             Self::Name => SortKey::Name,
             Self::DateAdded => SortKey::DateAdded,

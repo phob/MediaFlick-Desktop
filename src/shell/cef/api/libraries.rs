@@ -93,9 +93,11 @@ fn latest(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
     .clamp(1, LATEST_LIMIT);
     let id = library_id(id)?;
     let scope = services.session.scope();
-    let grid = browse::latest(&services.library, &id, limit).map_err(browse_failure)?;
-    let page = answer(services, scope, grid)?;
-    Ok(ApiResponse::ok(json!({ "items": page.items })))
+    let latest = browse::latest(&services.library, &id, limit).map_err(browse_failure)?;
+    let page = answer(services, scope, latest.grid)?;
+    Ok(ApiResponse::ok(
+        json!({ "items": page.items, "sort": latest.sort }),
+    ))
 }
 
 fn answer(

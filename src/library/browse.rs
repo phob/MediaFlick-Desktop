@@ -12,7 +12,7 @@ use super::libraries::{
 use super::model::is_synced_kind;
 use super::{
     DEFAULT_PAGE_SIZE, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort, ItemSummary,
-    KindFilter, Library, MAX_CHILD_PAGE_LIMIT, SortDirection, TitleDetail, TitleKind,
+    KindFilter, Library, MAX_CHILD_PAGE_LIMIT, SortDirection, SortKey, TitleDetail, TitleKind,
 };
 
 #[derive(Debug)]
@@ -130,9 +130,16 @@ pub fn library_options(library: &Library, id: &LibraryId) -> Result<FilterOption
     }
 }
 
-pub fn latest(library: &Library, id: &LibraryId, limit: i64) -> Result<Grid, BrowseError> {
+/// A library's newest titles, with the library sort that lists them in the
+/// same order so the shelf's "All" opens the page the shelf previews.
+pub struct Latest {
+    pub grid: Grid,
+    pub sort: SortKey,
+}
+
+pub fn latest(library: &Library, id: &LibraryId, limit: i64) -> Result<Latest, BrowseError> {
     let entry = registered(library, id)?;
-    match entry.kind().profile().grid {
+    Ok(match entry.kind().profile().grid {
         GridSource::Catalog { title } => {
             let sort = match title {
                 TitleKind::Movie => ItemSort::DateAdded,
@@ -146,27 +153,39 @@ pub fn latest(library: &Library, id: &LibraryId, limit: i64) -> Result<Grid, Bro
                 ..ItemQuery::default()
             })?;
             let total = i64::try_from(items.len()).unwrap_or(i64::MAX);
-            Ok(Grid::Cached(ItemPage { items, total }))
+            Latest {
+                grid: Grid::Cached(ItemPage { items, total }),
+                sort: sort.key(),
+            }
         }
         GridSource::Live {
             latest: LiveLatest::Grouped,
             ..
-        } => Ok(Grid::Live(LiveQuery::Latest {
-            parent: entry.id,
-            limit,
-        })),
+        } => Latest {
+            grid: Grid::Live(LiveQuery::Latest {
+                parent: entry.id,
+                limit,
+            }),
+            sort: SortKey::DateAdded,
+        },
         GridSource::Live {
             shape,
             latest: LiveLatest::Newest,
-        } => Ok(Grid::Live(LiveQuery::Page(LivePage {
-            parent: entry.id,
-            shape,
-            sort: LiveSort::DateAdded,
-            direction: SortDirection::Descending,
-            favorites_only: false,
-            page: ChildPage::first(limit),
-        }))),
-    }
+        } => {
+            let sort = LiveSort::DateAdded;
+            Latest {
+                grid: Grid::Live(LiveQuery::Page(LivePage {
+                    parent: entry.id,
+                    shape,
+                    sort,
+                    direction: SortDirection::Descending,
+                    favorites_only: false,
+                    page: ChildPage::first(limit),
+                })),
+                sort: sort.key(),
+            }
+        }
+    })
 }
 
 pub fn cached_title(library: &Library, item_id: &str) -> rusqlite::Result<Option<TitleDetail>> {

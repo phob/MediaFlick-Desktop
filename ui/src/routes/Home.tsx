@@ -14,6 +14,7 @@ import {
   type HomeElement,
   type HomeRow,
   type ItemSummary,
+  type LibraryLatest,
   type LibrarySortId,
 } from "@/lib/api"
 import { detailNavigationState } from "@/lib/navigation"
@@ -224,16 +225,13 @@ interface LibraryRow {
   id: string
   title: string
   items: ItemSummary[]
-  sorts: readonly LibrarySortId[]
+  sort: LibrarySortId
 }
 
 type ShelfRow = HomeRow | LibraryRow
 
 function rowViewAll(row: ShelfRow) {
-  if (row.kind === "library") {
-    const sort = row.sorts.includes("episode-added") ? "episode-added" : "added"
-    return libraryPath(row.id, new URLSearchParams({ sort }))
-  }
+  if (row.kind === "library") return libraryPath(row.id, new URLSearchParams({ sort: row.sort }))
   if (row.kind === "genre") return `/library?kind=Movie,Series&genre=${encodeURIComponent(row.id)}&sort=rating`
   if (row.kind === "collection") return `/collections/mine/${encodeURIComponent(row.id)}`
   switch (row.id) {
@@ -254,8 +252,9 @@ function Row({ row, landscape = false }: { row: ShelfRow; landscape?: boolean })
   )
 }
 
-function LibraryShelf({ row, pending }: { row: LibraryRow; pending: boolean }) {
-  return pending ? <RowSkeleton /> : <Row row={row} />
+function LibraryShelf({ element, latest, pending }: { element: HomeElement; latest: LibraryLatest | undefined; pending: boolean }) {
+  if (pending) return <RowSkeleton />
+  return latest ? <Row row={{ kind: "library", id: element.id, title: element.label, items: latest.items, sort: latest.sort }} /> : null
 }
 
 function WatchingRows({
@@ -304,7 +303,6 @@ function matches(row: HomeRow, element: HomeElement) {
 export default function Home() {
   const home = useHome()
   const configuration = home.data?.configuration
-  const libraries = useLibraries().data?.libraries
   const libraryElements = configuration?.elements.filter((element) => element.kind === "library" && element.available && element.enabled) ?? []
   const shelves = useLibraryShelves(libraryElements.map((element) => element.id))
   const watching = configuration?.elements.find((element) => element.kind === "builtIn" && element.id === "watching")
@@ -340,8 +338,7 @@ export default function Home() {
       if (element.kind === "builtIn" && element.id === "upcoming") return <UpcomingRow key="upcoming" entries={upcoming} />
       if (element.kind === "library") {
         const shelf = shelves[libraryElements.indexOf(element)]
-        const sorts = libraries?.find((library) => library.id === element.id)?.browse.sorts ?? []
-        return <LibraryShelf key={`library:${element.id}`} row={{ kind: "library", id: element.id, title: element.label, items: shelf.data?.items ?? [], sorts }} pending={shelf.isPending} />
+        return <LibraryShelf key={`library:${element.id}`} element={element} latest={shelf.data} pending={shelf.isPending} />
       }
       const row = home.data.rows.find((candidate) => matches(candidate, element))
       return row ? <Row key={`${element.kind}:${element.id}`} row={row} landscape={row.kind === "builtIn" && row.id === "recentlyAddedShows"} /> : null
