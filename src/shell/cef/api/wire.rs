@@ -1,8 +1,9 @@
-//! The JSON contract with the UI. Every JSON body the API answers or decodes
-//! passes through this module: `ApiResponse::ok` and `ApiRequest::body` take
-//! only types listed in [`wire_types!`], and `ui/src/lib/api/wire.gen.ts` is
-//! rendered from that list by `generated_typescript_is_current`. The raw
-//! encoder and decoder are private here, so a handler cannot skip the bound.
+//! The JSON contract with the UI. `ApiResponse::ok` and `ApiRequest::body`
+//! take only types listed in [`wire_types!`], and `ui/src/lib/api/wire.gen.ts`
+//! is rendered from that list by `generated_typescript_is_current`. The JSON
+//! encoder and decoder they share are private to this module; the handlers
+//! that predate it use `ApiResponse::untyped` and `ApiRequest::untyped_body`,
+//! which `untyped_responses_only_shrink` counts.
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -27,10 +28,17 @@ use super::{ApiRequest, ApiResponse, AppStatus, NO_STORE};
     label = "API bodies must be named types, not `json!` values",
     note = "derive `Serialize` (or `Deserialize`) and `ts_rs::TS` on a named type, add it to `wire_types!` in src/shell/cef/api/wire.rs, then run `just wire-types`"
 )]
-pub(super) trait Wire: TS + 'static {}
+pub(super) trait Wire: TS + sealed::Sealed + 'static {}
+
+mod sealed {
+    /// Only [`super::wire_types!`] implements this, so no other module can
+    /// make a type [`super::Wire`] without listing it.
+    pub trait Sealed {}
+}
 
 macro_rules! wire_types {
     ($($ty:ty),* $(,)?) => {
+        $(impl sealed::Sealed for $ty {})*
         $(impl Wire for $ty {})*
 
         #[cfg(test)]
@@ -135,7 +143,6 @@ impl ApiResponse {
 
 #[cfg(test)]
 mod tests {
-    use std::any::TypeId;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
@@ -152,7 +159,7 @@ mod tests {
 
     struct Collect<'a> {
         cfg: &'a Config,
-        decls: BTreeMap<String, (TypeId, String)>,
+        decls: BTreeMap<String, String>,
     }
 
     impl TypeVisitor for Collect<'_> {
@@ -161,15 +168,17 @@ mod tests {
                 return;
             }
             let name = T::ident(self.cfg);
-            if let Some((seen, _)) = self.decls.get(&name) {
+            let decl = format_decl(&T::decl(self.cfg));
+            if let Some(seen) = self.decls.get(&name) {
+                // A generic type arrives once per instantiation with the same
+                // declaration; a different declaration is a second type.
                 assert!(
-                    *seen == TypeId::of::<T>(),
+                    *seen == decl,
                     "two wire types are both named `{name}`; rename one with `#[ts(rename = \"...\")]`"
                 );
                 return;
             }
-            let decl = format_decl(&T::decl(self.cfg));
-            self.decls.insert(name, (TypeId::of::<T>(), decl));
+            self.decls.insert(name, decl);
             T::visit_dependencies(self);
         }
     }
@@ -269,8 +278,10 @@ mod tests {
             .lines()
             .map(|line| {
                 let line = line.trim();
-                let text = line.strip_prefix('*').unwrap_or(line);
-                format!("   *{}\n", text.trim_end())
+                match line.strip_prefix('*') {
+                    Some(text) => format!("   *{}\n", text.trim_end()),
+                    None => format!("   * {line}\n"),
+                }
             })
             .collect::<String>();
         format!("  /**\n{lines}   */\n  {},\n", tidy_inline(field.trim()))
@@ -303,7 +314,7 @@ mod tests {
         let mut out = String::from(
             "// Generated from src/shell/cef/api/wire.rs by `just wire-types`. Do not edit.\n",
         );
-        for (_, decl) in collect.decls.values() {
+        for decl in collect.decls.values() {
             out.push_str("\nexport ");
             out.push_str(decl);
             out.push('\n');
@@ -435,51 +446,64 @@ mod tests {
             })
     }
 
-    /// The keys of every `#[name(...)]` attribute, each with its value when
-    /// that is a `true` or `false` literal.
-    fn attr_keys(attrs: &[syn::Attribute], name: &str) -> Vec<(String, Option<bool>)> {
+    struct AttrKey {
+        name: String,
+        /// The value when it is a `true` or `false` literal.
+        flag: Option<bool>,
+        /// Written as `key(...)` rather than `key` or `key = value`.
+        nested: bool,
+    }
+
+    fn attr_keys(attr: &syn::Attribute) -> syn::Result<Vec<AttrKey>> {
         let mut keys = Vec::new();
-        for attr in attrs.iter().filter(|attr| attr.path().is_ident(name)) {
-            attr.parse_nested_meta(|meta| {
-                let key = meta
-                    .path
-                    .get_ident()
-                    .map_or_else(String::new, ToString::to_string);
-                let mut flag = None;
-                if meta.input.peek(syn::Token![=]) {
-                    let value: syn::Expr = meta.value()?.parse()?;
-                    if let syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Bool(value),
-                        ..
-                    }) = value
-                    {
-                        flag = Some(value.value);
-                    }
-                } else if meta.input.peek(syn::token::Paren) {
-                    meta.parse_nested_meta(|inner| {
-                        if inner.input.peek(syn::Token![=]) {
-                            inner.value()?.parse::<syn::Expr>()?;
-                        }
-                        Ok(())
-                    })?;
+        attr.parse_nested_meta(|meta| {
+            let name = meta
+                .path
+                .get_ident()
+                .map_or_else(String::new, ToString::to_string);
+            let (mut flag, mut nested) = (None, false);
+            if meta.input.peek(syn::Token![=]) {
+                let value: syn::Expr = meta.value()?.parse()?;
+                if let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Bool(value),
+                    ..
+                }) = value
+                {
+                    flag = Some(value.value);
                 }
-                keys.push((key, flag));
-                Ok(())
-            })
-            .expect("parse attribute");
-        }
-        keys
+            } else if meta.input.peek(syn::token::Paren) {
+                nested = true;
+                meta.parse_nested_meta(|inner| {
+                    if inner.input.peek(syn::Token![=]) {
+                        inner.value()?.parse::<syn::Expr>()?;
+                    }
+                    Ok(())
+                })?;
+            }
+            keys.push(AttrKey { name, flag, nested });
+            Ok(())
+        })?;
+        Ok(keys)
     }
 
-    fn has_key(keys: &[(String, Option<bool>)], key: &str) -> bool {
-        keys.iter().any(|(name, _)| name == key)
+    fn has_key(keys: &[AttrKey], name: &str) -> bool {
+        keys.iter().any(|key| key.name == name)
     }
 
-    /// The serde attributes ts-rs 12 reads (`ts-rs-macros/src/attr`), plus
-    /// those that only change how a field is matched while decoding. Any
-    /// other serde attribute changes the JSON in a way ts-rs ignores, so the
-    /// type needs an explicit `#[ts(type = ...)]` or `#[ts(as = ...)]`.
-    const CONTAINER_SERDE: &[&str] = &[
+    /// The serde keys ts-rs 12 reads for each kind of item
+    /// (`ts-rs-macros/src/attr`). It skips any other key with a warning that
+    /// no build fails on, and it drops the whole `#[serde(...)]` attribute
+    /// when a key it knows is written as `key(...)`.
+    const STRUCT_SERDE: &[&str] = &[
+        "rename",
+        "rename_all",
+        "tag",
+        "bound",
+        "default",
+        "deny_unknown_fields",
+        "crate",
+    ];
+    const ENUM_SERDE: &[&str] = &[
         "rename",
         "rename_all",
         "rename_all_fields",
@@ -487,18 +511,9 @@ mod tests {
         "content",
         "untagged",
         "bound",
-        "default",
         "crate",
-        "deny_unknown_fields",
     ];
-    const VARIANT_SERDE: &[&str] = &[
-        "rename",
-        "rename_all",
-        "skip",
-        "untagged",
-        "borrow",
-        "alias",
-    ];
+    const VARIANT_SERDE: &[&str] = &["rename", "rename_all", "skip", "untagged", "borrow"];
     const FIELD_SERDE: &[&str] = &[
         "rename",
         "skip",
@@ -507,8 +522,10 @@ mod tests {
         "flatten",
         "default",
         "borrow",
-        "alias",
     ];
+    /// Keys that only change how input is matched, so ts-rs skipping them
+    /// leaves the TypeScript right.
+    const DECODE_ONLY_SERDE: &[&str] = &["alias", "deny_unknown_fields"];
 
     struct SerdeFidelity<'a> {
         file: &'a Path,
@@ -516,30 +533,68 @@ mod tests {
     }
 
     impl SerdeFidelity<'_> {
-        fn unsupported(&mut self, at: &str, attrs: &[syn::Attribute], allowed: &[&str]) {
-            let ts = attr_keys(attrs, "ts");
-            if has_key(&ts, "type") || has_key(&ts, "as") {
-                return;
-            }
-            if has_key(&ts, "optional_fields") {
-                self.found.push(format!(
-                    "{}: {at} uses `#[ts(optional_fields)]`; mark each field instead",
-                    self.file.display()
-                ));
-            }
-            for (key, _) in attr_keys(attrs, "serde") {
-                if !allowed.contains(&key.as_str()) {
-                    self.found.push(format!(
-                        "{}: {at} has `#[serde({key})]`, which ts-rs ignores; describe the JSON with `#[ts(type = ...)]` or `#[ts(as = ...)]`",
-                        self.file.display()
-                    ));
+        fn report(&mut self, at: &str, problem: &str) {
+            self.found
+                .push(format!("{}: {at} {problem}", self.file.display()));
+        }
+
+        fn keys(&mut self, at: &str, attrs: &[syn::Attribute], name: &str) -> Vec<Vec<AttrKey>> {
+            let mut all = Vec::new();
+            for attr in attrs.iter().filter(|attr| attr.path().is_ident(name)) {
+                match attr_keys(attr) {
+                    Ok(keys) => all.push(keys),
+                    Err(error) => self.report(
+                        at,
+                        &format!("has a `#[{name}]` attribute this check cannot read: {error}"),
+                    ),
                 }
             }
+            all
+        }
+
+        /// The serde keys ts-rs will see, or `None` when the item states its
+        /// TypeScript itself with `#[ts(type = ...)]` or `#[ts(as = ...)]`.
+        fn serde_keys(
+            &mut self,
+            at: &str,
+            attrs: &[syn::Attribute],
+            accepted: &[&str],
+        ) -> Option<Vec<AttrKey>> {
+            let ts = self
+                .keys(at, attrs, "ts")
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
+            if has_key(&ts, "type") || has_key(&ts, "as") {
+                return None;
+            }
+            if has_key(&ts, "optional_fields") {
+                self.report(
+                    at,
+                    "uses `#[ts(optional_fields)]`; mark each field `#[ts(optional)]` instead",
+                );
+            }
+            let mut seen = Vec::new();
+            for keys in self.keys(at, attrs, "serde") {
+                if let Some(key) = keys.iter().find(|key| key.nested) {
+                    self.report(at, &format!("has `#[serde({}(...))]`, which ts-rs cannot read, so it ignores that whole attribute; use `{} = \"...\"` or describe the JSON with `#[ts(type = ...)]`", key.name, key.name));
+                    continue;
+                }
+                for key in keys {
+                    if accepted.contains(&key.name.as_str()) {
+                        seen.push(key);
+                    } else if !DECODE_ONLY_SERDE.contains(&key.name.as_str()) {
+                        self.report(at, &format!("has `#[serde({})]`, which ts-rs ignores; describe the JSON with `#[ts(type = ...)]` or `#[ts(as = ...)]`", key.name));
+                    }
+                }
+            }
+            Some(seen)
         }
 
         /// serde leaves out a `skip_serializing_if` field, but ts-rs types it
         /// as a present key unless the field says `#[ts(optional)]` or carries
-        /// `#[serde(default)]`. The UI would then read `undefined` as `T | null`.
+        /// `#[serde(default)]`, and `#[ts(optional = false)]` wins over both.
+        /// The UI would then read `undefined` as `T | null`.
         fn fields(&mut self, owner: &str, fields: &syn::Fields) {
             for (index, field) in fields.iter().enumerate() {
                 let name = field
@@ -547,18 +602,22 @@ mod tests {
                     .as_ref()
                     .map_or_else(|| index.to_string(), ToString::to_string);
                 let at = format!("{owner}.{name}");
-                self.unsupported(&at, &field.attrs, FIELD_SERDE);
-                let serde = attr_keys(&field.attrs, "serde");
-                let optional = attr_keys(&field.attrs, "ts")
+                let Some(serde) = self.serde_keys(&at, &field.attrs, FIELD_SERDE) else {
+                    continue;
+                };
+                let ts = self
+                    .keys(&at, &field.attrs, "ts")
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>();
+                let optional = ts
                     .iter()
-                    .any(|(key, flag)| key == "optional" && *flag != Some(false));
+                    .find(|key| key.name == "optional")
+                    .map_or_else(|| has_key(&serde, "default"), |key| key.flag != Some(false));
                 let omitted =
                     has_key(&serde, "skip_serializing_if") || has_key(&serde, "skip_serializing");
-                if omitted && !optional && !has_key(&serde, "default") {
-                    self.found.push(format!(
-                        "{}: {at} can be left out of the JSON but is typed as always present; add `#[ts(optional)]` (`#[ts(optional = nullable)]` for a non-`Option` field)",
-                        self.file.display()
-                    ));
+                if omitted && !optional {
+                    self.report(&at, "can be left out of the JSON but is typed as always present; add `#[ts(optional)]` (`#[ts(optional = nullable)]` for a non-`Option` field)");
                 }
             }
         }
@@ -568,18 +627,26 @@ mod tests {
         fn visit_item_struct(&mut self, item: &syn::ItemStruct) {
             if derives_ts(&item.attrs) {
                 let owner = item.ident.to_string();
-                self.unsupported(&owner, &item.attrs, CONTAINER_SERDE);
-                self.fields(&owner, &item.fields);
+                if self.serde_keys(&owner, &item.attrs, STRUCT_SERDE).is_some() {
+                    self.fields(&owner, &item.fields);
+                }
             }
         }
 
         fn visit_item_enum(&mut self, item: &syn::ItemEnum) {
             if derives_ts(&item.attrs) {
-                self.unsupported(&item.ident.to_string(), &item.attrs, CONTAINER_SERDE);
+                let owner = item.ident.to_string();
+                if self.serde_keys(&owner, &item.attrs, ENUM_SERDE).is_none() {
+                    return;
+                }
                 for variant in &item.variants {
-                    let owner = format!("{}::{}", item.ident, variant.ident);
-                    self.unsupported(&owner, &variant.attrs, VARIANT_SERDE);
-                    self.fields(&owner, &variant.fields);
+                    let owner = format!("{owner}::{}", variant.ident);
+                    if self
+                        .serde_keys(&owner, &variant.attrs, VARIANT_SERDE)
+                        .is_some()
+                    {
+                        self.fields(&owner, &variant.fields);
+                    }
                 }
             }
         }
