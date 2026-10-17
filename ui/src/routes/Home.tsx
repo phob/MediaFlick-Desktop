@@ -303,8 +303,8 @@ function matches(row: HomeRow, element: HomeElement) {
 export default function Home() {
   const home = useHome()
   const configuration = home.data?.configuration
-  const libraryElements = configuration?.elements.filter((element) => element.kind === "library" && element.available && element.enabled) ?? []
-  const shelves = useLibraryShelves(libraryElements.map((element) => element.id))
+  const shown = configuration?.elements.filter((element) => element.available && element.enabled) ?? []
+  const shelves = useLibraryShelves(shown.filter((element) => element.kind === "library").map((element) => element.id))
   const watching = configuration?.elements.find((element) => element.kind === "builtIn" && element.id === "watching")
   const upcomingElement = configuration?.elements.find((element) => element.kind === "builtIn" && element.id === "upcoming")
   const watchingEnabled = Boolean(watching?.enabled && watching.available)
@@ -319,7 +319,7 @@ export default function Home() {
   if (home.error && !home.data) return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Could not load your home page" description={home.error.message} action={<Button variant="outline" onClick={() => void home.refetch()}>Try again</Button>} /></div>
   if (home.isPending || !configuration) return <HomeSkeleton />
 
-  const configured = configuration.billboard || configuration.elements.some((element) => element.available && element.enabled)
+  const configured = configuration.billboard || shown.length > 0
   if (!configured) return <DisabledHome />
 
   const continueWatching = configuration.watching.continueWatching
@@ -327,18 +327,18 @@ export default function Home() {
     : []
   const nextUp = configuration.watching.nextUp ? resume.data?.nextUp ?? [] : []
   const featured = billboardEnabled ? billboard.data?.items ?? [] : []
-  const shelvesPending = shelves.some((shelf) => shelf.isPending)
-  const hasShelves = shelves.some((shelf) => Boolean(shelf.data?.items.length))
+  const shelvesPending = [...shelves.values()].some((shelf) => shelf.isPending)
+  const hasShelves = [...shelves.values()].some((shelf) => Boolean(shelf.data?.items.length))
   const hasRows = home.data.rows.length > 0 || continueWatching.length > 0 || nextUp.length > 0 || upcoming.length > 0 || hasShelves
   if (!featured.length && !hasRows && !shelvesPending) return <EmptyHome />
 
   return <div className="home-page flex h-full flex-col">{featured.length > 0 && <Billboard items={featured} />}<div className={cn("relative z-10 flex flex-col gap-9 pb-12", featured.length > 0 && "-mt-20")}>
-    {configuration.elements.filter((element) => element.available && element.enabled).map((element) => {
+    {shown.map((element) => {
       if (element.kind === "builtIn" && element.id === "watching") return <WatchingRows key="watching" continueWatching={continueWatching} nextUp={nextUp} combine={configuration.watching.combine} />
       if (element.kind === "builtIn" && element.id === "upcoming") return <UpcomingRow key="upcoming" entries={upcoming} />
       if (element.kind === "library") {
-        const shelf = shelves[libraryElements.indexOf(element)]
-        return <LibraryShelf key={`library:${element.id}`} element={element} latest={shelf.data} pending={shelf.isPending} />
+        const shelf = shelves.get(element.id)
+        return <LibraryShelf key={`library:${element.id}`} element={element} latest={shelf?.data} pending={Boolean(shelf?.isPending)} />
       }
       const row = home.data.rows.find((candidate) => matches(candidate, element))
       return row ? <Row key={`${element.kind}:${element.id}`} row={row} landscape={row.kind === "builtIn" && row.id === "recentlyAddedShows"} /> : null
