@@ -581,11 +581,11 @@ impl CompanionSession {
         Ok(value)
     }
 
-    pub fn seerr_cancel_request(&self, request_id: i64) -> Result<Value, ApiError> {
+    pub fn seerr_cancel_request(&self, request_id: i64) -> Result<(), ApiError> {
         self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
         self.client()?
             .companion_delete_once(&format!("/MediaFlick/seerr/request/{request_id}"))?;
-        Ok(json!({ "cancelled": true, "id": request_id }))
+        Ok(())
     }
 }
 

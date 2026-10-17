@@ -15,10 +15,30 @@ pub(super) fn route(
     Some(response)
 }
 
+/// `/api/shell/window/ready`: the shell queued the request.
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct ShellQueued {
+    queued: bool,
+}
+
+/// A shell request the UI later matches to its event by `requestId`.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ShellRequestQueued {
+    request_id: String,
+    queued: bool,
+}
+
+/// `/api/shell/mpv/help`: the mpv help page was handed to the browser.
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct MpvHelpOpened {
+    opened: bool,
+}
+
 fn shell_window_ready(services: &Arc<Services>) -> Handled {
     services.sync.release_startup_hold();
     match services.shell.request(ShellRequest::MainWindowReady) {
-        Ok(()) => Ok(ApiResponse::untyped(json!({ "queued": true }))),
+        Ok(()) => Ok(ApiResponse::ok(ShellQueued { queued: true })),
         Err(error) => Err(ApiResponse::error(503, error)),
     }
 }
@@ -28,9 +48,10 @@ fn shell_file_picker(services: &Arc<Services>, request: &ApiRequest) -> Handled 
     match services.shell.request(ShellRequest::FilePicker {
         request_id: request_id.clone(),
     }) {
-        Ok(()) => Ok(ApiResponse::untyped(
-            json!({ "requestId": request_id, "queued": true }),
-        )),
+        Ok(()) => Ok(ApiResponse::ok(ShellRequestQueued {
+            request_id,
+            queued: true,
+        })),
         Err(error) => Err(ApiResponse::error(503, error)),
     }
 }
@@ -46,16 +67,17 @@ fn shell_install_mpv(services: &Arc<Services>, request: &ApiRequest) -> Handled 
     match services.shell.request(ShellRequest::InstallMpv {
         request_id: request_id.clone(),
     }) {
-        Ok(()) => Ok(ApiResponse::untyped(
-            json!({ "requestId": request_id, "queued": true }),
-        )),
+        Ok(()) => Ok(ApiResponse::ok(ShellRequestQueued {
+            request_id,
+            queued: true,
+        })),
         Err(error) => Err(ApiResponse::error(503, error)),
     }
 }
 
 fn shell_mpv_help() -> Handled {
     super::super::bridge::open_external_link(player_setup::MPV_HELP_URL);
-    Ok(ApiResponse::untyped(json!({ "opened": true })))
+    Ok(ApiResponse::ok(MpvHelpOpened { opened: true }))
 }
 
 #[derive(Deserialize)]

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use super::{CollectionSource, MediaType, RefreshCadence, ResultLimit, TemplateReference};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub enum TemplateCategory {
     Trending,
@@ -19,7 +19,7 @@ pub enum TemplateCategory {
     Custom,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub enum TemplatePictogram {
     Award,
@@ -79,7 +79,7 @@ impl TemplateCategory {
     ];
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionTemplate {
     #[serde(flatten)]

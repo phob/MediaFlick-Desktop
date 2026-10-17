@@ -80,6 +80,21 @@ export type Capabilities = {
   mpvInstaller: boolean,
 };
 
+export type ClassifiedTitle = {
+  localItems: Array<LocalItem>,
+  title: string,
+  originalTitle: string | null,
+  year: number | null,
+  overview: string,
+  releaseDate: string | null,
+  sourceOrder: number,
+  posterPath: string | null,
+  backdropPath: string | null,
+  adult: boolean,
+  mediaType: MediaType,
+  tmdbId: number,
+};
+
 export type ClientView = {
   player: PlayerView,
   playback: PlaybackView,
@@ -93,6 +108,97 @@ export type CloseBehavior =
 export type CollectionMode =
   | "mediaFlick"
   | "jellyfin";
+
+export type CollectionProfile = {
+  id: string,
+  revision: string,
+  template: TemplateReference,
+  title: string,
+  description: string,
+  customPosterId: string | null,
+  source: CollectionSource,
+  mediaType: MediaType,
+  limit: ResultLimit,
+  cadence: RefreshCadence,
+  availableOnHome: boolean,
+};
+
+export type CollectionProfileDetail = {
+  profile: CollectionProfile,
+  status: ResultsStatus,
+  owned: Array<ClassifiedTitle>,
+  missing: Array<NormalizedTitle>,
+  items: Array<NormalizedTitle>,
+  libraryItems: Array<ItemSummary>,
+  /**
+   * Sent only once results are ready.
+   */
+  ownershipAvailable?: boolean,
+  refresh: RefreshState,
+  /**
+   * Sent only once results are ready.
+   */
+  overdue?: boolean,
+};
+
+export type CollectionProfilesIndex = {
+  profiles: Array<CollectionProfile>,
+  errors: { [key in string]: string },
+};
+
+export type CollectionRecovery = {
+  damagedPath: string,
+  restoredBackup: boolean,
+};
+
+export type CollectionSettings = {
+  effectiveMode: CollectionMode,
+  mediaFlickAvailable: boolean,
+  modeSelection: CollectionMode | null,
+  franchises: FranchiseSettings,
+  recovery: CollectionRecovery | null,
+  readiness: ProviderReadiness,
+};
+
+export type CollectionSource =
+  | { "kind": "tmdbDiscover", parameters: { [key in string]: JsonValue } }
+  | { "kind": "tmdbCollection", collectionId: number, includeUnreleased: boolean }
+  | { "kind": "mdbListPublicList", listId: string };
+
+export type CollectionTemplate = {
+  title: string,
+  description: string,
+  category: TemplateCategory,
+  pictogram: TemplatePictogram,
+  source: CollectionSource,
+  mediaType: MediaType,
+  limit: ResultLimit,
+  cadence: RefreshCadence,
+  id: string,
+};
+
+export type CollectionTemplateOption = {
+  template: CollectionTemplate,
+  /**
+   * The provider the template reads from is ready.
+   */
+  available: boolean,
+};
+
+export type CollectionTemplates = {
+  categories: Array<TemplateCategory>,
+  templates: Array<CollectionTemplateOption>,
+  readiness: ProviderReadiness,
+};
+
+export type CollectionTitle = {
+  item: NormalizedTitle,
+};
+
+export type CommittedProfile = {
+  profile: CollectionProfile,
+  total: number,
+};
 
 export type CompanionInfo = {
   pluginVersion: string,
@@ -155,6 +261,37 @@ export type FilterKey =
 export type FilterOptions = {
   genres: Array<string>,
   officialRatings: Array<string>,
+};
+
+export type FranchiseCollection = {
+  collectionId: number,
+  name: string,
+  posterPath: string | null,
+  backdropPath: string | null,
+  owned: Array<ClassifiedTitle>,
+  missing: Array<NormalizedTitle>,
+  items: Array<NormalizedTitle>,
+  libraryItems: Array<ItemSummary>,
+  ownershipAvailable: boolean,
+};
+
+export type FranchiseCollectionSummary = {
+  collectionId: number,
+  name: string,
+  posterPath: string | null,
+  backdropPath: string | null,
+  ownedCount: number,
+  missingCount: number,
+  ownershipAvailable: boolean,
+};
+
+export type FranchiseCollectionsIndex = {
+  status: ResultsStatus,
+  franchises: Array<FranchiseCollectionSummary>,
+};
+
+export type FranchiseSettings = {
+  includeUnreleased: boolean,
 };
 
 export type FullscreenBehavior =
@@ -339,6 +476,35 @@ export type ItemTechnical = {
   mediaStreams: Array<MediaStreamView>,
 };
 
+export type JellyfinCollectionDetail = {
+  id: string,
+  name: string,
+  primaryImageTag: string | null,
+  backdropImageTag: string | null,
+  items: Array<ItemSummary>,
+  totalRecordCount: number,
+};
+
+export type JellyfinCollectionSummary = {
+  id: string,
+  name: string,
+  primaryImageTag: string | null,
+  backdropImageTag: string | null,
+  itemCount: number | null,
+};
+
+export type JellyfinCollections = {
+  collections: Array<JellyfinCollectionSummary>,
+};
+
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | Array<JsonValue>
+  | { [key in string]: JsonValue };
+
 export type LetterboxdProfileRemoved = {
   removed: boolean,
 };
@@ -407,6 +573,13 @@ export type LibraryView = {
   browse: BrowseCapabilities,
 };
 
+export type LocalItem = {
+  id: string,
+  name: string,
+  kind: string,
+  played: boolean,
+};
+
 export type MediaInfoResponse = {
   sources: Array<MediaSourceView>,
   playbackPreference: ResolvedPlaybackPreference | null,
@@ -447,6 +620,11 @@ export type MediaStreamView = {
   isExternal: boolean,
 };
 
+export type MediaType =
+  | "movie"
+  | "series"
+  | "mixed";
+
 export type MemberReview = {
   profileId: string,
   username: string,
@@ -469,6 +647,20 @@ export type MemberReview = {
   stale: boolean,
 };
 
+export type MovieCollection = {
+  tmdbId: number,
+  collection: MovieFranchise | null,
+};
+
+export type MovieFranchise = {
+  id: number,
+  name: string,
+};
+
+export type MpvHelpOpened = {
+  opened: boolean,
+};
+
 export type NextEpisode =
   | "off"
   | "ask"
@@ -487,6 +679,20 @@ export type NormalizedRating = {
   score: number | null,
   votes: number | null,
   scaleMax: number,
+};
+
+export type NormalizedTitle = {
+  title: string,
+  originalTitle: string | null,
+  year: number | null,
+  overview: string,
+  releaseDate: string | null,
+  sourceOrder: number,
+  posterPath: string | null,
+  backdropPath: string | null,
+  adult: boolean,
+  mediaType: MediaType,
+  tmdbId: number,
 };
 
 export type OfficialRatings = {
@@ -520,11 +726,24 @@ export type Platform =
   | "linux"
   | "other";
 
+export type PlayStarted = {
+  started: boolean,
+  itemId?: string,
+  playMethod?: string,
+  mediaSource?: string,
+  startTicks?: number,
+};
+
 export type PlaybackDiagnostics = {
   bufferedUntilMs: number | null,
   buffering: boolean,
   droppedFrames: number | null,
   frameRate: number | null,
+};
+
+export type PlaybackNeighbors = {
+  previous: ItemSummary | null,
+  next: ItemSummary | null,
 };
 
 export type PlaybackPreferenceSaved = {
@@ -568,6 +787,10 @@ export type PlayerComfort = {
   subtitlesKey: string,
   seekBackThirtyKey: string,
   seekForwardThirtyKey: string,
+};
+
+export type PlayerCommandAccepted = {
+  accepted: boolean,
 };
 
 export type PlayerCommandBody =
@@ -632,10 +855,41 @@ export type PlayerView = {
   playerConfigured: boolean,
 };
 
+export type ProfileDeleted = {
+  deleted: boolean,
+};
+
 export type ProviderIds = {
   tmdb: string | null,
   imdb: string | null,
   tvdb: string | null,
+};
+
+export type ProviderReadiness = {
+  tmdb: boolean,
+  mdblist: boolean,
+};
+
+export type ProviderResult = {
+  items: Array<NormalizedTitle>,
+  total: number,
+  movies: number,
+  series: number,
+  sourceIdentity: string | null,
+};
+
+export type QuickConnectPoll = {
+  authenticated: boolean,
+  /**
+   * Sent once the code was approved and the session signed in.
+   */
+  session?: SessionStatus,
+};
+
+export type QuickConnectStart = {
+  serverUrl: string,
+  code: string,
+  secret: string,
 };
 
 export type RatingFormat =
@@ -685,6 +939,20 @@ export type Recovery = {
   restoredBackup: boolean,
 };
 
+export type RefreshCadence =
+  | "manual"
+  | "daily"
+  | "weekly"
+  | "monthly";
+
+export type RefreshState = {
+  lastAttempt: number | null,
+  lastSuccess: number | null,
+  latestFailure: string | null,
+  nextDue: number | null,
+  initialized: boolean,
+};
+
 export type ResolvedPlaybackPreference = {
   mediaSourceId: string | null,
   mediaSourceIndex: number,
@@ -696,6 +964,15 @@ export type ResolvedPlaybackPreference = {
   subtitleStreamIndex: number | null,
 };
 
+export type ResultLimit =
+  | { "kind": "all" }
+  | { "kind": "maximum", count: number };
+
+export type ResultsStatus =
+  | "updating"
+  | "resultsUnavailable"
+  | "ready";
+
 export type Retry = {
   reason: SyncFailure,
   retryAt: number,
@@ -705,6 +982,11 @@ export type ReviewLookup = {
   reviews: Array<MemberReview>,
   configuredProfiles: number,
   unavailableProfiles: number,
+};
+
+export type SeerrRequestCancelled = {
+  cancelled: boolean,
+  id: number,
 };
 
 export type SegmentSkipMode =
@@ -719,12 +1001,38 @@ export type SegmentType =
   | "recap"
   | "commercial";
 
+export type ServerInfo = {
+  serverUrl: string,
+  serverName: string,
+  version: string,
+  quickConnect: boolean,
+};
+
+export type SessionStatus = {
+  authenticated: boolean,
+  expired: boolean,
+  serverUrl: string | null,
+  serverName: string | null,
+  userId: string | null,
+  userName: string | null,
+  deviceId: string,
+};
+
 export type SettingsView = {
   client: ClientView,
   appearance: AppearanceView,
   capabilities: Capabilities,
   recoveries: Array<Recovery>,
   serverUrl: string | null,
+};
+
+export type ShellQueued = {
+  queued: boolean,
+};
+
+export type ShellRequestQueued = {
+  requestId: string,
+  queued: boolean,
 };
 
 export type SkipSegment = {
@@ -812,8 +1120,70 @@ export type SyncProgress = {
   retry: Retry | null,
 };
 
+export type SyncRequested = {
+  requested: boolean,
+};
+
 export type TechnicalBatch = {
   items: Array<ItemTechnical>,
+};
+
+export type TemplateCategory =
+  | "trending"
+  | "popular"
+  | "streamingServices"
+  | "topRated"
+  | "inTheaters"
+  | "upcoming"
+  | "onAir"
+  | "editorial"
+  | "custom";
+
+export type TemplatePictogram =
+  | "award"
+  | "binary"
+  | "blocks"
+  | "bone"
+  | "bookOpen"
+  | "briefcase"
+  | "bug"
+  | "calendarClock"
+  | "calendarDays"
+  | "circle"
+  | "compass"
+  | "crosshair"
+  | "drama"
+  | "film"
+  | "flame"
+  | "ghost"
+  | "heart"
+  | "landmark"
+  | "languages"
+  | "laugh"
+  | "listVideo"
+  | "monitorPlay"
+  | "mountain"
+  | "music"
+  | "orbit"
+  | "palette"
+  | "pawPrint"
+  | "popcorn"
+  | "rocket"
+  | "search"
+  | "slidersHorizontal"
+  | "sparkles"
+  | "star"
+  | "swords"
+  | "telescope"
+  | "trendingUp"
+  | "trophy"
+  | "tv"
+  | "usersRound"
+  | "wandSparkles"
+  | "zap";
+
+export type TemplateReference = {
+  id: string,
 };
 
 export type TitleDetail = {
@@ -885,6 +1255,10 @@ export type TrailerSummary = {
   id: string | null,
   name: string,
   embedUrl: string | null,
+};
+
+export type UploadedArtwork = {
+  id: string,
 };
 
 export type VideoAspectBody =

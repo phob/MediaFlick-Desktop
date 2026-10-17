@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use serde::Deserialize;
 
 use super::*;
@@ -6,10 +9,78 @@ use crate::collections::profiles::{
     result_configuration_changed,
 };
 use crate::collections::snapshots::{RefreshState, SnapshotRepository};
+use crate::collections::templates::{CollectionTemplate, TemplateCategory};
 use crate::collections::{
     CollectionMode, CollectionProfile, CollectionSnapshot, CollectionSource, MediaType,
-    RefreshCadence, ResultLimit, TemplateReference,
+    ProviderReadiness, ProviderResult, RefreshCadence, ResultLimit, TemplateReference,
 };
+use crate::preferences::FranchiseSettings;
+
+/// `/api/collections/settings`: which collection experience the account
+/// sees, and whether MediaFlick collections can be offered.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(in super::super) struct CollectionSettings {
+    effective_mode: CollectionMode,
+    media_flick_available: bool,
+    mode_selection: Option<CollectionMode>,
+    franchises: FranchiseSettings,
+    recovery: Option<CollectionRecovery>,
+    readiness: ProviderReadiness,
+}
+
+/// A damaged `collections.json` was set aside on load.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct CollectionRecovery {
+    damaged_path: PathBuf,
+    restored_backup: bool,
+}
+
+/// `/api/collections/templates`: every template, in category order.
+#[derive(Serialize, ts_rs::TS)]
+pub(in super::super) struct CollectionTemplates {
+    categories: Vec<TemplateCategory>,
+    templates: Vec<CollectionTemplateOption>,
+    readiness: ProviderReadiness,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+struct CollectionTemplateOption {
+    template: CollectionTemplate,
+    /// The provider the template reads from is ready.
+    available: bool,
+}
+
+/// The account's collection profiles, with each invalid one's reason by
+/// profile id.
+#[derive(Serialize, ts_rs::TS)]
+pub(in super::super) struct CollectionProfilesIndex {
+    pub(super) profiles: Vec<CollectionProfile>,
+    pub(super) errors: HashMap<String, String>,
+}
+
+impl CollectionProfilesIndex {
+    pub(super) fn of(services: &Services, account: &AccountKey) -> Self {
+        Self {
+            profiles: services.collections.account(account).profiles,
+            errors: services.collections.profile_errors(account),
+        }
+    }
+}
+
+/// A profile whose results were fetched and committed, with the number of
+/// titles the account can see.
+#[derive(Serialize, ts_rs::TS)]
+pub(in super::super) struct CommittedProfile {
+    profile: CollectionProfile,
+    total: u32,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub(in super::super) struct ProfileDeleted {
+    deleted: bool,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -63,17 +134,17 @@ pub(super) fn settings(services: &Arc<Services>, force_probe: bool) -> Handled {
         .effective_mode(&account, &readiness, has_results);
     let settings = services.collections.account(&account);
     let recovery = services.collections.take_recovery_notice();
-    Ok(ApiResponse::untyped(json!({
-        "effectiveMode": effective_mode,
-        "mediaFlickAvailable": readiness.tmdb || !settings.profiles.is_empty() || has_results,
-        "modeSelection": settings.mode_selection,
-        "franchises": settings.franchises,
-        "recovery": recovery.map(|notice| json!({
-            "damagedPath": notice.damaged_path,
-            "restoredBackup": notice.restored_backup,
-        })),
-        "readiness": readiness,
-    })))
+    Ok(ApiResponse::ok(CollectionSettings {
+        effective_mode,
+        media_flick_available: readiness.tmdb || !settings.profiles.is_empty() || has_results,
+        mode_selection: settings.mode_selection,
+        franchises: settings.franchises,
+        recovery: recovery.map(|notice| CollectionRecovery {
+            damaged_path: notice.damaged_path,
+            restored_backup: notice.restored_backup,
+        }),
+        readiness,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -144,14 +215,17 @@ pub(super) fn templates(services: &Arc<Services>) -> Handled {
                 crate::collections::Provider::Tmdb => readiness.tmdb,
                 crate::collections::Provider::MdbList => readiness.mdblist,
             };
-            json!({ "template": template, "available": available })
+            CollectionTemplateOption {
+                template,
+                available,
+            }
         })
-        .collect::<Vec<_>>();
-    Ok(ApiResponse::untyped(json!({
-        "categories": crate::collections::templates::TemplateCategory::ORDER,
-        "templates": templates,
-        "readiness": readiness,
-    })))
+        .collect();
+    Ok(ApiResponse::ok(CollectionTemplates {
+        categories: TemplateCategory::ORDER.to_vec(),
+        templates,
+        readiness,
+    }))
 }
 
 pub(super) fn preview(services: &Arc<Services>, request: &ApiRequest) -> Handled {
@@ -203,38 +277,34 @@ pub(super) fn preview(services: &Arc<Services>, request: &ApiRequest) -> Handled
         .unwrap_or(u32::MAX);
         let series = total.saturating_sub(movies);
         items.truncate(24);
-        return Ok(ApiResponse::untyped(json!(
-            crate::collections::ProviderResult {
-                items,
-                total,
-                movies,
-                series,
-                source_identity: result.source_identity,
-            }
-        )));
+        return Ok(ApiResponse::ok(ProviderResult {
+            items,
+            total,
+            movies,
+            series,
+            source_identity: result.source_identity,
+        }));
     }
     match services
         .companion
         .preview_collection(&provider_request(services, &profile))
     {
-        Ok(result) => Ok(ApiResponse::untyped(json!(result))),
+        Ok(result) => Ok(ApiResponse::ok(result)),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
 pub(super) fn list(services: &Arc<Services>) -> Handled {
     let account = active_account(services)?;
-    let settings = services.collections.account(&account);
-    let errors = services.collections.profile_errors(&account);
-    Ok(ApiResponse::untyped(
-        json!({ "profiles": settings.profiles, "errors": errors }),
-    ))
+    Ok(ApiResponse::ok(CollectionProfilesIndex::of(
+        services, &account,
+    )))
 }
 
 pub(super) fn read(services: &Arc<Services>, profile_id: &str) -> Handled {
     let account = active_account(services)?;
     match profile(services, &account, profile_id) {
-        Some(profile) => Ok(ApiResponse::untyped(json!(profile))),
+        Some(profile) => Ok(ApiResponse::ok(profile)),
         None => Err(ApiResponse::error(404, "that collection does not exist")),
     }
 }
@@ -290,7 +360,7 @@ pub(super) fn edit(services: &Arc<Services>, profile_id: &str, request: &ApiRequ
                 Ok(match services.collections.save_profile(&account, next) {
                     Ok(profile) => {
                         update_next_due(services, &account, &profile);
-                        ApiResponse::untyped(json!(profile))
+                        ApiResponse::ok(profile)
                     }
                     Err(error) => {
                         remove_unreferenced_artwork(services, &account, staged_artwork.as_deref());
@@ -348,7 +418,7 @@ pub(super) fn delete(services: &Arc<Services>, profile_id: &str) -> Handled {
                         tracing::warn!(target: "collections", "could not remove collection cache: {error}");
                     }
                     match services.accounts.forget_home_collection(&account, profile_id) {
-                        Ok(()) => ApiResponse::untyped(json!({ "deleted": true })),
+                        Ok(()) => ApiResponse::ok(ProfileDeleted { deleted: true }),
                         Err(error) => configuration_failure(&error),
                     }
                 }
@@ -367,14 +437,7 @@ pub(super) fn reorder(services: &Arc<Services>, request: &ApiRequest) -> Handled
         .commit_if_current(&scope, stale_account_response, || {
             Ok(
                 match services.collections.reorder_profiles(&account, &ids) {
-                    Ok(()) => {
-                        let settings = services.collections.account(&account);
-                        let errors = services.collections.profile_errors(&account);
-                        ApiResponse::untyped(json!({
-                            "profiles": settings.profiles,
-                            "errors": errors,
-                        }))
-                    }
+                    Ok(()) => ApiResponse::ok(CollectionProfilesIndex::of(services, &account)),
                     Err(error) => configuration_failure(&error),
                 },
             )
@@ -479,9 +542,10 @@ fn commit_result_profile(
                     initialized: true,
                 },
             );
-            Ok(ApiResponse::untyped(
-                json!({ "profile": profile, "total": visible_total }),
-            ))
+            Ok(ApiResponse::ok(CommittedProfile {
+                profile,
+                total: visible_total,
+            }))
         })
         .unwrap_or_else(|response| response)
 }

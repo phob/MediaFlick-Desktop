@@ -3,6 +3,15 @@ use super::*;
 mod browse;
 mod profiles;
 
+pub(super) use browse::{
+    CollectionProfileDetail, CollectionTitle, FranchiseCollection, FranchiseCollectionsIndex,
+    MovieCollection,
+};
+pub(super) use profiles::{
+    CollectionProfilesIndex, CollectionSettings, CollectionTemplates, CommittedProfile,
+    ProfileDeleted,
+};
+
 pub(super) fn route(
     services: &Arc<Services>,
     segments: &[&str],
@@ -109,19 +118,57 @@ fn active_account(services: &Arc<Services>) -> Result<AccountKey, ApiResponse> {
     active_scope(services).map(|scope| scope.account().clone())
 }
 
+/// `/api/collections/jellyfin`: the server's own box sets.
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct JellyfinCollections {
+    collections: Vec<JellyfinCollectionSummary>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct JellyfinCollectionSummary {
+    id: String,
+    name: String,
+    primary_image_tag: Option<String>,
+    backdrop_image_tag: Option<String>,
+    item_count: Option<i64>,
+}
+
+/// `/api/collections/jellyfin/{id}`: one box set and its children.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct JellyfinCollectionDetail {
+    id: String,
+    name: String,
+    primary_image_tag: Option<String>,
+    backdrop_image_tag: Option<String>,
+    items: Vec<ItemSummary>,
+    total_record_count: i64,
+}
+
+/// `/api/collections/artwork`: the staged custom poster's id.
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct UploadedArtwork {
+    id: String,
+}
+
 fn jellyfin_index(services: &Arc<Services>) -> Handled {
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_box_sets(client, user_id) {
-        Ok(response) => Ok(ApiResponse::untyped(json!({
-            "collections": response.items.iter().map(|item| json!({
-                "id": item.id,
-                "name": item.display_name(),
-                "primaryImageTag": item.primary_image_tag(),
-                "backdropImageTag": item.backdrop_image_tags.first(),
-                "itemCount": item.child_count,
-            })).collect::<Vec<_>>(),
-        }))),
+        Ok(response) => Ok(ApiResponse::ok(JellyfinCollections {
+            collections: response
+                .items
+                .iter()
+                .map(|item| JellyfinCollectionSummary {
+                    id: item.id.clone(),
+                    name: item.display_name().to_string(),
+                    primary_image_tag: item.primary_image_tag().map(str::to_string),
+                    backdrop_image_tag: item.backdrop_image_tags.first().cloned(),
+                    item_count: item.child_count,
+                })
+                .collect(),
+        })),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
@@ -146,14 +193,14 @@ fn jellyfin_detail(services: &Arc<Services>, id: &str) -> Handled {
         Err(error) => return Err(scoped_failure(services, &scope, &error)),
     };
     match items::fetch_box_set_children(client, user_id, id) {
-        Ok(children) => Ok(ApiResponse::untyped(json!({
-            "id": set.id,
-            "name": set.display_name(),
-            "primaryImageTag": set.primary_image_tag(),
-            "backdropImageTag": set.backdrop_image_tags.first(),
-            "items": children.items.iter().map(ItemSummary::from_dto).collect::<Vec<_>>(),
-            "totalRecordCount": children.total_record_count,
-        }))),
+        Ok(children) => Ok(ApiResponse::ok(JellyfinCollectionDetail {
+            name: set.display_name().to_string(),
+            primary_image_tag: set.primary_image_tag().map(str::to_string),
+            backdrop_image_tag: set.backdrop_image_tags.first().cloned(),
+            items: children.items.iter().map(ItemSummary::from_dto).collect(),
+            total_record_count: children.total_record_count,
+            id: set.id,
+        })),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
@@ -174,7 +221,7 @@ fn upload_artwork(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         Ok(id) => match services
             .session
             .commit_if_current(&scope, stale_account_response, || {
-                Ok(ApiResponse::untyped(json!({ "id": &id })))
+                Ok(ApiResponse::ok(UploadedArtwork { id: id.clone() }))
             }) {
             Ok(response) => Ok(response),
             Err(response) => {

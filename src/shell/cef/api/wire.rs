@@ -11,9 +11,11 @@ use ts_rs::TS;
 
 use crate::jellyfin::api::ApiError;
 
+use crate::collections::{CollectionProfile, ProviderResult};
 use crate::companion::CompanionStatus;
 use crate::integrations::letterboxd::ReviewLookup;
 use crate::integrations::mdblist::{RatingsBatchResponse, RatingsIntegrationStatus};
+use crate::jellyfin::session::{QuickConnectPoll, QuickConnectStart, ServerInfo};
 use crate::library::ItemPage;
 use crate::library::browse::FilterOptions;
 use crate::library::model::{DetailView, ItemSummary};
@@ -23,14 +25,24 @@ use super::catalog::{
     Billboard, Genres, HomeResponse, HomeResumeResponse, HomeSettingsResponse, ItemAbout,
     ItemLetters, ItemSynopsis, OfficialRatings, PersonResolution,
 };
+use super::collections::{
+    CollectionProfileDetail, CollectionProfilesIndex, CollectionSettings, CollectionTemplates,
+    CollectionTitle, CommittedProfile, FranchiseCollection, FranchiseCollectionsIndex,
+    JellyfinCollectionDetail, JellyfinCollections, MovieCollection, ProfileDeleted,
+    UploadedArtwork,
+};
 use super::letterboxd::{LetterboxdProfileRemoved, LetterboxdProfileSaved, LetterboxdProfiles};
 use super::libraries::{LibrariesResponse, LibraryLatest};
 use super::media::{
     ExternalLinkOpened, FavoriteState, MediaInfoResponse, NextUpResponse, PlaybackPreferenceSaved,
     PlayedState, TechnicalBatch, TrailerResponse,
 };
-use super::playback::PlayerCommandBody;
+use super::playback::{
+    PlayStarted, PlaybackNeighbors, PlayerCommandAccepted, PlayerCommandBody, SyncRequested,
+};
+use super::seerr::SeerrRequestCancelled;
 use super::settings::{BrowsingRoutes, BrowsingSaved, SettingsView, ViewingView};
+use super::shell::{MpvHelpOpened, ShellQueued, ShellRequestQueued};
 use super::{ApiRequest, ApiResponse, AppStatus, NO_STORE, StartupResponse};
 
 /// A type the UI reads or sends by name. Only [`wire_types!`] implements it,
@@ -66,11 +78,20 @@ wire_types! {
     Billboard,
     BrowsingRoutes,
     BrowsingSaved,
+    CollectionProfile,
+    CollectionProfileDetail,
+    CollectionProfilesIndex,
+    CollectionSettings,
+    CollectionTemplates,
+    CollectionTitle,
+    CommittedProfile,
     CompanionStatus,
     DetailView,
     ExternalLinkOpened,
     FavoriteState,
     FilterOptions,
+    FranchiseCollection,
+    FranchiseCollectionsIndex,
     Genres,
     HomeResponse,
     HomeResumeResponse,
@@ -80,26 +101,43 @@ wire_types! {
     ItemPage,
     ItemSummary,
     ItemSynopsis,
+    JellyfinCollectionDetail,
+    JellyfinCollections,
     LetterboxdProfileRemoved,
     LetterboxdProfileSaved,
     LetterboxdProfiles,
     LibrariesResponse,
     LibraryLatest,
     MediaInfoResponse,
+    MovieCollection,
+    MpvHelpOpened,
     NextUpResponse,
     OfficialRatings,
     PersonResolution,
+    PlayStarted,
+    PlaybackNeighbors,
     PlaybackPreferenceSaved,
     PlayedState,
+    PlayerCommandAccepted,
     PlayerCommandBody,
     PlayerSnapshot,
+    ProfileDeleted,
+    ProviderResult,
+    QuickConnectPoll,
+    QuickConnectStart,
     RatingsBatchResponse,
     RatingsIntegrationStatus,
     ReviewLookup,
+    SeerrRequestCancelled,
+    ServerInfo,
     SettingsView,
+    ShellQueued,
+    ShellRequestQueued,
     StartupResponse,
+    SyncRequested,
     TechnicalBatch,
     TrailerResponse,
+    UploadedArtwork,
     ViewingView,
 }
 
@@ -199,7 +237,7 @@ mod tests {
     /// Handlers that predate this module answer through `ApiResponse::untyped`
     /// and decode through `ApiRequest::untyped_body`. Moving one to a wire
     /// type lowers these; nothing raises them.
-    const UNTYPED_RESPONSES: usize = 41; // guard-ratchet
+    const UNTYPED_RESPONSES: usize = 6; // guard-ratchet
     const UNTYPED_BODIES: usize = 32; // guard-ratchet
 
     struct Collect<'a> {

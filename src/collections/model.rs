@@ -14,7 +14,7 @@ pub enum CollectionMode {
     Jellyfin,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub enum MediaType {
     #[default]
@@ -33,7 +33,7 @@ impl MediaType {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub enum RefreshCadence {
     #[default]
@@ -43,7 +43,7 @@ pub enum RefreshCadence {
     Monthly,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ResultLimit {
     #[default]
@@ -53,13 +53,19 @@ pub enum ResultLimit {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateReference {
     pub id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Names any JSON value for the generated TypeScript, which has no type for
+/// `serde_json::Value`. Nothing constructs it.
+#[derive(ts_rs::TS)]
+#[ts(type = "string | number | boolean | null | Array<JsonValue> | { [key in string]: JsonValue }")]
+pub enum JsonValue {}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -68,6 +74,7 @@ pub struct TemplateReference {
 pub enum CollectionSource {
     TmdbDiscover {
         #[serde(default)]
+        #[ts(as = "BTreeMap<String, JsonValue>")]
         parameters: BTreeMap<String, Value>,
     },
     TmdbCollection {
@@ -188,7 +195,7 @@ pub enum Provider {
     MdbList,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionProfile {
     pub id: String,
@@ -265,7 +272,7 @@ fn title_sort_key(value: &str) -> String {
     value.to_lowercase()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CanonicalIdentity {
     pub media_type: MediaType,
@@ -284,7 +291,7 @@ impl CanonicalIdentity {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NormalizedTitle {
     #[serde(flatten)]
@@ -316,7 +323,7 @@ pub struct CollectionSnapshot {
     pub items: Vec<NormalizedTitle>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalItem {
     pub id: String,
@@ -325,7 +332,7 @@ pub struct LocalItem {
     pub played: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ClassifiedTitle {
     #[serde(flatten)]
@@ -342,14 +349,14 @@ pub struct ClassifiedSnapshot {
     pub ownership_available: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProviderReadiness {
     pub tmdb: bool,
     pub mdblist: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProviderResult {
     pub items: Vec<NormalizedTitle>,

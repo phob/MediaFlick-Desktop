@@ -48,7 +48,7 @@ struct LogoutBody {
 fn auth_connect(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let body = request.untyped_body::<ServerBody>()?;
     match services.session.connect(&body.server) {
-        Ok(value) => Ok(ApiResponse::untyped(value)),
+        Ok(server) => Ok(ApiResponse::ok(server)),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
@@ -77,7 +77,7 @@ fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 fn quick_connect_start(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let body = request.untyped_body::<ServerBody>()?;
     match services.session.quick_connect_start(&body.server) {
-        Ok(value) => Ok(ApiResponse::untyped(value)),
+        Ok(start) => Ok(ApiResponse::ok(start)),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
@@ -88,8 +88,8 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> Handled
         .session
         .quick_connect_poll(&body.server, &body.secret);
     match result {
-        Ok(value) => {
-            if value["authenticated"] == json!(true) {
+        Ok(poll) => {
+            if poll.authenticated {
                 remember_server_url(services);
                 activate_account_preferences(services)?;
                 services.companion.clear();
@@ -99,7 +99,7 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> Handled
                 services.sync.request();
                 crate::collections::scheduler::request_run(services.clone());
             }
-            Ok(ApiResponse::untyped(value))
+            Ok(ApiResponse::ok(poll))
         }
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }

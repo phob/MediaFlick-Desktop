@@ -1,12 +1,5 @@
-export interface ServerInfo {
-  serverUrl: string
-  serverName: string | null
-  version: string | null
-  quickConnect: boolean
-}
+import type * as Wire from "../wire.gen.ts"
 
-export interface QuickConnectStart {
-  serverUrl: string
-  code: string
-  secret: string
-}
+export type ServerInfo = Wire.ServerInfo
+
+export type QuickConnectStart = Wire.QuickConnectStart

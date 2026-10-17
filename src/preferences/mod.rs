@@ -17,7 +17,7 @@ pub use accounts::{
     AccountConfigurationService, AccountKey, HomeBuiltIn, HomeElement, HomeElementId, HomeSettings,
     HomeWatchingSettings, accounts_file_path,
 };
-pub use collections::{CollectionConfigurationService, collections_file_path};
+pub use collections::{CollectionConfigurationService, FranchiseSettings, collections_file_path};
 pub use deletions::{PendingDeletion, PendingDeletionService, pending_deletions_file_path};
 pub use json_file::RecoveryNotice;
 pub(crate) use json_file::backup_path;

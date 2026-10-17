@@ -62,7 +62,10 @@ function title(id: number, patch: Partial<NormalizedCollectionTitle> = {}): Norm
     mediaType: "movie",
     tmdbId: id,
     title: `Movie ${id}`,
+    originalTitle: null,
+    year: null,
     overview: "",
+    releaseDate: null,
     sourceOrder: id,
     posterPath: null,
     backdropPath: null,
@@ -81,6 +84,7 @@ function preview(items = [title(603, {
     total: items.length,
     movies: items.filter((item) => item.mediaType === "movie").length,
     series: items.filter((item) => item.mediaType === "series").length,
+    sourceIdentity: null,
   }
 }
 
@@ -97,7 +101,10 @@ function mockPage(options: {
   templates?: CollectionTemplates
 } = {}) {
   vi.spyOn(api.api.collections, "settings").mockResolvedValue(accountSettings)
-  vi.spyOn(api.api.collections, "profiles").mockResolvedValue({ profiles: options.profiles ?? [] })
+  vi.spyOn(api.api.collections, "profiles").mockResolvedValue({
+    profiles: options.profiles ?? [],
+    errors: {},
+  })
   vi.spyOn(api.api.collections, "templates").mockResolvedValue(
     options.templates ?? catalog(template()),
   )
@@ -313,6 +320,7 @@ describe("collection settings management", () => {
     vi.spyOn(api.api.collections, "patchSettings").mockResolvedValue(accountSettings)
     const reorder = vi.spyOn(api.api.collections, "reorderProfiles").mockResolvedValue({
       profiles: [second, first],
+      errors: {},
     })
     page()
 

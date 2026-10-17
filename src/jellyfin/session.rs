@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex, RwLock};
 
 use serde::Serialize;
-use serde_json::{Value, json};
 
 use crate::app::services::ShellBridge;
 use crate::library::{Library, StoredCredentials};
@@ -35,6 +34,34 @@ pub struct SessionStatus {
     pub user_id: Option<String>,
     pub user_name: Option<String>,
     pub device_id: String,
+}
+
+/// The Jellyfin server at a normalized address, before sign-in.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerInfo {
+    pub server_url: String,
+    pub server_name: String,
+    pub version: String,
+    pub quick_connect: bool,
+}
+
+/// A Quick Connect code to show the user, and the secret to poll it with.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickConnectStart {
+    pub server_url: String,
+    pub code: String,
+    pub secret: String,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub struct QuickConnectPoll {
+    pub authenticated: bool,
+    /// Sent once the code was approved and the session signed in.
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<SessionStatus>,
 }
 
 pub struct Session {
@@ -239,7 +266,7 @@ impl Session {
         JellyfinClient::new(server_url, &self.read().device_id, None)
     }
 
-    pub fn connect(&self, server_url: &str) -> Result<Value, ApiError> {
+    pub fn connect(&self, server_url: &str) -> Result<ServerInfo, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
         let client = self.anonymous_client(&normalized);
         let info = auth::public_system_info(&client)?;
@@ -248,12 +275,12 @@ impl Session {
             state.server_url = Some(normalized.clone());
             state.server_name = Some(info.server_name.clone());
         }
-        Ok(json!({
-            "serverUrl": normalized,
-            "serverName": info.server_name,
-            "version": info.version,
-            "quickConnect": quick_connect,
-        }))
+        Ok(ServerInfo {
+            server_url: normalized,
+            server_name: info.server_name,
+            version: info.version,
+            quick_connect,
+        })
     }
 
     pub fn login(
@@ -268,30 +295,40 @@ impl Session {
         self.accept(&normalized, credentials)
     }
 
-    pub fn quick_connect_start(&self, server_url: &str) -> Result<Value, ApiError> {
+    pub fn quick_connect_start(&self, server_url: &str) -> Result<QuickConnectStart, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
         let client = self.anonymous_client(&normalized);
         if !auth::quick_connect_enabled(&client) {
             return Err(ApiError::Status { status: 501 });
         }
         let result = auth::quick_connect_initiate(&client)?;
-        Ok(json!({
-            "serverUrl": normalized,
-            "code": result.code,
-            "secret": result.secret,
-        }))
+        Ok(QuickConnectStart {
+            server_url: normalized,
+            code: result.code,
+            secret: result.secret,
+        })
     }
 
-    pub fn quick_connect_poll(&self, server_url: &str, secret: &str) -> Result<Value, ApiError> {
+    pub fn quick_connect_poll(
+        &self,
+        server_url: &str,
+        secret: &str,
+    ) -> Result<QuickConnectPoll, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
         let client = self.anonymous_client(&normalized);
         let state = auth::quick_connect_state(&client, secret)?;
         if !state.authenticated {
-            return Ok(json!({ "authenticated": false }));
+            return Ok(QuickConnectPoll {
+                authenticated: false,
+                session: None,
+            });
         }
         let credentials = auth::authenticate_with_quick_connect(&client, secret)?;
         let session = self.accept(&normalized, credentials)?;
-        Ok(json!({ "authenticated": true, "session": session }))
+        Ok(QuickConnectPoll {
+            authenticated: true,
+            session: Some(session),
+        })
     }
 
     fn accept(
