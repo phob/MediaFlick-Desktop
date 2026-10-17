@@ -475,11 +475,11 @@ const UNCHECKED_CLAIMS: &[(&str, &str)] = &[
     ("PlayerSettingsPatch.default_fullscreen", FROM_ID),
     (
         "PlayerSettingsPatch.mark_watched_next",
-        "`NullablePatch` decodes like `Option`: `null` clears and a missing key keeps",
+        "`NullablePatch` takes `T` or `null`, which `T | null` types; `null` clears and a missing key keeps",
     ),
     (
         "PlayerSettingsPatch.mpv_path",
-        "`NullablePatch` decodes like `Option`: `null` clears and a missing key keeps",
+        "`NullablePatch` takes `T` or `null`, which `T | null` types; `null` clears and a missing key keeps",
     ),
     ("PlayerSettingsPatch.player_backend", FROM_ID),
     (
