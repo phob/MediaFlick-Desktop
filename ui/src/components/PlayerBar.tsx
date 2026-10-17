@@ -17,7 +17,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react"
-import { useEffect, useEffectEvent, useRef, useState, type PointerEvent, type ReactNode } from "react"
+import { useEffect, useEffectEvent, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import {
@@ -40,7 +40,6 @@ import {
   TICKS_PER_MS,
   imageUrl,
   qualityLabel,
-  type PlayerChapter,
   type PlayerCommand,
   type PlayerSkipSegment,
   type PlayerState,
@@ -51,7 +50,6 @@ import {
   formatBitrate,
   formatCodec,
   formatFileSize,
-  formatLanguage,
   formatResolution,
   formatVideoRange,
 } from "@/lib/format"
@@ -66,8 +64,11 @@ import {
   usePlayerState,
   useSettings,
 } from "@/lib/queries"
+import { SUBTITLES_OFF, TrackMenu, TrackSubmenu, type TrackChoices } from "@/components/player/TrackMenu"
+import { TuningMenu, type PlaybackTuning } from "@/components/player/TuningMenu"
+import { Timeline } from "@/components/player/Timeline"
+import { currentChapter, formatClock, trackLabel } from "@/components/player/format"
 
-const SUBTITLES_OFF = "__off__"
 const TIME_DISPLAY_KEY = "mediaflick.player.time-display"
 
 function savedTimeDisplay() {
@@ -85,27 +86,10 @@ function saveTimeDisplay(value: "elapsed" | "remaining") {
   }
 }
 
-function formatClock(ms: number) {
-  const total = Math.max(0, Math.round(ms / 1000))
-  const hours = Math.floor(total / 3600)
-  const minutes = Math.floor((total % 3600) / 60)
-  const seconds = total % 60
-  const pad = (value: number) => String(value).padStart(2, "0")
-  return hours ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`
-}
-
 function withShortcuts(label: string, fixed: string[], bindings: (string | null | undefined)[] = []) {
   const keys = [...fixed, ...bindings.filter((binding): binding is string => Boolean(binding)).map(shortcutLabel)]
   const unique = keys.filter((key, index) => keys.indexOf(key) === index)
   return unique.length ? `${label} (${unique.join(" or ")})` : label
-}
-
-function trackLabel(track: PlayerTrack, position: number) {
-  const parts = [track.title?.trim(), formatLanguage(track.language), formatCodec(track.codec)]
-    .filter((part): part is string => Boolean(part))
-    .filter((part, index, all) => all.indexOf(part) === index)
-  if (parts.length) return parts.join(" · ")
-  return `${track.kind === "audio" ? "Audio" : "Subtitle"} ${position + 1}`
 }
 
 function playMethodLabel(method: string | null | undefined) {
@@ -134,72 +118,6 @@ function segmentLabel(segment: PlayerSkipSegment) {
   }
 }
 
-function currentChapter(chapters: PlayerChapter[], positionMs: number) {
-  return chapters.reduce<PlayerChapter | null>(
-    (current, chapter) => (chapter.startMs <= positionMs ? chapter : current),
-    null,
-  )
-}
-
-interface TrackChoices {
-  tracks: PlayerTrack[]
-  value: string
-  allowOff?: boolean
-  onValueChange: (value: string) => void
-}
-
-function TrackRadioItems({ tracks, value, allowOff = false, onValueChange }: TrackChoices) {
-  return (
-    <DropdownMenuRadioGroup value={value} onValueChange={onValueChange}>
-      {allowOff && <DropdownMenuRadioItem value={SUBTITLES_OFF}>Off</DropdownMenuRadioItem>}
-      {tracks.map((track, index) => (
-        <DropdownMenuRadioItem key={track.id} value={String(track.id)}>
-          <span className="min-w-0 truncate">{trackLabel(track, index)}</span>
-        </DropdownMenuRadioItem>
-      ))}
-    </DropdownMenuRadioGroup>
-  )
-}
-
-function TrackMenu({
-  icon,
-  label,
-  onOpenChange,
-  ...choices
-}: TrackChoices & {
-  icon: ReactNode
-  label: string
-  onOpenChange?: (open: boolean) => void
-}) {
-  const selected = choices.tracks.find((track) => String(track.id) === choices.value)
-  const title = selected ? `${label}: ${trackLabel(selected, choices.tracks.indexOf(selected))}` : label
-
-  return (
-    <DropdownMenu onOpenChange={onOpenChange}>
-      <DropdownMenuTrigger asChild>
-        <Button variant="secondary" size="icon" title={title} aria-label={label}>
-          {icon}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="end" sideOffset={10} className="w-72">
-        <DropdownMenuLabel>{label}</DropdownMenuLabel>
-        <TrackRadioItems {...choices} />
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-function TrackSubmenu({ label, ...choices }: TrackChoices & { label: string }) {
-  return (
-    <DropdownMenuSub>
-      <DropdownMenuSubTrigger>{label}</DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className="w-72">
-        <TrackRadioItems {...choices} />
-      </DropdownMenuSubContent>
-    </DropdownMenuSub>
-  )
-}
-
 function MuteButton({ muted, volume, title, onToggle, className }: {
   muted: boolean
   volume: number
@@ -221,105 +139,6 @@ function MuteButton({ muted, volume, title, onToggle, className }: {
   )
 }
 
-function Timeline({
-  position,
-  duration,
-  chapters,
-  segments,
-  bufferedUntil,
-  onScrub,
-  onSeek,
-}: {
-  position: number
-  duration: number
-  chapters: PlayerChapter[]
-  segments: PlayerSkipSegment[]
-  bufferedUntil: number | null
-  onScrub: (value: number | null) => void
-  onSeek: (value: number) => void
-}) {
-  const [hoverMs, setHoverMs] = useState<number | null>(null)
-  const previewChapter = hoverMs === null ? null : currentChapter(chapters, hoverMs)
-  const updateHover = (event: PointerEvent<HTMLDivElement>) => {
-    if (!duration) return
-    const bounds = event.currentTarget.getBoundingClientRect()
-    const fraction = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width))
-    const value = fraction * duration
-    setHoverMs(value)
-  }
-  const clearHover = () => setHoverMs(null)
-
-  return (
-    <div
-      className="relative h-10 min-w-24 flex-1"
-      onPointerMove={updateHover}
-      onPointerLeave={clearHover}
-    >
-      {hoverMs !== null && duration > 0 && (
-        <div
-          className="pointer-events-none absolute bottom-full z-30 mb-2 -translate-x-1/2 rounded border bg-popover px-2 py-1 text-center text-xs shadow-lg"
-          style={{ left: `${Math.max(4, Math.min(96, (hoverMs / duration) * 100))}%` }}
-        >
-          <div className="font-medium tabular-nums">{formatClock(hoverMs)}</div>
-          {previewChapter && (
-            <div className="max-w-48 truncate text-muted-foreground">{previewChapter.title}</div>
-          )}
-        </div>
-      )}
-      <div className="pointer-events-none absolute inset-x-2 top-1/2 z-10 h-1.5 -translate-y-1/2 overflow-hidden rounded-full">
-        {duration > 0 && bufferedUntil !== null && (
-          <span
-            className="absolute inset-y-0 left-0 bg-white/20"
-            style={{ width: `${Math.max(0, Math.min(100, (bufferedUntil / duration) * 100))}%` }}
-          />
-        )}
-        {duration > 0 &&
-          segments.map((segment, index) => {
-            const startMs = segment.startTicks / TICKS_PER_MS
-            const endMs = segment.endTicks / TICKS_PER_MS
-            const left = Math.max(0, Math.min(100, (startMs / duration) * 100))
-            const width = Math.max(0, Math.min(100 - left, ((endMs - startMs) / duration) * 100))
-            return (
-              <span
-                key={`${segment.segmentType}-${segment.startTicks}-${index}`}
-                className="absolute inset-y-0 bg-amber-400/55"
-                style={{ left: `${left}%`, width: `${width}%` }}
-              />
-            )
-          })}
-        {duration > 0 &&
-          chapters.map((chapter, index) => (
-            <span
-              key={`${chapter.startMs}-${index}`}
-              className="absolute inset-y-0 w-px bg-white/70"
-              style={{ left: `${Math.max(0, Math.min(100, (chapter.startMs / duration) * 100))}%` }}
-            />
-          ))}
-      </div>
-      <Slider
-        value={[Math.min(position, duration || position)]}
-        max={duration || 1}
-        step={1000}
-        disabled={!duration}
-        aria-label="Playback position"
-        onValueChange={([value]) => onScrub(value)}
-        onValueCommit={([value]) => onSeek(value)}
-        className="player-seek-target h-10 cursor-pointer"
-      />
-    </div>
-  )
-}
-
-interface PlaybackTuning {
-  audioDelay: string
-  subtitleDelay: string
-  subtitleScale: string
-  videoFit: "fit" | "fill"
-  videoAspect: "source" | "4:3" | "16:9" | "21:9"
-  toneMapping: "auto" | "clip" | "mobius" | "reinhard" | "hable" | "bt.2390"
-  deinterlace: boolean
-}
-
 const DEFAULT_TUNING: PlaybackTuning = {
   audioDelay: "0",
   subtitleDelay: "0",
@@ -330,187 +149,8 @@ const DEFAULT_TUNING: PlaybackTuning = {
   deinterlace: false,
 }
 
-function isVideoFit(value: string): value is PlaybackTuning["videoFit"] {
-  return value === "fit" || value === "fill"
-}
-
-function isVideoAspect(value: string): value is PlaybackTuning["videoAspect"] {
-  return value === "source" || value === "4:3" || value === "16:9" || value === "21:9"
-}
-
-function isToneMapping(value: string): value is PlaybackTuning["toneMapping"] {
-  return ["auto", "clip", "mobius", "reinhard", "hable", "bt.2390"].includes(value)
-}
-
 function isStreamingQuality(value: string): value is StreamingQualityId {
   return STREAMING_QUALITIES.some((quality) => quality.id === value)
-}
-
-const DELAYS = ["-2", "-1", "-0.5", "0", "0.5", "1", "2"]
-
-function signedSeconds(value: string) {
-  return `${Number(value) >= 0 ? "+" : ""}${value}s`
-}
-
-function DelaySubmenu({ label, value, onValueChange }: {
-  label: string
-  value: string
-  onValueChange: (value: string) => void
-}) {
-  return (
-    <DropdownMenuSub>
-      <DropdownMenuSubTrigger>{label}</DropdownMenuSubTrigger>
-      <DropdownMenuSubContent>
-        <DropdownMenuRadioGroup value={value} onValueChange={onValueChange}>
-          {DELAYS.map((delay) => (
-            <DropdownMenuRadioItem key={delay} value={delay}>
-              {Number(delay) === 0 ? "No delay" : signedSeconds(delay)}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuSubContent>
-    </DropdownMenuSub>
-  )
-}
-
-function TuningMenu({
-  tuning,
-  onChange,
-}: {
-  tuning: PlaybackTuning
-  onChange: (patch: Partial<PlaybackTuning>, command: PlayerCommand, feedback: string) => void
-}) {
-  return (
-    <>
-      <DelaySubmenu
-        label="Audio delay"
-        value={tuning.audioDelay}
-        onValueChange={(value) => onChange(
-          { audioDelay: value },
-          { command: "set-audio-delay", delaySeconds: Number(value) },
-          `Audio delay ${signedSeconds(value)}`,
-        )}
-      />
-      <DelaySubmenu
-        label="Subtitle delay"
-        value={tuning.subtitleDelay}
-        onValueChange={(value) => onChange(
-          { subtitleDelay: value },
-          { command: "set-subtitle-delay", delaySeconds: Number(value) },
-          `Subtitle delay ${signedSeconds(value)}`,
-        )}
-      />
-      <DropdownMenuSub>
-        <DropdownMenuSubTrigger>Subtitle size</DropdownMenuSubTrigger>
-        <DropdownMenuSubContent>
-          <DropdownMenuRadioGroup
-            value={tuning.subtitleScale}
-            onValueChange={(value) =>
-              onChange(
-                { subtitleScale: value },
-                { command: "set-subtitle-scale", scale: Number(value) },
-                `Subtitle size ${Math.round(Number(value) * 100)}%`,
-              )
-            }
-          >
-            {[
-              ["0.75", "Small"],
-              ["1", "Normal"],
-              ["1.25", "Large"],
-              ["1.5", "Extra large"],
-            ].map(([value, label]) => (
-              <DropdownMenuRadioItem key={value} value={value}>
-                {label}
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        </DropdownMenuSubContent>
-      </DropdownMenuSub>
-      <DropdownMenuSub>
-        <DropdownMenuSubTrigger>Video fit</DropdownMenuSubTrigger>
-        <DropdownMenuSubContent>
-          <DropdownMenuRadioGroup
-            value={tuning.videoFit}
-            onValueChange={(value) => {
-              if (!isVideoFit(value)) return
-              onChange(
-                { videoFit: value },
-                { command: "set-video-fit", fit: value },
-                value === "fill" ? "Video fills the window" : "Video fits the window",
-              )
-            }}
-          >
-            <DropdownMenuRadioItem value="fit">Fit</DropdownMenuRadioItem>
-            <DropdownMenuRadioItem value="fill">Fill and crop</DropdownMenuRadioItem>
-          </DropdownMenuRadioGroup>
-        </DropdownMenuSubContent>
-      </DropdownMenuSub>
-      <DropdownMenuSub>
-        <DropdownMenuSubTrigger>Aspect ratio</DropdownMenuSubTrigger>
-        <DropdownMenuSubContent>
-          <DropdownMenuRadioGroup
-            value={tuning.videoAspect}
-            onValueChange={(value) => {
-              if (!isVideoAspect(value)) return
-              onChange(
-                { videoAspect: value },
-                { command: "set-video-aspect", aspect: value },
-                `Aspect ratio ${value === "source" ? "from source" : value}`,
-              )
-            }}
-          >
-            <DropdownMenuRadioItem value="source">From source</DropdownMenuRadioItem>
-            <DropdownMenuRadioItem value="4:3">4:3</DropdownMenuRadioItem>
-            <DropdownMenuRadioItem value="16:9">16:9</DropdownMenuRadioItem>
-            <DropdownMenuRadioItem value="21:9">21:9</DropdownMenuRadioItem>
-          </DropdownMenuRadioGroup>
-        </DropdownMenuSubContent>
-      </DropdownMenuSub>
-      <DropdownMenuSub>
-        <DropdownMenuSubTrigger>HDR tone mapping</DropdownMenuSubTrigger>
-        <DropdownMenuSubContent>
-          <DropdownMenuRadioGroup
-            value={tuning.toneMapping}
-            onValueChange={(value) => {
-              if (!isToneMapping(value)) return
-              onChange(
-                { toneMapping: value },
-                { command: "set-tone-mapping", mode: value },
-                `Tone mapping ${value}`,
-              )
-            }}
-          >
-            {[
-              ["auto", "Automatic"],
-              ["bt.2390", "BT.2390"],
-              ["mobius", "Mobius"],
-              ["reinhard", "Reinhard"],
-              ["hable", "Hable"],
-              ["clip", "Clip"],
-            ].map(([value, label]) => (
-              <DropdownMenuRadioItem key={value} value={value}>
-                {label}
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        </DropdownMenuSubContent>
-      </DropdownMenuSub>
-      <DropdownMenuItem
-        onSelect={() =>
-          onChange(
-            { deinterlace: !tuning.deinterlace },
-            { command: "set-deinterlace", enabled: !tuning.deinterlace },
-            `Deinterlacing ${tuning.deinterlace ? "off" : "on"}`,
-          )
-        }
-      >
-        Deinterlacing
-        <span className="ml-auto text-xs text-muted-foreground">
-          {tuning.deinterlace ? "On" : "Off"}
-        </span>
-      </DropdownMenuItem>
-    </>
-  )
 }
 
 function ActivePlayerBar({
