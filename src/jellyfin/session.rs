@@ -25,7 +25,7 @@ struct SessionState {
     deleting: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStatus {
     pub authenticated: bool,

@@ -29,7 +29,7 @@ impl From<rusqlite::Error> for BrowseError {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FilterOptions {
     pub genres: Vec<String>,

@@ -1,7 +1,8 @@
 // The UI's view of the native app: wire types (`api/types/`, one file per API
 // area), the typed client (`api/client.ts`), locally built URLs (`api/urls.ts`),
-// and tick conversions (`api/ticks.ts`). Shapes mirror the handlers under
-// `src/shell/cef/api/`.
+// and tick conversions (`api/ticks.ts`). Types generated from the Rust handlers
+// live in `api/wire.gen.ts`; `api/types/` aliases them and still hand-writes
+// the answers the handlers build with `json!`.
 
 export * from "./api/client.ts"
 export * from "./api/ticks.ts"

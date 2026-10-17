@@ -493,7 +493,7 @@ impl UserDataRecord {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryStats {
     pub movies: i64,
@@ -520,9 +520,8 @@ fn release_year_from_date(value: &str) -> Option<i64> {
 }
 
 /// One item as list, row and grid surfaces show it. Built from a cached row
-/// or a live Jellyfin item; mirrors `ItemSummary` in
-/// `ui/src/lib/api/types/catalog.ts`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+/// or a live Jellyfin item.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemSummary {
     pub id: String,
@@ -548,11 +547,19 @@ pub struct ItemSummary {
     pub position_ticks: i64,
     pub favorite: bool,
     pub unplayed_count: Option<i64>,
+    /// Width over height of the primary image. Null for cached movies and
+    /// shows, whose art is a 2:3 poster.
     pub primary_aspect: Option<f64>,
+    /// `/api/item/{id}/children` carries this for a season's episodes, from
+    /// its live server reconcile, and a generic item's details carry their
+    /// own. The grid queries do not, and offline rows have none.
+    #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overview: Option<String>,
-    /// The playlist slot this item fills. Jellyfin's PlaylistItemId is the
-    /// item's own id, so it cannot tell two slots of one item apart.
+    /// The slot this item fills among a playlist's children, counted from
+    /// zero. Jellyfin's PlaylistItemId is the item's own id, so it cannot tell
+    /// two slots of one item apart.
+    #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub playlist_index: Option<i64>,
 }
@@ -593,9 +600,8 @@ impl ItemSummary {
     }
 }
 
-/// A cached item with what its detail page adds to the card; mirrors
-/// `ItemDetail` in `ui/src/lib/api/types/catalog.ts`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+/// A cached item with what its detail page adds to the card.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemDetail {
     #[serde(flatten)]
@@ -625,14 +631,14 @@ impl ItemDetail {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(tag = "layout", rename_all = "camelCase")]
 pub enum DetailView {
     Title(TitleDetail),
     Generic(GenericItemDetail),
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TitleDetail {
     #[serde(flatten)]
@@ -642,7 +648,7 @@ pub struct TitleDetail {
     pub library_id: Option<LibraryId>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct GenericItemDetail {
     #[serde(flatten)]
@@ -666,7 +672,7 @@ impl GenericItemDetail {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, ts_rs::TS)]
 pub struct ProviderIds {
     pub tmdb: Option<String>,
     pub imdb: Option<String>,

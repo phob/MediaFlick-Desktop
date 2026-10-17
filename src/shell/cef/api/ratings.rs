@@ -18,7 +18,7 @@ fn ratings_sources(services: &Arc<Services>) -> Vec<String> {
 }
 
 fn ratings_status(services: &Arc<Services>) -> Handled {
-    Ok(ApiResponse::ok(
+    Ok(ApiResponse::untyped(
         services.ratings.status(&ratings_sources(services)),
     ))
 }
@@ -29,9 +29,9 @@ struct RatingsBatchBody {
 }
 
 fn ratings_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<RatingsBatchBody>()?;
+    let body = request.untyped_body::<RatingsBatchBody>()?;
     match services.ratings.batch(&body.ids) {
-        Ok(ratings) => Ok(ApiResponse::ok(ratings)),
+        Ok(ratings) => Ok(ApiResponse::untyped(ratings)),
         Err(error) => Err(ApiResponse::error(500, error.to_string())),
     }
 }

@@ -141,14 +141,14 @@ impl fmt::Display for ReportingState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "lowercase")]
 pub enum PlayerTrackKind {
     Audio,
     Subtitle,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerTrack {
     pub id: i64,
@@ -160,7 +160,7 @@ pub struct PlayerTrack {
     pub external: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerChapter {
     pub title: String,
@@ -191,7 +191,7 @@ pub enum ToneMapping {
     Bt2390,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaybackDiagnostics {
     pub buffered_until_ms: Option<f64>,
@@ -200,7 +200,7 @@ pub struct PlaybackDiagnostics {
     pub frame_rate: Option<f64>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerSnapshot {
     pub active: bool,
@@ -221,7 +221,7 @@ pub struct PlayerSnapshot {
     pub stop_reason: Option<StopReason>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "kebab-case")]
 pub enum StopReason {
     Eof,
@@ -283,7 +283,6 @@ pub enum PlayerCommand {
     SeekMilliseconds(f64),
     SetVolume(f64),
     SetMute(bool),
-    SetPlaybackRate(f64),
     SetAudioDelay(f64),
     SetSubtitleDelay(f64),
     SetSubtitleScale(f64),

@@ -113,7 +113,7 @@ fn jellyfin_index(services: &Arc<Services>) -> Handled {
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_box_sets(client, user_id) {
-        Ok(response) => Ok(ApiResponse::ok(json!({
+        Ok(response) => Ok(ApiResponse::untyped(json!({
             "collections": response.items.iter().map(|item| json!({
                 "id": item.id,
                 "name": item.display_name(),
@@ -146,7 +146,7 @@ fn jellyfin_detail(services: &Arc<Services>, id: &str) -> Handled {
         Err(error) => return Err(scoped_failure(services, &scope, &error)),
     };
     match items::fetch_box_set_children(client, user_id, id) {
-        Ok(children) => Ok(ApiResponse::ok(json!({
+        Ok(children) => Ok(ApiResponse::untyped(json!({
             "id": set.id,
             "name": set.display_name(),
             "primaryImageTag": set.primary_image_tag(),
@@ -174,7 +174,7 @@ fn upload_artwork(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         Ok(id) => match services
             .session
             .commit_if_current(&scope, stale_account_response, || {
-                Ok(ApiResponse::ok(json!({ "id": &id })))
+                Ok(ApiResponse::untyped(json!({ "id": &id })))
             }) {
             Ok(response) => Ok(response),
             Err(response) => {
@@ -236,20 +236,20 @@ struct ConfirmationBody {
 }
 
 fn search_public_lists(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<PublicListSearchBody>()?;
+    let body = request.untyped_body::<PublicListSearchBody>()?;
     active_account(services)?;
     let query = body.query.trim();
     if query.is_empty() {
         return Err(ApiResponse::error(400, "enter a public-list search"));
     }
     match services.companion.search_public_lists(query) {
-        Ok(result) => Ok(ApiResponse::ok(result)),
+        Ok(result) => Ok(ApiResponse::untyped(result)),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
 fn validate_public_list(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<PublicListValidateBody>()?;
+    let body = request.untyped_body::<PublicListValidateBody>()?;
     active_account(services)?;
     let selector = body.selector.trim();
     if selector.is_empty() {
@@ -259,7 +259,7 @@ fn validate_public_list(services: &Arc<Services>, request: &ApiRequest) -> Handl
         ));
     }
     match services.companion.validate_public_list(selector) {
-        Ok(result) => Ok(ApiResponse::ok(result)),
+        Ok(result) => Ok(ApiResponse::untyped(result)),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
@@ -282,7 +282,7 @@ fn provider_artwork(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 }
 
 fn delete_local_account(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let confirmed = request.body::<ConfirmationBody>()?.confirmed;
+    let confirmed = request.untyped_body::<ConfirmationBody>()?.confirmed;
     if !confirmed {
         return Err(ApiResponse::error(
             400,

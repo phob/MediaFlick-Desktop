@@ -76,12 +76,6 @@ pub fn control_command(command: &PlayerCommand) -> Option<Value> {
         PlayerCommand::SetMute(mute) => {
             json!(["set_property", "mute", mute])
         }
-        PlayerCommand::SetPlaybackRate(rate) => {
-            if !rate.is_finite() {
-                return None;
-            }
-            json!(["set_property", "speed", rate.clamp(0.1, 10.0)])
-        }
         PlayerCommand::SetAudioDelay(delay) => {
             if !delay.is_finite() {
                 return None;
@@ -345,7 +339,6 @@ mod tests {
         for command in [
             PlayerCommand::SeekMilliseconds(f64::NAN),
             PlayerCommand::SetVolume(f64::INFINITY),
-            PlayerCommand::SetPlaybackRate(f64::NAN),
             PlayerCommand::SetAudioDelay(f64::NAN),
             PlayerCommand::SetSubtitleDelay(f64::NEG_INFINITY),
             PlayerCommand::SetSubtitleScale(f64::INFINITY),

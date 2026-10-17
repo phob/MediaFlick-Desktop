@@ -7,7 +7,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -59,21 +58,6 @@ pub struct ApiRequest {
 }
 
 impl ApiRequest {
-    /// Decodes the JSON body into the endpoint's request type. A request sent
-    /// without a body decodes like `{}`, so it is accepted exactly when every
-    /// field of `T` is optional. A body that is not JSON, or does not match
-    /// `T`, is rejected rather than read as defaults: a garbled "mark as
-    /// unwatched" must not mark the item watched.
-    fn body<T: DeserializeOwned>(&self) -> Result<T, ApiResponse> {
-        let body: &[u8] = if self.body.iter().all(u8::is_ascii_whitespace) {
-            b"{}"
-        } else {
-            &self.body
-        };
-        serde_json::from_slice(body)
-            .map_err(|error| ApiResponse::error(400, format!("invalid request body: {error}")))
-    }
-
     fn param(&self, key: &str) -> Option<String> {
         query_param(&self.query, key).filter(|value| !value.trim().is_empty())
     }
@@ -97,33 +81,6 @@ pub struct ApiResponse {
 }
 
 impl ApiResponse {
-    fn json(status: u16, value: impl Serialize) -> Self {
-        let body = serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec());
-        drop(value);
-        Self {
-            status,
-            content_type: "application/json; charset=utf-8".to_string(),
-            body,
-            cache_control: NO_STORE,
-            headers: Vec::new(),
-        }
-    }
-
-    fn ok(value: impl Serialize) -> Self {
-        Self::json(200, value)
-    }
-
-    fn error(status: u16, message: impl Into<String>) -> Self {
-        Self::json(status, json!({ "error": message.into() }))
-    }
-
-    fn from_api_error(error: &ApiError) -> Self {
-        Self::json(
-            error.client_status(),
-            json!({ "error": error.to_string(), "expired": *error == ApiError::Unauthorized }),
-        )
-    }
-
     fn asset(content_type: &str, body: &'static [u8], cache_control: &'static str) -> Self {
         Self {
             status: 200,
@@ -227,6 +184,7 @@ mod ratings;
 mod seerr;
 mod settings;
 mod shell;
+mod wire;
 
 /// Every endpoint the modules below serve, by method and path shape (`*` is
 /// one segment). The modules own the handlers; this table answers what they
@@ -411,7 +369,7 @@ fn route_status(
     Some(response)
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 struct AppStatus {
     #[serde(flatten)]
@@ -482,7 +440,7 @@ fn startup(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         }
     };
     let home_part = |path: &str| if home { part(path) } else { Value::Null };
-    Ok(ApiResponse::ok(json!({
+    Ok(ApiResponse::untyped(json!({
         "settings": part("settings"),
         "viewing": account_part("settings/viewing"),
         "browsing": account_part("settings/browsing"),
@@ -891,7 +849,7 @@ mod tests {
         assert_eq!(response.status, 503, "{}", error_of(&response));
         let response = command(br#"{"command":"set-subtitle-track","subtitleTrack":null}"#);
         assert_eq!(response.status, 503, "{}", error_of(&response));
-        let response = command(br#"{"command":"set-playback-rate","rate":0}"#);
+        let response = command(br#"{"command":"set-subtitle-scale","scale":0}"#);
         assert_eq!(response.status, 400);
     }
 

@@ -21,15 +21,24 @@ pub enum MpvSetupPhase {
     Extracting,
 }
 
-pub fn platform_id() -> &'static str {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "lowercase")]
+pub enum Platform {
+    Windows,
+    Macos,
+    Linux,
+    Other,
+}
+
+pub fn platform() -> Platform {
     if cfg!(target_os = "windows") {
-        "windows"
+        Platform::Windows
     } else if cfg!(target_os = "macos") {
-        "macos"
+        Platform::Macos
     } else if cfg!(target_os = "linux") {
-        "linux"
+        Platform::Linux
     } else {
-        "other"
+        Platform::Other
     }
 }
 

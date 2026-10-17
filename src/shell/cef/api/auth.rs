@@ -46,15 +46,15 @@ struct LogoutBody {
 }
 
 fn auth_connect(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<ServerBody>()?;
+    let body = request.untyped_body::<ServerBody>()?;
     match services.session.connect(&body.server) {
-        Ok(value) => Ok(ApiResponse::ok(value)),
+        Ok(value) => Ok(ApiResponse::untyped(value)),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
 fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<LoginBody>()?;
+    let body = request.untyped_body::<LoginBody>()?;
     let result = services
         .session
         .login(&body.server, &body.username, &body.password);
@@ -75,15 +75,15 @@ fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 }
 
 fn quick_connect_start(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<ServerBody>()?;
+    let body = request.untyped_body::<ServerBody>()?;
     match services.session.quick_connect_start(&body.server) {
-        Ok(value) => Ok(ApiResponse::ok(value)),
+        Ok(value) => Ok(ApiResponse::untyped(value)),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
 fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<QuickConnectPollBody>()?;
+    let body = request.untyped_body::<QuickConnectPollBody>()?;
     let result = services
         .session
         .quick_connect_poll(&body.server, &body.secret);
@@ -99,14 +99,14 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> Handled
                 services.sync.request();
                 crate::collections::scheduler::request_run(services.clone());
             }
-            Ok(ApiResponse::ok(value))
+            Ok(ApiResponse::untyped(value))
         }
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
 fn auth_logout(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<LogoutBody>()?;
+    let body = request.untyped_body::<LogoutBody>()?;
     if let Err(error) = services.session.logout(body.forget_library) {
         tracing::error!("could not clear the local session after logout: {error}");
         return Err(ApiResponse::error(500, "could not clear the local session"));

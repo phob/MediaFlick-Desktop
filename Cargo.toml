@@ -15,6 +15,7 @@ getrandom = "0.4"
 libloading = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ts-rs = "12.0.1"
 roxmltree = "0.21.1"
 tracing = "0.1"
 tracing-appender = "0.2"
@@ -54,6 +55,9 @@ too_many_lines = "deny"
 undocumented_unsafe_blocks = "deny"
 unimplemented = "deny"
 unwrap_used = "deny"
+
+[dev-dependencies]
+syn = { version = "2", features = ["full", "visit"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 sevenz-rust2 = { version = "0.24", default-features = false, features = ["util"] }

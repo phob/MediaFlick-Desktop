@@ -76,9 +76,9 @@ fn push_recovery(
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-struct SettingsView {
+pub(super) struct SettingsView {
     client: ClientView,
     appearance: AppearanceView,
     capabilities: Capabilities,
@@ -86,65 +86,66 @@ struct SettingsView {
     server_url: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 struct ClientView {
     player: PlayerView,
     playback: PlaybackView,
     application: ApplicationView,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 struct PlayerView {
-    player_backend: &'static str,
+    player_backend: crate::preferences::PlayerBackend,
     mpv_path: Option<String>,
-    default_fullscreen: &'static str,
+    default_fullscreen: crate::preferences::FullscreenBehavior,
     mark_watched_next: Option<String>,
     comfort: crate::preferences::PlayerComfort,
     player_configured: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 struct PlaybackView {
-    streaming_quality: &'static str,
-    skip_intro: &'static str,
-    skip_credits: &'static str,
-    skip_recap: &'static str,
-    skip_commercial: &'static str,
+    streaming_quality: StreamingQuality,
+    skip_intro: crate::preferences::SegmentSkipMode,
+    skip_credits: crate::preferences::SegmentSkipMode,
+    skip_recap: crate::preferences::SegmentSkipMode,
+    skip_commercial: crate::preferences::SegmentSkipMode,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 struct ApplicationView {
-    close_behavior: &'static str,
+    close_behavior: crate::preferences::CloseBehavior,
     show_scrollbars: bool,
     log_level: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 struct AppearanceView {
-    accent: &'static str,
-    density: &'static str,
+    accent: crate::preferences::AppearanceAccent,
+    density: crate::preferences::AppearanceDensity,
     artwork_intensity: u8,
     backdrop_intensity: u8,
     reduced_motion: bool,
     card_previews: bool,
     show_media_info: bool,
+    /// Canonical IDs from the fixed public MDBList source catalog.
     rating_sources: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 struct Capabilities {
-    platform: &'static str,
+    platform: player_setup::Platform,
     libmpv: bool,
     integrated_libmpv_overlay: bool,
     mpv_installer: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 struct Recovery {
     area: &'static str,
@@ -156,29 +157,29 @@ fn settings_response(settings: &AppSettings, recoveries: Vec<Recovery>) -> ApiRe
     ApiResponse::ok(SettingsView {
         client: ClientView {
             player: PlayerView {
-                player_backend: settings.effective_backend().as_str(),
+                player_backend: settings.effective_backend(),
                 mpv_path: settings.mpv_path.clone(),
-                default_fullscreen: settings.default_fullscreen.as_str(),
+                default_fullscreen: settings.default_fullscreen,
                 mark_watched_next: settings.mark_watched_next.clone(),
                 comfort: settings.comfort.clone(),
                 player_configured: crate::players::configured_player_path(settings).is_some(),
             },
             playback: PlaybackView {
-                streaming_quality: settings.streaming_quality.as_str(),
-                skip_intro: settings.skip_intro.as_str(),
-                skip_credits: settings.skip_credits.as_str(),
-                skip_recap: settings.skip_recap.as_str(),
-                skip_commercial: settings.skip_commercial.as_str(),
+                streaming_quality: settings.streaming_quality,
+                skip_intro: settings.skip_intro,
+                skip_credits: settings.skip_credits,
+                skip_recap: settings.skip_recap,
+                skip_commercial: settings.skip_commercial,
             },
             application: ApplicationView {
-                close_behavior: settings.close_behavior.as_str(),
+                close_behavior: settings.close_behavior,
                 show_scrollbars: settings.show_scrollbars,
                 log_level: settings.log_level.clone(),
             },
         },
         appearance: AppearanceView {
-            accent: appearance.accent.as_str(),
-            density: appearance.density.as_str(),
+            accent: appearance.accent,
+            density: appearance.density,
             artwork_intensity: appearance.artwork_intensity,
             backdrop_intensity: appearance.backdrop_intensity,
             reduced_motion: appearance.reduced_motion,
@@ -187,7 +188,7 @@ fn settings_response(settings: &AppSettings, recoveries: Vec<Recovery>) -> ApiRe
             rating_sources: appearance.rating_sources.clone(),
         },
         capabilities: Capabilities {
-            platform: player_setup::platform_id(),
+            platform: player_setup::platform(),
             libmpv: crate::players::bundled_libmpv_path().is_some(),
             integrated_libmpv_overlay: crate::shell::cef::libmpv_overlay::is_active(),
             mpv_installer: player_setup::supported(),
@@ -198,7 +199,7 @@ fn settings_response(settings: &AppSettings, recoveries: Vec<Recovery>) -> ApiRe
 }
 
 fn patch_player_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.body::<PlayerSettingsPatch>()?;
+    let patch = request.untyped_body::<PlayerSettingsPatch>()?;
     match services.preferences.patch_player(patch) {
         Ok(change) => Ok(settings_response(&change.settings, Vec::new())),
         Err(error) => Err(ApiResponse::error(400, error.to_string())),
@@ -206,7 +207,7 @@ fn patch_player_settings(services: &Arc<Services>, request: &ApiRequest) -> Hand
 }
 
 fn patch_playback_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.body::<PlaybackSettingsPatch>()?;
+    let patch = request.untyped_body::<PlaybackSettingsPatch>()?;
     match services.preferences.patch_playback(patch) {
         Ok(change) => Ok(settings_response(&change.settings, Vec::new())),
         Err(error) => Err(ApiResponse::error(400, error.to_string())),
@@ -214,7 +215,7 @@ fn patch_playback_settings(services: &Arc<Services>, request: &ApiRequest) -> Ha
 }
 
 fn patch_application_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.body::<ApplicationSettingsPatch>()?;
+    let patch = request.untyped_body::<ApplicationSettingsPatch>()?;
     match services.preferences.patch_application(patch) {
         Ok(change) => Ok(settings_response(&change.settings, Vec::new())),
         Err(error) => Err(ApiResponse::error(400, error.to_string())),
@@ -222,7 +223,7 @@ fn patch_application_settings(services: &Arc<Services>, request: &ApiRequest) ->
 }
 
 fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.body::<AppearanceSettingsPatch>()?;
+    let patch = request.untyped_body::<AppearanceSettingsPatch>()?;
     let scope = session_scope(services)?;
     services
         .session
@@ -245,9 +246,9 @@ fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         let mut viewing = services.accounts.viewing(key);
         viewing.startup_destination = startup_view(&viewing.startup_destination, &registry);
         still_signed_in(services, &scope)?;
-        return Ok(ApiResponse::ok(json!(viewing)));
+        return Ok(ApiResponse::untyped(json!(viewing)));
     }
-    let write = request.body::<ViewingWrite>()?;
+    let write = request.untyped_body::<ViewingWrite>()?;
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
@@ -257,7 +258,7 @@ fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
                 Ok(saved) => saved,
                 Err(error) => return Ok(ApiResponse::error(400, error.to_string())),
             };
-            Ok(ApiResponse::ok(json!(ViewingSettings {
+            Ok(ApiResponse::untyped(json!(ViewingSettings {
                 startup_destination: startup_view(&saved.startup_destination, &registry),
                 ..saved
             })))
@@ -274,15 +275,15 @@ fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled 
     let scope = session_scope(services)?;
     let key = scope.account();
     if request.is("GET") {
-        return Ok(ApiResponse::ok(json!(services.accounts.browsing(key))));
+        return Ok(ApiResponse::untyped(json!(services.accounts.browsing(key))));
     }
-    let body = request.body::<BrowsingBody>()?;
+    let body = request.untyped_body::<BrowsingBody>()?;
     let (page, route) = (body.page.as_str(), body.route.as_str());
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
             Ok(match services.accounts.save_browsing(key, page, route) {
-                Ok(()) => ApiResponse::ok(json!({"saved": true})),
+                Ok(()) => ApiResponse::untyped(json!({"saved": true})),
                 Err(error) => ApiResponse::error(400, error.to_string()),
             })
         })

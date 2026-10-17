@@ -24,7 +24,7 @@ const FAILED_PROBE_RETRY: Duration = Duration::from_secs(30);
 const SUCCESSFUL_PROBE_REUSE: Duration = Duration::from_secs(5 * 60);
 const FRANCHISE_MEMBERSHIPS_CAPABILITY: &str = "franchise-memberships-v1";
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CompanionInfo {
     pub plugin_version: String,
@@ -47,7 +47,7 @@ impl CompanionInfo {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CompanionStatus {
     pub available: bool,
@@ -58,7 +58,7 @@ pub struct CompanionStatus {
     pub supported_api: SupportedApi,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, ts_rs::TS)]
 pub struct SupportedApi {
     pub min: i64,
     pub max: i64,

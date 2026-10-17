@@ -18,7 +18,7 @@ pub(super) fn route(
 fn shell_window_ready(services: &Arc<Services>) -> Handled {
     services.sync.release_startup_hold();
     match services.shell.request(ShellRequest::MainWindowReady) {
-        Ok(()) => Ok(ApiResponse::ok(json!({ "queued": true }))),
+        Ok(()) => Ok(ApiResponse::untyped(json!({ "queued": true }))),
         Err(error) => Err(ApiResponse::error(503, error)),
     }
 }
@@ -28,7 +28,7 @@ fn shell_file_picker(services: &Arc<Services>, request: &ApiRequest) -> Handled 
     match services.shell.request(ShellRequest::FilePicker {
         request_id: request_id.clone(),
     }) {
-        Ok(()) => Ok(ApiResponse::ok(
+        Ok(()) => Ok(ApiResponse::untyped(
             json!({ "requestId": request_id, "queued": true }),
         )),
         Err(error) => Err(ApiResponse::error(503, error)),
@@ -46,7 +46,7 @@ fn shell_install_mpv(services: &Arc<Services>, request: &ApiRequest) -> Handled 
     match services.shell.request(ShellRequest::InstallMpv {
         request_id: request_id.clone(),
     }) {
-        Ok(()) => Ok(ApiResponse::ok(
+        Ok(()) => Ok(ApiResponse::untyped(
             json!({ "requestId": request_id, "queued": true }),
         )),
         Err(error) => Err(ApiResponse::error(503, error)),
@@ -55,7 +55,7 @@ fn shell_install_mpv(services: &Arc<Services>, request: &ApiRequest) -> Handled 
 
 fn shell_mpv_help() -> Handled {
     super::super::bridge::open_external_link(player_setup::MPV_HELP_URL);
-    Ok(ApiResponse::ok(json!({ "opened": true })))
+    Ok(ApiResponse::untyped(json!({ "opened": true })))
 }
 
 #[derive(Deserialize)]
@@ -65,7 +65,7 @@ struct ShellRequestBody {
 }
 
 fn shell_request_id(request: &ApiRequest) -> Result<String, ApiResponse> {
-    let body = request.body::<ShellRequestBody>()?;
+    let body = request.untyped_body::<ShellRequestBody>()?;
     let value = body.request_id.trim();
     if value.is_empty()
         || value.len() > 128

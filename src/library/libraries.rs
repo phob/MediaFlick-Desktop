@@ -5,8 +5,9 @@ use crate::jellyfin::api::model::UserViewDto;
 use super::SortKey;
 use super::model::TitleKind;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
 #[serde(try_from = "String")]
+#[ts(type = "string")]
 pub struct LibraryId(String);
 
 impl LibraryId {
