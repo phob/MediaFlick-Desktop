@@ -1,4 +1,6 @@
-export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[]
+import type { JsonValue } from "./api/wire.gen.ts"
+
+export type { JsonValue }
 
 export interface JsonObject {
   [key: string]: JsonValue
