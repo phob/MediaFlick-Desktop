@@ -23,7 +23,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{OptionalExtension, params};
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use serde_json::Value;
 
 use crate::app::ids::new_device_id;
@@ -173,26 +173,26 @@ pub enum ItemSort {
     },
 }
 
-/// The serde names are [`SortKey::id`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
+/// Serialized as [`SortKey::id`]; the TypeScript names repeat those ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ts_rs::TS)]
 pub enum SortKey {
-    #[serde(rename = "name")]
+    #[ts(rename = "name")]
     Name,
-    #[serde(rename = "year")]
+    #[ts(rename = "year")]
     ReleaseDate,
-    #[serde(rename = "added")]
+    #[ts(rename = "added")]
     DateAdded,
-    #[serde(rename = "episode-added")]
+    #[ts(rename = "episode-added")]
     EpisodeAdded,
-    #[serde(rename = "rating")]
+    #[ts(rename = "rating")]
     CommunityRating,
-    #[serde(rename = "played")]
+    #[ts(rename = "played")]
     DatePlayed,
-    #[serde(rename = "plays")]
+    #[ts(rename = "plays")]
     PlayCount,
-    #[serde(rename = "runtime")]
+    #[ts(rename = "runtime")]
     Runtime,
-    #[serde(rename = "random")]
+    #[ts(rename = "random")]
     Random,
 }
 
@@ -229,6 +229,12 @@ impl SortKey {
             "communityrating" => Some(Self::CommunityRating),
             id => Self::ALL.into_iter().find(|key| key.id() == id),
         }
+    }
+}
+
+impl Serialize for SortKey {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.id())
     }
 }
 

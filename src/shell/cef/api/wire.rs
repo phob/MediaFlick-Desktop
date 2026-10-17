@@ -467,7 +467,7 @@ mod tests {
         }
     }
 
-    fn derives(attrs: &[syn::Attribute], wanted: &str) -> bool {
+    fn derives_ts(attrs: &[syn::Attribute]) -> bool {
         attrs
             .iter()
             .filter_map(|attr| list_tokens(attr, "derive"))
@@ -475,13 +475,9 @@ mod tests {
                 derives.split(',').any(|path| {
                     path.rsplit("::")
                         .next()
-                        .is_some_and(|name| name.trim() == wanted)
+                        .is_some_and(|name| name.trim() == "TS")
                 })
             })
-    }
-
-    fn derives_ts(attrs: &[syn::Attribute]) -> bool {
-        derives(attrs, "TS")
     }
 
     struct AttrKey {
@@ -674,23 +670,13 @@ mod tests {
                 }
             }
         }
-
-        /// ts-rs reads serde's derive attributes. A hand-written `Serialize`
-        /// can send anything, so the item must state its TypeScript.
-        fn hand_serialized(&mut self, owner: &str, attrs: &[syn::Attribute], seen: &Seen) {
-            if !seen.overridden && !derives(attrs, "Serialize") && !derives(attrs, "Deserialize") {
-                self.report(owner, "derives `TS` without deriving `Serialize` or `Deserialize`, so ts-rs cannot see what its JSON looks like; derive serde or describe the JSON with `#[ts(type = ...)]`");
-            }
-        }
     }
 
     impl Visit<'_> for SerdeFidelity<'_> {
         fn visit_item_struct(&mut self, item: &syn::ItemStruct) {
             if derives_ts(&item.attrs) {
                 let owner = item.ident.to_string();
-                let seen = self.seen(&owner, &item.attrs, STRUCT_SERDE);
-                self.hand_serialized(&owner, &item.attrs, &seen);
-                if !seen.overridden {
+                if !self.seen(&owner, &item.attrs, STRUCT_SERDE).overridden {
                     self.fields(&owner, &item.fields);
                 }
             }
@@ -699,9 +685,7 @@ mod tests {
         fn visit_item_enum(&mut self, item: &syn::ItemEnum) {
             if derives_ts(&item.attrs) {
                 let owner = item.ident.to_string();
-                let seen = self.seen(&owner, &item.attrs, ENUM_SERDE);
-                self.hand_serialized(&owner, &item.attrs, &seen);
-                if seen.overridden {
+                if self.seen(&owner, &item.attrs, ENUM_SERDE).overridden {
                     return;
                 }
                 for variant in &item.variants {

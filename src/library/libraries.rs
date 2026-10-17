@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::jellyfin::api::model::UserViewDto;
 
@@ -184,9 +184,9 @@ const LIVE_SORT_KEYS: [SortKey; LiveSort::ALL.len()] = {
     keys
 };
 
-/// The serde names are [`FilterKey::id`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
+/// Serialized as [`FilterKey::id`], which is each name in camel case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ts_rs::TS)]
+#[ts(rename_all = "camelCase")]
 pub enum FilterKey {
     Genre,
     Decade,
@@ -206,6 +206,12 @@ impl FilterKey {
             Self::SeriesStatus => "seriesStatus",
             Self::Favorite => "favorite",
         }
+    }
+}
+
+impl Serialize for FilterKey {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.id())
     }
 }
 
