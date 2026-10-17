@@ -88,12 +88,13 @@ pub(super) struct PlayBody {
 
 #[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct PlaybackItemBody {
+#[ts(rename = "PlaybackItemBody")]
+pub(super) struct ItemBody {
     item_id: String,
 }
 
 fn item_id_of(request: &ApiRequest) -> Result<String, ApiResponse> {
-    let body = request.body::<PlaybackItemBody>()?;
+    let body = request.body::<ItemBody>()?;
     if body.item_id.is_empty() {
         return Err(ApiResponse::error(400, "itemId is required"));
     }
@@ -246,7 +247,6 @@ pub(super) enum PlayerCommandBody {
     },
     /// A null track turns subtitles off.
     SetSubtitleTrack {
-        #[ts(optional = nullable)]
         subtitle_track: Option<i64>,
     },
     ToggleSubtitles,

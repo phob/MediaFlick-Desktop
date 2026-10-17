@@ -78,7 +78,7 @@ export type SettingsView = {
   serverUrl: string | null,
 };
 
-export type ViewingSettingsWrite = Partial<ViewingView>;
+export type ViewingSettingsWrite = Omit<ViewingView, "startupDestination"> & { startupDestination?: StartupView };
 
 export type ViewingView = {
   spoilerProtection: boolean,

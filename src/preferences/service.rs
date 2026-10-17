@@ -33,28 +33,27 @@ where
 }
 
 // The settings patches take enum values as strings and parse them with
-// `from_id`, which accepts each enum's serde name, so the TypeScript names the
-// enum.
+// `from_id`, which decodes each enum's serde name, so the TypeScript names the
+// enum. The UI sends every key; `null` keeps the stored value, except for the
+// nullable `mpvPath` and `markWatchedNext`, where it clears it.
 #[derive(Debug, Clone, Default, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(optional_fields)]
 pub struct PlayerSettingsPatch {
     pub comfort: Option<super::PlayerComfort>,
     #[ts(as = "Option<PlayerBackend>")]
     pub player_backend: Option<String>,
     #[serde(default)]
-    #[ts(as = "Option<String>", optional = nullable)]
+    #[ts(as = "Option<String>")]
     pub mpv_path: NullablePatch<String>,
     #[ts(as = "Option<FullscreenBehavior>")]
     pub default_fullscreen: Option<String>,
     #[serde(default)]
-    #[ts(as = "Option<String>", optional = nullable)]
+    #[ts(as = "Option<String>")]
     pub mark_watched_next: NullablePatch<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(optional_fields)]
 pub struct PlaybackSettingsPatch {
     #[ts(as = "Option<StreamingQuality>")]
     pub streaming_quality: Option<String>,
@@ -70,7 +69,6 @@ pub struct PlaybackSettingsPatch {
 
 #[derive(Debug, Clone, Default, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(optional_fields)]
 pub struct ApplicationSettingsPatch {
     #[ts(as = "Option<CloseBehavior>")]
     pub close_behavior: Option<String>,
@@ -80,7 +78,6 @@ pub struct ApplicationSettingsPatch {
 
 #[derive(Debug, Clone, Default, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[ts(optional_fields)]
 pub struct AppearanceSettingsPatch {
     #[ts(as = "Option<AppearanceAccent>")]
     pub accent: Option<String>,

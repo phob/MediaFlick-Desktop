@@ -315,12 +315,13 @@ pub(super) fn viewing(services: &Services) -> Result<ViewingView, ApiResponse> {
     Ok(viewing)
 }
 
-/// The body of a viewing settings write: any of the [`ViewingView`] keys.
-/// A missing startup destination keeps the stored one and any other missing
-/// key takes its default; Movies and Series are rejected as destinations.
+/// The body of a viewing settings write: every [`ViewingView`] key. A
+/// missing startup destination keeps the stored one, but any other missing
+/// key resets that setting to its default, so the TypeScript requires them.
+/// Movies and Series are rejected as destinations.
 #[derive(Deserialize, ts_rs::TS)]
 #[serde(transparent)]
-#[ts(type = "Partial<ViewingView>")]
+#[ts(type = "Omit<ViewingView, \"startupDestination\"> & { startupDestination?: StartupView }")]
 pub(super) struct ViewingSettingsWrite(ViewingWrite);
 
 fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {

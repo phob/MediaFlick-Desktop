@@ -223,8 +223,10 @@ struct Container {
     /// `#[ts(optional_fields)]` makes each `Option` field `?: T`, and
     /// `#[ts(optional_fields = nullable)]` makes it `?: T | null`.
     optional_fields: bool,
-    /// Only decoded, never sent, so a key serde does not require must be
-    /// optional in the TypeScript.
+    /// Decoded by a derived `Deserialize`, so every key the TypeScript lets
+    /// the UI leave out must be one serde can do without.
+    decoded: bool,
+    /// Only decoded, never sent, so a `None` may be typed as an absent key.
     decoded_only: bool,
     /// `#[serde(default)]` on the type makes every field optional to serde.
     default: bool,
@@ -246,6 +248,7 @@ impl Container {
     ) -> Self {
         let container = Self {
             optional_fields: optional_fields(seen).unwrap_or(false),
+            decoded: derives(attrs, "Deserialize"),
             decoded_only: derives(attrs, "Deserialize") && !derives(attrs, "Serialize"),
             default: has_key(&seen.serde, "default") || has_key(&seen.dropped, "default"),
         };
@@ -338,9 +341,9 @@ impl SerdeFidelity<'_> {
     /// A skip in an attribute ts-rs drops still omits the key. The UI
     /// would otherwise read `undefined` as `T | null`.
     ///
-    /// A type that is only decoded is a request body: serde accepts it
-    /// without an `Option` field or a field with a default, so the
-    /// TypeScript must let the UI leave that key out.
+    /// A decoded type must not let the UI leave out a key serde requires,
+    /// or the request is rejected. The reverse is safe: the TypeScript may
+    /// require a key serde could do without.
     fn fields(&mut self, owner: &str, fields: &syn::Fields, container: Container) {
         for (index, field) in fields.iter().enumerate() {
             let name = field
@@ -371,13 +374,13 @@ impl SerdeFidelity<'_> {
             let skipped = [&serde, &dropped]
                 .into_iter()
                 .any(|keys| has_key(keys, "skip") || has_key(keys, "flatten"));
-            let unrequired = container.default
-                || is_option(&field.ty)
-                || [&serde, &dropped]
+            let required = !container.default
+                && !is_option(&field.ty)
+                && ![&serde, &dropped]
                     .into_iter()
                     .any(|keys| has_key(keys, "default"));
-            if container.decoded_only && unrequired && !skipped && !optional {
-                self.report(&at, "can be left out of the request but is typed as required; add `#[ts(optional = nullable)]`, or `#[ts(optional_fields)]` on the type for its `Option` fields");
+            if container.decoded && required && !skipped && optional {
+                self.report(&at, "is required by serde but optional in the TypeScript, so a request that leaves it out is rejected; drop the `#[ts(optional)]` or `#[ts(optional_fields)]` that makes it optional, or give the field `#[serde(default)]`");
             }
         }
     }

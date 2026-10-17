@@ -29,14 +29,15 @@ pub(super) fn route(
 const TECHNICAL_BATCH_SIZE: usize = 40;
 
 #[derive(Deserialize, ts_rs::TS)]
-pub(super) struct TechnicalBatchBody {
+#[ts(rename = "TechnicalBatchBody")]
+pub(super) struct IdsBody {
     ids: Vec<String>,
 }
 
 #[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields = nullable)]
-pub(super) struct PlaybackTrackPreferenceWrite {
+#[ts(rename = "PlaybackTrackPreferenceWrite")]
+pub(super) struct PlaybackPreferenceBody {
     media_source_index: usize,
     media_source_id: Option<String>,
     audio_stream_index: Option<i64>,
@@ -44,7 +45,8 @@ pub(super) struct PlaybackTrackPreferenceWrite {
 }
 
 #[derive(Deserialize, ts_rs::TS)]
-pub(super) struct ExternalLinkBody {
+#[ts(rename = "ExternalLinkBody")]
+pub(super) struct ExternalBody {
     provider: String,
 }
 
@@ -162,7 +164,7 @@ pub(super) struct FavoriteState {
 /// a representative episode. Nothing is persisted; a failure is silent on
 /// cards.
 fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<TechnicalBatchBody>()?;
+    let body = request.body::<IdsBody>()?;
     let mut seen = HashSet::new();
     let ids = body
         .ids
@@ -301,7 +303,7 @@ fn set_item_playback_preference(
             "this item has no selectable media tracks",
         ));
     }
-    let body = request.body::<PlaybackTrackPreferenceWrite>()?;
+    let body = request.body::<PlaybackPreferenceBody>()?;
     let source_index = body.media_source_index;
     let requested_source_id = body
         .media_source_id
@@ -669,7 +671,7 @@ impl ExternalProvider {
 /// from the cached row here, so nothing the page can say turns into a launched
 /// address.
 fn open_external(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
-    let body = request.body::<ExternalLinkBody>()?;
+    let body = request.body::<ExternalBody>()?;
     let Some(provider) = ExternalProvider::parse(&body.provider) else {
         return Err(ApiResponse::error(
             404,

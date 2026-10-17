@@ -7,13 +7,13 @@ import type { FranchiseSettings } from "./preferences.collections.gen.ts"
 export type CollectionProfileDraft = {
   template: TemplateReference,
   title: string,
-  description?: string,
-  customPosterId?: string | null,
+  description: string,
+  customPosterId: string | null,
   source: CollectionSource,
   mediaType: MediaType,
-  limit?: ResultLimit,
-  cadence?: RefreshCadence,
-  availableOnHome?: boolean,
+  limit: ResultLimit,
+  cadence: RefreshCadence,
+  availableOnHome: boolean,
 };
 
 export type CollectionProfilesIndex = {

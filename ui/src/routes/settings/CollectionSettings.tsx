@@ -71,26 +71,20 @@ const CATEGORY_LABELS = {
   custom: "Custom",
 } satisfies Record<CollectionCategory, string>
 
-/**
- * The profile editor's state: every field a draft can carry, so the form
- * is always a complete request body.
- */
-type ProfileForm = Required<CollectionProfileDraft>
-
-function providerLabel(profile: Pick<ProfileForm, "source">) {
+function providerLabel(profile: Pick<CollectionProfileDraft, "source">) {
   if (profile.source.kind === "mdbListPublicList") return "MDBList"
   if (profile.source.kind === "tmdbCollection" || profile.source.kind === "tmdbDiscover") return "TMDB"
   return "Unavailable"
 }
 
-function sourceLabel(profile: Pick<ProfileForm, "source">) {
+function sourceLabel(profile: Pick<CollectionProfileDraft, "source">) {
   if (profile.source.kind === "tmdbCollection") return "Exact collection"
   if (profile.source.kind === "mdbListPublicList") return "Public list"
   if (profile.source.kind === "tmdbDiscover") return "Discover"
   return "Unsupported source"
 }
 
-function draftFromTemplate(template: CollectionTemplate): ProfileForm {
+function draftFromTemplate(template: CollectionTemplate): CollectionProfileDraft {
   const { category: _, pictogram: __, id, ...draft } = template
   return structuredClone({
     ...draft,
@@ -100,12 +94,12 @@ function draftFromTemplate(template: CollectionTemplate): ProfileForm {
   })
 }
 
-function draftFromProfile(profile: CollectionProfile): ProfileForm {
+function draftFromProfile(profile: CollectionProfile): CollectionProfileDraft {
   const { id: _, revision: __, ...draft } = profile
   return structuredClone(draft)
 }
 
-function resultSignature(profile: ProfileForm) {
+function resultSignature(profile: CollectionProfileDraft) {
   return JSON.stringify({
     source: profile.source,
     mediaType: profile.mediaType,
@@ -313,7 +307,7 @@ function CollectionWizard({
   open,
   onOpenChange,
 }: {
-  initial: ProfileForm | null
+  initial: CollectionProfileDraft | null
   profileId: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -321,7 +315,7 @@ function CollectionWizard({
   const cache = useQueryClient()
   const { data: status } = useStatus()
   const account = accountKey(status)
-  const [draft, setDraft] = useState<ProfileForm | null>(initial)
+  const [draft, setDraft] = useState<CollectionProfileDraft | null>(initial)
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof api.collections.preview>> | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -336,7 +330,7 @@ function CollectionWizard({
   })
   const settings = useCollectionSettings()
   const saveProfile = useMutation({
-    mutationFn: (value: ProfileForm) =>
+    mutationFn: (value: CollectionProfileDraft) =>
       profileId ? api.collections.updateProfile(profileId, value) : api.collections.createProfile(value),
     onSuccess: () => {
       void cache.invalidateQueries({ queryKey: ["collections", account] })
@@ -389,11 +383,11 @@ function CollectionWizard({
     setPreviewing(false)
   }
 
-  const patch = (change: Partial<ProfileForm>, resultAffecting = false) => {
+  const patch = (change: Partial<CollectionProfileDraft>, resultAffecting = false) => {
     setDraft((current) => current ? { ...current, ...change } : current)
     if (resultAffecting) invalidatePreview()
   }
-  const patchSource = (source: ProfileForm["source"]) => {
+  const patchSource = (source: CollectionProfileDraft["source"]) => {
     setDraft((current) => {
       if (!current) return current
       const supported = source.kind === "mdbListPublicList"
@@ -661,7 +655,7 @@ export default function CollectionSettingsPage() {
   const profiles = useCollectionProfiles(Boolean(status?.authenticated))
   const [params, setParams] = useSearchParams()
   const [selection, setSelection] = useState<{
-    draft: ProfileForm
+    draft: CollectionProfileDraft
     profileId: string | null
   } | null>(null)
   const savedDraft = useMemo<CollectionSettingsDraft | null>(() => settings.data && profiles.data ? ({

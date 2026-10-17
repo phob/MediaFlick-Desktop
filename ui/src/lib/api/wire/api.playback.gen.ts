@@ -49,7 +49,7 @@ export type PlayerCommandBody =
   | { "command": "set-deinterlace", enabled: boolean }
   | { "command": "set-tone-mapping", mode: ToneMappingBody }
   | { "command": "set-audio-track", audioTrack: number }
-  | { "command": "set-subtitle-track", subtitleTrack?: number | null }
+  | { "command": "set-subtitle-track", subtitleTrack: number | null }
   | { "command": "toggle-subtitles" }
   | { "command": "toggle-fullscreen" }
   | { "command": "stop" }

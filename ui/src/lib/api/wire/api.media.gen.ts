@@ -74,9 +74,9 @@ export type PlaybackPreferenceSaved = {
 
 export type PlaybackTrackPreferenceWrite = {
   mediaSourceIndex: number,
-  mediaSourceId?: string | null,
-  audioStreamIndex?: number | null,
-  subtitleStreamIndex?: number | null,
+  mediaSourceId: string | null,
+  audioStreamIndex: number | null,
+  subtitleStreamIndex: number | null,
 };
 
 export type PlayedBody = {

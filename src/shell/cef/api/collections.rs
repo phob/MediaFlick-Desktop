@@ -8,8 +8,8 @@ pub(super) use browse::{
     MovieCollection,
 };
 pub(super) use profiles::{
-    CollectionProfileDraft, CollectionProfilesIndex, CollectionSettings, CollectionSettingsPatch,
-    CollectionTemplates, CommittedProfile, ProfileDeleted, ProfileOrderBody,
+    CollectionProfilesIndex, CollectionSettings, CollectionTemplates, CommittedProfile,
+    ProfileDeleted, ProfileDraft, ReorderBody, SettingsPatch,
 };
 
 pub(super) fn route(
@@ -267,21 +267,19 @@ fn custom_artwork(services: &Arc<Services>, id: &str) -> Handled {
 #[derive(Deserialize, ts_rs::TS)]
 pub(super) struct PublicListSearchBody {
     #[serde(default)]
-    #[ts(optional = nullable)]
     query: String,
 }
 
 #[derive(Deserialize, ts_rs::TS)]
 pub(super) struct PublicListValidateBody {
     #[serde(default)]
-    #[ts(optional = nullable)]
     selector: String,
 }
 
 #[derive(Deserialize, ts_rs::TS)]
-pub(super) struct LocalAccountDeletionBody {
+#[ts(rename = "LocalAccountDeletionBody")]
+pub(super) struct ConfirmationBody {
     #[serde(default)]
-    #[ts(optional = nullable)]
     confirmed: bool,
 }
 
@@ -332,7 +330,7 @@ fn provider_artwork(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 }
 
 fn delete_local_account(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let confirmed = request.body::<LocalAccountDeletionBody>()?.confirmed;
+    let confirmed = request.body::<ConfirmationBody>()?.confirmed;
     if !confirmed {
         return Err(ApiResponse::error(
             400,

@@ -24,15 +24,15 @@ export type JellyfinCollections = {
 };
 
 export type LocalAccountDeletionBody = {
-  confirmed?: boolean,
+  confirmed: boolean,
 };
 
 export type PublicListSearchBody = {
-  query?: string,
+  query: string,
 };
 
 export type PublicListValidateBody = {
-  selector?: string,
+  selector: string,
 };
 
 export type UploadedArtwork = {
