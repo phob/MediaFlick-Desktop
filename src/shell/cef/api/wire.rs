@@ -1,6 +1,7 @@
 //! The JSON contract with the UI. `ApiResponse::ok` and `ApiRequest::body`
-//! take only types listed in [`wire_types!`], and `ui/src/lib/api/wire.gen.ts`
-//! is rendered from that list by `generated_typescript_is_current`. The JSON
+//! take only types listed in [`wire_types!`], and `generated_typescript_is_current`
+//! renders that list into one file per Rust module in `ui/src/lib/api/wire/`,
+//! re-exported by `ui/src/lib/api/wire.gen.ts`. The JSON
 //! encoder and decoder they share are private to this module; the handlers
 //! that predate it use `ApiResponse::untyped` and `ApiRequest::untyped_body`,
 //! which `untyped_responses_only_shrink` counts.
@@ -226,13 +227,16 @@ impl ApiResponse {
 #[cfg(test)]
 mod tests {
     use std::any::TypeId;
-    use std::collections::{BTreeMap, HashSet};
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
     use std::path::{Path, PathBuf};
 
     use syn::visit::Visit;
     use ts_rs::{Config, TS, TypeVisitor};
 
     const GENERATED: &str = "ui/src/lib/api/wire.gen.ts";
+    const GENERATED_DIR: &str = "ui/src/lib/api/wire";
+    const HEADER: &str =
+        "// Generated from src/shell/cef/api/wire.rs by `just wire-types`. Do not edit.\n";
 
     /// Handlers that predate this module answer through `ApiResponse::untyped`
     /// and decode through `ApiRequest::untyped_body`. Moving one to a wire
@@ -240,10 +244,28 @@ mod tests {
     const UNTYPED_RESPONSES: usize = 6; // guard-ratchet
     const UNTYPED_BODIES: usize = 32; // guard-ratchet
 
+    struct Decl {
+        module: String,
+        text: String,
+        /// The wire types the declaration names.
+        deps: Vec<String>,
+    }
+
     struct Collect<'a> {
         cfg: &'a Config,
         visited: HashSet<TypeId>,
-        decls: BTreeMap<String, String>,
+        decls: BTreeMap<String, Decl>,
+    }
+
+    /// The defining module without the crate, as the generated file's name:
+    /// `mediaflick_desktop::shell::cef::api::wire::ErrorBody` is `api.wire`.
+    fn module_of<T: ?Sized>() -> String {
+        let path = std::any::type_name::<T>();
+        let path = path.split_once('<').map_or(path, |(path, _)| path);
+        let module = path.rsplit_once("::").map_or("", |(module, _)| module);
+        let module = module.split_once("::").map_or("", |(_, module)| module);
+        let module = module.strip_prefix("shell::cef::").unwrap_or(module);
+        module.replace("::", ".")
     }
 
     impl TypeVisitor for Collect<'_> {
@@ -252,12 +274,20 @@ mod tests {
                 return;
             }
             let name = T::ident(self.cfg);
-            let decl = format_decl(&T::decl(self.cfg));
+            let decl = Decl {
+                module: module_of::<T>(),
+                text: format_decl(&T::decl(self.cfg)),
+                deps: T::dependencies(self.cfg)
+                    .into_iter()
+                    .map(|dep| dep.ts_name)
+                    .collect(),
+            };
             // Each instantiation of a generic type renders the same
-            // declaration; a different declaration is a second type.
+            // declaration; a different declaration is a second type. Names
+            // stay unique across files because the index re-exports them all.
             if let Some(seen) = self.decls.get(&name) {
                 assert!(
-                    *seen == decl,
+                    seen.text == decl.text,
                     "two wire types are both named `{name}`; rename one with `#[ts(rename = \"...\")]`"
                 );
             } else {
@@ -395,7 +425,10 @@ mod tests {
         out
     }
 
-    fn render() -> String {
+    /// Every generated file by its path from the repository root: one per
+    /// Rust module, importing what it names from the others, and the index
+    /// that re-exports them.
+    fn render() -> BTreeMap<String, String> {
         let cfg = Config::new().with_large_int("number");
         let mut collect = Collect {
             cfg: &cfg,
@@ -404,34 +437,61 @@ mod tests {
         };
         super::visit_roots(&mut collect);
         collect.visit::<super::ErrorBody>();
-        let mut out = String::from(
-            "// Generated from src/shell/cef/api/wire.rs by `just wire-types`. Do not edit.\n",
-        );
+        let mut modules = BTreeMap::<&str, (BTreeMap<&str, BTreeSet<&str>>, String)>::new();
         for decl in collect.decls.values() {
-            out.push_str("\nexport ");
-            out.push_str(decl);
-            out.push('\n');
+            let (imports, body) = modules.entry(&decl.module).or_default();
+            for dep in &decl.deps {
+                let from = &collect.decls[dep].module;
+                if *from != decl.module {
+                    imports.entry(from).or_default().insert(dep);
+                }
+            }
+            body.push_str("\nexport ");
+            body.push_str(&decl.text);
+            body.push('\n');
         }
-        out
+        let mut files = BTreeMap::new();
+        let mut index = format!("{HEADER}\n");
+        for (module, (imports, body)) in modules {
+            let mut out = HEADER.to_string();
+            if !imports.is_empty() {
+                out.push('\n');
+            }
+            for (from, names) in imports {
+                let names = names.into_iter().collect::<Vec<_>>().join(", ");
+                out.push_str(&format!(
+                    "import type {{ {names} }} from \"./{from}.gen.ts\"\n"
+                ));
+            }
+            out.push_str(&body);
+            index.push_str(&format!("export type * from \"./wire/{module}.gen.ts\"\n"));
+            files.insert(format!("{GENERATED_DIR}/{module}.gen.ts"), out);
+        }
+        files.insert(GENERATED.to_string(), index);
+        files
     }
 
-    #[test]
-    fn generated_typescript_is_current() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(GENERATED);
-        let rendered = render();
-        // A Windows checkout may hold the file with CRLF line endings.
-        let committed = std::fs::read_to_string(&path)
-            .unwrap_or_default()
-            .replace("\r\n", "\n");
-        if rendered == committed {
-            return;
-        }
-        if std::env::var("MEDIAFLICK_WRITE_WIRE_TYPES").as_deref() == Ok("1") {
-            std::fs::write(&path, rendered).expect("write wire.gen.ts");
-            println!("rewrote {GENERATED}");
-            return;
-        }
-        let first = rendered
+    /// The generated files on disk, with the line endings a Windows checkout
+    /// may give them normalized.
+    fn committed(root: &Path) -> BTreeMap<String, String> {
+        let names = std::fs::read_dir(root.join(GENERATED_DIR))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.ends_with(".gen.ts"))
+            .map(|name| format!("{GENERATED_DIR}/{name}"));
+        std::iter::once(GENERATED.to_string())
+            .chain(names)
+            .filter_map(|path| {
+                let text = std::fs::read_to_string(root.join(&path)).ok()?;
+                Some((path, text.replace("\r\n", "\n")))
+            })
+            .collect()
+    }
+
+    fn first_difference(rendered: &str, committed: &str) -> String {
+        rendered
             .lines()
             .chain(std::iter::repeat("<missing>"))
             .zip(committed.lines().chain(std::iter::repeat("<missing>")))
@@ -439,9 +499,53 @@ mod tests {
             .find(|(new, old)| new != old)
             .map_or_else(String::new, |(new, old)| {
                 format!("\n  committed: {old}\n  rust now:  {new}")
-            });
+            })
+    }
+
+    #[test]
+    fn generated_typescript_is_current() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let rendered = render();
+        let committed = committed(root);
+        if rendered == committed {
+            return;
+        }
+        if std::env::var("MEDIAFLICK_WRITE_WIRE_TYPES").as_deref() == Ok("1") {
+            std::fs::create_dir_all(root.join(GENERATED_DIR)).expect("create wire dir");
+            for (path, text) in &rendered {
+                if committed.get(path) != Some(text) {
+                    std::fs::write(root.join(path), text).expect("write generated TypeScript");
+                    println!("rewrote {path}");
+                }
+            }
+            for path in committed
+                .keys()
+                .filter(|path| !rendered.contains_key(*path))
+            {
+                std::fs::remove_file(root.join(path)).expect("remove stale TypeScript");
+                println!("removed {path}");
+            }
+            return;
+        }
+        let problem = rendered
+            .iter()
+            .find_map(|(path, new)| match committed.get(path) {
+                None => Some(format!("{path} is missing")),
+                Some(old) if old != new => Some(format!(
+                    "{path} does not match{}",
+                    first_difference(new, old)
+                )),
+                Some(_) => None,
+            })
+            .or_else(|| {
+                committed
+                    .keys()
+                    .find(|path| !rendered.contains_key(*path))
+                    .map(|path| format!("{path} is no longer generated"))
+            })
+            .unwrap_or_default();
         panic!(
-            "{GENERATED} does not match the Rust wire types. Run `just wire-types` and commit the result.{first}"
+            "the generated TypeScript does not match the Rust wire types. Run `just wire-types` and commit the result.\n  {problem}"
         );
     }
 

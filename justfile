@@ -92,13 +92,13 @@ fmt-check:
 test:
     cargo test --all-targets
 
-# Regenerate ui/src/lib/api/wire.gen.ts from the Rust wire types
+# Regenerate ui/src/lib/api/wire.gen.ts and ui/src/lib/api/wire/ from the Rust wire types
 [group('build')]
 [unix]
 wire-types:
     MEDIAFLICK_WRITE_WIRE_TYPES=1 cargo test --bin mediaflick-desktop wire::tests::generated_typescript_is_current -- --nocapture
 
-# Regenerate ui/src/lib/api/wire.gen.ts from the Rust wire types
+# Regenerate ui/src/lib/api/wire.gen.ts and ui/src/lib/api/wire/ from the Rust wire types
 [group('build')]
 [windows]
 wire-types:
