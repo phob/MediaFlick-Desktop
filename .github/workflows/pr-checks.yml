@@ -3,7 +3,9 @@ name: PR checks
 # A separate workflow so adding or removing a label reruns only these checks.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    # `edited` covers a retarget to another base. The job always runs: a skipped
+    # job would replace a failed result with one that satisfies a required check.
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
 
 permissions:
   contents: read

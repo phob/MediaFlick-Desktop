@@ -7,7 +7,7 @@ Escape: MEDIAFLICK_GUARDS_CHANGED=1, which CI sets only from the PR's `guards-ch
 Lint configuration is compared by meaning: a new lint at full strength, a raised level
 or a lowered threshold passes. Guard code (CI scripts, gating workflows, check recipes,
 TypeScript and compiler-warning settings) has no such reading, so any change to it
-counts, except an action version bump. CI runs the base branch's copy of this script
+counts, except a version bump. CI runs the default branch's copy of this script
 from a pull_request_target workflow, so a PR cannot edit the check that judges it.
 """
 
@@ -28,13 +28,19 @@ RUST_LEVELS = {"allow": 0, "warn": 1, "deny": 2, "forbid": 3}
 OXLINT_LEVELS = {"off": 0, "allow": 0, 0: 0, "warn": 1, 1: 1, "error": 2, "deny": 2, 2: 2}
 UI_GUARD_SCRIPTS = ("build", "lint", "test", "test:unit", "test:ui")
 GUARD_RECIPES = ("check-pr", "clippy", "clippy-target", "fmt-check", "rust-quality", "test", "ui")
-MSBUILD_WARNINGS = re.compile(r"TreatWarningsAsErrors|WarningsAsErrors|WarningsNotAsErrors|NoWarn|WarningLevel|AnalysisLevel|AnalysisMode|EnforceCodeStyleInBuild|Nullable")
+MSBUILD_WARNINGS = re.compile(
+    r"TreatWarningsAsErrors|WarningsAsErrors|WarningsNotAsErrors|NoWarn|WarningLevel|AnalysisLevel|AnalysisMode"
+    r"|EnforceCodeStyleInBuild|Nullable|Condition|<PropertyGroup|</PropertyGroup|<Import|<Project"
+)
 RATCHET = re.compile(r"guard-ratchet")
 NUMBER = re.compile(r"\d[\d_]*")
-RUST_SUPPRESSION = re.compile(r"(?<![\w.:])(allow|expect) ?\( ?(\w[\w:]*(?: ?, ?\w[\w:]*)*)")
+RUST_ATTRIBUTE = re.compile(r"#!?\[")
+RUST_LINT_LEVEL = re.compile(r"\b(allow|expect)\s*\(\s*(\w[\w:]*(?:\s*,\s*\w[\w:]*)*)")
 RUST_STRING = re.compile(r'"(?:\\[\s\S]|[^"\\])*"')
-RUST_COMMENT = re.compile(r"//[^\n]*")
-RUST_ITEM = re.compile(r"\b(fn|impl|mod|struct|enum|trait|const|static|type|use|let|match|macro_rules)\b")
+RUST_GAP = re.compile(r"(?:\s+|//[^\n]*)*")
+RUST_WORD = re.compile(r"[A-Za-z_]\w*")
+RUST_ITEMS = frozenset({"fn", "impl", "mod", "struct", "enum", "union", "trait", "const", "static", "type", "use", "macro_rules"})
+RUST_QUALIFIERS = frozenset({"pub", "crate", "super", "self", "in", "async", "unsafe", "default", "extern"})
 VERSION_PIN = re.compile(r"((?:uses:\s*[^@\s]+@)|(?:[\w-]*version[\w-]*:\s*))\S+", re.IGNORECASE)
 SCRIPT_SUPPRESSION = re.compile(r"(?:oxlint|eslint)-disable[^\n*]*|@ts-(?:ignore|expect-error|nocheck)")
 CSHARP_SUPPRESSION = re.compile(r"#pragma\s+warning\s+disable[^\n]*|SuppressMessage\s*\([^)]*\)")
@@ -189,9 +195,8 @@ SURFACES = (
     Surface("Companion warning settings", "plugin/*.csproj", matching_lines(MSBUILD_WARNINGS)),
     Surface("Analyzer severities", "*.editorconfig", matching_lines(re.compile(r"severity"))),
     Surface("CI scripts", "scripts/ci/*", changed_lines),
-    Surface("CI workflow", ".github/workflows/ci.yml", workflow_lines),
-    Surface("PR checks workflow", ".github/workflows/pr-checks.yml", workflow_lines),
-    Surface("Guard workflow", ".github/workflows/guard-integrity.yml", workflow_lines),
+    Surface("Cargo configuration", ".cargo/config*", changed_lines),
+    Surface("Workflow", ".github/workflows/*", workflow_lines),
     Surface("Check recipes", "justfile", recipe_lines),
 )
 
@@ -221,7 +226,7 @@ def suppressions(path: str, text: str) -> Counter[str]:
     """Lint suppressions in a file, keyed by what they silence so a moved one still matches."""
     suffix = os.path.splitext(path)[1]
     if suffix == ".rs":
-        return Counter(rust_suppression(code, match) for code in [re.sub(r"\s+", " ", RUST_COMMENT.sub("", RUST_STRING.sub('""', text)))] for match in RUST_SUPPRESSION.finditer(code))
+        return rust_suppressions(text)
     if suffix in (".ts", ".tsx", ".js", ".mjs"):
         return Counter(match.strip() for match in SCRIPT_SUPPRESSION.findall(text))
     if suffix == ".cs":
@@ -229,15 +234,52 @@ def suppressions(path: str, text: str) -> Counter[str]:
     return Counter()
 
 
-def rust_suppression(code: str, match: re.Match[str]) -> str:
+def attribute_end(text: str, start: int) -> int:
+    """Index just past the bracket that closes the one at `start`, skipping string literals."""
+    depth, index = 0, start
+    while index < len(text):
+        char = text[index]
+        if char == '"':
+            index += 1
+            while index < len(text) and text[index] != '"':
+                index += 2 if text[index] == "\\" else 1
+        elif char in "[(":
+            depth += 1
+        elif char in "])":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return len(text)
+
+
+def attribute_target(text: str, index: int) -> str:
+    """The kind of item an outer attribute ending at `index` applies to; fields and variants are `member`."""
+    while True:
+        index = RUST_GAP.match(text, index).end()
+        if not text.startswith("#[", index):
+            break
+        index = attribute_end(text, index + 1)
+    words = RUST_WORD.findall(RUST_STRING.sub('""', text[index : index + 200]))
+    for position, word in enumerate(words):
+        following = words[position + 1] if position + 1 < len(words) else ""
+        if word in RUST_QUALIFIERS or word == "const" and following in ("fn", "unsafe", "async", "extern"):
+            continue
+        return word if word in RUST_ITEMS else "member"
+    return "member"
+
+
+def rust_suppressions(text: str) -> Counter[str]:
     """`expect(clippy::panic) on fn`: what is silenced and how far, so widening the scope counts as new."""
-    lints = match.group(2).replace(" ", "").removesuffix(",reason")
-    if code.rfind("#![", 0, match.start()) > code.rfind("#[", 0, match.start()):
-        scope = "module"
-    else:
-        item = RUST_ITEM.search(code, match.end())
-        scope = item.group() if item else "item"
-    return f"{match.group(1)}({lints}) on {scope}"
+    found: Counter[str] = Counter()
+    for match in RUST_ATTRIBUTE.finditer(text):
+        end = attribute_end(text, match.end() - 1)
+        body = RUST_STRING.sub('""', text[match.end() - 1 : end])
+        for kind, names in RUST_LINT_LEVEL.findall(body):
+            lints = ",".join(name for name in re.split(r"\s*,\s*", names) if name != "reason")
+            scope = "module" if match.group() == "#![" else attribute_target(text, end)
+            found[f"{kind}({lints}) on {scope}"] += 1
+    return found
 
 
 def added_suppressions(contents: dict[str, tuple[str, str]]) -> list[tuple[str, str]]:
