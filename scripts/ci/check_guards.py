@@ -4,8 +4,11 @@
 Usage: check_guards.py BASE [HEAD]
 Escape: MEDIAFLICK_GUARDS_CHANGED=1, which CI sets only from the PR's `guards-changed` label.
 
-Tightening passes: a new lint, a raised level, a lowered threshold, an added CI step.
-Anything the check cannot classify as tightening counts as a relaxation.
+Lint configuration is compared by meaning: a new lint at full strength, a raised level
+or a lowered threshold passes. Guard code (CI scripts, gating workflows, check recipes,
+TypeScript and compiler-warning settings) has no such reading, so any change to it
+counts, except an action version bump. CI runs the base branch's copy of this script
+from a pull_request_target workflow, so a PR cannot edit the check that judges it.
 """
 
 import fnmatch
@@ -24,10 +27,15 @@ Check = Callable[[str, str], list[str]]
 RUST_LEVELS = {"allow": 0, "warn": 1, "deny": 2, "forbid": 3}
 OXLINT_LEVELS = {"off": 0, "allow": 0, 0: 0, "warn": 1, 1: 1, "error": 2, "deny": 2, 2: 2}
 UI_GUARD_SCRIPTS = ("build", "lint", "test", "test:unit", "test:ui")
-GUARD_RECIPES = ("clippy", "clippy-target", "check-pr", "fmt-check", "rust-quality", "test")
+GUARD_RECIPES = ("check-pr", "clippy", "clippy-target", "fmt-check", "rust-quality", "test", "ui")
+MSBUILD_WARNINGS = re.compile(r"TreatWarningsAsErrors|WarningsAsErrors|WarningsNotAsErrors|NoWarn|WarningLevel|AnalysisLevel|AnalysisMode|EnforceCodeStyleInBuild|Nullable")
 RATCHET = re.compile(r"guard-ratchet")
 NUMBER = re.compile(r"\d[\d_]*")
-RUST_SUPPRESSION = re.compile(r"(?<![\w.:])(allow|expect)\((\w[\w:]*(?:,\w[\w:]*)*)")
+RUST_SUPPRESSION = re.compile(r"(?<![\w.:])(allow|expect) ?\( ?(\w[\w:]*(?: ?, ?\w[\w:]*)*)")
+RUST_STRING = re.compile(r'"(?:\\[\s\S]|[^"\\])*"')
+RUST_COMMENT = re.compile(r"//[^\n]*")
+RUST_ITEM = re.compile(r"\b(fn|impl|mod|struct|enum|trait|const|static|type|use|let|match|macro_rules)\b")
+VERSION_PIN = re.compile(r"((?:uses:\s*[^@\s]+@)|(?:[\w-]*version[\w-]*:\s*))\S+", re.IGNORECASE)
 SCRIPT_SUPPRESSION = re.compile(r"(?:oxlint|eslint)-disable[^\n*]*|@ts-(?:ignore|expect-error|nocheck)")
 CSHARP_SUPPRESSION = re.compile(r"#pragma\s+warning\s+disable[^\n]*|SuppressMessage\s*\([^)]*\)")
 
@@ -37,8 +45,8 @@ def git(*args: str) -> str:
 
 
 def show(rev: str, path: str) -> str:
-    result = subprocess.run(["git", "show", f"{rev}:{path}"], capture_output=True, text=True)
-    return result.stdout if result.returncode == 0 else ""
+    result = subprocess.run(["git", "show", f"{rev}:{path}"], capture_output=True)
+    return result.stdout.decode("utf-8", errors="replace") if result.returncode == 0 else ""
 
 
 def guard_lines(text: str) -> Counter[str]:
@@ -46,16 +54,25 @@ def guard_lines(text: str) -> Counter[str]:
     return Counter(line for line in lines if line and not line.startswith(("#", "//")))
 
 
-def removed_lines(before: str, after: str) -> list[str]:
-    """Any guard line that disappeared; moving a line within the file is fine."""
-    gone = guard_lines(before) - guard_lines(after)
-    return [f"removed `{line}`" for line in sorted(gone)]
+def changed_lines(before: str, after: str) -> list[str]:
+    """Any guard line added or removed; moving a line within the file is fine."""
+    old, new = guard_lines(before), guard_lines(after)
+    return [f"removed `{line}`" for line in sorted(old - new)] + [f"added `{line}`" for line in sorted(new - old)]
 
 
 def workflow_lines(before: str, after: str) -> list[str]:
-    """Like removed_lines, but an action version bump is not a relaxation."""
-    pinless = re.compile(r"(uses:\s*[^@\s]+)@\S+")
-    return removed_lines(pinless.sub(r"\1", before), pinless.sub(r"\1", after))
+    """Like changed_lines, but an action or tool version bump is not a relaxation."""
+    return changed_lines(VERSION_PIN.sub(r"\1V", before), VERSION_PIN.sub(r"\1V", after))
+
+
+def matching_lines(pattern: re.Pattern[str]) -> Check:
+    def check(before: str, after: str) -> list[str]:
+        def keep(text: str) -> str:
+            return "\n".join(line for line in text.splitlines() if pattern.search(line))
+
+        return changed_lines(keep(before), keep(after))
+
+    return check
 
 
 def recipe_lines(before: str, after: str) -> list[str]:
@@ -71,7 +88,7 @@ def recipe_lines(before: str, after: str) -> list[str]:
                 blocks.append(line)
         return "\n".join(blocks)
 
-    return removed_lines(recipes(before), recipes(after))
+    return changed_lines(recipes(before), recipes(after))
 
 
 def toml(text: str) -> dict:
@@ -88,7 +105,7 @@ def cargo_lints(before: str, after: str) -> list[str]:
         return RUST_LEVELS.get(str(level), -1)
 
     old, new = levels(before), levels(after)
-    findings = []
+    findings = [f"added `{lint}` below deny" for lint, value in new.items() if lint not in old and rank(value) < RUST_LEVELS["deny"]]
     for lint, value in old.items():
         if lint not in new:
             findings.append(f"removed lint `{lint}`")
@@ -134,6 +151,7 @@ def oxlint_config(before: str, after: str) -> list[str]:
     findings = []
     for table in ("rules", "categories"):
         old_rules, new_rules = old.get(table, {}), new.get(table, {})
+        findings += [f"added {table} `{rule}` below error" for rule, setting in new_rules.items() if rule not in old_rules and level(setting) < 2]
         for rule, setting in old_rules.items():
             if rule not in new_rules:
                 findings.append(f"removed {table} `{rule}`")
@@ -166,10 +184,14 @@ SURFACES = (
     Surface("Clippy configuration", "clippy.toml", clippy_config),
     Surface("Oxlint configuration", "ui/.oxlintrc.json", oxlint_config),
     Surface("UI check scripts", "ui/package.json", ui_scripts),
-    Surface("TypeScript configuration", "ui/tsconfig*.json", removed_lines),
-    Surface("CI scripts", "scripts/ci/*", removed_lines),
+    Surface("TypeScript configuration", "ui/tsconfig*.json", changed_lines),
+    Surface("Companion warning settings", "plugin/*.props", matching_lines(MSBUILD_WARNINGS)),
+    Surface("Companion warning settings", "plugin/*.csproj", matching_lines(MSBUILD_WARNINGS)),
+    Surface("Analyzer severities", "*.editorconfig", matching_lines(re.compile(r"severity"))),
+    Surface("CI scripts", "scripts/ci/*", changed_lines),
     Surface("CI workflow", ".github/workflows/ci.yml", workflow_lines),
     Surface("PR checks workflow", ".github/workflows/pr-checks.yml", workflow_lines),
+    Surface("Guard workflow", ".github/workflows/guard-integrity.yml", workflow_lines),
     Surface("Check recipes", "justfile", recipe_lines),
 )
 
@@ -199,13 +221,23 @@ def suppressions(path: str, text: str) -> Counter[str]:
     """Lint suppressions in a file, keyed by what they silence so a moved one still matches."""
     suffix = os.path.splitext(path)[1]
     if suffix == ".rs":
-        matches = RUST_SUPPRESSION.findall(re.sub(r"\s+", "", text))
-        return Counter(f"{kind}({lints.removesuffix(',reason')})" for kind, lints in matches)
+        return Counter(rust_suppression(code, match) for code in [re.sub(r"\s+", " ", RUST_COMMENT.sub("", RUST_STRING.sub('""', text)))] for match in RUST_SUPPRESSION.finditer(code))
     if suffix in (".ts", ".tsx", ".js", ".mjs"):
         return Counter(match.strip() for match in SCRIPT_SUPPRESSION.findall(text))
     if suffix == ".cs":
         return Counter(match.strip() for match in CSHARP_SUPPRESSION.findall(text))
     return Counter()
+
+
+def rust_suppression(code: str, match: re.Match[str]) -> str:
+    """`expect(clippy::panic) on fn`: what is silenced and how far, so widening the scope counts as new."""
+    lints = match.group(2).replace(" ", "").removesuffix(",reason")
+    if code.rfind("#![", 0, match.start()) > code.rfind("#[", 0, match.start()):
+        scope = "module"
+    else:
+        item = RUST_ITEM.search(code, match.end())
+        scope = item.group() if item else "item"
+    return f"{match.group(1)}({lints}) on {scope}"
 
 
 def added_suppressions(contents: dict[str, tuple[str, str]]) -> list[tuple[str, str]]:
@@ -246,10 +278,10 @@ def main(argv: list[str]) -> int:
     for where, finding in findings:
         print(f"{where}: {finding}")
     if os.environ.get("MEDIAFLICK_GUARDS_CHANGED") == "1":
-        print(f"guards: {len(findings)} relaxations above, accepted by the guards-changed label")
+        print(f"guards: {len(findings)} findings above, accepted by the guards-changed label")
         return 0
     print(
-        f"guards: {span} deletes or relaxes {len(findings)} guards.\n"
+        f"guards: {span} relaxes a guard or changes guard code ({len(findings)} findings).\n"
         "Fix: keep the guard and change the code instead. If the relaxation is intended,\n"
         "say why in the PR body and label the PR `guards-changed`; that label marks it for the operator's review."
     )

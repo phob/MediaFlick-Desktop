@@ -11,6 +11,8 @@ import subprocess
 import sys
 
 CODE_PREFIXES = ("src/", "ui/src/", "plugin/")
+# Dependency manifests are exempt, as Cargo.toml and ui/package.json are by lying outside the prefixes.
+DEPENDENCY_SUFFIXES = (".csproj", ".props", "packages.lock.json")
 FRAGMENT = re.compile(r"^changelog\.d/[^/]+\.md$")
 
 
@@ -26,7 +28,7 @@ def main(argv: list[str]) -> int:
     span = f"{git('merge-base', base, head).strip()}..{head}"
 
     changed = [line.split("\t") for line in git("diff", "--name-status", "--no-renames", span).splitlines()]
-    code = [path for _, path in changed if path.startswith(CODE_PREFIXES)]
+    code = [path for _, path in changed if path.startswith(CODE_PREFIXES) and not path.endswith(DEPENDENCY_SUFFIXES)]
     fragments = [path for status, path in changed if status in ("A", "M") and FRAGMENT.match(path)]
     if not code or fragments:
         return 0
