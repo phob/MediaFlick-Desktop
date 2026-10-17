@@ -1,0 +1,43 @@
+name: Guard integrity
+
+# pull_request_target runs this file and check_guards.py from the base branch,
+# so a PR cannot edit or skip the check that judges it. The job only reads the
+# PR's commits as git objects and never executes them.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: guard-integrity-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guard-integrity:
+    name: Guard integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the base branch
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch the PR head
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags origin "+refs/pull/$PR/head:refs/remotes/pr/head"
+
+      # Labels are read live: a rerun of an older run must not reuse a stale event payload.
+      - name: Check that no guard was deleted or relaxed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx guards-changed; then
+            export MEDIAFLICK_GUARDS_CHANGED=1
+          fi
+          python3 scripts/ci/check_guards.py HEAD pr/head

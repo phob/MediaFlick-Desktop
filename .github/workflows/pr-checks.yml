@@ -45,22 +45,3 @@ jobs:
 
       - name: Check file sizes
         run: python3 scripts/ci/check_file_size.py "$BASE"
-
-  guard-integrity:
-    name: Guard integrity
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Check that no guard was deleted or relaxed
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          if gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx guards-changed; then
-            export MEDIAFLICK_GUARDS_CHANGED=1
-          fi
-          python3 scripts/ci/check_guards.py "$BASE"
