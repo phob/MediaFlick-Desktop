@@ -204,7 +204,13 @@ const LIBRARY_CHANGE_REFRESHES: Record<
     home: "all" | "summary" | "none"
     details: "named" | "all"
     grids: (source: BrowseSource) => boolean
-    /** Whether every "Latest in <library>" shelf refreshes. Libraries named by the batch always do. */
+    /**
+     * Whether every "Latest in <library>" shelf refreshes, live ones included;
+     * a library the batch names refreshes either way. `catalog-changed` (the
+     * bootstrap's pages) refreshes only the catalog libraries it names;
+     * `library-changed` (incremental cycles, pushed changes) refreshes every
+     * shelf once per event.
+     */
     shelves: boolean
   }
 > = {
