@@ -1203,6 +1203,7 @@ mod tests {
         elements.extend([
             library(SHOWS, false),
             genre("Action", false),
+            library(MOVIES, true),
             genre("Gone", true),
         ]);
         let defaults = home_defaults(
@@ -1213,8 +1214,9 @@ mod tests {
         );
         let mut expected = built_ins();
         expected.extend([
-            genre("Action", true),
             library(SHOWS, true),
+            library(MOVIES, true),
+            genre("Action", true),
             genre("Gone", false),
         ]);
         assert_eq!(defaults.elements, expected);
