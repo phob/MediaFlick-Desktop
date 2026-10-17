@@ -82,26 +82,31 @@ pub(in super::super) struct ProfileDeleted {
     deleted: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ProfileDraft {
+pub(in super::super) struct CollectionProfileDraft {
     template: TemplateReference,
     title: String,
     #[serde(default)]
+    #[ts(optional = nullable)]
     description: String,
     #[serde(default)]
+    #[ts(optional = nullable)]
     custom_poster_id: Option<String>,
     source: CollectionSource,
     media_type: MediaType,
     #[serde(default)]
+    #[ts(optional = nullable)]
     limit: ResultLimit,
     #[serde(default)]
+    #[ts(optional = nullable)]
     cadence: RefreshCadence,
     #[serde(default)]
+    #[ts(optional = nullable)]
     available_on_home: bool,
 }
 
-impl ProfileDraft {
+impl CollectionProfileDraft {
     fn into_profile(self, id: String, revision: String) -> std::io::Result<CollectionProfile> {
         let mut profile = CollectionProfile {
             id,
@@ -147,21 +152,22 @@ pub(super) fn settings(services: &Arc<Services>, force_probe: bool) -> Handled {
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SettingsPatch {
+#[ts(optional_fields)]
+pub(in super::super) struct CollectionSettingsPatch {
     mode_selection: Option<CollectionMode>,
     include_unreleased: Option<bool>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-struct ReorderBody {
+pub(in super::super) struct ProfileOrderBody {
     profile_ids: Vec<String>,
 }
 
 pub(super) fn patch_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.untyped_body::<SettingsPatch>()?;
+    let patch = request.body::<CollectionSettingsPatch>()?;
     let scope = active_scope(services)?;
     let account = scope.account().clone();
     let updates_mode = patch.mode_selection.is_some();
@@ -230,7 +236,7 @@ pub(super) fn templates(services: &Arc<Services>) -> Handled {
 
 pub(super) fn preview(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let account = active_account(services)?;
-    let draft = request.untyped_body::<ProfileDraft>()?;
+    let draft = request.body::<CollectionProfileDraft>()?;
     let profile = match draft.into_profile(allocate_profile_id(), allocate_revision_id()) {
         Ok(profile) => profile,
         Err(error) => return Err(configuration_failure(&error)),
@@ -311,7 +317,7 @@ pub(super) fn read(services: &Arc<Services>, profile_id: &str) -> Handled {
 
 pub(super) fn create(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let account = active_account(services)?;
-    let draft = request.untyped_body::<ProfileDraft>()?;
+    let draft = request.body::<CollectionProfileDraft>()?;
     let profile = match draft.into_profile(allocate_profile_id(), allocate_revision_id()) {
         Ok(profile) => profile,
         Err(error) => return Err(configuration_failure(&error)),
@@ -330,7 +336,7 @@ pub(super) fn edit(services: &Arc<Services>, profile_id: &str, request: &ApiRequ
     let Some(previous) = profile(services, &account, profile_id) else {
         return Err(ApiResponse::error(404, "that collection does not exist"));
     };
-    let draft = request.untyped_body::<ProfileDraft>()?;
+    let draft = request.body::<CollectionProfileDraft>()?;
     let next = match draft.into_profile(previous.id.clone(), previous.revision.clone()) {
         Ok(profile) => profile,
         Err(error) => return Err(configuration_failure(&error)),
@@ -429,7 +435,7 @@ pub(super) fn delete(services: &Arc<Services>, profile_id: &str) -> Handled {
 }
 
 pub(super) fn reorder(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let ids = request.untyped_body::<ReorderBody>()?.profile_ids;
+    let ids = request.body::<ProfileOrderBody>()?.profile_ids;
     let scope = active_scope(services)?;
     let account = scope.account().clone();
     services

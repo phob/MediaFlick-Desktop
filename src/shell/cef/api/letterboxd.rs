@@ -74,18 +74,18 @@ fn letterboxd_profiles(services: &Arc<Services>) -> Handled {
     Ok(ApiResponse::ok(LetterboxdProfiles { profiles }))
 }
 
-#[derive(Deserialize)]
-struct AddProfileBody {
+#[derive(Deserialize, ts_rs::TS)]
+pub(super) struct LetterboxdProfileBody {
     profile: String,
 }
 
-#[derive(Deserialize)]
-struct EnabledBody {
+#[derive(Deserialize, ts_rs::TS)]
+pub(super) struct LetterboxdEnabledBody {
     enabled: bool,
 }
 
 fn letterboxd_add_profile(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.untyped_body::<AddProfileBody>()?;
+    let body = request.body::<LetterboxdProfileBody>()?;
     let scope = letterboxd_scope(services)?;
     let account = scope.account().clone();
     let profile = match letterboxd_integration::normalize_profile(&body.profile) {
@@ -141,7 +141,7 @@ fn letterboxd_set_enabled(services: &Arc<Services>, id: &str, request: &ApiReque
     if !valid_profile_id(id) {
         return Err(ApiResponse::error(404, "profile not found"));
     }
-    let enabled = request.untyped_body::<EnabledBody>()?.enabled;
+    let enabled = request.body::<LetterboxdEnabledBody>()?.enabled;
     let scope = letterboxd_scope(services)?;
     let account = scope.account().clone();
     services

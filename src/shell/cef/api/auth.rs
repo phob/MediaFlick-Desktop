@@ -20,33 +20,34 @@ pub(super) fn route(
     Some(response)
 }
 
-#[derive(Deserialize)]
-struct ServerBody {
+#[derive(Deserialize, ts_rs::TS)]
+pub(super) struct ServerBody {
     server: String,
 }
 
-#[derive(Deserialize)]
-struct LoginBody {
+#[derive(Deserialize, ts_rs::TS)]
+pub(super) struct LoginBody {
     server: String,
     username: String,
     password: String,
 }
 
-#[derive(Deserialize)]
-struct QuickConnectPollBody {
+#[derive(Deserialize, ts_rs::TS)]
+pub(super) struct QuickConnectPollBody {
     server: String,
     secret: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-struct LogoutBody {
+pub(super) struct LogoutBody {
     #[serde(default)]
+    #[ts(optional = nullable)]
     forget_library: bool,
 }
 
 fn auth_connect(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.untyped_body::<ServerBody>()?;
+    let body = request.body::<ServerBody>()?;
     match services.session.connect(&body.server) {
         Ok(server) => Ok(ApiResponse::ok(server)),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
@@ -54,7 +55,7 @@ fn auth_connect(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 }
 
 fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.untyped_body::<LoginBody>()?;
+    let body = request.body::<LoginBody>()?;
     let result = services
         .session
         .login(&body.server, &body.username, &body.password);
@@ -75,7 +76,7 @@ fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 }
 
 fn quick_connect_start(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.untyped_body::<ServerBody>()?;
+    let body = request.body::<ServerBody>()?;
     match services.session.quick_connect_start(&body.server) {
         Ok(start) => Ok(ApiResponse::ok(start)),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
@@ -83,7 +84,7 @@ fn quick_connect_start(services: &Arc<Services>, request: &ApiRequest) -> Handle
 }
 
 fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.untyped_body::<QuickConnectPollBody>()?;
+    let body = request.body::<QuickConnectPollBody>()?;
     let result = services
         .session
         .quick_connect_poll(&body.server, &body.secret);
@@ -106,7 +107,7 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> Handled
 }
 
 fn auth_logout(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.untyped_body::<LogoutBody>()?;
+    let body = request.body::<LogoutBody>()?;
     if let Err(error) = services.session.logout(body.forget_library) {
         tracing::error!("could not clear the local session after logout: {error}");
         return Err(ApiResponse::error(500, "could not clear the local session"));

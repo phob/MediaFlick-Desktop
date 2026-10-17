@@ -32,40 +32,59 @@ where
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+// The settings patches take enum values as strings and parse them with
+// `from_id`, which accepts each enum's serde name, so the TypeScript names the
+// enum.
+#[derive(Debug, Clone, Default, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(optional_fields)]
 pub struct PlayerSettingsPatch {
     pub comfort: Option<super::PlayerComfort>,
+    #[ts(as = "Option<PlayerBackend>")]
     pub player_backend: Option<String>,
     #[serde(default)]
+    #[ts(as = "Option<String>", optional = nullable)]
     pub mpv_path: NullablePatch<String>,
+    #[ts(as = "Option<FullscreenBehavior>")]
     pub default_fullscreen: Option<String>,
     #[serde(default)]
+    #[ts(as = "Option<String>", optional = nullable)]
     pub mark_watched_next: NullablePatch<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(optional_fields)]
 pub struct PlaybackSettingsPatch {
+    #[ts(as = "Option<StreamingQuality>")]
     pub streaming_quality: Option<String>,
+    #[ts(as = "Option<SegmentSkipMode>")]
     pub skip_intro: Option<String>,
+    #[ts(as = "Option<SegmentSkipMode>")]
     pub skip_credits: Option<String>,
+    #[ts(as = "Option<SegmentSkipMode>")]
     pub skip_recap: Option<String>,
+    #[ts(as = "Option<SegmentSkipMode>")]
     pub skip_commercial: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(optional_fields)]
 pub struct ApplicationSettingsPatch {
+    #[ts(as = "Option<CloseBehavior>")]
     pub close_behavior: Option<String>,
     pub show_scrollbars: Option<bool>,
     pub log_level: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(optional_fields)]
 pub struct AppearanceSettingsPatch {
+    #[ts(as = "Option<AppearanceAccent>")]
     pub accent: Option<String>,
+    #[ts(as = "Option<AppearanceDensity>")]
     pub density: Option<String>,
     pub artwork_intensity: Option<u8>,
     pub backdrop_intensity: Option<u8>,

@@ -10,6 +10,6 @@ export type PlaybackTrackPreference = Wire.ResolvedPlaybackPreference
 
 export type MediaInfoResponse = Wire.MediaInfoResponse
 
-export type PlaybackTrackPreferenceWrite = PlaybackTrackPreference
+export type PlaybackTrackPreferenceWrite = Wire.PlaybackTrackPreferenceWrite
 
 export type TrailerSummary = Wire.TrailerSummary

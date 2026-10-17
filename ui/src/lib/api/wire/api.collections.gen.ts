@@ -23,6 +23,18 @@ export type JellyfinCollections = {
   collections: Array<JellyfinCollectionSummary>,
 };
 
+export type LocalAccountDeletionBody = {
+  confirmed?: boolean,
+};
+
+export type PublicListSearchBody = {
+  query?: string,
+};
+
+export type PublicListValidateBody = {
+  selector?: string,
+};
+
 export type UploadedArtwork = {
   id: string,
 };

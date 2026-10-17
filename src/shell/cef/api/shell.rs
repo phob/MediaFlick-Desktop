@@ -80,14 +80,14 @@ fn shell_mpv_help() -> Handled {
     Ok(ApiResponse::ok(MpvHelpOpened { opened: true }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-struct ShellRequestBody {
+pub(super) struct ShellRequestBody {
     request_id: String,
 }
 
 fn shell_request_id(request: &ApiRequest) -> Result<String, ApiResponse> {
-    let body = request.untyped_body::<ShellRequestBody>()?;
+    let body = request.body::<ShellRequestBody>()?;
     let value = body.request_id.trim();
     if value.is_empty()
         || value.len() > 128

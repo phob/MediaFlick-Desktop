@@ -3,7 +3,7 @@ import { sameJson } from "../../json.ts"
 
 export type PlayerSettings = Wire.PlayerView
 
-export type PlayerSettingsWrite = Omit<PlayerSettings, "playerConfigured">
+export type PlayerSettingsWrite = Wire.PlayerSettingsPatch
 
 export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWrite {
   return {
@@ -19,9 +19,7 @@ export type StartupDestination = Wire.StartupView
 
 export type ViewingSettings = Wire.ViewingView
 
-export type ViewingSettingsWrite = Omit<ViewingSettings, "startupDestination"> & {
-  startupDestination?: StartupDestination
-}
+export type ViewingSettingsWrite = Wire.ViewingSettingsWrite
 
 export function viewingSettingsWrite(settings: ViewingSettings, source: ViewingSettings | undefined): ViewingSettingsWrite {
   const { startupDestination, ...others } = settings
@@ -33,6 +31,12 @@ export type PlayerComfort = Wire.PlayerComfort
 export type ClientSettings = Wire.SettingsView
 
 export type AppearanceSettings = Wire.AppearanceView
+
+export type PlaybackSettingsWrite = Wire.PlaybackSettingsPatch
+
+export type ApplicationSettingsWrite = Wire.ApplicationSettingsPatch
+
+export type AppearanceSettingsWrite = Wire.AppearanceSettingsPatch
 
 export type StreamingQualityId = Wire.StreamingQuality
 

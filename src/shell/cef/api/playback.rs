@@ -70,11 +70,13 @@ pub(super) struct PlayerCommandAccepted {
     accepted: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-struct PlayBody {
+#[ts(optional_fields)]
+pub(super) struct PlayBody {
     item_id: String,
     #[serde(default)]
+    #[ts(optional = nullable)]
     resume: bool,
     start_ticks: Option<i64>,
     media_source_id: Option<String>,
@@ -84,14 +86,14 @@ struct PlayBody {
     quality: Option<StreamingQuality>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-struct ItemBody {
+pub(super) struct PlaybackItemBody {
     item_id: String,
 }
 
 fn item_id_of(request: &ApiRequest) -> Result<String, ApiResponse> {
-    let body = request.untyped_body::<ItemBody>()?;
+    let body = request.body::<PlaybackItemBody>()?;
     if body.item_id.is_empty() {
         return Err(ApiResponse::error(400, "itemId is required"));
     }
@@ -99,7 +101,7 @@ fn item_id_of(request: &ApiRequest) -> Result<String, ApiResponse> {
 }
 
 fn play_item(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.untyped_body::<PlayBody>()?;
+    let body = request.body::<PlayBody>()?;
     if body.item_id.is_empty() {
         return Err(ApiResponse::error(400, "itemId is required"));
     }
@@ -244,6 +246,7 @@ pub(super) enum PlayerCommandBody {
     },
     /// A null track turns subtitles off.
     SetSubtitleTrack {
+        #[ts(optional = nullable)]
         subtitle_track: Option<i64>,
     },
     ToggleSubtitles,

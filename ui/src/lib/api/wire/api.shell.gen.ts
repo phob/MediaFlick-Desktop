@@ -8,6 +8,10 @@ export type ShellQueued = {
   queued: boolean,
 };
 
+export type ShellRequestBody = {
+  requestId: string,
+};
+
 export type ShellRequestQueued = {
   requestId: string,
   queued: boolean,

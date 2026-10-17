@@ -65,8 +65,9 @@ fn untyped_responses_only_shrink() {
         calls.visit_file(&file);
     }
     let UntypedCalls { responses, bodies } = calls;
+    let raised = responses > UNTYPED_RESPONSES || bodies > UNTYPED_BODIES;
     assert!(
-        responses <= UNTYPED_RESPONSES && bodies <= UNTYPED_BODIES,
+        !raised,
         "new untyped API bodies ({responses} responses, {bodies} request bodies; \
          allowed {UNTYPED_RESPONSES} and {UNTYPED_BODIES}). Answer with \
          `ApiResponse::ok(<wire type>)` and decode with `request.body::<wire type>()`."
@@ -85,7 +86,7 @@ fn list_tokens(attr: &syn::Attribute, name: &str) -> Option<String> {
     }
 }
 
-fn derives_ts(attrs: &[syn::Attribute]) -> bool {
+fn derives(attrs: &[syn::Attribute], derive: &str) -> bool {
     attrs
         .iter()
         .filter_map(|attr| list_tokens(attr, "derive"))
@@ -93,15 +94,22 @@ fn derives_ts(attrs: &[syn::Attribute]) -> bool {
             derives.split(',').any(|path| {
                 path.rsplit("::")
                     .next()
-                    .is_some_and(|name| name.trim() == "TS")
+                    .is_some_and(|name| name.trim() == derive)
             })
         })
+}
+
+fn is_option(ty: &syn::Type) -> bool {
+    matches!(ty, syn::Type::Path(path) if path.qself.is_none()
+        && path.path.segments.last().is_some_and(|last| last.ident == "Option"))
 }
 
 struct AttrKey {
     name: String,
     /// The value when it is a `true` or `false` literal.
     flag: Option<bool>,
+    /// The value when it is a string literal or a single word.
+    text: Option<String>,
     /// Written as `key(...)` rather than `key` or `key = value`.
     nested: bool,
 }
@@ -113,15 +121,19 @@ fn attr_keys(attr: &syn::Attribute) -> syn::Result<Vec<AttrKey>> {
             .path
             .get_ident()
             .map_or_else(String::new, ToString::to_string);
-        let (mut flag, mut nested) = (None, false);
+        let (mut flag, mut text, mut nested) = (None, None, false);
         if meta.input.peek(syn::Token![=]) {
-            let value: syn::Expr = meta.value()?.parse()?;
-            if let syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Bool(value),
-                ..
-            }) = value
-            {
-                flag = Some(value.value);
+            match meta.value()?.parse()? {
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Bool(value),
+                    ..
+                }) => flag = Some(value.value),
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(value),
+                    ..
+                }) => text = Some(value.value()),
+                syn::Expr::Path(path) => text = path.path.get_ident().map(ToString::to_string),
+                _ => {}
             }
         } else if meta.input.peek(syn::token::Paren) {
             nested = true;
@@ -132,7 +144,12 @@ fn attr_keys(attr: &syn::Attribute) -> syn::Result<Vec<AttrKey>> {
                 Ok(())
             })?;
         }
-        keys.push(AttrKey { name, flag, nested });
+        keys.push(AttrKey {
+            name,
+            flag,
+            text,
+            nested,
+        });
         Ok(())
     })?;
     Ok(keys)
@@ -140,6 +157,10 @@ fn attr_keys(attr: &syn::Attribute) -> syn::Result<Vec<AttrKey>> {
 
 fn has_key(keys: &[AttrKey], name: &str) -> bool {
     keys.iter().any(|key| key.name == name)
+}
+
+fn last_key<'a>(keys: &'a [AttrKey], name: &str) -> Option<&'a AttrKey> {
+    keys.iter().rfind(|key| key.name == name)
 }
 
 /// The serde keys ts-rs 12 reads for each kind of item
@@ -196,6 +217,62 @@ struct Seen {
     overridden: bool,
 }
 
+/// What a type's own attributes mean for each of its fields.
+#[derive(Clone, Copy)]
+struct Container {
+    /// `#[ts(optional_fields)]` makes each `Option` field `?: T`, and
+    /// `#[ts(optional_fields = nullable)]` makes it `?: T | null`.
+    optional_fields: bool,
+    /// Only decoded, never sent, so a key serde does not require must be
+    /// optional in the TypeScript.
+    decoded_only: bool,
+    /// `#[serde(default)]` on the type makes every field optional to serde.
+    default: bool,
+}
+
+fn optional_fields(seen: &Seen) -> Option<bool> {
+    last_key(&seen.ts, "optional_fields").map(|key| key.flag != Some(false))
+}
+
+impl Container {
+    /// serde sends `null` for a `None` field it does not skip, so only a type
+    /// that is never sent may drop `null` from its `Option` fields; serde
+    /// decodes a missing key and `null` the same way.
+    fn new(
+        fidelity: &mut SerdeFidelity<'_>,
+        at: &str,
+        attrs: &[syn::Attribute],
+        seen: &Seen,
+    ) -> Self {
+        let container = Self {
+            optional_fields: optional_fields(seen).unwrap_or(false),
+            decoded_only: derives(attrs, "Deserialize") && !derives(attrs, "Serialize"),
+            default: has_key(&seen.serde, "default") || has_key(&seen.dropped, "default"),
+        };
+        container.check(fidelity, at, seen);
+        container
+    }
+
+    fn check(self, fidelity: &mut SerdeFidelity<'_>, at: &str, seen: &Seen) {
+        let drops_null = last_key(&seen.ts, "optional_fields")
+            .is_some_and(|key| key.flag != Some(false) && key.text.as_deref() != Some("nullable"));
+        if drops_null && !self.decoded_only {
+            fidelity.report(at, "uses `#[ts(optional_fields)]`, which types the `null` serde sends for `None` as absent; write `#[ts(optional_fields = nullable)]`");
+        }
+    }
+
+    /// A variant takes the enum's derives, and its `optional_fields` unless
+    /// it sets its own.
+    fn variant(self, fidelity: &mut SerdeFidelity<'_>, at: &str, seen: &Seen) -> Self {
+        let variant = Self {
+            optional_fields: optional_fields(seen).unwrap_or(self.optional_fields),
+            ..self
+        };
+        variant.check(fidelity, at, seen);
+        variant
+    }
+}
+
 impl SerdeFidelity<'_> {
     fn report(&mut self, at: &str, problem: &str) {
         self.found
@@ -223,12 +300,6 @@ impl SerdeFidelity<'_> {
             .flatten()
             .collect::<Vec<_>>();
         let overridden = has_key(&ts, "type") || has_key(&ts, "as");
-        if has_key(&ts, "optional_fields") {
-            self.report(
-                at,
-                "uses `#[ts(optional_fields)]`; mark each field `#[ts(optional)]` instead",
-            );
-        }
         // A field's override replaces only its value type; ts-rs still
         // takes the key and the `?` from the serde attributes it reads.
         let reports_nested = !overridden || accepted == FIELD_SERDE;
@@ -266,7 +337,11 @@ impl SerdeFidelity<'_> {
     /// as in ts-rs, and a `#[ts(type = ...)]` changes the value type only.
     /// A skip in an attribute ts-rs drops still omits the key. The UI
     /// would otherwise read `undefined` as `T | null`.
-    fn fields(&mut self, owner: &str, fields: &syn::Fields) {
+    ///
+    /// A type that is only decoded is a request body: serde accepts it
+    /// without an `Option` field or a field with a default, so the
+    /// TypeScript must let the UI leave that key out.
+    fn fields(&mut self, owner: &str, fields: &syn::Fields, container: Container) {
         for (index, field) in fields.iter().enumerate() {
             let name = field
                 .ident
@@ -276,15 +351,33 @@ impl SerdeFidelity<'_> {
             let Seen {
                 ts, serde, dropped, ..
             } = self.seen(&at, &field.attrs, FIELD_SERDE);
-            let optional = ts
-                .iter()
-                .rfind(|key| key.name == "optional")
-                .map_or_else(|| has_key(&serde, "default"), |key| key.flag != Some(false));
             let omitted = [&serde, &dropped].into_iter().any(|keys| {
                 has_key(keys, "skip_serializing_if") || has_key(keys, "skip_serializing")
             });
+            // ts-rs reads `Option` from the `#[ts(as = ...)]` type, and a
+            // `#[ts(type = ...)]` field does not inherit `optional_fields`.
+            let ts_type = last_key(&ts, "as")
+                .and_then(|key| key.text.as_deref())
+                .and_then(|text| syn::parse_str::<syn::Type>(text).ok())
+                .unwrap_or_else(|| field.ty.clone());
+            let optional = match last_key(&ts, "optional") {
+                Some(key) => key.flag != Some(false),
+                None if container.optional_fields && !has_key(&ts, "type") => is_option(&ts_type),
+                None => omitted && has_key(&serde, "default"),
+            };
             if omitted && !optional {
                 self.report(&at, "can be left out of the JSON but is typed as always present; add `#[ts(optional)]` (`#[ts(optional = nullable)]` for a non-`Option` field)");
+            }
+            let skipped = [&serde, &dropped]
+                .into_iter()
+                .any(|keys| has_key(keys, "skip") || has_key(keys, "flatten"));
+            let unrequired = container.default
+                || is_option(&field.ty)
+                || [&serde, &dropped]
+                    .into_iter()
+                    .any(|keys| has_key(keys, "default"));
+            if container.decoded_only && unrequired && !skipped && !optional {
+                self.report(&at, "can be left out of the request but is typed as required; add `#[ts(optional = nullable)]`, or `#[ts(optional_fields)]` on the type for its `Option` fields");
             }
         }
     }
@@ -292,24 +385,30 @@ impl SerdeFidelity<'_> {
 
 impl Visit<'_> for SerdeFidelity<'_> {
     fn visit_item_struct(&mut self, item: &syn::ItemStruct) {
-        if derives_ts(&item.attrs) {
+        if derives(&item.attrs, "TS") {
             let owner = item.ident.to_string();
-            if !self.seen(&owner, &item.attrs, STRUCT_SERDE).overridden {
-                self.fields(&owner, &item.fields);
+            let seen = self.seen(&owner, &item.attrs, STRUCT_SERDE);
+            if !seen.overridden {
+                let container = Container::new(self, &owner, &item.attrs, &seen);
+                self.fields(&owner, &item.fields, container);
             }
         }
     }
 
     fn visit_item_enum(&mut self, item: &syn::ItemEnum) {
-        if derives_ts(&item.attrs) {
+        if derives(&item.attrs, "TS") {
             let owner = item.ident.to_string();
-            if self.seen(&owner, &item.attrs, ENUM_SERDE).overridden {
+            let seen = self.seen(&owner, &item.attrs, ENUM_SERDE);
+            if seen.overridden {
                 return;
             }
+            let container = Container::new(self, &owner, &item.attrs, &seen);
             for variant in &item.variants {
                 let owner = format!("{owner}::{}", variant.ident);
-                if !self.seen(&owner, &variant.attrs, VARIANT_SERDE).overridden {
-                    self.fields(&owner, &variant.fields);
+                let seen = self.seen(&owner, &variant.attrs, VARIANT_SERDE);
+                if !seen.overridden {
+                    let variant_container = container.variant(self, &owner, &seen);
+                    self.fields(&owner, &variant.fields, variant_container);
                 }
             }
         }
@@ -330,7 +429,7 @@ fn generated_typescript_follows_serde() {
     }
     assert!(
         found.is_empty(),
-        "the generated TypeScript would not match what serde sends:\n  {}",
+        "the generated TypeScript would not match what serde sends or accepts:\n  {}",
         found.join("\n  ")
     );
 }

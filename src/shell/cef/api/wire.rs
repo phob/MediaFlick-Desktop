@@ -1,10 +1,10 @@
 //! The JSON contract with the UI. `ApiResponse::ok` and `ApiRequest::body`
 //! take only types listed in [`wire_types!`], and `generated_typescript_is_current`
 //! renders that list into one file per Rust module in `ui/src/lib/api/wire/`,
-//! re-exported by `ui/src/lib/api/wire.gen.ts`. The JSON
-//! encoder and decoder they share are private to this module; the handlers
-//! that predate it use `ApiResponse::untyped` and `ApiRequest::untyped_body`,
-//! which `untyped_responses_only_shrink` counts.
+//! re-exported by `ui/src/lib/api/wire.gen.ts`. The JSON encoder they
+//! share is private to this module; the handlers that predate it answer
+//! through `ApiResponse::untyped`, which `untyped_responses_only_shrink`
+//! counts.
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -21,29 +21,43 @@ use crate::library::ItemPage;
 use crate::library::browse::FilterOptions;
 use crate::library::model::{DetailView, ItemSummary};
 use crate::playback::PlayerSnapshot;
+use crate::preferences::{
+    AppearanceSettingsPatch, ApplicationSettingsPatch, HomeSettings, PlaybackSettingsPatch,
+    PlayerSettingsPatch,
+};
 
+use super::auth::{LoginBody, LogoutBody, QuickConnectPollBody, ServerBody};
 use super::catalog::{
     Billboard, Genres, HomeResponse, HomeResumeResponse, HomeSettingsResponse, ItemAbout,
     ItemLetters, ItemSynopsis, OfficialRatings, PersonResolution,
 };
 use super::collections::{
-    CollectionProfileDetail, CollectionProfilesIndex, CollectionSettings, CollectionTemplates,
-    CollectionTitle, CommittedProfile, FranchiseCollection, FranchiseCollectionsIndex,
-    JellyfinCollectionDetail, JellyfinCollections, MovieCollection, ProfileDeleted,
-    UploadedArtwork,
+    CollectionProfileDetail, CollectionProfileDraft, CollectionProfilesIndex, CollectionSettings,
+    CollectionSettingsPatch, CollectionTemplates, CollectionTitle, CommittedProfile,
+    FranchiseCollection, FranchiseCollectionsIndex, JellyfinCollectionDetail, JellyfinCollections,
+    LocalAccountDeletionBody, MovieCollection, ProfileDeleted, ProfileOrderBody,
+    PublicListSearchBody, PublicListValidateBody, UploadedArtwork,
 };
-use super::letterboxd::{LetterboxdProfileRemoved, LetterboxdProfileSaved, LetterboxdProfiles};
+use super::letterboxd::{
+    LetterboxdEnabledBody, LetterboxdProfileBody, LetterboxdProfileRemoved, LetterboxdProfileSaved,
+    LetterboxdProfiles,
+};
 use super::libraries::{LibrariesResponse, LibraryLatest};
 use super::media::{
-    ExternalLinkOpened, FavoriteState, MediaInfoResponse, NextUpResponse, PlaybackPreferenceSaved,
-    PlayedState, TechnicalBatch, TrailerResponse,
+    ExternalLinkBody, ExternalLinkOpened, FavoriteBody, FavoriteState, MediaInfoResponse,
+    NextUpResponse, PlaybackPreferenceSaved, PlaybackTrackPreferenceWrite, PlayedBody, PlayedState,
+    TechnicalBatch, TechnicalBatchBody, TrailerResponse,
 };
 use super::playback::{
-    PlayStarted, PlaybackNeighbors, PlayerCommandAccepted, PlayerCommandBody, SyncRequested,
+    PlayBody, PlayStarted, PlaybackItemBody, PlaybackNeighbors, PlayerCommandAccepted,
+    PlayerCommandBody, SyncRequested,
 };
-use super::seerr::SeerrRequestCancelled;
-use super::settings::{BrowsingRoutes, BrowsingSaved, SettingsView, ViewingView};
-use super::shell::{MpvHelpOpened, ShellQueued, ShellRequestQueued};
+use super::ratings::RatingsBatchBody;
+use super::seerr::{SeerrRequestBody, SeerrRequestCancelled};
+use super::settings::{
+    BrowsingBody, BrowsingRoutes, BrowsingSaved, SettingsView, ViewingSettingsWrite, ViewingView,
+};
+use super::shell::{MpvHelpOpened, ShellQueued, ShellRequestBody, ShellRequestQueued};
 use super::{ApiRequest, ApiResponse, AppStatus, NO_STORE, StartupResponse};
 
 /// A type the UI reads or sends by name. Only [`wire_types!`] implements it,
@@ -76,19 +90,26 @@ macro_rules! wire_types {
 
 wire_types! {
     AppStatus,
+    AppearanceSettingsPatch,
+    ApplicationSettingsPatch,
     Billboard,
+    BrowsingBody,
     BrowsingRoutes,
     BrowsingSaved,
     CollectionProfile,
     CollectionProfileDetail,
+    CollectionProfileDraft,
     CollectionProfilesIndex,
     CollectionSettings,
+    CollectionSettingsPatch,
     CollectionTemplates,
     CollectionTitle,
     CommittedProfile,
     CompanionStatus,
     DetailView,
+    ExternalLinkBody,
     ExternalLinkOpened,
+    FavoriteBody,
     FavoriteState,
     FilterOptions,
     FranchiseCollection,
@@ -96,6 +117,7 @@ wire_types! {
     Genres,
     HomeResponse,
     HomeResumeResponse,
+    HomeSettings,
     HomeSettingsResponse,
     ItemAbout,
     ItemLetters,
@@ -104,41 +126,62 @@ wire_types! {
     ItemSynopsis,
     JellyfinCollectionDetail,
     JellyfinCollections,
+    LetterboxdEnabledBody,
+    LetterboxdProfileBody,
     LetterboxdProfileRemoved,
     LetterboxdProfileSaved,
     LetterboxdProfiles,
     LibrariesResponse,
     LibraryLatest,
+    LocalAccountDeletionBody,
+    LoginBody,
+    LogoutBody,
     MediaInfoResponse,
     MovieCollection,
     MpvHelpOpened,
     NextUpResponse,
     OfficialRatings,
     PersonResolution,
+    PlayBody,
     PlayStarted,
+    PlaybackItemBody,
     PlaybackNeighbors,
     PlaybackPreferenceSaved,
+    PlaybackSettingsPatch,
+    PlaybackTrackPreferenceWrite,
+    PlayedBody,
     PlayedState,
     PlayerCommandAccepted,
     PlayerCommandBody,
+    PlayerSettingsPatch,
     PlayerSnapshot,
     ProfileDeleted,
+    ProfileOrderBody,
     ProviderResult,
+    PublicListSearchBody,
+    PublicListValidateBody,
     QuickConnectPoll,
+    QuickConnectPollBody,
     QuickConnectStart,
+    RatingsBatchBody,
     RatingsBatchResponse,
     RatingsIntegrationStatus,
     ReviewLookup,
+    SeerrRequestBody,
     SeerrRequestCancelled,
+    ServerBody,
     ServerInfo,
     SettingsView,
     ShellQueued,
+    ShellRequestBody,
     ShellRequestQueued,
     StartupResponse,
     SyncRequested,
     TechnicalBatch,
+    TechnicalBatchBody,
     TrailerResponse,
     UploadedArtwork,
+    ViewingSettingsWrite,
     ViewingView,
 }
 
@@ -159,16 +202,6 @@ impl ApiRequest {
     /// `T`, is rejected rather than read as defaults: a garbled "mark as
     /// unwatched" must not mark the item watched.
     pub(super) fn body<T: DeserializeOwned + Wire>(&self) -> Result<T, ApiResponse> {
-        self.decode()
-    }
-
-    /// [`Self::body`] for a request type the generated TypeScript does not
-    /// know. `untyped_responses_only_shrink` keeps it from spreading.
-    pub(super) fn untyped_body<T: DeserializeOwned>(&self) -> Result<T, ApiResponse> {
-        self.decode()
-    }
-
-    fn decode<T: DeserializeOwned>(&self) -> Result<T, ApiResponse> {
         let body: &[u8] = if self.body.iter().all(u8::is_ascii_whitespace) {
             b"{}"
         } else {
@@ -224,13 +257,13 @@ impl ApiResponse {
     }
 }
 
-/// Handlers that predate this module answer through `ApiResponse::untyped`
-/// and decode through `ApiRequest::untyped_body`. Moving one to a wire
-/// type lowers these; nothing raises them.
+/// Handlers that predate this module answer through `ApiResponse::untyped`.
+/// Moving one to a wire type lowers these; nothing raises them, and request
+/// bodies, all typed now, stay at zero.
 #[cfg(test)]
 const UNTYPED_RESPONSES: usize = 6; // guard-ratchet
 #[cfg(test)]
-const UNTYPED_BODIES: usize = 32; // guard-ratchet
+const UNTYPED_BODIES: usize = 0; // guard-ratchet
 
 #[cfg(test)]
 mod guards;

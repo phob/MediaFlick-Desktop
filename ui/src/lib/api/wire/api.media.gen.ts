@@ -2,9 +2,17 @@
 
 import type { ItemSummary, ResolvedPlaybackPreference } from "./library.model.gen.ts"
 
+export type ExternalLinkBody = {
+  provider: string,
+};
+
 export type ExternalLinkOpened = {
   opened: boolean,
   url: string,
+};
+
+export type FavoriteBody = {
+  favorite: boolean,
 };
 
 export type FavoriteState = {
@@ -64,12 +72,27 @@ export type PlaybackPreferenceSaved = {
   playbackPreference: ResolvedPlaybackPreference | null,
 };
 
+export type PlaybackTrackPreferenceWrite = {
+  mediaSourceIndex: number,
+  mediaSourceId?: string | null,
+  audioStreamIndex?: number | null,
+  subtitleStreamIndex?: number | null,
+};
+
+export type PlayedBody = {
+  played: boolean,
+};
+
 export type PlayedState = {
   played: boolean,
 };
 
 export type TechnicalBatch = {
   items: Array<ItemTechnical>,
+};
+
+export type TechnicalBatchBody = {
+  ids: Array<string>,
 };
 
 export type TrailerResponse = {
