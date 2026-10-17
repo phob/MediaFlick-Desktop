@@ -79,18 +79,6 @@ pub struct ApiResponse {
     pub headers: Vec<(String, String)>,
 }
 
-impl ApiResponse {
-    fn asset(content_type: &str, body: &'static [u8], cache_control: &'static str) -> Self {
-        Self {
-            status: 200,
-            content_type: content_type.to_string(),
-            body: body.to_vec(),
-            cache_control,
-            headers: Vec::new(),
-        }
-    }
-}
-
 /// The signed-in account this request runs against. Its failures go through
 /// [`scoped_failure`] and its cache writes through `commit_if_current`, so a
 /// response that arrives after an account switch cannot expire or rewrite the

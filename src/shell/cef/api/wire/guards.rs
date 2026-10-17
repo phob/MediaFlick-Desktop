@@ -677,26 +677,27 @@ const ROUTER_FILES: &[(&str, &str)] = &[
         "the JSON encoder behind `ok`, `untyped` and the errors",
     ),
     (
-        "src/shell/cef/api.rs",
-        "defines `ApiResponse` and its builder for the UI bundle's files",
-    ),
-    (
         "src/shell/cef/api/assets.rs",
-        "serves the UI bundle's files, which no route declares",
+        "builds the responses for the UI bundle's files, which no route declares",
     ),
 ];
 
 /// Paths only [`ROUTER_FILES`] may name: the success builders, the body a
 /// route declares, and the trait that turns a declared answer into a
-/// response.
+/// response, by name, through the answers that are not wire types, or
+/// through a glob of `routes`.
 const ROUTER_ONLY: &[[&str; 2]] = &[
     ["ApiResponse", "ok"],
     ["ApiResponse", "untyped"],
-    ["ApiResponse", "asset"],
     ["Body", "new"],
     ["routes", "Answer"],
+    ["routes", "*"],
     ["Answer", "respond"],
     ["Answer", "success"],
+    ["Relay", "respond"],
+    ["Relay", "success"],
+    ["Binary", "respond"],
+    ["Binary", "success"],
 ];
 
 /// What one file does that only [`ROUTER_FILES`] may.
@@ -716,6 +717,12 @@ impl RouterOnly {
     }
 }
 
+fn is_api_response(path: &syn::Path) -> bool {
+    path.segments
+        .last()
+        .is_some_and(|last| last.ident == "ApiResponse")
+}
+
 fn names(path: &syn::Path) -> Vec<String> {
     path.segments
         .iter()
@@ -733,7 +740,7 @@ fn use_paths(tree: &syn::UseTree, prefix: &mut Vec<String>, paths: &mut Vec<Vec<
         }
         syn::UseTree::Name(name) => paths.push(leaf(prefix, name.ident.to_string())),
         syn::UseTree::Rename(rename) => paths.push(leaf(prefix, rename.ident.to_string())),
-        syn::UseTree::Glob(_) => {}
+        syn::UseTree::Glob(_) => paths.push(leaf(prefix, "*".to_string())),
         syn::UseTree::Group(group) => {
             for tree in &group.items {
                 use_paths(tree, prefix, paths);
@@ -743,7 +750,8 @@ fn use_paths(tree: &syn::UseTree, prefix: &mut Vec<String>, paths: &mut Vec<Vec<
 }
 
 /// The `a::b::c` paths written in a macro's tokens, which syn leaves
-/// unparsed: a `routes!` table's calls, a `vec![..]`'s elements.
+/// unparsed, such as a `vec![..]`'s elements. A turbofish is skipped, so
+/// `a::<T>::b` reads as `a::b`.
 fn macro_paths(mut cursor: syn::buffer::Cursor<'_>, paths: &mut Vec<Vec<String>>) {
     let mut current = Vec::new();
     let mut colons = 0;
@@ -757,12 +765,17 @@ fn macro_paths(mut cursor: syn::buffer::Cursor<'_>, paths: &mut Vec<Vec<String>>
             cursor = next;
             continue;
         }
-        if let Some((punct, next)) = cursor.punct()
-            && punct.as_char() == ':'
-        {
-            colons += 1;
-            cursor = next;
-            continue;
+        if let Some((punct, next)) = cursor.punct() {
+            if punct.as_char() == ':' {
+                colons += 1;
+                cursor = next;
+                continue;
+            }
+            if punct.as_char() == '<' && colons == 2 {
+                colons = 0;
+                cursor = past_generics(next);
+                continue;
+            }
         }
         if !current.is_empty() {
             paths.push(std::mem::take(&mut current));
@@ -777,6 +790,62 @@ fn macro_paths(mut cursor: syn::buffer::Cursor<'_>, paths: &mut Vec<Vec<String>>
     }
     if !current.is_empty() {
         paths.push(current);
+    }
+}
+
+/// The cursor past the `>` that closes a turbofish's `<`.
+fn past_generics(mut cursor: syn::buffer::Cursor<'_>) -> syn::buffer::Cursor<'_> {
+    let (mut depth, mut arrow) = (1_usize, false);
+    while depth > 0 && !cursor.eof() {
+        if let Some((punct, next)) = cursor.punct() {
+            match punct.as_char() {
+                '<' => depth += 1,
+                '>' if !arrow => depth -= 1,
+                _ => {}
+            }
+            arrow = punct.as_char() == '-';
+            cursor = next;
+        } else if let Some((_, next)) = cursor.token_tree() {
+            arrow = false;
+            cursor = next;
+        }
+    }
+    cursor
+}
+
+/// A `routes!` table's request bodies, answers and calls, so the checks on
+/// ordinary code run on them too.
+struct RouteTable(Vec<(Option<syn::Type>, syn::Type, syn::Expr)>);
+
+impl syn::parse::Parse for RouteTable {
+    fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
+        input.parse::<syn::Token![|]>()?;
+        input.parse::<syn::Ident>()?;
+        input.parse::<syn::Token![,]>()?;
+        input.parse::<syn::Ident>()?;
+        input.parse::<syn::Token![|]>()?;
+        let mut rows = Vec::new();
+        while !input.is_empty() {
+            input.parse::<syn::Ident>()?;
+            input.parse::<syn::ExprArray>()?;
+            let body = if input.peek(syn::token::Paren) {
+                let body;
+                syn::parenthesized!(body in input);
+                body.parse::<syn::Ident>()?;
+                body.parse::<syn::Token![:]>()?;
+                Some(body.parse()?)
+            } else {
+                None
+            };
+            input.parse::<syn::Token![->]>()?;
+            let answer = input.parse()?;
+            input.parse::<syn::Token![=]>()?;
+            rows.push((body, answer, input.parse()?));
+            if !input.is_empty() {
+                input.parse::<syn::Token![,]>()?;
+            }
+        }
+        Ok(Self(rows))
     }
 }
 
@@ -795,17 +864,39 @@ impl Visit<'_> for RouterOnly {
     }
 
     fn visit_macro(&mut self, mac: &syn::Macro) {
-        let buffer = syn::buffer::TokenBuffer::new2(mac.tokens.clone());
-        let mut paths = Vec::new();
-        macro_paths(buffer.begin(), &mut paths);
-        for path in paths {
-            self.check(&path);
+        if mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|last| last.ident == "routes")
+        {
+            match mac.parse_body::<RouteTable>() {
+                Ok(RouteTable(rows)) => {
+                    for (body, answer, call) in &rows {
+                        if let Some(body) = body {
+                            self.visit_type(body);
+                        }
+                        self.visit_type(answer);
+                        self.visit_expr(call);
+                    }
+                }
+                Err(error) => self.found.push(format!(
+                    "has a `routes!` table this check cannot read: {error}"
+                )),
+            }
+        } else {
+            let buffer = syn::buffer::TokenBuffer::new2(mac.tokens.clone());
+            let mut paths = Vec::new();
+            macro_paths(buffer.begin(), &mut paths);
+            for path in paths {
+                self.check(&path);
+            }
         }
         syn::visit::visit_macro(self, mac);
     }
 
     fn visit_expr_struct(&mut self, expr: &syn::ExprStruct) {
-        if expr.path.is_ident("ApiResponse") {
+        if is_api_response(&expr.path) {
             self.found
                 .push("builds an `ApiResponse { .. }`".to_string());
         }
@@ -813,7 +904,7 @@ impl Visit<'_> for RouterOnly {
     }
 
     fn visit_item_impl(&mut self, item: &syn::ItemImpl) {
-        if matches!(&*item.self_ty, syn::Type::Path(ty) if ty.path.is_ident("ApiResponse")) {
+        if matches!(&*item.self_ty, syn::Type::Path(ty) if is_api_response(&ty.path)) {
             self.found.push("implements on `ApiResponse`".to_string());
         }
         syn::visit::visit_item_impl(self, item);

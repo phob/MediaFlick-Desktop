@@ -11,8 +11,10 @@
 //! request body only through the [`Body`] its route declares, because only
 //! this module can see a [`RawBody`]'s bytes. What visibility cannot keep
 //! inside this module, `only_the_router_answers_with_success` does: it fails
-//! when code elsewhere builds a success `ApiResponse`, sets a status, names
-//! `Body::new` or `Answer`, or answers an error with a 2xx status.
+//! when code elsewhere, a `routes!` table included, builds a success
+//! `ApiResponse`, sets a status, names `Body::new` or `Answer` (or reaches
+//! `Answer` through `Relay`, `Binary` or a glob of this module), or answers
+//! an error with a 2xx status.
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -128,8 +130,9 @@ impl<'a> Body<'a, Bytes> {
 /// stream. Its handler answers a [`BinaryAnswer`].
 pub(super) struct Binary;
 
-/// What a [`Binary`] route answers on success. Only the byte builders below
-/// make one, so a binary route cannot answer JSON.
+/// What a [`Binary`] route answers on success. Only a binary route answers
+/// bytes, and only through the builders below; the builders take whatever
+/// content type the handler passes.
 pub(super) struct BinaryAnswer(ApiResponse);
 
 impl BinaryAnswer {
