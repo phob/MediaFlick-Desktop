@@ -153,8 +153,6 @@ fn home_defaults(
     defaults
 }
 
-/// Where a new library shelf goes: after the last library shelf, else after
-/// the last built-in shelf.
 fn library_block_end(elements: &[HomeElement]) -> usize {
     let is_library =
         |element: &HomeElement| matches!(element.element, HomeElementId::Library { .. });
@@ -168,8 +166,7 @@ fn library_block_end(elements: &[HomeElement]) -> usize {
 }
 
 /// A read never writes: library shelves reach accounts.json with the user's
-/// next Home save. While the library list is unknown, saved shelves stay as
-/// they are and none are added.
+/// next Home save.
 fn reconcile_home_elements(
     settings: &mut HomeSettings,
     genres: &[String],
