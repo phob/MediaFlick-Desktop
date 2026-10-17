@@ -360,7 +360,7 @@ pub fn fetch_live(
     match query {
         LiveQuery::Page(page) => client.get_json("/Items", &live_page_query(user_id, page)),
         LiveQuery::Latest { parent, limit } => {
-            let items: Vec<BaseItemDto> = client.get_json(
+            let mut items: Vec<BaseItemDto> = client.get_json(
                 "/Items/Latest",
                 &[
                     user_query(user_id),
@@ -372,6 +372,10 @@ pub fn fetch_live(
                     ("Limit", limit.to_string()),
                 ],
             )?;
+            // A grouped row's ChildCount counts its new items, not its seasons or tracks.
+            for item in &mut items {
+                item.child_count = None;
+            }
             Ok(ItemsResponse {
                 total_record_count: i64::try_from(items.len()).unwrap_or(i64::MAX),
                 items,

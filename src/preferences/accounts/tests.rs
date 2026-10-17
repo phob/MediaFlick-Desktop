@@ -96,6 +96,35 @@ fn saved_home_gains_a_new_built_in_after_its_predecessor() {
 }
 
 #[test]
+fn library_home_elements_round_trip_and_reject_non_canonical_ids() {
+    const ID: &str = "f137a2dd21bbc1b99aa5c0f6bf02a805";
+    let wire = serde_json::json!({ "kind": "library", "id": ID, "enabled": false });
+    let element = serde_json::from_value::<HomeElement>(wire.clone()).expect("library element");
+    assert_eq!(
+        element,
+        HomeElement {
+            element: HomeElementId::Library {
+                id: LibraryId::canonical(ID).expect("canonical id"),
+            },
+            enabled: false,
+        }
+    );
+    assert_eq!(serde_json::to_value(&element).expect("serialize"), wire);
+    for id in [
+        ID.to_ascii_uppercase(),
+        format!(" {ID}"),
+        "f137a2dd".to_owned(),
+        "../library".to_owned(),
+    ] {
+        let wire = serde_json::json!({ "kind": "library", "id": id, "enabled": true });
+        assert!(
+            serde_json::from_value::<HomeElement>(wire).is_err(),
+            "{id:?} must not load"
+        );
+    }
+}
+
+#[test]
 fn browsing_survives_reopen_and_rejects_external_destinations() {
     let path = test_path("browsing-round-trip");
     let alice = key("server", "alice");

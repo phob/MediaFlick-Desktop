@@ -21,7 +21,7 @@ const SHAPES = {
   photos: { types: null, latest: "grouped" },
   playlists: { types: null, latest: "newest" },
   liveTv: { types: null, latest: "newest" },
-  mixed: { types: null, latest: "newest" },
+  mixed: { types: null, latest: "grouped" },
 }
 const SORTS = {
   name: { sortBy: "SortName", order: "Ascending" },

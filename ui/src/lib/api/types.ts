@@ -207,11 +207,12 @@ export type HomeElement = {
   enabled: boolean
   label: string
   available: boolean
-  category: "Built-in" | "Genre" | "My Collection"
+  category: "Built-in" | "Genre" | "My Collection" | "Library"
 } & (
   | { kind: "builtIn"; id: HomeBuiltInId }
   | { kind: "genre"; id: string }
   | { kind: "collection"; id: string }
+  | { kind: "library"; id: string }
 )
 
 export interface HomeConfiguration {
@@ -1287,6 +1288,15 @@ export interface LibraryQuery {
   sort?: LibrarySortId
   order?: SortOrder
   seed?: number
+}
+
+/**
+ * A library's newest titles and the library sort "All" opens with: the shelf's
+ * own order for catalog and newest-first libraries, date added for grouped ones.
+ */
+export interface LibraryLatest {
+  items: ItemSummary[]
+  sort: LibrarySortId
 }
 
 export interface LibraryFilterOptions {

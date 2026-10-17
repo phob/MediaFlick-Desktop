@@ -269,6 +269,20 @@ export function useLibraryOptions(id: string | null) {
   })
 }
 
+/**
+ * One request per "Latest in <library>" shelf, so a slow or offline live
+ * library holds back only its own shelf.
+ */
+export function useLibraryShelves(libraryIds: readonly string[]) {
+  return useQueries({
+    queries: libraryIds.map((id) => ({
+      queryKey: queryKeys.libraryLatest(id),
+      queryFn: () => api.libraryLatest(id),
+    })),
+    combine: (results) => new Map(libraryIds.map((id, index) => [id, results[index]])),
+  })
+}
+
 export function useItems(query: ItemQuery, enabled = true) {
   return useQuery({
     queryKey: queryKeys.items(query),
