@@ -143,7 +143,8 @@ impl ApiResponse {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::any::TypeId;
+    use std::collections::{BTreeMap, HashSet};
     use std::path::{Path, PathBuf};
 
     use syn::visit::Visit;
@@ -159,26 +160,27 @@ mod tests {
 
     struct Collect<'a> {
         cfg: &'a Config,
+        visited: HashSet<TypeId>,
         decls: BTreeMap<String, String>,
     }
 
     impl TypeVisitor for Collect<'_> {
         fn visit<T: TS + 'static + ?Sized>(&mut self) {
-            if T::output_path().is_none() {
+            if T::output_path().is_none() || !self.visited.insert(TypeId::of::<T>()) {
                 return;
             }
             let name = T::ident(self.cfg);
             let decl = format_decl(&T::decl(self.cfg));
+            // Each instantiation of a generic type renders the same
+            // declaration; a different declaration is a second type.
             if let Some(seen) = self.decls.get(&name) {
-                // A generic type arrives once per instantiation with the same
-                // declaration; a different declaration is a second type.
                 assert!(
                     *seen == decl,
                     "two wire types are both named `{name}`; rename one with `#[ts(rename = \"...\")]`"
                 );
-                return;
+            } else {
+                self.decls.insert(name, decl);
             }
-            self.decls.insert(name, decl);
             T::visit_dependencies(self);
         }
     }
@@ -280,6 +282,7 @@ mod tests {
                 let line = line.trim();
                 match line.strip_prefix('*') {
                     Some(text) => format!("   *{}\n", text.trim_end()),
+                    None if line.is_empty() => "   *\n".to_string(),
                     None => format!("   * {line}\n"),
                 }
             })
@@ -307,6 +310,7 @@ mod tests {
         let cfg = Config::new().with_large_int("number");
         let mut collect = Collect {
             cfg: &cfg,
+            visited: HashSet::new(),
             decls: BTreeMap::new(),
         };
         super::visit_roots(&mut collect);
@@ -532,6 +536,15 @@ mod tests {
         found: Vec<String>,
     }
 
+    /// The attributes of one item as ts-rs will read them.
+    struct Seen {
+        ts: Vec<AttrKey>,
+        /// The serde keys ts-rs reads for this kind of item.
+        serde: Vec<AttrKey>,
+        /// `#[ts(type = ...)]` or `#[ts(as = ...)]` states the TypeScript.
+        overridden: bool,
+    }
+
     impl SerdeFidelity<'_> {
         fn report(&mut self, at: &str, problem: &str) {
             self.found
@@ -552,49 +565,50 @@ mod tests {
             all
         }
 
-        /// The serde keys ts-rs will see, or `None` when the item states its
-        /// TypeScript itself with `#[ts(type = ...)]` or `#[ts(as = ...)]`.
-        fn serde_keys(
-            &mut self,
-            at: &str,
-            attrs: &[syn::Attribute],
-            accepted: &[&str],
-        ) -> Option<Vec<AttrKey>> {
+        fn seen(&mut self, at: &str, attrs: &[syn::Attribute], accepted: &[&str]) -> Seen {
             let ts = self
                 .keys(at, attrs, "ts")
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>();
-            if has_key(&ts, "type") || has_key(&ts, "as") {
-                return None;
-            }
+            let overridden = has_key(&ts, "type") || has_key(&ts, "as");
             if has_key(&ts, "optional_fields") {
                 self.report(
                     at,
                     "uses `#[ts(optional_fields)]`; mark each field `#[ts(optional)]` instead",
                 );
             }
-            let mut seen = Vec::new();
+            let mut serde = Vec::new();
             for keys in self.keys(at, attrs, "serde") {
-                if let Some(key) = keys.iter().find(|key| key.nested) {
-                    self.report(at, &format!("has `#[serde({}(...))]`, which ts-rs cannot read, so it ignores that whole attribute; use `{} = \"...\"` or describe the JSON with `#[ts(type = ...)]`", key.name, key.name));
+                if let Some(key) = keys
+                    .iter()
+                    .find(|key| key.nested && accepted.contains(&key.name.as_str()))
+                {
+                    if !overridden {
+                        self.report(at, &format!("has `#[serde({}(...))]`, which ts-rs cannot read, so it ignores that whole attribute; use `{} = \"...\"` or describe the JSON with `#[ts(type = ...)]`", key.name, key.name));
+                    }
                     continue;
                 }
                 for key in keys {
                     if accepted.contains(&key.name.as_str()) {
-                        seen.push(key);
-                    } else if !DECODE_ONLY_SERDE.contains(&key.name.as_str()) {
+                        serde.push(key);
+                    } else if !overridden && !DECODE_ONLY_SERDE.contains(&key.name.as_str()) {
                         self.report(at, &format!("has `#[serde({})]`, which ts-rs ignores; describe the JSON with `#[ts(type = ...)]` or `#[ts(as = ...)]`", key.name));
                     }
                 }
             }
-            Some(seen)
+            Seen {
+                ts,
+                serde,
+                overridden,
+            }
         }
 
         /// serde leaves out a `skip_serializing_if` field, but ts-rs types it
         /// as a present key unless the field says `#[ts(optional)]` or carries
-        /// `#[serde(default)]`, and `#[ts(optional = false)]` wins over both.
-        /// The UI would then read `undefined` as `T | null`.
+        /// `#[serde(default)]`. The last `#[ts(optional ...)]` wins over both,
+        /// as in ts-rs, and a `#[ts(type = ...)]` changes the value type only.
+        /// The UI would otherwise read `undefined` as `T | null`.
         fn fields(&mut self, owner: &str, fields: &syn::Fields) {
             for (index, field) in fields.iter().enumerate() {
                 let name = field
@@ -602,17 +616,10 @@ mod tests {
                     .as_ref()
                     .map_or_else(|| index.to_string(), ToString::to_string);
                 let at = format!("{owner}.{name}");
-                let Some(serde) = self.serde_keys(&at, &field.attrs, FIELD_SERDE) else {
-                    continue;
-                };
-                let ts = self
-                    .keys(&at, &field.attrs, "ts")
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>();
+                let Seen { ts, serde, .. } = self.seen(&at, &field.attrs, FIELD_SERDE);
                 let optional = ts
                     .iter()
-                    .find(|key| key.name == "optional")
+                    .rfind(|key| key.name == "optional")
                     .map_or_else(|| has_key(&serde, "default"), |key| key.flag != Some(false));
                 let omitted =
                     has_key(&serde, "skip_serializing_if") || has_key(&serde, "skip_serializing");
@@ -627,7 +634,7 @@ mod tests {
         fn visit_item_struct(&mut self, item: &syn::ItemStruct) {
             if derives_ts(&item.attrs) {
                 let owner = item.ident.to_string();
-                if self.serde_keys(&owner, &item.attrs, STRUCT_SERDE).is_some() {
+                if !self.seen(&owner, &item.attrs, STRUCT_SERDE).overridden {
                     self.fields(&owner, &item.fields);
                 }
             }
@@ -636,15 +643,12 @@ mod tests {
         fn visit_item_enum(&mut self, item: &syn::ItemEnum) {
             if derives_ts(&item.attrs) {
                 let owner = item.ident.to_string();
-                if self.serde_keys(&owner, &item.attrs, ENUM_SERDE).is_none() {
+                if self.seen(&owner, &item.attrs, ENUM_SERDE).overridden {
                     return;
                 }
                 for variant in &item.variants {
                     let owner = format!("{owner}::{}", variant.ident);
-                    if self
-                        .serde_keys(&owner, &variant.attrs, VARIANT_SERDE)
-                        .is_some()
-                    {
+                    if !self.seen(&owner, &variant.attrs, VARIANT_SERDE).overridden {
                         self.fields(&owner, &variant.fields);
                     }
                 }
