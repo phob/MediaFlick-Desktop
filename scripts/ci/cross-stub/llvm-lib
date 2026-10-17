@@ -1,0 +1,8 @@
+#!/bin/sh
+# Stub archiver paired with clang-cl: writes an empty archive at -out:/ /OUT:.
+for arg in "$@"; do
+  case "$arg" in
+    -out:*|/out:*|-OUT:*|/OUT:*) printf '!<arch>\n' > "${arg#*:}" ;;
+  esac
+done
+exit 0

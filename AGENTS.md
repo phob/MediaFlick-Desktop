@@ -88,13 +88,15 @@ The standard component checks are:
 
 Use focused checks during iteration. Run the full component checks for changes with broad impact or when focused checks cannot establish correctness; contract changes require checks for every affected side. Repeat checks only after relevant edits or when failures or unresolved concerns justify it. Report what was checked and any material gaps.
 
-Use the recipes above for local validation. CI is defined by `.github/workflows/ci.yml` and additionally uses `--locked` for Cargo commands; reproducing a CI failure requires its exact command and environment. A passing local recipe does not require a second run solely to add `--locked`.
+Use the recipes above for local validation. CI is defined by `.github/workflows/ci.yml` and `.github/workflows/pr-checks.yml` and additionally uses `--locked` for Cargo commands; reproducing a CI failure requires its exact command and environment. A passing local recipe does not require a second run solely to add `--locked`. `just check-pr` runs every PR check locally on Linux or macOS before you open or update a PR; `just clippy-target <triple>` runs one cross-target Clippy.
+
+The PR checks fail a change that deletes or relaxes a guard: a lint level, a Clippy or Oxlint setting, a lint suppression, a script under `scripts/ci/`, a CI workflow line, a check recipe, or a `guard-ratchet` count. Change the code instead. The `guards-changed` label accepts a relaxation; add it only when the operator asked for that relaxation, and say why in the PR body.
 
 After changes to deployable Companion code or assets, run `just plugin-deploy` as the final step after validation and other work. Its publish dependency satisfies `just plugin` above. Documentation-only, test-only, and review tasks do not require deployment.
 
 ## Changelog and releases
 
-- Every code, behavior, packaging, build, release-automation, or user-facing documentation change needs an entry in a Markdown fragment under `changelog.d/`, committed with the change. Pure changelog edits and release housekeeping are exempt.
+- Every code, behavior, packaging, build, release-automation, or user-facing documentation change needs an entry in a Markdown fragment under `changelog.d/`, committed with the change. Pure changelog edits and release housekeeping are exempt; CI enforces this for `src/`, `ui/src/`, and `plugin/`, and only the `no-changelog` PR label waives it.
 - Create fragments during implementation, before a PR exists if needed. Use a descriptive filename with a random suffix, such as `fix-playback-resume-a7c92e.md`; no PR number or later renaming is required. Update the change's existing fragment as its implementation evolves. Do not maintain a shared fragment index.
 - Write concise, user-facing entries under the matching existing subsection headings: `Breaking Changes`, `Added`, `Changed`, `Fixed`, or `Removed` (using `###` Markdown headings).
 - Keep the existing `CHANGELOG.md` `[Unreleased]` section as the baseline for the upcoming 1.0 release. Regular implementation work must use fragments instead of editing `CHANGELOG.md`; edit that file only for release consolidation or an explicitly requested correction.

@@ -45,9 +45,11 @@ jobs:
           if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             assembly_version="${version}.0"
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "assembly_version=$assembly_version" >> "$GITHUB_OUTPUT"
-          echo "tag=companion-v$version" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "assembly_version=$assembly_version"
+            echo "tag=companion-v$version"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install .NET
         uses: actions/setup-dotnet@v6
@@ -115,7 +117,7 @@ jobs:
             --draft --latest=false --target "$GITHUB_SHA" "${extra_args[@]}" \
             --title "MediaFlick Companion v${VERSION}" \
             --notes "$notes" \
-            plugin/bin/Release/package/mediaflick-companion_${VERSION}.zip \
+            "plugin/bin/Release/package/mediaflick-companion_${VERSION}.zip" \
             plugin/bin/Release/package/meta.json \
             plugin/bin/Release/package/manifest.json
 

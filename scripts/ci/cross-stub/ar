@@ -1,0 +1,8 @@
+#!/bin/sh
+# Stub archiver for Unix-style targets: writes an empty archive at the .a argument.
+for arg in "$@"; do
+  case "$arg" in
+    *.a) printf '!<arch>\n' > "$arg" ;;
+  esac
+done
+exit 0

@@ -1,0 +1,66 @@
+name: PR checks
+
+# A separate workflow so adding or removing a label reruns only these checks.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  BASE: origin/${{ github.base_ref }}
+  ACTIONLINT_VERSION: 1.7.12
+
+jobs:
+  pr-scripts:
+    name: PR scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Lint workflows
+        run: |
+          bash <(curl -sSfL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash") "$ACTIONLINT_VERSION"
+          ./actionlint -color
+
+      # Labels are read live: a rerun of an older run must not reuse a stale event payload.
+      - name: Check changelog fragment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx no-changelog; then
+            export MEDIAFLICK_NO_CHANGELOG=1
+          fi
+          python3 scripts/ci/check_changelog_fragment.py "$BASE"
+
+      - name: Check file sizes
+        run: python3 scripts/ci/check_file_size.py "$BASE"
+
+  guard-integrity:
+    name: Guard integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check that no guard was deleted or relaxed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx guards-changed; then
+            export MEDIAFLICK_GUARDS_CHANGED=1
+          fi
+          python3 scripts/ci/check_guards.py "$BASE"

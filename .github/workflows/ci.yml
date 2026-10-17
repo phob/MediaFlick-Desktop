@@ -17,11 +17,8 @@ env:
   CARGO_TARGET_DIR: build/cargo-target
 
 jobs:
-  # Only phob-authored PRs skip CI. Check the author, not the actor who
-  # pushes or reruns a workflow; all other PRs and main pushes run in full.
   source-quality:
     name: Source quality
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.user.login != 'phob' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -44,7 +41,6 @@ jobs:
 
   ui:
     name: UI
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.user.login != 'phob' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -68,18 +64,27 @@ jobs:
       - name: Lint UI
         run: pnpm --dir ui lint
 
+      # `pnpm build` runs `tsc -b` before the Vite bundle.
+      - name: Type-check and build UI
+        run: pnpm --dir ui build
+
       - name: Test UI
         run: pnpm --dir ui test
 
+      - name: Check that pnpm left the lockfile unchanged
+        run: git diff --exit-code ui/pnpm-lock.yaml
+
   build-and-test:
     name: Build and test (${{ matrix.os }})
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.user.login != 'phob' }}
     runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-15]
+        # phob-authored PRs, which include every agent PR, build on Ubuntu only;
+        # clippy-cross catches their Windows and macOS compile errors. Check the
+        # author, not the actor who pushes or reruns a workflow.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'phob' && '["ubuntu-24.04"]' || '["ubuntu-24.04", "windows-latest", "macos-15"]') }}
 
     env:
       CEF_PATH: ${{ github.workspace }}/../mediaflick-cache/cef
@@ -168,9 +173,61 @@ jobs:
       - name: Build
         run: cargo build --locked --bin mediaflick-desktop
 
+  clippy-cross:
+    name: Clippy (${{ matrix.name }} target)
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            target: x86_64-pc-windows-msvc
+          - name: macOS
+            target: aarch64-apple-darwin
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: ${{ matrix.target }}
+
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: ui/package.json
+
+      - name: Install Node toolchain
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          workspaces: ". -> build/cargo-target"
+
+      # build.rs embeds the bundle; clippy-target expects it already built.
+      - name: Build UI bundle
+        run: just ui
+
+      - name: Clippy
+        run: just clippy-target ${{ matrix.target }}
+
   plugin:
     name: Companion plugin
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.user.login != 'phob' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -189,15 +246,18 @@ jobs:
 
   ci:
     name: CI
-    # A skipped job satisfies the required CI check without allocating a runner.
-    # Other runs must still report failed, cancelled, or unexpectedly skipped jobs.
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'phob') }}
-    needs: [source-quality, ui, build-and-test, plugin]
+    # Runs even when a needed job fails, so a failed, cancelled, or skipped job
+    # turns this required check red instead of leaving it skipped.
+    if: ${{ always() }}
+    needs: [source-quality, ui, build-and-test, clippy-cross, plugin]
     runs-on: ubuntu-latest
     steps:
       - name: Verify required jobs succeeded
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
         run: |
-          if [ "${{ needs.source-quality.result }}" != "success" ] || [ "${{ needs.ui.result }}" != "success" ] || [ "${{ needs.build-and-test.result }}" != "success" ] || [ "${{ needs.plugin.result }}" != "success" ]; then
-            echo "One or more required CI jobs failed."
+          echo "$RESULTS"
+          if [ "$(jq '[.[] | select(. != "success")] | length' <<< "$RESULTS")" != 0 ]; then
+            echo "One or more required CI jobs did not succeed."
             exit 1
           fi
