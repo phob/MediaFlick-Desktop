@@ -29,7 +29,7 @@ const PREFERRED_HOME_GENRES: [&str; 12] = [
     "Romance",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub enum HomeBuiltIn {
     Watching,
@@ -55,7 +55,7 @@ impl HomeBuiltIn {
     ];
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum HomeElementId {
     BuiltIn { id: HomeBuiltIn },
@@ -64,7 +64,7 @@ pub enum HomeElementId {
     Library { id: LibraryId },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct HomeElement {
     #[serde(flatten)]
@@ -96,7 +96,7 @@ impl<'de> Deserialize<'de> for HomeElement {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HomeWatchingSettings {
     pub continue_watching: bool,

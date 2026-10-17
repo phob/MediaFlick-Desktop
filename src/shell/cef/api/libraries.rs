@@ -1,11 +1,47 @@
-use crate::library::ItemPage;
 use crate::library::browse::{self, BrowseError, Grid};
-use crate::library::libraries::{CROSS_LIBRARY_BROWSE, LibraryId, LibraryRegistry, Membership};
+use crate::library::libraries::{
+    BrowseCapabilities, CROSS_LIBRARY_BROWSE, LibraryId, LibraryKind, LibraryRegistry, Membership,
+};
+use crate::library::{ItemPage, SortKey};
 
-use super::catalog::{Params, library_query, param, still_signed_in};
+use super::catalog::{ItemLetters, Params, library_query, param, still_signed_in};
 use super::*;
 
 const LATEST_LIMIT: i64 = 40;
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct LibrariesResponse {
+    /// False until a sync cycle has read the server's library list.
+    known: bool,
+    /// In the user's Jellyfin order.
+    libraries: Vec<LibraryView>,
+    cross_library: &'static BrowseCapabilities,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct LibraryView {
+    id: LibraryId,
+    name: String,
+    kind: LibraryKind,
+    image_tag: Option<String>,
+    /// True while a movies or TV shows library's titles are not known yet:
+    /// during the first catalog download, and until the library's first
+    /// membership walk lands. A later walk keeps the stored titles, so it
+    /// never sets this.
+    membership_pending: bool,
+    browse: &'static BrowseCapabilities,
+}
+
+/// A library's newest titles and the library sort "All" opens with: the
+/// shelf's own order for catalog and newest-first libraries, date added for
+/// grouped ones.
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct LibraryLatest {
+    items: Vec<ItemSummary>,
+    sort: SortKey,
+}
 
 pub(super) fn route(
     services: &Arc<Services>,
@@ -42,21 +78,21 @@ fn libraries(services: &Arc<Services>) -> Handled {
             let kind = library.kind();
             let filling = library.catalog_title().is_some()
                 && (downloading || library.membership == Membership::Unwalked);
-            json!({
-                "id": library.id,
-                "name": library.name,
-                "kind": kind,
-                "imageTag": library.primary_image_tag,
-                "membershipPending": filling,
-                "browse": kind.profile().browse,
-            })
+            LibraryView {
+                id: library.id.clone(),
+                name: library.name.clone(),
+                kind,
+                image_tag: library.primary_image_tag.clone(),
+                membership_pending: filling,
+                browse: kind.profile().browse,
+            }
         })
-        .collect::<Vec<_>>();
-    Ok(ApiResponse::untyped(json!({
-        "known": known,
-        "libraries": libraries,
-        "crossLibrary": &CROSS_LIBRARY_BROWSE,
-    })))
+        .collect();
+    Ok(ApiResponse::ok(LibrariesResponse {
+        known,
+        libraries,
+        cross_library: &CROSS_LIBRARY_BROWSE,
+    }))
 }
 
 fn items(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
@@ -64,19 +100,14 @@ fn items(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
     let id = library_id(id)?;
     let scope = services.session.scope();
     let grid = browse::library_page(&services.library, &id, &query).map_err(browse_failure)?;
-    let page = answer(services, scope, grid)?;
-    Ok(ApiResponse::untyped(
-        json!({ "items": page.items, "total": page.total }),
-    ))
+    Ok(ApiResponse::ok(answer(services, scope, grid)?))
 }
 
 fn letters(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
     let query = library_query(request, Params::Strict)?;
     let letters = browse::library_letters(&services.library, &library_id(id)?, &query)
         .map_err(browse_failure)?;
-    Ok(ApiResponse::untyped(json!({
-        "letters": letters.into_iter().collect::<std::collections::BTreeMap<_, _>>(),
-    })))
+    Ok(ApiResponse::ok(ItemLetters::new(letters)))
 }
 
 fn options(services: &Arc<Services>, id: &str) -> Handled {
@@ -95,9 +126,10 @@ fn latest(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
     let scope = services.session.scope();
     let latest = browse::latest(&services.library, &id, limit).map_err(browse_failure)?;
     let page = answer(services, scope, latest.grid)?;
-    Ok(ApiResponse::untyped(
-        json!({ "items": page.items, "sort": latest.sort }),
-    ))
+    Ok(ApiResponse::ok(LibraryLatest {
+        items: page.items,
+        sort: latest.sort,
+    }))
 }
 
 fn answer(

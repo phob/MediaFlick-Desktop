@@ -46,6 +46,10 @@ export type ApplicationView = {
   logLevel: string,
 };
 
+export type Billboard = {
+  items: Array<ItemSummary>,
+};
+
 export type Bootstrap =
   | { "state": "loading" }
   | { "state": "retrying" } & Retry
@@ -55,6 +59,12 @@ export type BootstrapProgress = {
   complete: boolean,
   processed: number,
   total: number | null,
+};
+
+export type BrowseCapabilities = {
+  sorts: Array<SortKey>,
+  filters: Array<FilterKey>,
+  letterIndex: boolean,
 };
 
 export type Capabilities = {
@@ -98,6 +108,23 @@ export type ErrorBody = {
   error: string,
   expired?: boolean,
 };
+
+export type ExternalLinkOpened = {
+  opened: boolean,
+  url: string,
+};
+
+export type FavoriteState = {
+  favorite: boolean,
+};
+
+export type FilterKey =
+  | "genre"
+  | "decade"
+  | "watched"
+  | "parental"
+  | "seriesStatus"
+  | "favorite";
 
 export type FilterOptions = {
   genres: Array<string>,
@@ -154,6 +181,70 @@ export type GenericItemDetail = {
   playlistIndex?: number,
 };
 
+export type Genres = {
+  genres: Array<string>,
+};
+
+export type HomeBuiltIn =
+  | "watching"
+  | "becauseYouWatched"
+  | "recentlyAdded"
+  | "recentlyAddedShows"
+  | "upcoming"
+  | "latestMovies"
+  | "latestShows"
+  | "myList";
+
+export type HomeConfiguration = {
+  billboard: boolean,
+  watching: HomeWatchingSettings,
+  elements: Array<HomeElementView>,
+};
+
+export type HomeElementCategory =
+  | "Built-in"
+  | "Genre"
+  | "My Collection"
+  | "Library";
+
+export type HomeElementView = { label: string, available: boolean, category: HomeElementCategory, enabled: boolean } & ({ "kind": "builtIn", id: HomeBuiltIn } | { "kind": "genre", id: string } | { "kind": "collection", id: string } | { "kind": "library", id: LibraryId });
+
+export type HomeResponse = {
+  configuration: HomeConfiguration,
+  continueWatching: Array<ItemSummary>,
+  rows: Array<HomeRow>,
+};
+
+export type HomeResumeResponse = {
+  continueWatching: Array<ItemSummary>,
+  nextUp: Array<ItemSummary>,
+};
+
+export type HomeRow = { title: string, items: Array<ItemSummary> } & ({ "kind": "builtIn", id: HomeBuiltIn } | { "kind": "genre", id: string } | { "kind": "collection", id: string });
+
+export type HomeWatchingSettings = {
+  continueWatching: boolean,
+  nextUp: boolean,
+  combine: boolean,
+};
+
+export type ItemAbout = {
+  overview: string | null,
+  criticRating: number | null,
+  people: Array<Person>,
+  tags: Array<string>,
+  studios: Array<string>,
+};
+
+export type ItemLetters = {
+  letters: { [key in string]: number },
+};
+
+export type ItemPage = {
+  items: Array<ItemSummary>,
+  total: number,
+};
+
 export type ItemSummary = {
   id: string,
   kind: string,
@@ -197,7 +288,47 @@ export type ItemSummary = {
   playlistIndex?: number,
 };
 
+export type ItemSynopsis = {
+  overview: string | null,
+};
+
+export type ItemTechnical = {
+  id: string,
+  mediaStreams: Array<MediaStreamView>,
+};
+
+export type LibrariesResponse = {
+  /**
+   * False until a sync cycle has read the server's library list.
+   */
+  known: boolean,
+  /**
+   * In the user's Jellyfin order.
+   */
+  libraries: Array<LibraryView>,
+  crossLibrary: BrowseCapabilities,
+};
+
 export type LibraryId = string;
+
+export type LibraryKind =
+  | "movies"
+  | "shows"
+  | "music"
+  | "musicVideos"
+  | "homeVideos"
+  | "photos"
+  | "books"
+  | "boxSets"
+  | "playlists"
+  | "liveTv"
+  | "trailers"
+  | "mixed";
+
+export type LibraryLatest = {
+  items: Array<ItemSummary>,
+  sort: SortKey,
+};
 
 export type LibraryStats = {
   movies: number,
@@ -205,6 +336,90 @@ export type LibraryStats = {
   seasons: number,
   episodes: number,
   total: number,
+};
+
+export type LibraryView = {
+  id: LibraryId,
+  name: string,
+  kind: LibraryKind,
+  imageTag: string | null,
+  /**
+   * True while a movies or TV shows library's titles are not known yet:
+   * during the first catalog download, and until the library's first
+   * membership walk lands. A later walk keeps the stored titles, so it
+   * never sets this.
+   */
+  membershipPending: boolean,
+  browse: BrowseCapabilities,
+};
+
+export type MediaInfoResponse = {
+  sources: Array<MediaSourceView>,
+  playbackPreference: ResolvedPlaybackPreference | null,
+};
+
+export type MediaSourceView = {
+  id: string | null,
+  name: string,
+  container: string | null,
+  fileName: string | null,
+  size: number | null,
+  bitrate: number | null,
+  defaultAudioStreamIndex: number | null,
+  defaultSubtitleStreamIndex: number | null,
+  video: Array<MediaStreamView>,
+  audio: Array<MediaStreamView>,
+  subtitles: Array<MediaStreamView>,
+};
+
+export type MediaStreamView = {
+  index: number,
+  type: string | null,
+  codec: string | null,
+  profile: string | null,
+  language: string | null,
+  title: string | null,
+  displayTitle: string | null,
+  width: number | null,
+  height: number | null,
+  channels: number | null,
+  audioSpatialFormat: string | null,
+  videoRange: string | null,
+  videoRangeType: string | null,
+  bitDepth: number | null,
+  isDefault: boolean,
+  isForced: boolean,
+  isHearingImpaired: boolean,
+  isExternal: boolean,
+};
+
+export type NextUpResponse = {
+  item: ItemSummary | null,
+};
+
+export type OfficialRatings = {
+  officialRatings: Array<string>,
+};
+
+export type Person = {
+  id: string | null,
+  name: string | null,
+  role: string | null,
+  type: string | null,
+  imageTag: string | null,
+};
+
+export type PersonIdentity = {
+  jellyfinId: string,
+  tmdbId: number | null,
+  name: string,
+  imageTag: string | null,
+};
+
+export type PersonResolution = {
+  person: PersonIdentity | null,
+  candidates: Array<PersonIdentity>,
+  ambiguous: boolean,
 };
 
 export type Platform =
@@ -220,12 +435,20 @@ export type PlaybackDiagnostics = {
   frameRate: number | null,
 };
 
+export type PlaybackPreferenceSaved = {
+  playbackPreference: ResolvedPlaybackPreference | null,
+};
+
 export type PlaybackView = {
   streamingQuality: StreamingQuality,
   skipIntro: SegmentSkipMode,
   skipCredits: SegmentSkipMode,
   skipRecap: SegmentSkipMode,
   skipCommercial: SegmentSkipMode,
+};
+
+export type PlayedState = {
+  played: boolean,
 };
 
 export type PlayerBackend =
@@ -328,6 +551,17 @@ export type Recovery = {
   restoredBackup: boolean,
 };
 
+export type ResolvedPlaybackPreference = {
+  mediaSourceId: string | null,
+  mediaSourceIndex: number,
+  audioStreamIndex: number | null,
+  /**
+   * `None` is subtitles off. Playback translates it to Jellyfin/mpv's off
+   * sentinel only when an existing stored row made that choice explicit.
+   */
+  subtitleStreamIndex: number | null,
+};
+
 export type Retry = {
   reason: SyncFailure,
   retryAt: number,
@@ -359,6 +593,17 @@ export type SkipSegment = {
   endTicks: number,
   triggered: boolean,
 };
+
+export type SortKey =
+  | "name"
+  | "year"
+  | "added"
+  | "episode-added"
+  | "rating"
+  | "played"
+  | "plays"
+  | "runtime"
+  | "random";
 
 export type StopReason =
   | "eof"
@@ -403,6 +648,10 @@ export type SyncProgress = {
   phase: SyncPhase,
   catalog: BootstrapProgress,
   retry: Retry | null,
+};
+
+export type TechnicalBatch = {
+  items: Array<ItemTechnical>,
 };
 
 export type TitleDetail = {
@@ -465,6 +714,16 @@ export type ToneMappingBody =
   | "reinhard"
   | "hable"
   | "bt.2390";
+
+export type TrailerResponse = {
+  trailer: TrailerSummary | null,
+};
+
+export type TrailerSummary = {
+  id: string | null,
+  name: string,
+  embedUrl: string | null,
+};
 
 export type VideoAspectBody =
   | "source"

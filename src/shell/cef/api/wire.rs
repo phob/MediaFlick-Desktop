@@ -12,10 +12,20 @@ use ts_rs::TS;
 use crate::jellyfin::api::ApiError;
 
 use crate::companion::CompanionStatus;
+use crate::library::ItemPage;
 use crate::library::browse::FilterOptions;
 use crate::library::model::{DetailView, ItemSummary};
 use crate::playback::PlayerSnapshot;
 
+use super::catalog::{
+    Billboard, Genres, HomeResponse, HomeResumeResponse, ItemAbout, ItemLetters, ItemSynopsis,
+    OfficialRatings, PersonResolution,
+};
+use super::libraries::{LibrariesResponse, LibraryLatest};
+use super::media::{
+    ExternalLinkOpened, FavoriteState, MediaInfoResponse, NextUpResponse, PlaybackPreferenceSaved,
+    PlayedState, TechnicalBatch, TrailerResponse,
+};
 use super::playback::PlayerCommandBody;
 use super::settings::SettingsView;
 use super::{ApiRequest, ApiResponse, AppStatus, NO_STORE};
@@ -50,13 +60,33 @@ macro_rules! wire_types {
 
 wire_types! {
     AppStatus,
+    Billboard,
     CompanionStatus,
     DetailView,
+    ExternalLinkOpened,
+    FavoriteState,
     FilterOptions,
+    Genres,
+    HomeResponse,
+    HomeResumeResponse,
+    ItemAbout,
+    ItemLetters,
+    ItemPage,
     ItemSummary,
+    ItemSynopsis,
+    LibrariesResponse,
+    LibraryLatest,
+    MediaInfoResponse,
+    NextUpResponse,
+    OfficialRatings,
+    PersonResolution,
+    PlaybackPreferenceSaved,
+    PlayedState,
     PlayerCommandBody,
     PlayerSnapshot,
     SettingsView,
+    TechnicalBatch,
+    TrailerResponse,
 }
 
 /// The body of every non-2xx JSON response. It is generated for the UI but
@@ -155,7 +185,7 @@ mod tests {
     /// Handlers that predate this module answer through `ApiResponse::untyped`
     /// and decode through `ApiRequest::untyped_body`. Moving one to a wire
     /// type lowers these; nothing raises them.
-    const UNTYPED_RESPONSES: usize = 91; // guard-ratchet
+    const UNTYPED_RESPONSES: usize = 58; // guard-ratchet
     const UNTYPED_BODIES: usize = 32; // guard-ratchet
 
     struct Collect<'a> {
@@ -541,6 +571,9 @@ mod tests {
         ts: Vec<AttrKey>,
         /// The serde keys ts-rs reads for this kind of item.
         serde: Vec<AttrKey>,
+        /// The keys of `#[serde(...)]` attributes ts-rs drops whole. serde
+        /// still obeys them.
+        dropped: Vec<AttrKey>,
         /// `#[ts(type = ...)]` or `#[ts(as = ...)]` states the TypeScript.
         overridden: bool,
     }
@@ -578,15 +611,19 @@ mod tests {
                     "uses `#[ts(optional_fields)]`; mark each field `#[ts(optional)]` instead",
                 );
             }
-            let mut serde = Vec::new();
+            // A field's override replaces only its value type; ts-rs still
+            // takes the key and the `?` from the serde attributes it reads.
+            let reports_nested = !overridden || accepted == FIELD_SERDE;
+            let (mut serde, mut dropped) = (Vec::new(), Vec::new());
             for keys in self.keys(at, attrs, "serde") {
                 if let Some(key) = keys
                     .iter()
                     .find(|key| key.nested && accepted.contains(&key.name.as_str()))
                 {
-                    if !overridden {
-                        self.report(at, &format!("has `#[serde({}(...))]`, which ts-rs cannot read, so it ignores that whole attribute; use `{} = \"...\"` or describe the JSON with `#[ts(type = ...)]`", key.name, key.name));
+                    if reports_nested {
+                        self.report(at, &format!("has `#[serde({}(...))]`, which ts-rs cannot read, so it ignores that whole attribute; use `{} = \"...\"`, or describe the whole type with `#[ts(type = ...)]`", key.name, key.name));
                     }
+                    dropped.extend(keys);
                     continue;
                 }
                 for key in keys {
@@ -600,6 +637,7 @@ mod tests {
             Seen {
                 ts,
                 serde,
+                dropped,
                 overridden,
             }
         }
@@ -608,7 +646,8 @@ mod tests {
         /// as a present key unless the field says `#[ts(optional)]` or carries
         /// `#[serde(default)]`. The last `#[ts(optional ...)]` wins over both,
         /// as in ts-rs, and a `#[ts(type = ...)]` changes the value type only.
-        /// The UI would otherwise read `undefined` as `T | null`.
+        /// A skip in an attribute ts-rs drops still omits the key. The UI
+        /// would otherwise read `undefined` as `T | null`.
         fn fields(&mut self, owner: &str, fields: &syn::Fields) {
             for (index, field) in fields.iter().enumerate() {
                 let name = field
@@ -616,13 +655,16 @@ mod tests {
                     .as_ref()
                     .map_or_else(|| index.to_string(), ToString::to_string);
                 let at = format!("{owner}.{name}");
-                let Seen { ts, serde, .. } = self.seen(&at, &field.attrs, FIELD_SERDE);
+                let Seen {
+                    ts, serde, dropped, ..
+                } = self.seen(&at, &field.attrs, FIELD_SERDE);
                 let optional = ts
                     .iter()
                     .rfind(|key| key.name == "optional")
                     .map_or_else(|| has_key(&serde, "default"), |key| key.flag != Some(false));
-                let omitted =
-                    has_key(&serde, "skip_serializing_if") || has_key(&serde, "skip_serializing");
+                let omitted = [&serde, &dropped].into_iter().any(|keys| {
+                    has_key(keys, "skip_serializing_if") || has_key(keys, "skip_serializing")
+                });
                 if omitted && !optional {
                     self.report(&at, "can be left out of the JSON but is typed as always present; add `#[ts(optional)]` (`#[ts(optional = nullable)]` for a non-`Option` field)");
                 }

@@ -6,26 +6,11 @@ export type CatalogKind = (typeof CATALOG_KINDS)[number]
 
 export type ItemSummary = Wire.ItemSummary
 
-export interface Person {
-  id: string | null
-  name: string | null
-  role: string | null
-  type: string | null
-  imageTag: string | null
-}
+export type Person = Wire.Person
 
-export interface PersonIdentity {
-  jellyfinId: string
-  tmdbId: number | null
-  name: string
-  imageTag: string | null
-}
+export type PersonIdentity = Wire.PersonIdentity
 
-export interface PersonResolution {
-  person: PersonIdentity | null
-  candidates: PersonIdentity[]
-  ambiguous: boolean
-}
+export type PersonResolution = Wire.PersonResolution
 
 export interface PersonResolveQuery {
   jellyfinId?: string
@@ -39,22 +24,9 @@ export type GenericItemDetail = Extract<Wire.DetailView, { layout: "generic" }>
 
 export type AnyItemDetail = Wire.DetailView
 
-/**
- * Rich metadata fetched live from Jellyfin by `/api/item/{id}/about` for the
- * detail page. Nothing here is cached locally; with the server unreachable
- * these sections stay in their loading/error states.
- */
-export interface ItemAbout {
-  overview: string | null
-  criticRating: number | null
-  people: Person[]
-  tags: string[]
-  studios: string[]
-}
+export type ItemAbout = Wire.ItemAbout
 
-export interface ItemSynopsis {
-  overview: string | null
-}
+export type ItemSynopsis = Wire.ItemSynopsis
 
 export type SortOrder = "asc" | "desc"
 

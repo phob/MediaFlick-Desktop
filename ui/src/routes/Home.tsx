@@ -228,9 +228,16 @@ interface LibraryRow {
   sort: LibrarySortId
 }
 
-type ShelfRow = HomeRow | LibraryRow
+interface WatchingRow {
+  kind: "watching"
+  title: string
+  items: ItemSummary[]
+}
+
+type ShelfRow = HomeRow | LibraryRow | WatchingRow
 
 function rowViewAll(row: ShelfRow) {
+  if (row.kind === "watching") return undefined
   if (row.kind === "library") return libraryPath(row.id, new URLSearchParams({ sort: row.sort }))
   if (row.kind === "genre") return `/library?kind=Movie,Series&genre=${encodeURIComponent(row.id)}&sort=rating`
   if (row.kind === "collection") return `/collections/mine/${encodeURIComponent(row.id)}`
@@ -267,12 +274,12 @@ function WatchingRows({
   combine: boolean
 }) {
   if (combine) {
-    return <Row landscape row={{ kind: "builtIn", id: "watching", title: "Watching", items: [...continueWatching, ...nextUp] }} />
+    return <Row landscape row={{ kind: "watching", title: "Watching", items: [...continueWatching, ...nextUp] }} />
   }
   return (
     <>
-      <Row landscape row={{ kind: "builtIn", id: "continueWatching", title: "Continue Watching", items: continueWatching }} />
-      <Row landscape row={{ kind: "builtIn", id: "nextUp", title: "Next Up", items: nextUp }} />
+      <Row landscape row={{ kind: "watching", title: "Continue Watching", items: continueWatching }} />
+      <Row landscape row={{ kind: "watching", title: "Next Up", items: nextUp }} />
     </>
   )
 }

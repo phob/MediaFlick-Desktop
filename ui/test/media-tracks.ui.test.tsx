@@ -8,13 +8,16 @@ const save = { isPending: false, mutate: vi.fn() }
 function stream(overrides: Partial<MediaStream>): MediaStream {
   return {
     index: 0,
+    type: null,
     codec: null,
+    profile: null,
     language: null,
     title: null,
     displayTitle: null,
     width: null,
     height: null,
     channels: null,
+    audioSpatialFormat: null,
     videoRange: null,
     videoRangeType: null,
     bitDepth: null,

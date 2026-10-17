@@ -1,4 +1,5 @@
 use crate::library::libraries::LibraryRegistry;
+use crate::preferences::HomeWatchingSettings;
 
 use super::*;
 
@@ -184,7 +185,34 @@ fn built_in_label(id: HomeBuiltIn) -> &'static str {
     }
 }
 
-pub(super) fn settings_view(home: &ResolvedHome, settings: &HomeSettings) -> Value {
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct HomeConfiguration {
+    billboard: bool,
+    watching: HomeWatchingSettings,
+    elements: Vec<HomeElementView>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+struct HomeElementView {
+    #[serde(flatten)]
+    element: HomeElement,
+    label: String,
+    available: bool,
+    category: HomeElementCategory,
+}
+
+/// The group Home settings lists an element under.
+#[derive(Serialize, ts_rs::TS)]
+enum HomeElementCategory {
+    #[serde(rename = "Built-in")]
+    BuiltIn,
+    Genre,
+    #[serde(rename = "My Collection")]
+    MyCollection,
+    Library,
+}
+
+pub(super) fn settings_view(home: &ResolvedHome, settings: &HomeSettings) -> HomeConfiguration {
     let profiles = home
         .profiles
         .iter()
@@ -202,10 +230,16 @@ pub(super) fn settings_view(home: &ResolvedHome, settings: &HomeSettings) -> Val
         .iter()
         .map(|element| {
             let (label, available, category) = match &element.element {
-                HomeElementId::BuiltIn { id } => {
-                    (built_in_label(*id).to_string(), true, "Built-in")
-                }
-                HomeElementId::Genre { id } => (id.clone(), home.genres.contains(id), "Genre"),
+                HomeElementId::BuiltIn { id } => (
+                    built_in_label(*id).to_string(),
+                    true,
+                    HomeElementCategory::BuiltIn,
+                ),
+                HomeElementId::Genre { id } => (
+                    id.clone(),
+                    home.genres.contains(id),
+                    HomeElementCategory::Genre,
+                ),
                 HomeElementId::Collection { id } => (
                     profiles
                         .get(id.as_str())
@@ -213,27 +247,34 @@ pub(super) fn settings_view(home: &ResolvedHome, settings: &HomeSettings) -> Val
                         .unwrap_or("Collection")
                         .to_string(),
                     home.mediaflick_collections && profiles.contains_key(id.as_str()),
-                    "My Collection",
+                    HomeElementCategory::MyCollection,
                 ),
                 HomeElementId::Library { id } => match libraries.get(id) {
-                    Some(name) => (format!("Latest in {name}"), true, "Library"),
-                    None => ("Latest in library".to_string(), false, "Library"),
+                    Some(name) => (
+                        format!("Latest in {name}"),
+                        true,
+                        HomeElementCategory::Library,
+                    ),
+                    None => (
+                        "Latest in library".to_string(),
+                        false,
+                        HomeElementCategory::Library,
+                    ),
                 },
             };
-            let mut value = serde_json::to_value(element).unwrap_or_else(|_| json!({}));
-            if let Some(object) = value.as_object_mut() {
-                object.insert("label".to_string(), json!(label));
-                object.insert("available".to_string(), json!(available));
-                object.insert("category".to_string(), json!(category));
+            HomeElementView {
+                element: element.clone(),
+                label,
+                available,
+                category,
             }
-            value
         })
-        .collect::<Vec<_>>();
-    json!({
-        "billboard": settings.billboard,
-        "watching": settings.watching,
-        "elements": elements,
-    })
+        .collect();
+    HomeConfiguration {
+        billboard: settings.billboard,
+        watching: settings.watching,
+        elements,
+    }
 }
 
 fn home_settings_response(home: &ResolvedHome) -> ApiResponse {

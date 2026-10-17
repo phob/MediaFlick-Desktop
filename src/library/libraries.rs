@@ -33,7 +33,7 @@ impl TryFrom<String> for LibraryId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub enum LibraryKind {
     Movies,
@@ -184,7 +184,9 @@ const LIVE_SORT_KEYS: [SortKey; LiveSort::ALL.len()] = {
     keys
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Serialized as [`FilterKey::id`], which is each name in camel case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ts_rs::TS)]
+#[ts(rename_all = "camelCase")]
 pub enum FilterKey {
     Genre,
     Decade,
@@ -213,7 +215,9 @@ impl Serialize for FilterKey {
     }
 }
 
-#[derive(Debug, Serialize)]
+/// The sorts and filters a grid can run. A request for anything else answers
+/// 400.
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowseCapabilities {
     pub sorts: &'static [SortKey],

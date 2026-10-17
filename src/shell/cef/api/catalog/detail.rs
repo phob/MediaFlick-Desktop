@@ -3,6 +3,35 @@ use crate::library::{DetailView, ItemPage};
 
 use super::*;
 
+#[derive(Serialize, ts_rs::TS)]
+pub(in super::super) struct ItemSynopsis {
+    overview: Option<String>,
+}
+
+/// Rich metadata fetched live from Jellyfin by `/api/item/{id}/about` for the
+/// detail page. Nothing here is cached locally; with the server unreachable
+/// these sections stay in their loading/error states.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(in super::super) struct ItemAbout {
+    overview: Option<String>,
+    critic_rating: Option<f64>,
+    people: Vec<Person>,
+    tags: Vec<String>,
+    studios: Vec<String>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct Person {
+    id: Option<String>,
+    name: Option<String>,
+    role: Option<String>,
+    #[serde(rename = "type")]
+    person_type: Option<String>,
+    image_tag: Option<String>,
+}
+
 pub(super) fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
     let cached = browse::cached_title(&services.library, item_id)
         .map_err(|error| storage_failure(&error))?;
@@ -50,7 +79,9 @@ pub(super) fn item_synopsis(services: &Arc<Services>, item_id: &str) -> Handled 
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_item_synopsis(client, user_id, item_id) {
-        Ok(Some(dto)) => Ok(ApiResponse::untyped(json!({ "overview": dto.overview }))),
+        Ok(Some(dto)) => Ok(ApiResponse::ok(ItemSynopsis {
+            overview: dto.overview,
+        })),
         Ok(None) => Err(server_lacks_item(services, &scope, item_id)),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
@@ -69,7 +100,7 @@ fn is_cast_credit(person: &BaseItemPerson) -> bool {
                 .is_some_and(|role| !role.trim().is_empty()))
 }
 
-fn bounded_about_people(people: &[BaseItemPerson]) -> Vec<Value> {
+fn bounded_about_people(people: &[BaseItemPerson]) -> Vec<Person> {
     let mut selected = Vec::with_capacity(ITEM_ABOUT_CAST_LIMIT + ITEM_ABOUT_CREW_LIMIT);
     let mut cast = 0;
     let mut crew = 0;
@@ -103,13 +134,13 @@ fn bounded_about_people(people: &[BaseItemPerson]) -> Vec<Value> {
             crew += 1;
             *job_count += 1;
         }
-        selected.push(json!({
-            "id": person.id,
-            "name": person.name,
-            "role": person.role,
-            "type": person.person_type,
-            "imageTag": person.primary_image_tag,
-        }));
+        selected.push(Person {
+            id: person.id.clone(),
+            name: person.name.clone(),
+            role: person.role.clone(),
+            person_type: person.person_type.clone(),
+            image_tag: person.primary_image_tag.clone(),
+        });
     }
     selected
 }
@@ -125,13 +156,13 @@ pub(super) fn item_about(services: &Arc<Services>, item_id: &str) -> Handled {
                 .iter()
                 .filter_map(|studio| studio.name.clone())
                 .collect::<Vec<_>>();
-            Ok(ApiResponse::untyped(json!({
-                "overview": dto.overview,
-                "criticRating": dto.critic_rating,
-                "people": people,
-                "tags": dto.tags,
-                "studios": studios,
-            })))
+            Ok(ApiResponse::ok(ItemAbout {
+                overview: dto.overview,
+                critic_rating: dto.critic_rating,
+                people,
+                tags: dto.tags,
+                studios,
+            }))
         }
         Ok(None) => Err(server_lacks_item(services, &scope, item_id)),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
@@ -158,9 +189,7 @@ pub(super) fn children(services: &Arc<Services>, item_id: &str, request: &ApiReq
         }
         None => live_children(services, item_id, page)?,
     };
-    Ok(ApiResponse::untyped(
-        json!({ "items": page.items, "total": page.total }),
-    ))
+    Ok(ApiResponse::ok(page))
 }
 
 fn live_children(
