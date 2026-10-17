@@ -130,8 +130,9 @@ pub fn library_options(library: &Library, id: &LibraryId) -> Result<FilterOption
     }
 }
 
-/// A library's newest titles, with the library sort that lists them in the
-/// same order so the shelf's "All" opens the page the shelf previews.
+/// A library's newest titles, with the library sort its "All" opens: the
+/// shelf's own order for catalog and newest-first libraries, date added for
+/// grouped ones, whose shelf groups new items into their parents.
 pub struct Latest {
     pub grid: Grid,
     pub sort: SortKey,
@@ -171,20 +172,17 @@ pub fn latest(library: &Library, id: &LibraryId, limit: i64) -> Result<Latest, B
         GridSource::Live {
             shape,
             latest: LiveLatest::Newest,
-        } => {
-            let sort = LiveSort::DateAdded;
-            Latest {
-                grid: Grid::Live(LiveQuery::Page(LivePage {
-                    parent: entry.id,
-                    shape,
-                    sort,
-                    direction: SortDirection::Descending,
-                    favorites_only: false,
-                    page: ChildPage::first(limit),
-                })),
-                sort: sort.key(),
-            }
-        }
+        } => Latest {
+            grid: Grid::Live(LiveQuery::Page(LivePage {
+                parent: entry.id,
+                shape,
+                sort: LiveSort::DateAdded,
+                direction: SortDirection::Descending,
+                favorites_only: false,
+                page: ChildPage::first(limit),
+            })),
+            sort: SortKey::DateAdded,
+        },
     })
 }
 

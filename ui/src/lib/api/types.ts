@@ -1290,7 +1290,10 @@ export interface LibraryQuery {
   seed?: number
 }
 
-/** A library's newest titles and the library sort that lists them in the same order. */
+/**
+ * A library's newest titles and the library sort "All" opens with: the shelf's
+ * own order for catalog and newest-first libraries, date added for grouped ones.
+ */
 export interface LibraryLatest {
   items: ItemSummary[]
   sort: LibrarySortId

@@ -208,8 +208,9 @@ const LIBRARY_CHANGE_REFRESHES: Record<
      * Whether every "Latest in <library>" shelf refreshes, live ones included;
      * a library the batch names refreshes either way. `catalog-changed` (the
      * bootstrap's pages) refreshes only the catalog libraries it names;
-     * `library-changed` (incremental cycles, pushed changes) refreshes every
-     * shelf once per event.
+     * `library-changed` (incremental cycles, pushed changes) and
+     * `live-changed` (live and resync scopes) refresh every shelf once per
+     * event.
      */
     shelves: boolean
   }
