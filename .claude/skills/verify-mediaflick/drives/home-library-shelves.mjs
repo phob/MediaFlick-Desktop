@@ -4,8 +4,9 @@
 // query its profile names: /Items/Latest for grouped live libraries, the
 // library's grid newest first for box sets, playlists and Live TV, and for
 // movies and TV shows libraries the Jellyfin data the cache sorts by (date
-// added; a show's newest episode). Its All link opens the library with the
-// matching sort. Then, in the disposable profile's accounts.json: one shelf
+// added; a show's newest episode). /latest names the library sort that
+// matches the shelf (episode-added for TV shows, added otherwise), and the
+// shelf's All link opens the library with it. Then, in the disposable profile's accounts.json: one shelf
 // turned off and saved, another toggled and discarded (the file keeps its
 // hash), and Restore defaults saved (every library shelf on, in server
 // order). Read-only on the server.
@@ -79,6 +80,7 @@ const LATEST_QUERIES = `(() => {
     status: query.state.status,
     fetching: query.state.fetchStatus === "fetching",
     items: query.state.data?.items?.length ?? null,
+    sort: query.state.data?.sort ?? null,
   })) ?? null
 })()`
 
@@ -206,10 +208,7 @@ function tieAware(shelfIds, rows, total) {
   return { match, exact, ties }
 }
 
-function expectedViewAll(library) {
-  const sort = library.browse.sorts.includes("episode-added") ? "episode-added" : "added"
-  return { sort, href: `/library/${encodeURIComponent(library.id)}?sort=${sort}` }
-}
+const viewAllHref = (library, sort) => `/library/${encodeURIComponent(library.id)}?sort=${sort}`
 
 function libraryElements(home) {
   return (home?.elements ?? []).filter((element) => element.kind === "library")
@@ -275,6 +274,8 @@ export default async function homeLibraryShelves(ctx) {
     entry.shelfIds = shelf?.ids ?? []
     entry.oracleIds = entry.oracle.rows.slice(0, Math.min(SHELF_LIMIT, entry.oracle.total)).map((row) => row.id)
     entry.oracleTypes = [...new Set(entry.oracle.rows.map((row) => row.type))]
+    entry.sort = { expected: library.kind === "shows" ? "episode-added" : "added", returned: settled.find((query) => query.id === library.id)?.sort ?? null }
+    expect(entry.sort.returned === entry.sort.expected && library.browse.sorts.includes(entry.sort.returned), `${library.name} (${library.kind}): /latest names sort ${entry.sort.returned}, expected ${entry.sort.expected}, one of the library's sorts`)
     if (entry.oracle.total === 0) {
       entry.match = !shelf
       expect(entry.match, `${library.name} (${library.kind}) holds nothing and has no shelf`)
@@ -285,9 +286,13 @@ export default async function homeLibraryShelves(ctx) {
       continue
     }
     Object.assign(entry, tieAware(entry.shelfIds, entry.oracle.rows, entry.oracle.total))
-    expect(entry.match, `${label(library.name)} lists ${entry.shelfIds.length} ids matching ${entry.source} (${entry.exact ? "exact order" : `same order up to ${entry.ties.length} tie groups`}; oracle ${entry.oracleIds.length} of ${entry.oracle.total})`)
-    entry.viewAll = { expected: expectedViewAll(library), shown: shelf.viewAll }
-    expect(shelf.viewAll === entry.viewAll.expected.href, `${label(library.name)}: All links to ${entry.viewAll.expected.href} (${shelf.viewAll})`)
+    const order = `${entry.exact ? "exact order" : `same order up to ${entry.ties.length} tie groups`}; oracle ${entry.oracleIds.length} of ${entry.oracle.total}`
+    expect(entry.match, PROFILES[library.kind].source.startsWith("catalog")
+      ? `${label(library.name)} lists ${entry.shelfIds.length} ids matching ${entry.source} (${order})`
+      : `${label(library.name)} matches its profile's Jellyfin query (${entry.source}): ${entry.shelfIds.length} ids (${order})`)
+    entry.viewAll = { expected: { sort: entry.sort.returned, href: viewAllHref(library, entry.sort.returned) }, shown: shelf.viewAll }
+    expect(shelf.viewAll === entry.viewAll.expected.href, `${label(library.name)}: All links to the sort /latest named, ${entry.viewAll.expected.href} (${shelf.viewAll})`)
+    if (library.kind === "shows") expect(shelf.viewAll === viewAllHref(library, "episode-added"), `${label(library.name)}: a TV shows shelf's All is sort=episode-added`)
     if (library.kind === "shows") {
       ctx.step(`measured: ${library.name} SortBy=DateLastContentAdded ${entry.oracle.dateLastContentAdded.match ? "matches" : "does not match"} the newest-episode order`)
     }
