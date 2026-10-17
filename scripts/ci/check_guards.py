@@ -31,7 +31,11 @@ GUARD_RECIPES = ("check-pr", "clippy", "clippy-target", "fmt-check", "rust-quali
 MSBUILD_WARNINGS = re.compile(r"TreatWarningsAsErrors|WarningsAsErrors|WarningsNotAsErrors|NoWarn|WarningLevel|AnalysisLevel|AnalysisMode|EnforceCodeStyleInBuild|Nullable")
 RATCHET = re.compile(r"guard-ratchet")
 NUMBER = re.compile(r"\d[\d_]*")
-RUST_SUPPRESSION = re.compile(r"(?<![\w.:])(allow|expect)\((\w[\w:]*(?:,\w[\w:]*)*)")
+RUST_SUPPRESSION = re.compile(r"(?<![\w.:])(allow|expect) ?\( ?(\w[\w:]*(?: ?, ?\w[\w:]*)*)")
+RUST_STRING = re.compile(r'"(?:\\[\s\S]|[^"\\])*"')
+RUST_COMMENT = re.compile(r"//[^\n]*")
+RUST_ITEM = re.compile(r"\b(fn|impl|mod|struct|enum|trait|const|static|type|use|let|match|macro_rules)\b")
+VERSION_PIN = re.compile(r"((?:uses:\s*[^@\s]+@)|(?:[\w-]*version[\w-]*:\s*))\S+", re.IGNORECASE)
 SCRIPT_SUPPRESSION = re.compile(r"(?:oxlint|eslint)-disable[^\n*]*|@ts-(?:ignore|expect-error|nocheck)")
 CSHARP_SUPPRESSION = re.compile(r"#pragma\s+warning\s+disable[^\n]*|SuppressMessage\s*\([^)]*\)")
 
@@ -57,9 +61,8 @@ def changed_lines(before: str, after: str) -> list[str]:
 
 
 def workflow_lines(before: str, after: str) -> list[str]:
-    """Like changed_lines, but an action version bump is not a relaxation."""
-    pinless = re.compile(r"(uses:\s*[^@\s]+)@\S+")
-    return changed_lines(pinless.sub(r"\1", before), pinless.sub(r"\1", after))
+    """Like changed_lines, but an action or tool version bump is not a relaxation."""
+    return changed_lines(VERSION_PIN.sub(r"\1V", before), VERSION_PIN.sub(r"\1V", after))
 
 
 def matching_lines(pattern: re.Pattern[str]) -> Check:
@@ -218,13 +221,23 @@ def suppressions(path: str, text: str) -> Counter[str]:
     """Lint suppressions in a file, keyed by what they silence so a moved one still matches."""
     suffix = os.path.splitext(path)[1]
     if suffix == ".rs":
-        matches = RUST_SUPPRESSION.findall(re.sub(r"\s+", "", text))
-        return Counter(f"{kind}({lints.removesuffix(',reason')})" for kind, lints in matches)
+        return Counter(rust_suppression(code, match) for code in [re.sub(r"\s+", " ", RUST_COMMENT.sub("", RUST_STRING.sub('""', text)))] for match in RUST_SUPPRESSION.finditer(code))
     if suffix in (".ts", ".tsx", ".js", ".mjs"):
         return Counter(match.strip() for match in SCRIPT_SUPPRESSION.findall(text))
     if suffix == ".cs":
         return Counter(match.strip() for match in CSHARP_SUPPRESSION.findall(text))
     return Counter()
+
+
+def rust_suppression(code: str, match: re.Match[str]) -> str:
+    """`expect(clippy::panic) on fn`: what is silenced and how far, so widening the scope counts as new."""
+    lints = match.group(2).replace(" ", "").removesuffix(",reason")
+    if code.rfind("#![", 0, match.start()) > code.rfind("#[", 0, match.start()):
+        scope = "module"
+    else:
+        item = RUST_ITEM.search(code, match.end())
+        scope = item.group() if item else "item"
+    return f"{match.group(1)}({lints}) on {scope}"
 
 
 def added_suppressions(contents: dict[str, tuple[str, str]]) -> list[tuple[str, str]]:
@@ -265,10 +278,10 @@ def main(argv: list[str]) -> int:
     for where, finding in findings:
         print(f"{where}: {finding}")
     if os.environ.get("MEDIAFLICK_GUARDS_CHANGED") == "1":
-        print(f"guards: {len(findings)} relaxations above, accepted by the guards-changed label")
+        print(f"guards: {len(findings)} findings above, accepted by the guards-changed label")
         return 0
     print(
-        f"guards: {span} deletes or relaxes {len(findings)} guards.\n"
+        f"guards: {span} relaxes a guard or changes guard code ({len(findings)} findings).\n"
         "Fix: keep the guard and change the code instead. If the relaxation is intended,\n"
         "say why in the PR body and label the PR `guards-changed`; that label marks it for the operator's review."
     )
