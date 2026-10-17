@@ -414,7 +414,3 @@ fn swap_chain_format(format: DXGI_FORMAT) -> DXGI_FORMAT {
 fn unexpected_error(message: &str) -> windows::core::Error {
     windows::core::Error::new(windows::core::HRESULT(0x8000_4005_u32 as i32), message)
 }
-
-pub(super) fn scratch_gate_proof() -> u32 {
-    "not a number"
-}
