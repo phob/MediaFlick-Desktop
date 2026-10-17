@@ -5,7 +5,7 @@ Usage: check_guards.py BASE [HEAD]
 Escape: MEDIAFLICK_GUARDS_CHANGED=1, which CI sets only from the PR's `guards-changed` label.
 
 Lint configuration is compared by meaning: a new lint at full strength, a raised level
-or a lowered threshold passes. Guard code (CI scripts, gating workflows, check recipes,
+or a lowered threshold passes. Guard code (CI scripts, workflows, check recipes, Cargo configuration,
 TypeScript and compiler-warning settings) has no such reading, so any change to it
 counts, except a version bump. CI runs the default branch's copy of this script
 from a pull_request_target workflow, so a PR cannot edit the check that judges it.
