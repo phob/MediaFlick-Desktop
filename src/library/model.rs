@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, MediaStream, UserItemDataDto};
 
@@ -118,7 +117,7 @@ impl ItemPlaybackPreference {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedPlaybackPreference {
     pub media_source_id: Option<String>,
@@ -372,45 +371,6 @@ impl KindFilter {
                 .collect(),
         }
     }
-}
-
-/// Only fields useful to a concise technical readout are retained. Subtitle
-/// tracks, paths, delivery URLs, and playback-negotiation flags never reach
-/// the card-badge channel; the media endpoint serves those from full sources.
-/// Nothing here is persisted — this shapes live DTO streams for the UI.
-pub(crate) fn technical_media_streams_json(streams: &[MediaStream]) -> serde_json::Value {
-    serde_json::Value::Array(
-        streams
-            .iter()
-            .filter(|stream| {
-                stream.stream_type.as_deref().is_some_and(|kind| {
-                    kind.eq_ignore_ascii_case("video") || kind.eq_ignore_ascii_case("audio")
-                })
-            })
-            .map(|stream| {
-                json!({
-                    "index": stream.index,
-                    "type": stream.stream_type,
-                    "codec": stream.codec,
-                    "profile": stream.profile,
-                    "language": stream.language,
-                    "title": stream.title,
-                    "displayTitle": stream.display_title,
-                    "width": stream.width,
-                    "height": stream.height,
-                    "channels": stream.channels,
-                    "videoRange": stream.video_range,
-                    "videoRangeType": stream.video_range_type,
-                    "audioSpatialFormat": stream.audio_spatial_format,
-                    "bitDepth": stream.bit_depth,
-                    "isDefault": stream.is_default,
-                    "isForced": stream.is_forced,
-                    "isHearingImpaired": stream.is_hearing_impaired,
-                    "isExternal": stream.is_external,
-                })
-            })
-            .collect(),
-    )
 }
 
 impl ItemRecord {

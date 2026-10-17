@@ -1,61 +1,15 @@
-export interface ItemTechnical {
-  id: string
-  mediaStreams: MediaStream[]
-}
+import type * as Wire from "../wire.gen.ts"
 
-export interface MediaStream {
-  index: number
-  /** Present on cached item summaries; detail sources already group by type. */
-  type?: string | null
-  codec: string | null
-  profile?: string | null
-  language: string | null
-  title: string | null
-  displayTitle: string | null
-  width: number | null
-  height: number | null
-  channels: number | null
-  audioSpatialFormat?: string | null
-  videoRange: string | null
-  videoRangeType: string | null
-  bitDepth: number | null
-  isDefault: boolean
-  isForced: boolean
-  isHearingImpaired: boolean
-  isExternal: boolean
-}
+export type ItemTechnical = Wire.ItemTechnical
 
-export interface MediaSource {
-  id: string | null
-  name: string
-  container: string | null
-  fileName: string | null
-  size: number | null
-  bitrate: number | null
-  defaultAudioStreamIndex: number | null
-  defaultSubtitleStreamIndex: number | null
-  video: MediaStream[]
-  audio: MediaStream[]
-  subtitles: MediaStream[]
-}
+export type MediaStream = Wire.MediaStreamView
 
-export interface PlaybackTrackPreference {
-  mediaSourceId: string | null
-  mediaSourceIndex: number
-  audioStreamIndex: number | null
-  /** `null` means subtitles off. */
-  subtitleStreamIndex: number | null
-}
+export type MediaSource = Wire.MediaSourceView
 
-export interface MediaInfoResponse {
-  sources: MediaSource[]
-  playbackPreference: PlaybackTrackPreference | null
-}
+export type PlaybackTrackPreference = Wire.ResolvedPlaybackPreference
+
+export type MediaInfoResponse = Wire.MediaInfoResponse
 
 export type PlaybackTrackPreferenceWrite = PlaybackTrackPreference
 
-export interface TrailerSummary {
-  id: string | null
-  name: string
-  embedUrl: string | null
-}
+export type TrailerSummary = Wire.TrailerSummary

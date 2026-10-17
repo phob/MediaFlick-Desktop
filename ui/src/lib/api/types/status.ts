@@ -1,5 +1,4 @@
 import type * as Wire from "../wire.gen.ts"
-import type { ItemSummary } from "./catalog.ts"
 import type { HomeResponse } from "./home.ts"
 import type { ClientSettings, ViewingSettings } from "./settings.ts"
 
@@ -15,7 +14,7 @@ export interface StartupResponse {
   viewing: ViewingSettings | null
   browsing: Record<string, string> | null
   home: HomeResponse | null
-  billboard: { items: ItemSummary[] } | null
+  billboard: Wire.Billboard | null
 }
 
 export type CompanionService = "sonarr" | "radarr" | "seerr" | "mdblist" | "tmdb"

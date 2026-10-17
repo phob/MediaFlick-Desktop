@@ -22,7 +22,6 @@ use crate::jellyfin::api::model::{BaseItemDto, BaseItemPerson, MediaSourceInfo, 
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
 use crate::jellyfin::session::{SessionScope, SessionStatus};
-use crate::library::model::technical_media_streams_json;
 use crate::library::sync::{Bootstrap, SyncProgress};
 use crate::library::{
     CatalogKind, ItemPlaybackPreference, ItemQuery, ItemSort, ItemSummary, KindFilter, Library,

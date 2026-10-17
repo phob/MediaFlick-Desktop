@@ -1,3 +1,5 @@
+use crate::library::model::ResolvedPlaybackPreference;
+
 use super::*;
 
 pub(super) fn route(
@@ -55,6 +57,105 @@ struct FavoriteBody {
     favorite: bool,
 }
 
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct TechnicalBatch {
+    items: Vec<ItemTechnical>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct ItemTechnical {
+    id: String,
+    media_streams: Vec<MediaStreamView>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct MediaInfoResponse {
+    sources: Vec<MediaSourceView>,
+    playback_preference: Option<ResolvedPlaybackPreference>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PlaybackPreferenceSaved {
+    playback_preference: Option<ResolvedPlaybackPreference>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct MediaSourceView {
+    id: Option<String>,
+    name: String,
+    container: Option<String>,
+    file_name: Option<String>,
+    size: Option<i64>,
+    bitrate: Option<i64>,
+    default_audio_stream_index: Option<i64>,
+    default_subtitle_stream_index: Option<i64>,
+    video: Vec<MediaStreamView>,
+    audio: Vec<MediaStreamView>,
+    subtitles: Vec<MediaStreamView>,
+}
+
+#[derive(Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct MediaStreamView {
+    index: i64,
+    #[serde(rename = "type")]
+    stream_type: Option<String>,
+    codec: Option<String>,
+    profile: Option<String>,
+    language: Option<String>,
+    title: Option<String>,
+    display_title: Option<String>,
+    width: Option<i64>,
+    height: Option<i64>,
+    channels: Option<i64>,
+    audio_spatial_format: Option<String>,
+    video_range: Option<String>,
+    video_range_type: Option<String>,
+    bit_depth: Option<i64>,
+    is_default: bool,
+    is_forced: bool,
+    is_hearing_impaired: bool,
+    is_external: bool,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct TrailerResponse {
+    trailer: Option<TrailerSummary>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct TrailerSummary {
+    id: Option<String>,
+    name: String,
+    embed_url: Option<String>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct NextUpResponse {
+    item: Option<ItemSummary>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct ExternalLinkOpened {
+    opened: bool,
+    url: String,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct PlayedState {
+    played: bool,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct FavoriteState {
+    favorite: bool,
+}
+
 /// Live technical stream descriptors for visible cards, batched by the UI's
 /// badge scheduler. Container ids (Series, Season) answer with the streams of
 /// a representative episode. Nothing is persisted; a failure is silent on
@@ -72,7 +173,7 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         .map(str::to_string)
         .collect::<Vec<_>>();
     if ids.is_empty() {
-        return Ok(ApiResponse::untyped(json!({ "items": [] })));
+        return Ok(ApiResponse::ok(TechnicalBatch { items: Vec::new() }));
     }
     // Series and Season cards advertise the same badges as movies, but their
     // rows are containers Jellyfin reports without streams. Each is answered
@@ -92,7 +193,7 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         cards.push(card_id);
     }
     if source_ids.is_empty() {
-        return Ok(ApiResponse::untyped(json!({ "items": [] })));
+        return Ok(ApiResponse::ok(TechnicalBatch { items: Vec::new() }));
     }
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
@@ -108,12 +209,12 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         match items::fetch_media_stream_batch(client, user_id, chunk) {
             Ok(response) => {
                 for dto in &response.items {
-                    let streams = technical_media_streams_json(&dto.media_streams);
+                    let streams = technical_streams(&dto.media_streams);
                     for card_id in cards_by_source.get(&dto.id).into_iter().flatten() {
-                        results.push(json!({
-                            "id": card_id,
-                            "mediaStreams": streams.clone(),
-                        }));
+                        results.push(ItemTechnical {
+                            id: card_id.clone(),
+                            media_streams: streams.clone(),
+                        });
                     }
                 }
             }
@@ -123,7 +224,23 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
             }
         }
     }
-    Ok(ApiResponse::untyped(json!({ "items": results })))
+    Ok(ApiResponse::ok(TechnicalBatch { items: results }))
+}
+
+/// Only fields useful to a concise technical readout are retained. Subtitle
+/// tracks, paths, delivery URLs, and playback-negotiation flags never reach
+/// the card-badge channel; the media endpoint serves those from full sources.
+/// Nothing here is persisted — this shapes live DTO streams for the UI.
+fn technical_streams(streams: &[MediaStream]) -> Vec<MediaStreamView> {
+    streams
+        .iter()
+        .filter(|stream| {
+            stream.stream_type.as_deref().is_some_and(|kind| {
+                kind.eq_ignore_ascii_case("video") || kind.eq_ignore_ascii_case("audio")
+            })
+        })
+        .map(MediaStreamView::of)
+        .collect()
 }
 
 fn cached_kind(services: &Services, item_id: &str) -> Result<Option<CatalogKind>, ApiResponse> {
@@ -142,10 +259,10 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> Handled {
         cached_kind(services, item_id)?,
         Some(CatalogKind::Series | CatalogKind::Season)
     ) {
-        return Ok(ApiResponse::untyped(json!({
-            "sources": [],
-            "playbackPreference": Value::Null,
-        })));
+        return Ok(ApiResponse::ok(MediaInfoResponse {
+            sources: Vec::new(),
+            playback_preference: None,
+        }));
     }
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
@@ -155,10 +272,10 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> Handled {
                 .session
                 .account_key()
                 .and_then(|account| services.playback_preferences.get(&account, item_id));
-            Ok(ApiResponse::untyped(json!({
-                "sources": sources.iter().map(media_source_json).collect::<Vec<_>>(),
-                "playbackPreference": resolve_playback_preference(preference.as_ref(), &sources),
-            })))
+            Ok(ApiResponse::ok(MediaInfoResponse {
+                sources: sources.iter().map(MediaSourceView::of).collect(),
+                playback_preference: resolve_playback_preference(preference.as_ref(), &sources),
+            }))
         }
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
@@ -272,9 +389,9 @@ fn set_item_playback_preference(
                     format!("could not save playback preference: {error}"),
                 ));
             }
-            Ok(ApiResponse::untyped(json!({
-                "playbackPreference": resolve_playback_preference(Some(&preference), &sources),
-            })))
+            Ok(ApiResponse::ok(PlaybackPreferenceSaved {
+                playback_preference: resolve_playback_preference(Some(&preference), &sources),
+            }))
         })
 }
 
@@ -286,13 +403,13 @@ fn trailer_info(services: &Arc<Services>, item_id: &str) -> Handled {
             .into_iter()
             .find(|trailer| !trailer.id.trim().is_empty())
         {
-            Some(trailer) => Ok(ApiResponse::untyped(json!({
-                "trailer": {
-                    "id": trailer.id,
-                    "name": trailer.display_name(),
-                    "embedUrl": Value::Null,
-                }
-            }))),
+            Some(trailer) => Ok(ApiResponse::ok(TrailerResponse {
+                trailer: Some(TrailerSummary {
+                    name: trailer.display_name().to_string(),
+                    id: Some(trailer.id),
+                    embed_url: None,
+                }),
+            })),
             None => remote_trailer_info(services, &scope, item_id),
         },
         Err(error) => Err(scoped_failure(services, &scope, &error)),
@@ -303,15 +420,13 @@ fn remote_trailer_info(services: &Arc<Services>, scope: &SessionScope, item_id: 
     match items::fetch_remote_trailers(scope.client(), scope.user_id(), item_id) {
         Ok(trailers) => {
             let trailer = trailers.into_iter().find_map(|trailer| {
-                youtube_embed_url(&trailer.url).map(|embed_url| {
-                    json!({
-                        "id": Value::Null,
-                        "name": trailer.name.unwrap_or_else(|| "Trailer".to_string()),
-                        "embedUrl": embed_url,
-                    })
+                youtube_embed_url(&trailer.url).map(|embed_url| TrailerSummary {
+                    id: None,
+                    name: trailer.name.unwrap_or_else(|| "Trailer".to_string()),
+                    embed_url: Some(embed_url),
                 })
             });
-            Ok(ApiResponse::untyped(json!({ "trailer": trailer })))
+            Ok(ApiResponse::ok(TrailerResponse { trailer }))
         }
         Err(error) => Err(scoped_failure(services, scope, &error)),
     }
@@ -398,54 +513,62 @@ fn bounded_byte_range(value: Option<&str>) -> String {
     fallback
 }
 
-fn media_source_json(source: &MediaSourceInfo) -> Value {
-    let streams = |kind: &str| {
-        source
-            .streams_of_type(kind)
-            .map(media_stream_json)
-            .collect::<Vec<_>>()
-    };
-    json!({
-        "id": source.id,
-        "name": source.display_name(),
-        "container": source.container,
-        // Only the file name: the server's directory layout is not the UI's
-        // business, but "which file is this" is exactly what this page is for.
-        // Jellyfin answers non-admin users with an opaque id in `Path`, which
-        // `file_name_of` filters out — the source name carries the release
-        // there, and the UI falls back to it.
-        "fileName": source.path.as_deref().and_then(file_name_of),
-        "size": source.size,
-        "bitrate": source.bitrate,
-        "defaultAudioStreamIndex": source.default_audio_stream_index,
-        "defaultSubtitleStreamIndex": source.default_subtitle_stream_index,
-        "video": streams("video"),
-        "audio": streams("audio"),
-        "subtitles": streams("subtitle"),
-    })
+impl MediaSourceView {
+    fn of(source: &MediaSourceInfo) -> Self {
+        let streams = |kind: &str| {
+            source
+                .streams_of_type(kind)
+                .map(MediaStreamView::of)
+                .collect::<Vec<_>>()
+        };
+        Self {
+            id: source.id.clone(),
+            name: source.display_name().to_string(),
+            container: source.container.clone(),
+            // Only the file name: the server's directory layout is not the UI's
+            // business, but "which file is this" is exactly what this page is for.
+            // Jellyfin answers non-admin users with an opaque id in `Path`, which
+            // `file_name_of` filters out — the source name carries the release
+            // there, and the UI falls back to it.
+            file_name: source
+                .path
+                .as_deref()
+                .and_then(file_name_of)
+                .map(str::to_string),
+            size: source.size,
+            bitrate: source.bitrate,
+            default_audio_stream_index: source.default_audio_stream_index,
+            default_subtitle_stream_index: source.default_subtitle_stream_index,
+            video: streams("video"),
+            audio: streams("audio"),
+            subtitles: streams("subtitle"),
+        }
+    }
 }
 
-fn media_stream_json(stream: &MediaStream) -> Value {
-    json!({
-        "index": stream.index,
-        "type": stream.stream_type,
-        "codec": stream.codec,
-        "profile": stream.profile,
-        "language": stream.language,
-        "title": stream.title,
-        "displayTitle": stream.display_title,
-        "width": stream.width,
-        "height": stream.height,
-        "channels": stream.channels,
-        "audioSpatialFormat": stream.audio_spatial_format,
-        "videoRange": stream.video_range,
-        "videoRangeType": stream.video_range_type,
-        "bitDepth": stream.bit_depth,
-        "isDefault": stream.is_default,
-        "isForced": stream.is_forced,
-        "isHearingImpaired": stream.is_hearing_impaired,
-        "isExternal": stream.is_external,
-    })
+impl MediaStreamView {
+    fn of(stream: &MediaStream) -> Self {
+        Self {
+            index: stream.index,
+            stream_type: stream.stream_type.clone(),
+            codec: stream.codec.clone(),
+            profile: stream.profile.clone(),
+            language: stream.language.clone(),
+            title: stream.title.clone(),
+            display_title: stream.display_title.clone(),
+            width: stream.width,
+            height: stream.height,
+            channels: stream.channels,
+            audio_spatial_format: stream.audio_spatial_format.clone(),
+            video_range: stream.video_range.clone(),
+            video_range_type: stream.video_range_type.clone(),
+            bit_depth: stream.bit_depth,
+            is_default: stream.is_default,
+            is_forced: stream.is_forced,
+            is_hearing_impaired: stream.is_hearing_impaired,
+            is_external: stream.is_external,
+        }
+    }
 }
 
 /// The basename of a real file path.
@@ -468,7 +591,7 @@ fn file_name_of(path: &str) -> Option<&str> {
 /// than a page with nothing to play.
 fn next_up(services: &Arc<Services>, item_id: &str) -> Handled {
     if cached_kind(services, item_id)? != Some(CatalogKind::Series) {
-        return Ok(ApiResponse::untyped(json!({ "item": Value::Null })));
+        return Ok(ApiResponse::ok(NextUpResponse { item: None }));
     }
     let from_server = match services.session.scope() {
         Ok(scope) => items::fetch_next_up(scope.client(), scope.user_id(), Some(item_id), 1)
@@ -484,7 +607,7 @@ fn next_up(services: &Arc<Services>, item_id: &str) -> Handled {
         Some(item) => Some(item),
         None => services.library.first_episode(item_id).unwrap_or_default(),
     };
-    Ok(ApiResponse::untyped(json!({ "item": item })))
+    Ok(ApiResponse::ok(NextUpResponse { item }))
 }
 
 #[derive(Clone, Copy)]
@@ -566,7 +689,7 @@ fn open_external(services: &Arc<Services>, item_id: &str, request: &ApiRequest) 
         ));
     };
     super::super::bridge::open_external_link(&url);
-    Ok(ApiResponse::untyped(json!({ "opened": true, "url": url })))
+    Ok(ApiResponse::ok(ExternalLinkOpened { opened: true, url }))
 }
 
 fn valid_external_id(source: &str, id: &str) -> bool {
@@ -594,7 +717,7 @@ fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> 
         || (),
         || Ok(services.library.set_local_played(item_id, played)),
     );
-    Ok(ApiResponse::untyped(json!({ "played": played })))
+    Ok(ApiResponse::ok(PlayedState { played }))
 }
 
 fn set_favorite(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
@@ -607,7 +730,7 @@ fn set_favorite(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -
         || (),
         || Ok(services.library.set_local_favorite(item_id, favorite)),
     );
-    Ok(ApiResponse::untyped(json!({ "favorite": favorite })))
+    Ok(ApiResponse::ok(FavoriteState { favorite }))
 }
 
 fn user_data_write(

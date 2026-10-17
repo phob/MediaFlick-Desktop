@@ -173,16 +173,26 @@ pub enum ItemSort {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Serialized as [`SortKey::id`]; the TypeScript names repeat those ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ts_rs::TS)]
 pub enum SortKey {
+    #[ts(rename = "name")]
     Name,
+    #[ts(rename = "year")]
     ReleaseDate,
+    #[ts(rename = "added")]
     DateAdded,
+    #[ts(rename = "episode-added")]
     EpisodeAdded,
+    #[ts(rename = "rating")]
     CommunityRating,
+    #[ts(rename = "played")]
     DatePlayed,
+    #[ts(rename = "plays")]
     PlayCount,
+    #[ts(rename = "runtime")]
     Runtime,
+    #[ts(rename = "random")]
     Random,
 }
 
@@ -368,7 +378,7 @@ pub const DEFAULT_PAGE_SIZE: i64 = 60;
 
 pub const MAX_CHILD_PAGE_LIMIT: i64 = 200;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 pub struct ItemPage {
     pub items: Vec<ItemSummary>,
     pub total: i64,

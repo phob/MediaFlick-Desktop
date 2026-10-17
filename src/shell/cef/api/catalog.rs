@@ -1,5 +1,7 @@
-use crate::library::DEFAULT_PAGE_SIZE;
+use std::collections::BTreeMap;
+
 use crate::library::libraries::FilterKey;
+use crate::library::{DEFAULT_PAGE_SIZE, ItemPage};
 
 use super::*;
 
@@ -8,10 +10,38 @@ mod home;
 mod home_settings;
 mod person;
 
+pub(super) use detail::{ItemAbout, ItemSynopsis};
 use detail::{children, item_about, item_detail, item_synopsis};
+pub(super) use home::{Billboard, HomeResponse, HomeResumeResponse};
 use home::{billboard, home, home_resume};
 use home_settings::{home_settings, patch_home_settings};
+pub(super) use person::PersonResolution;
 use person::{query_person_items, resolve_person};
+
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct Genres {
+    genres: Vec<String>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct OfficialRatings {
+    official_ratings: Vec<String>,
+}
+
+/// Where each initial starts in the grid, `#` for any that is not A to Z.
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct ItemLetters {
+    letters: BTreeMap<String, i64>,
+}
+
+impl ItemLetters {
+    pub(super) fn new(letters: Vec<(String, i64)>) -> Self {
+        Self {
+            letters: letters.into_iter().collect(),
+        }
+    }
+}
 
 pub(super) fn route(
     services: &Arc<Services>,
@@ -28,7 +58,7 @@ pub(super) fn route(
         ["items"] if request.is("GET") => query_items(services, request),
         ["items", "letters"] if request.is("GET") => item_letters(services, request),
         ["genres"] if request.is("GET") => Ok(match services.library.genres(None) {
-            Ok(genres) => ApiResponse::untyped(json!({ "genres": genres })),
+            Ok(genres) => ApiResponse::ok(Genres { genres }),
             Err(error) => storage_failure(&error),
         }),
         ["official-ratings"] if request.is("GET") => official_ratings(services, request),
@@ -79,18 +109,14 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 
     let query = item_query(request)?;
     match services.library.query(&query) {
-        Ok(page) => Ok(ApiResponse::untyped(
-            json!({ "items": page.items, "total": page.total }),
-        )),
+        Ok(page) => Ok(ApiResponse::ok(page)),
         Err(error) => Err(storage_failure(&error)),
     }
 }
 
 fn item_letters(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     match services.library.letter_index(&item_query(request)?) {
-        Ok(letters) => Ok(ApiResponse::untyped(json!({
-            "letters": letters.into_iter().collect::<std::collections::BTreeMap<_, _>>(),
-        }))),
+        Ok(letters) => Ok(ApiResponse::ok(ItemLetters::new(letters))),
         Err(error) => Err(storage_failure(&error)),
     }
 }
@@ -108,7 +134,9 @@ fn official_ratings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         .filter(|kinds| !kinds.is_empty())
         .unwrap_or_else(|| CatalogKind::TOP_LEVEL.to_vec());
     match services.library.official_ratings(&kinds, None) {
-        Ok(ratings) => Ok(ApiResponse::untyped(json!({ "officialRatings": ratings }))),
+        Ok(ratings) => Ok(ApiResponse::ok(OfficialRatings {
+            official_ratings: ratings,
+        })),
         Err(error) => Err(storage_failure(&error)),
     }
 }

@@ -1,5 +1,31 @@
 use super::*;
 
+#[derive(Serialize, ts_rs::TS)]
+pub(in super::super) struct PersonResolution {
+    person: Option<PersonIdentity>,
+    candidates: Vec<PersonIdentity>,
+    ambiguous: bool,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct PersonIdentity {
+    jellyfin_id: String,
+    tmdb_id: Option<i64>,
+    name: String,
+    image_tag: Option<String>,
+}
+
+impl PersonResolution {
+    fn found(person: PersonIdentity) -> Self {
+        Self {
+            person: Some(person),
+            candidates: Vec::new(),
+            ambiguous: false,
+        }
+    }
+}
+
 pub(super) fn query_person_items(
     services: &Arc<Services>,
     person_id: &str,
@@ -16,25 +42,25 @@ pub(super) fn query_person_items(
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_person_items(client, user_id, person_id, offset, limit) {
-        Ok(response) => Ok(ApiResponse::untyped(json!({
-            "items": response.items.iter().map(ItemSummary::from_dto).collect::<Vec<_>>(),
-            "total": response.total_record_count,
-        }))),
+        Ok(response) => Ok(ApiResponse::ok(ItemPage {
+            items: response.items.iter().map(ItemSummary::from_dto).collect(),
+            total: response.total_record_count,
+        })),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
-fn person_identity(dto: &BaseItemDto, fallback_tmdb_id: Option<i64>) -> Value {
-    json!({
-        "jellyfinId": dto.id,
-        "tmdbId": dto
+fn person_identity(dto: &BaseItemDto, fallback_tmdb_id: Option<i64>) -> PersonIdentity {
+    PersonIdentity {
+        jellyfin_id: dto.id.clone(),
+        tmdb_id: dto
             .provider_id("Tmdb")
             .and_then(|id| id.parse::<i64>().ok())
             .filter(|id| *id > 0)
             .or(fallback_tmdb_id),
-        "name": dto.display_name(),
-        "imageTag": dto.primary_image_tag(),
-    })
+        name: dto.display_name().to_string(),
+        image_tag: dto.primary_image_tag().map(str::to_string),
+    }
 }
 
 /// Bridges Jellyfin and TMDB person namespaces without ever treating a fuzzy
@@ -63,11 +89,9 @@ pub(super) fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> 
                         "the Jellyfin and TMDB person ids do not match",
                     ));
                 }
-                Ok(ApiResponse::untyped(json!({
-                    "person": person_identity(&person, tmdb_id),
-                    "candidates": [],
-                    "ambiguous": false,
-                })))
+                Ok(ApiResponse::ok(PersonResolution::found(person_identity(
+                    &person, tmdb_id,
+                ))))
             }
             Ok(Some(_)) => Err(ApiResponse::error(409, "that Jellyfin id is not a person")),
             Ok(None) => Err(ApiResponse::error(
@@ -107,21 +131,19 @@ pub(super) fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> 
                 })
                 .collect::<Vec<_>>();
             if exact.len() == 1 {
-                return Ok(ApiResponse::untyped(json!({
-                    "person": person_identity(&exact[0], tmdb_id),
-                    "candidates": [],
-                    "ambiguous": false,
-                })));
+                return Ok(ApiResponse::ok(PersonResolution::found(person_identity(
+                    &exact[0], tmdb_id,
+                ))));
             }
             let candidates = exact
                 .iter()
                 .map(|person| person_identity(person, tmdb_id))
                 .collect::<Vec<_>>();
-            Ok(ApiResponse::untyped(json!({
-                "person": Value::Null,
-                "ambiguous": candidates.len() > 1,
-                "candidates": candidates,
-            })))
+            Ok(ApiResponse::ok(PersonResolution {
+                person: None,
+                ambiguous: candidates.len() > 1,
+                candidates,
+            }))
         }
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }

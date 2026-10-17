@@ -1,37 +1,9 @@
-import type { ItemSummary } from "./catalog.ts"
+import type * as Wire from "../wire.gen.ts"
 import type { CollectionMode } from "./collections.ts"
 
-export type HomeBuiltInId =
-  | "watching"
-  | "becauseYouWatched"
-  | "recentlyAdded"
-  | "recentlyAddedShows"
-  | "upcoming"
-  | "latestMovies"
-  | "latestShows"
-  | "myList"
+export type HomeElement = Wire.HomeElementView
 
-export type HomeElement = {
-  enabled: boolean
-  label: string
-  available: boolean
-  category: "Built-in" | "Genre" | "My Collection" | "Library"
-} & (
-  | { kind: "builtIn"; id: HomeBuiltInId }
-  | { kind: "genre"; id: string }
-  | { kind: "collection"; id: string }
-  | { kind: "library"; id: string }
-)
-
-export interface HomeConfiguration {
-  billboard: boolean
-  watching: {
-    continueWatching: boolean
-    nextUp: boolean
-    combine: boolean
-  }
-  elements: HomeElement[]
-}
+export type HomeConfiguration = Wire.HomeConfiguration
 
 export interface HomeSettingsResponse {
   settings: HomeConfiguration
@@ -51,20 +23,8 @@ export function homeSettingsWrite(settings: HomeConfiguration): HomeSettingsWrit
   }
 }
 
-export interface HomeRow {
-  kind: "builtIn" | "genre" | "collection"
-  id: string
-  title: string
-  items: ItemSummary[]
-}
+export type HomeRow = Wire.HomeRow
 
-export interface HomeResponse {
-  configuration: HomeConfiguration
-  continueWatching: ItemSummary[]
-  rows: HomeRow[]
-}
+export type HomeResponse = Wire.HomeResponse
 
-export interface HomeResumeResponse {
-  continueWatching: ItemSummary[]
-  nextUp: ItemSummary[]
-}
+export type HomeResumeResponse = Wire.HomeResumeResponse

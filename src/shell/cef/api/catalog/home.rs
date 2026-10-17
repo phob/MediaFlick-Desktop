@@ -1,5 +1,34 @@
-use super::home_settings::{ResolvedHome, resolved_home, settings_view};
+use super::home_settings::{HomeConfiguration, ResolvedHome, resolved_home, settings_view};
 use super::*;
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(in super::super) struct HomeResponse {
+    configuration: HomeConfiguration,
+    continue_watching: Vec<ItemSummary>,
+    rows: Vec<HomeRow>,
+}
+
+/// One Home shelf, named by the element that produced it.
+#[derive(Serialize, ts_rs::TS)]
+struct HomeRow {
+    #[serde(flatten)]
+    element: HomeElementId,
+    title: String,
+    items: Vec<ItemSummary>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(in super::super) struct HomeResumeResponse {
+    continue_watching: Vec<ItemSummary>,
+    next_up: Vec<ItemSummary>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub(in super::super) struct Billboard {
+    items: Vec<ItemSummary>,
+}
 
 pub(super) fn home(services: &Arc<Services>) -> Handled {
     let home = resolved_home(services)?;
@@ -22,10 +51,9 @@ pub(super) fn home(services: &Arc<Services>) -> Handled {
         let row = match &element.element {
             HomeElementId::BuiltIn { id } => built_in_home_row(services, &home.account, *id),
             HomeElementId::Genre { id } if home.genres.contains(id) => Some(home_row(
-                "genre",
+                HomeElementId::Genre { id: id.clone() },
                 id,
-                id,
-                &home_query(
+                home_query(
                     &services.library,
                     ItemQuery {
                         genre: Some(id.clone()),
@@ -40,26 +68,27 @@ pub(super) fn home(services: &Arc<Services>) -> Handled {
             _ => None,
         };
         if let Some(row) = row
-            && row["items"]
-                .as_array()
-                .is_some_and(|items| !items.is_empty())
+            && !row.items.is_empty()
         {
             rows.push(row);
         }
     }
-    Ok(ApiResponse::untyped(json!({
-        "configuration": settings_view(&home, &home.settings),
-        "continueWatching": continue_watching,
-        "rows": rows,
-    })))
+    Ok(ApiResponse::ok(HomeResponse {
+        configuration: settings_view(&home, &home.settings),
+        continue_watching,
+        rows,
+    }))
 }
 
-fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn) -> Option<Value> {
-    let (row_id, title, items) = match id {
+fn built_in_home_row(
+    services: &Services,
+    account: &AccountKey,
+    id: HomeBuiltIn,
+) -> Option<HomeRow> {
+    let (title, items) = match id {
         HomeBuiltIn::Watching | HomeBuiltIn::Upcoming => return None,
         HomeBuiltIn::BecauseYouWatched => return because_you_watched(services, account),
         HomeBuiltIn::RecentlyAdded => (
-            "recentlyAdded",
             "Recently Added Movies",
             home_query(
                 &services.library,
@@ -71,7 +100,6 @@ fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn)
             ),
         ),
         HomeBuiltIn::RecentlyAddedShows => (
-            "recentlyAddedShows",
             "Recently Added Shows",
             services
                 .library
@@ -79,17 +107,14 @@ fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn)
                 .unwrap_or_default(),
         ),
         HomeBuiltIn::LatestMovies => (
-            "latestMovies",
             "Latest Movies",
             latest_home_items(&services.library, CatalogKind::Movie),
         ),
         HomeBuiltIn::LatestShows => (
-            "latestShows",
             "Latest Shows",
             latest_home_items(&services.library, CatalogKind::Series),
         ),
         HomeBuiltIn::MyList => (
-            "myList",
             "Favorites",
             home_query(
                 &services.library,
@@ -101,7 +126,7 @@ fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn)
             ),
         ),
     };
-    Some(home_row("builtIn", row_id, title, &items))
+    Some(home_row(HomeElementId::BuiltIn { id }, title, items))
 }
 
 fn element_enabled(settings: &HomeSettings, id: HomeBuiltIn) -> bool {
@@ -116,11 +141,15 @@ fn home_query(library: &Library, mut query: ItemQuery) -> Vec<ItemSummary> {
     library.query_page(&query).unwrap_or_default()
 }
 
-fn home_row(kind: &str, id: &str, title: &str, items: &[ItemSummary]) -> Value {
-    json!({ "kind": kind, "id": id, "title": title, "items": items })
+fn home_row(element: HomeElementId, title: &str, items: Vec<ItemSummary>) -> HomeRow {
+    HomeRow {
+        element,
+        title: title.to_string(),
+        items,
+    }
 }
 
-fn because_you_watched(services: &Services, account: &AccountKey) -> Option<Value> {
+fn because_you_watched(services: &Services, account: &AccountKey) -> Option<HomeRow> {
     let seed = {
         let mut seeds = services
             .home_watched
@@ -148,15 +177,16 @@ fn because_you_watched(services: &Services, account: &AccountKey) -> Option<Valu
     );
     (!items.is_empty()).then(|| {
         home_row(
-            "builtIn",
-            "becauseYouWatched",
+            HomeElementId::BuiltIn {
+                id: HomeBuiltIn::BecauseYouWatched,
+            },
             &format!("Because you watched {}", seed.summary.name),
-            &items,
+            items,
         )
     })
 }
 
-fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -> Option<Value> {
+fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -> Option<HomeRow> {
     let profile = home
         .profiles
         .iter()
@@ -192,15 +222,22 @@ fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -
         .iter()
         .filter_map(|id| by_id.get(id).cloned())
         .collect::<Vec<_>>();
-    Some(home_row("collection", &profile.id, &profile.title, &items))
+    Some(home_row(
+        HomeElementId::Collection {
+            id: profile.id.clone(),
+        },
+        &profile.title,
+        items,
+    ))
 }
 
 pub(super) fn home_resume(services: &Arc<Services>) -> Handled {
     let home = resolved_home(services)?;
     if !element_enabled(&home.settings, HomeBuiltIn::Watching) {
-        return Ok(ApiResponse::untyped(
-            json!({ "continueWatching": [], "nextUp": [] }),
-        ));
+        return Ok(ApiResponse::ok(HomeResumeResponse {
+            continue_watching: Vec::new(),
+            next_up: Vec::new(),
+        }));
     }
     let resume = if home.settings.watching.continue_watching {
         services
@@ -230,10 +267,11 @@ pub(super) fn home_resume(services: &Arc<Services>) -> Handled {
     } else {
         Vec::new()
     };
-    Ok(ApiResponse::untyped(json!({
-        "continueWatching": resume,
-        "nextUp": deduplicate_next_up(&resume, next_up),
-    })))
+    let next_up = deduplicate_next_up(&resume, next_up);
+    Ok(ApiResponse::ok(HomeResumeResponse {
+        continue_watching: resume,
+        next_up,
+    }))
 }
 
 fn deduplicate_next_up(resume: &[ItemSummary], next_up: Vec<ItemSummary>) -> Vec<ItemSummary> {
@@ -262,10 +300,10 @@ fn latest_home_items(library: &Library, kind: CatalogKind) -> Vec<ItemSummary> {
 
 pub(super) fn billboard(services: &Arc<Services>) -> Handled {
     if !resolved_home(services)?.settings.billboard {
-        return Ok(ApiResponse::untyped(json!({ "items": [] })));
+        return Ok(ApiResponse::ok(Billboard { items: Vec::new() }));
     }
     match services.library.random_billboard_titles(BILLBOARD_LIMIT) {
-        Ok(items) => Ok(ApiResponse::untyped(json!({ "items": items }))),
+        Ok(items) => Ok(ApiResponse::ok(Billboard { items })),
         Err(error) => Err(storage_failure(&error)),
     }
 }

@@ -12,10 +12,20 @@ use ts_rs::TS;
 use crate::jellyfin::api::ApiError;
 
 use crate::companion::CompanionStatus;
+use crate::library::ItemPage;
 use crate::library::browse::FilterOptions;
 use crate::library::model::{DetailView, ItemSummary};
 use crate::playback::PlayerSnapshot;
 
+use super::catalog::{
+    Billboard, Genres, HomeResponse, HomeResumeResponse, ItemAbout, ItemLetters, ItemSynopsis,
+    OfficialRatings, PersonResolution,
+};
+use super::libraries::{LibrariesResponse, LibraryLatest};
+use super::media::{
+    ExternalLinkOpened, FavoriteState, MediaInfoResponse, NextUpResponse, PlaybackPreferenceSaved,
+    PlayedState, TechnicalBatch, TrailerResponse,
+};
 use super::playback::PlayerCommandBody;
 use super::settings::SettingsView;
 use super::{ApiRequest, ApiResponse, AppStatus, NO_STORE};
@@ -50,13 +60,33 @@ macro_rules! wire_types {
 
 wire_types! {
     AppStatus,
+    Billboard,
     CompanionStatus,
     DetailView,
+    ExternalLinkOpened,
+    FavoriteState,
     FilterOptions,
+    Genres,
+    HomeResponse,
+    HomeResumeResponse,
+    ItemAbout,
+    ItemLetters,
+    ItemPage,
     ItemSummary,
+    ItemSynopsis,
+    LibrariesResponse,
+    LibraryLatest,
+    MediaInfoResponse,
+    NextUpResponse,
+    OfficialRatings,
+    PersonResolution,
+    PlaybackPreferenceSaved,
+    PlayedState,
     PlayerCommandBody,
     PlayerSnapshot,
     SettingsView,
+    TechnicalBatch,
+    TrailerResponse,
 }
 
 /// The body of every non-2xx JSON response. It is generated for the UI but
@@ -155,7 +185,7 @@ mod tests {
     /// Handlers that predate this module answer through `ApiResponse::untyped`
     /// and decode through `ApiRequest::untyped_body`. Moving one to a wire
     /// type lowers these; nothing raises them.
-    const UNTYPED_RESPONSES: usize = 91; // guard-ratchet
+    const UNTYPED_RESPONSES: usize = 58; // guard-ratchet
     const UNTYPED_BODIES: usize = 32; // guard-ratchet
 
     struct Collect<'a> {
