@@ -188,7 +188,7 @@ impl ViewingSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlayerComfort {
     pub subtitle_size: u16,

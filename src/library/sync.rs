@@ -66,7 +66,7 @@ pub(super) const META_LATEST_FAILURE: &str = "sync.latest_failure";
 ///
 /// Both values live in SQLite rather than in the worker handle so a restarted
 /// app can report the same progress before the next page request begins.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapProgress {
     pub complete: bool,
@@ -173,7 +173,7 @@ pub(super) struct Flags {
     window_ready: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub enum SyncPhase {
     Catalog,
@@ -182,7 +182,7 @@ pub enum SyncPhase {
     Complete,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub enum SyncFailure {
     Unreachable,
@@ -206,14 +206,14 @@ impl SyncFailure {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Retry {
     pub reason: SyncFailure,
     pub retry_at: i64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum Bootstrap {
     Loading,
@@ -233,7 +233,7 @@ pub(super) struct WorkerState {
     failure: Option<Failure>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncProgress {
     pub active: bool,

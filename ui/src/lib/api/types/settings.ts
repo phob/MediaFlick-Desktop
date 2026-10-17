@@ -1,13 +1,7 @@
+import type * as Wire from "../wire.gen.ts"
 import { sameJson } from "../../json.ts"
 
-export interface PlayerSettings {
-  comfort: PlayerComfort
-  playerBackend: "libmpv" | "mpv"
-  mpvPath: string | null
-  defaultFullscreen: "fullscreen" | "windowed"
-  markWatchedNext: string | null
-  playerConfigured: boolean
-}
+export type PlayerSettings = Wire.PlayerView
 
 export type PlayerSettingsWrite = Omit<PlayerSettings, "playerConfigured">
 
@@ -50,77 +44,13 @@ export function viewingSettingsWrite(settings: ViewingSettings, source: ViewingS
   return source && sameJson(startupDestination, source.startupDestination) ? others : settings
 }
 
-export interface PlayerComfort {
-  subtitleSize: number
-  subtitleOutline: number
-  subtitleBackground: number
-  subtitlePosition: number
-  seekBackSeconds: number
-  seekForwardSeconds: number
-  pauseKey: string
-  muteKey: string
-  fullscreenKey: string
-  seekBackKey: string
-  seekForwardKey: string
-  stopKey: string
-  subtitlesKey: string
-  seekBackThirtyKey: string
-  seekForwardThirtyKey: string
-}
+export type PlayerComfort = Wire.PlayerComfort
 
-export interface ClientSettings {
-  client: {
-    player: PlayerSettings
-    playback: {
-      streamingQuality: StreamingQualityId
-      skipIntro: SegmentSkipMode
-      skipCredits: SegmentSkipMode
-      skipRecap: SegmentSkipMode
-      skipCommercial: SegmentSkipMode
-    }
-    application: {
-      closeBehavior: "exit_app" | "minimize_window"
-      showScrollbars: boolean
-      logLevel: "trace" | "debug" | "info" | "warn" | "error"
-    }
-  }
-  appearance: AppearanceSettings
-  capabilities: {
-    platform: "windows" | "macos" | "linux" | "other"
-    libmpv: boolean
-    integratedLibmpvOverlay: boolean
-    mpvInstaller: boolean
-  }
-  recoveries: { area: string; restoredBackup: boolean }[]
-  serverUrl: string | null
-}
+export type ClientSettings = Wire.SettingsView
 
-type SegmentSkipMode = "hidden" | "disabled" | "prompt" | "always"
+export type AppearanceSettings = Wire.AppearanceView
 
-export interface AppearanceSettings {
-  accent: "signal" | "cobalt" | "amber" | "violet"
-  density: "compact" | "comfortable"
-  artworkIntensity: number
-  backdropIntensity: number
-  reducedMotion: boolean
-  cardPreviews: boolean
-  showMediaInfo: boolean
-  /** Canonical IDs from the fixed public MDBList source catalog. */
-  ratingSources: string[]
-}
-
-export type StreamingQualityId =
-  | "original"
-  | "auto"
-  | "120_mbps"
-  | "80_mbps"
-  | "60_mbps"
-  | "40_mbps"
-  | "20_mbps"
-  | "10_mbps"
-  | "5_mbps"
-  | "3_mbps"
-  | "1_5_mbps"
+export type StreamingQualityId = Wire.StreamingQuality
 
 export const STREAMING_QUALITIES: { id: StreamingQualityId; label: string }[] = [
   { id: "original", label: "Original file" },

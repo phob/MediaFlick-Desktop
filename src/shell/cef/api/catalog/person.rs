@@ -16,7 +16,7 @@ pub(super) fn query_person_items(
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_person_items(client, user_id, person_id, offset, limit) {
-        Ok(response) => Ok(ApiResponse::ok(json!({
+        Ok(response) => Ok(ApiResponse::untyped(json!({
             "items": response.items.iter().map(ItemSummary::from_dto).collect::<Vec<_>>(),
             "total": response.total_record_count,
         }))),
@@ -63,7 +63,7 @@ pub(super) fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> 
                         "the Jellyfin and TMDB person ids do not match",
                     ));
                 }
-                Ok(ApiResponse::ok(json!({
+                Ok(ApiResponse::untyped(json!({
                     "person": person_identity(&person, tmdb_id),
                     "candidates": [],
                     "ambiguous": false,
@@ -107,7 +107,7 @@ pub(super) fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> 
                 })
                 .collect::<Vec<_>>();
             if exact.len() == 1 {
-                return Ok(ApiResponse::ok(json!({
+                return Ok(ApiResponse::untyped(json!({
                     "person": person_identity(&exact[0], tmdb_id),
                     "candidates": [],
                     "ambiguous": false,
@@ -117,7 +117,7 @@ pub(super) fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> 
                 .iter()
                 .map(|person| person_identity(person, tmdb_id))
                 .collect::<Vec<_>>();
-            Ok(ApiResponse::ok(json!({
+            Ok(ApiResponse::untyped(json!({
                 "person": Value::Null,
                 "ambiguous": candidates.len() > 1,
                 "candidates": candidates,

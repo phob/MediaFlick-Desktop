@@ -14,7 +14,7 @@ pub(super) fn route(
         ["player", "command"] if request.is("POST") => player_command(services, request),
         ["sync"] if request.is("POST") => {
             services.sync.request();
-            Ok(ApiResponse::ok(json!({ "requested": true })))
+            Ok(ApiResponse::untyped(json!({ "requested": true })))
         }
         _ => return None,
     };
@@ -42,7 +42,7 @@ struct ItemBody {
 }
 
 fn item_id_of(request: &ApiRequest) -> Result<String, ApiResponse> {
-    let body = request.body::<ItemBody>()?;
+    let body = request.untyped_body::<ItemBody>()?;
     if body.item_id.is_empty() {
         return Err(ApiResponse::error(400, "itemId is required"));
     }
@@ -50,7 +50,7 @@ fn item_id_of(request: &ApiRequest) -> Result<String, ApiResponse> {
 }
 
 fn play_item(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<PlayBody>()?;
+    let body = request.untyped_body::<PlayBody>()?;
     if body.item_id.is_empty() {
         return Err(ApiResponse::error(400, "itemId is required"));
     }
@@ -72,7 +72,7 @@ fn play_next(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let item_id = item_id_of(request)?;
     let next = match services.library.next_episode(&item_id) {
         Ok(Some(next)) => next,
-        Ok(None) => return Ok(ApiResponse::ok(json!({ "started": false }))),
+        Ok(None) => return Ok(ApiResponse::untyped(json!({ "started": false }))),
         Err(error) => return Err(storage_failure(&error)),
     };
     start_playback(
@@ -89,7 +89,7 @@ fn play_previous(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let item_id = item_id_of(request)?;
     let previous = match services.library.previous_episode(&item_id) {
         Ok(Some(previous)) => previous,
-        Ok(None) => return Ok(ApiResponse::ok(json!({ "started": false }))),
+        Ok(None) => return Ok(ApiResponse::untyped(json!({ "started": false }))),
         Err(error) => return Err(storage_failure(&error)),
     };
     start_playback(
@@ -112,7 +112,7 @@ fn playback_neighbors(services: &Arc<Services>, request: &ApiRequest) -> Handled
         Ok(next) => next,
         Err(error) => return Err(storage_failure(&error)),
     };
-    Ok(ApiResponse::ok(
+    Ok(ApiResponse::untyped(
         json!({ "previous": previous, "next": next }),
     ))
 }
@@ -120,7 +120,7 @@ fn playback_neighbors(services: &Arc<Services>, request: &ApiRequest) -> Handled
 fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> Handled {
     let scope = session_scope(services)?;
     match play::start(services, &scope, options, "own UI") {
-        Ok(prepared) => Ok(ApiResponse::ok(json!({
+        Ok(prepared) => Ok(ApiResponse::untyped(json!({
             "started": true,
             "itemId": options.item_id,
             "playMethod": prepared.play_method,
@@ -153,13 +153,13 @@ fn player_state(services: &Arc<Services>) -> Handled {
     Ok(ApiResponse::ok(snapshot))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ts_rs::TS)]
 #[serde(
     tag = "command",
     rename_all = "kebab-case",
     rename_all_fields = "camelCase"
 )]
-enum PlayerCommandBody {
+pub(super) enum PlayerCommandBody {
     Pause,
     Resume,
     Seek {
@@ -170,9 +170,6 @@ enum PlayerCommandBody {
     },
     SetMute {
         mute: bool,
-    },
-    SetPlaybackRate {
-        rate: f64,
     },
     SetAudioDelay {
         delay_seconds: f64,
@@ -208,15 +205,15 @@ enum PlayerCommandBody {
     MarkWatchedNext,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "lowercase")]
-enum VideoFitBody {
+pub(super) enum VideoFitBody {
     Fit,
     Fill,
 }
 
-#[derive(Deserialize)]
-enum VideoAspectBody {
+#[derive(Deserialize, ts_rs::TS)]
+pub(super) enum VideoAspectBody {
     #[serde(rename = "source")]
     Source,
     #[serde(rename = "4:3")]
@@ -227,9 +224,9 @@ enum VideoAspectBody {
     Ratio21x9,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "lowercase")]
-enum ToneMappingBody {
+pub(super) enum ToneMappingBody {
     Auto,
     Clip,
     Mobius,
@@ -240,7 +237,7 @@ enum ToneMappingBody {
 }
 
 impl PlayerCommandBody {
-    /// Values the player cannot apply (a zero rate, a non-positive track) are
+    /// Values the player cannot apply (a zero subtitle scale, a non-positive track) are
     /// rejected here rather than forwarded.
     fn into_command(self) -> Option<crate::playback::PlayerCommand> {
         use crate::playback::{PlayerCommand, ToneMapping, VideoAspect, VideoFit};
@@ -251,8 +248,6 @@ impl PlayerCommandBody {
             Self::Seek { position_ms } => PlayerCommand::SeekMilliseconds(position_ms),
             Self::SetVolume { volume } => PlayerCommand::SetVolume(volume),
             Self::SetMute { mute } => PlayerCommand::SetMute(mute),
-            Self::SetPlaybackRate { rate } if rate > 0.0 => PlayerCommand::SetPlaybackRate(rate),
-            Self::SetPlaybackRate { .. } => return None,
             Self::SetAudioDelay { delay_seconds } => PlayerCommand::SetAudioDelay(delay_seconds),
             Self::SetSubtitleDelay { delay_seconds } => {
                 PlayerCommand::SetSubtitleDelay(delay_seconds)
@@ -307,5 +302,5 @@ fn player_command(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         ));
     };
     playback.control(command);
-    Ok(ApiResponse::ok(json!({ "accepted": true })))
+    Ok(ApiResponse::untyped(json!({ "accepted": true })))
 }

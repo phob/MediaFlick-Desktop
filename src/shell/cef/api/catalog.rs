@@ -28,7 +28,7 @@ pub(super) fn route(
         ["items"] if request.is("GET") => query_items(services, request),
         ["items", "letters"] if request.is("GET") => item_letters(services, request),
         ["genres"] if request.is("GET") => Ok(match services.library.genres(None) {
-            Ok(genres) => ApiResponse::ok(json!({ "genres": genres })),
+            Ok(genres) => ApiResponse::untyped(json!({ "genres": genres })),
             Err(error) => storage_failure(&error),
         }),
         ["official-ratings"] if request.is("GET") => official_ratings(services, request),
@@ -57,7 +57,7 @@ fn calendar(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     }
     let scope = session_scope(services)?;
     match services.companion.calendar(&start, &end) {
-        Ok(value) => Ok(ApiResponse::ok(value)),
+        Ok(value) => Ok(ApiResponse::untyped(value)),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
@@ -79,7 +79,7 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 
     let query = item_query(request)?;
     match services.library.query(&query) {
-        Ok(page) => Ok(ApiResponse::ok(
+        Ok(page) => Ok(ApiResponse::untyped(
             json!({ "items": page.items, "total": page.total }),
         )),
         Err(error) => Err(storage_failure(&error)),
@@ -88,7 +88,7 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 
 fn item_letters(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     match services.library.letter_index(&item_query(request)?) {
-        Ok(letters) => Ok(ApiResponse::ok(json!({
+        Ok(letters) => Ok(ApiResponse::untyped(json!({
             "letters": letters.into_iter().collect::<std::collections::BTreeMap<_, _>>(),
         }))),
         Err(error) => Err(storage_failure(&error)),
@@ -108,7 +108,7 @@ fn official_ratings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         .filter(|kinds| !kinds.is_empty())
         .unwrap_or_else(|| CatalogKind::TOP_LEVEL.to_vec());
     match services.library.official_ratings(&kinds, None) {
-        Ok(ratings) => Ok(ApiResponse::ok(json!({ "officialRatings": ratings }))),
+        Ok(ratings) => Ok(ApiResponse::untyped(json!({ "officialRatings": ratings }))),
         Err(error) => Err(storage_failure(&error)),
     }
 }

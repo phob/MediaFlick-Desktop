@@ -123,7 +123,7 @@ impl AppearanceSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
 pub enum AppearanceAccent {
     #[default]
@@ -137,14 +137,6 @@ impl AppearanceAccent {
     pub fn is_default(&self) -> bool {
         self == &Self::default()
     }
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Signal => "signal",
-            Self::Cobalt => "cobalt",
-            Self::Amber => "amber",
-            Self::Violet => "violet",
-        }
-    }
     pub fn from_id(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "signal" => Some(Self::Signal),
@@ -156,7 +148,7 @@ impl AppearanceAccent {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
 pub enum AppearanceDensity {
     Compact,
@@ -168,12 +160,6 @@ impl AppearanceDensity {
     pub fn is_default(&self) -> bool {
         self == &Self::default()
     }
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Compact => "compact",
-            Self::Comfortable => "comfortable",
-        }
-    }
     pub fn from_id(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "compact" => Some(Self::Compact),
@@ -183,7 +169,7 @@ impl AppearanceDensity {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 pub enum StreamingQuality {
     #[default]
     #[serde(rename = "original")]
@@ -268,7 +254,7 @@ impl StreamingQuality {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
 pub enum SegmentSkipMode {
     Hidden,
@@ -281,15 +267,6 @@ pub enum SegmentSkipMode {
 impl SegmentSkipMode {
     pub fn is_default(&self) -> bool {
         self == &Self::default()
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Hidden => "hidden",
-            Self::Disabled => "disabled",
-            Self::Prompt => "prompt",
-            Self::Always => "always",
-        }
     }
 
     pub fn from_id(value: &str) -> Option<Self> {
@@ -350,7 +327,7 @@ impl SegmentSkipConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
 pub enum PlayerBackend {
     #[default]
@@ -383,7 +360,7 @@ impl PlayerBackend {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
 pub enum FullscreenBehavior {
     #[default]
@@ -403,13 +380,6 @@ impl FullscreenBehavior {
         }
     }
 
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Fullscreen => "fullscreen",
-            Self::Windowed => "windowed",
-        }
-    }
-
     pub fn from_id(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "fullscreen" => Some(Self::Fullscreen),
@@ -419,7 +389,7 @@ impl FullscreenBehavior {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseBehavior {
     #[default]
@@ -430,13 +400,6 @@ pub enum CloseBehavior {
 impl CloseBehavior {
     pub fn is_default(&self) -> bool {
         self == &Self::default()
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ExitApp => "exit_app",
-            Self::MinimizeWindow => "minimize_window",
-        }
     }
 
     pub fn from_id(value: &str) -> Option<Self> {

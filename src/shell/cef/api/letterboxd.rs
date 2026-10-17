@@ -52,7 +52,7 @@ fn unix_now() -> i64 {
 fn letterboxd_profiles(services: &Arc<Services>) -> Handled {
     let scope = letterboxd_scope(services)?;
     let profiles = services.accounts.letterboxd_profiles(scope.account());
-    Ok(ApiResponse::ok(json!({ "profiles": profiles })))
+    Ok(ApiResponse::untyped(json!({ "profiles": profiles })))
 }
 
 #[derive(Deserialize)]
@@ -66,7 +66,7 @@ struct EnabledBody {
 }
 
 fn letterboxd_add_profile(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<AddProfileBody>()?;
+    let body = request.untyped_body::<AddProfileBody>()?;
     let scope = letterboxd_scope(services)?;
     let account = scope.account().clone();
     let profile = match letterboxd_integration::normalize_profile(&body.profile) {
@@ -111,7 +111,7 @@ fn letterboxd_add_profile(services: &Arc<Services>, request: &ApiRequest) -> Han
         .commit_if_current(&scope, stale_account_response, || {
             Ok(
                 match services.accounts.save_letterboxd_profile(&account, &record) {
-                    Ok(profile) => ApiResponse::ok(json!({ "profile": profile })),
+                    Ok(profile) => ApiResponse::untyped(json!({ "profile": profile })),
                     Err(error) => account_config_failure(&error),
                 },
             )
@@ -122,7 +122,7 @@ fn letterboxd_set_enabled(services: &Arc<Services>, id: &str, request: &ApiReque
     if !valid_profile_id(id) {
         return Err(ApiResponse::error(404, "profile not found"));
     }
-    let enabled = request.body::<EnabledBody>()?.enabled;
+    let enabled = request.untyped_body::<EnabledBody>()?.enabled;
     let scope = letterboxd_scope(services)?;
     let account = scope.account().clone();
     services
@@ -133,7 +133,7 @@ fn letterboxd_set_enabled(services: &Arc<Services>, id: &str, request: &ApiReque
                     .accounts
                     .set_letterboxd_profile_enabled(&account, id, enabled)
                 {
-                    Ok(Some(profile)) => ApiResponse::ok(json!({ "profile": profile })),
+                    Ok(Some(profile)) => ApiResponse::untyped(json!({ "profile": profile })),
                     Ok(None) => ApiResponse::error(404, "profile not found"),
                     Err(error) => account_config_failure(&error),
                 },
@@ -152,7 +152,7 @@ fn letterboxd_remove_profile(services: &Arc<Services>, id: &str) -> Handled {
         .commit_if_current(&scope, stale_account_response, || {
             Ok(
                 match services.accounts.remove_letterboxd_profile(&account, id) {
-                    Ok(true) => ApiResponse::ok(json!({ "removed": true })),
+                    Ok(true) => ApiResponse::untyped(json!({ "removed": true })),
                     Ok(false) => ApiResponse::error(404, "profile not found"),
                     Err(error) => account_config_failure(&error),
                 },
@@ -196,7 +196,7 @@ fn letterboxd_refresh_profile(services: &Arc<Services>, id: &str) -> Handled {
         .commit_if_current(&scope, stale_account_response, || {
             Ok(
                 match services.accounts.save_letterboxd_profile(&account, &record) {
-                    Ok(profile) => ApiResponse::ok(json!({ "profile": profile })),
+                    Ok(profile) => ApiResponse::untyped(json!({ "profile": profile })),
                     Err(error) => account_config_failure(&error),
                 },
             )
@@ -211,7 +211,7 @@ fn letterboxd_open_profile(services: &Arc<Services>, id: &str) -> Handled {
     match services.accounts.letterboxd_profile(scope.account(), id) {
         Some(profile) if profile.provider == "letterboxd" => {
             super::super::bridge::open_external_link(&profile.canonical_url);
-            Ok(ApiResponse::ok(
+            Ok(ApiResponse::untyped(
                 json!({ "opened": true, "url": profile.canonical_url }),
             ))
         }
@@ -230,7 +230,7 @@ fn item_letterboxd(services: &Arc<Services>, item_id: &str) -> Handled {
     // series or episode even if it happens to carry the same numeric provider
     // id, or a TV record could inherit an unrelated film review.
     if item.summary.kind != "Movie" {
-        return Ok(ApiResponse::ok(json!({
+        return Ok(ApiResponse::untyped(json!({
             "reviews": [],
             "configuredProfiles": 0,
             "unavailableProfiles": 0,
@@ -242,7 +242,7 @@ fn item_letterboxd(services: &Arc<Services>, item_id: &str) -> Handled {
         .as_deref()
         .filter(|value| !value.is_empty())
     else {
-        return Ok(ApiResponse::ok(json!({
+        return Ok(ApiResponse::untyped(json!({
             "reviews": [],
             "configuredProfiles": 0,
             "unavailableProfiles": 0,
@@ -273,7 +273,7 @@ fn letterboxd_reviews_for_movie(
     tmdb_id: &str,
 ) -> Handled {
     let profiles = services.accounts.letterboxd_profiles(account);
-    Ok(ApiResponse::ok(json!(
+    Ok(ApiResponse::untyped(json!(
         services.letterboxd.reviews_for_item(&profiles, tmdb_id)
     )))
 }

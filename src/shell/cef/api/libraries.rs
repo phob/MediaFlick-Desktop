@@ -52,7 +52,7 @@ fn libraries(services: &Arc<Services>) -> Handled {
             })
         })
         .collect::<Vec<_>>();
-    Ok(ApiResponse::ok(json!({
+    Ok(ApiResponse::untyped(json!({
         "known": known,
         "libraries": libraries,
         "crossLibrary": &CROSS_LIBRARY_BROWSE,
@@ -65,7 +65,7 @@ fn items(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
     let scope = services.session.scope();
     let grid = browse::library_page(&services.library, &id, &query).map_err(browse_failure)?;
     let page = answer(services, scope, grid)?;
-    Ok(ApiResponse::ok(
+    Ok(ApiResponse::untyped(
         json!({ "items": page.items, "total": page.total }),
     ))
 }
@@ -74,7 +74,7 @@ fn letters(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled 
     let query = library_query(request, Params::Strict)?;
     let letters = browse::library_letters(&services.library, &library_id(id)?, &query)
         .map_err(browse_failure)?;
-    Ok(ApiResponse::ok(json!({
+    Ok(ApiResponse::untyped(json!({
         "letters": letters.into_iter().collect::<std::collections::BTreeMap<_, _>>(),
     })))
 }
@@ -95,7 +95,7 @@ fn latest(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
     let scope = services.session.scope();
     let latest = browse::latest(&services.library, &id, limit).map_err(browse_failure)?;
     let page = answer(services, scope, latest.grid)?;
-    Ok(ApiResponse::ok(
+    Ok(ApiResponse::untyped(
         json!({ "items": page.items, "sort": latest.sort }),
     ))
 }

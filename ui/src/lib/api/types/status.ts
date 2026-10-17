@@ -1,36 +1,9 @@
+import type * as Wire from "../wire.gen.ts"
 import type { ItemSummary } from "./catalog.ts"
 import type { HomeResponse } from "./home.ts"
 import type { ClientSettings, ViewingSettings } from "./settings.ts"
 
-interface LibraryStats {
-  movies: number
-  series: number
-  seasons: number
-  episodes: number
-  total: number
-}
-
-interface BootstrapProgress {
-  complete: boolean
-  processed: number
-  total: number | null
-}
-
-export interface Status {
-  authenticated: boolean
-  expired: boolean
-  serverUrl: string | null
-  serverName: string | null
-  userId: string | null
-  userName: string | null
-  deviceId: string
-  library: LibraryStats
-  syncing: boolean
-  lastSync: string | null
-  bootstrap: Bootstrap
-  syncProgress: SyncProgress
-  companion: CompanionStatus
-}
+export type Status = Wire.AppStatus
 
 /**
  * `/api/startup`: what the first frame reads, in one request. A part that its
@@ -47,45 +20,20 @@ export interface StartupResponse {
 
 export type CompanionService = "sonarr" | "radarr" | "seerr" | "mdblist" | "tmdb"
 
-export interface CompanionInfo {
-  pluginVersion: string
-  apiVersion: number
-  capabilities: string[]
-  services: Record<CompanionService, boolean>
-}
+export type CompanionInfo = Wire.CompanionInfo
 
-export interface CompanionStatus {
-  available: boolean
-  compatible: boolean
-  checked: boolean
-  info: CompanionInfo | null
-  error: string | null
-  supportedApi: { min: number; max: number }
-}
+export type CompanionStatus = Wire.CompanionStatus
 
-type SyncPhase = "catalog" | "reconciling" | "complete"
-
-export type SyncFailure = "unreachable" | "server" | "storage"
+export type SyncFailure = Wire.SyncFailure
 
 /** A failed cycle and when the worker tries again, in Unix seconds. */
-export interface SyncRetry {
-  reason: SyncFailure
-  retryAt: number
-}
+export type SyncRetry = Wire.Retry
 
 /**
  * What the shell gates on after sign-in (`Bootstrap`, `src/library/sync.rs`):
  * Home needs a usable catalog. A retry outlives the next attempt, so it stays
  * while `Status.syncing` reports that attempt running.
  */
-export type Bootstrap =
-  | { state: "loading" }
-  | ({ state: "retrying" } & SyncRetry)
-  | { state: "ready" }
+export type Bootstrap = Wire.Bootstrap
 
-export interface SyncProgress {
-  active: boolean
-  phase: SyncPhase
-  catalog: BootstrapProgress
-  retry: SyncRetry | null
-}
+export type SyncProgress = Wire.SyncProgress

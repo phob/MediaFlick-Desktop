@@ -1,3 +1,4 @@
+import type * as Wire from "../wire.gen.ts"
 import type { ItemSummary, SeriesStatus, SortOrder, WatchFilter } from "./catalog.ts"
 
 export type LibraryKind =
@@ -75,7 +76,4 @@ export interface LibraryLatest {
   sort: LibrarySortId
 }
 
-export interface LibraryFilterOptions {
-  genres: string[]
-  officialRatings: string[]
-}
+export type LibraryFilterOptions = Wire.FilterOptions

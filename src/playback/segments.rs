@@ -8,7 +8,7 @@ const AUTO_SKIP_DELAY: Duration = Duration::from_secs(3);
 const AUTO_SKIP_COUNTDOWN_INTERVAL: Duration = Duration::from_secs(1);
 const PROMPT_DEBOUNCE: Duration = Duration::from_secs(3);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "lowercase")]
 pub enum SegmentType {
     Intro,
@@ -59,7 +59,7 @@ impl SegmentType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SkipSegment {
     pub segment_type: SegmentType,

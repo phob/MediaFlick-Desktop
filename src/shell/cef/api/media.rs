@@ -60,7 +60,7 @@ struct FavoriteBody {
 /// a representative episode. Nothing is persisted; a failure is silent on
 /// cards.
 fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<IdsBody>()?;
+    let body = request.untyped_body::<IdsBody>()?;
     let mut seen = HashSet::new();
     let ids = body
         .ids
@@ -72,7 +72,7 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         .map(str::to_string)
         .collect::<Vec<_>>();
     if ids.is_empty() {
-        return Ok(ApiResponse::ok(json!({ "items": [] })));
+        return Ok(ApiResponse::untyped(json!({ "items": [] })));
     }
     // Series and Season cards advertise the same badges as movies, but their
     // rows are containers Jellyfin reports without streams. Each is answered
@@ -92,7 +92,7 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         cards.push(card_id);
     }
     if source_ids.is_empty() {
-        return Ok(ApiResponse::ok(json!({ "items": [] })));
+        return Ok(ApiResponse::untyped(json!({ "items": [] })));
     }
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
@@ -123,7 +123,7 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
             }
         }
     }
-    Ok(ApiResponse::ok(json!({ "items": results })))
+    Ok(ApiResponse::untyped(json!({ "items": results })))
 }
 
 fn cached_kind(services: &Services, item_id: &str) -> Result<Option<CatalogKind>, ApiResponse> {
@@ -142,7 +142,7 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> Handled {
         cached_kind(services, item_id)?,
         Some(CatalogKind::Series | CatalogKind::Season)
     ) {
-        return Ok(ApiResponse::ok(json!({
+        return Ok(ApiResponse::untyped(json!({
             "sources": [],
             "playbackPreference": Value::Null,
         })));
@@ -155,7 +155,7 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> Handled {
                 .session
                 .account_key()
                 .and_then(|account| services.playback_preferences.get(&account, item_id));
-            Ok(ApiResponse::ok(json!({
+            Ok(ApiResponse::untyped(json!({
                 "sources": sources.iter().map(media_source_json).collect::<Vec<_>>(),
                 "playbackPreference": resolve_playback_preference(preference.as_ref(), &sources),
             })))
@@ -183,7 +183,7 @@ fn set_item_playback_preference(
             "this item has no selectable media tracks",
         ));
     }
-    let body = request.body::<PlaybackPreferenceBody>()?;
+    let body = request.untyped_body::<PlaybackPreferenceBody>()?;
     let source_index = body.media_source_index;
     let requested_source_id = body
         .media_source_id
@@ -272,7 +272,7 @@ fn set_item_playback_preference(
                     format!("could not save playback preference: {error}"),
                 ));
             }
-            Ok(ApiResponse::ok(json!({
+            Ok(ApiResponse::untyped(json!({
                 "playbackPreference": resolve_playback_preference(Some(&preference), &sources),
             })))
         })
@@ -286,7 +286,7 @@ fn trailer_info(services: &Arc<Services>, item_id: &str) -> Handled {
             .into_iter()
             .find(|trailer| !trailer.id.trim().is_empty())
         {
-            Some(trailer) => Ok(ApiResponse::ok(json!({
+            Some(trailer) => Ok(ApiResponse::untyped(json!({
                 "trailer": {
                     "id": trailer.id,
                     "name": trailer.display_name(),
@@ -311,7 +311,7 @@ fn remote_trailer_info(services: &Arc<Services>, scope: &SessionScope, item_id: 
                     })
                 })
             });
-            Ok(ApiResponse::ok(json!({ "trailer": trailer })))
+            Ok(ApiResponse::untyped(json!({ "trailer": trailer })))
         }
         Err(error) => Err(scoped_failure(services, scope, &error)),
     }
@@ -468,7 +468,7 @@ fn file_name_of(path: &str) -> Option<&str> {
 /// than a page with nothing to play.
 fn next_up(services: &Arc<Services>, item_id: &str) -> Handled {
     if cached_kind(services, item_id)? != Some(CatalogKind::Series) {
-        return Ok(ApiResponse::ok(json!({ "item": Value::Null })));
+        return Ok(ApiResponse::untyped(json!({ "item": Value::Null })));
     }
     let from_server = match services.session.scope() {
         Ok(scope) => items::fetch_next_up(scope.client(), scope.user_id(), Some(item_id), 1)
@@ -484,7 +484,7 @@ fn next_up(services: &Arc<Services>, item_id: &str) -> Handled {
         Some(item) => Some(item),
         None => services.library.first_episode(item_id).unwrap_or_default(),
     };
-    Ok(ApiResponse::ok(json!({ "item": item })))
+    Ok(ApiResponse::untyped(json!({ "item": item })))
 }
 
 #[derive(Clone, Copy)]
@@ -545,7 +545,7 @@ impl ExternalProvider {
 /// from the cached row here, so nothing the page can say turns into a launched
 /// address.
 fn open_external(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
-    let body = request.body::<ExternalBody>()?;
+    let body = request.untyped_body::<ExternalBody>()?;
     let Some(provider) = ExternalProvider::parse(&body.provider) else {
         return Err(ApiResponse::error(
             404,
@@ -566,7 +566,7 @@ fn open_external(services: &Arc<Services>, item_id: &str, request: &ApiRequest) 
         ));
     };
     super::super::bridge::open_external_link(&url);
-    Ok(ApiResponse::ok(json!({ "opened": true, "url": url })))
+    Ok(ApiResponse::untyped(json!({ "opened": true, "url": url })))
 }
 
 fn valid_external_id(source: &str, id: &str) -> bool {
@@ -585,7 +585,7 @@ fn valid_external_id(source: &str, id: &str) -> bool {
 }
 
 fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
-    let played = request.body::<PlayedBody>()?.played;
+    let played = request.untyped_body::<PlayedBody>()?.played;
     let scope = user_data_write(services, item_id, |client, user_id| {
         items::set_played(client, user_id, item_id, played)
     })?;
@@ -594,11 +594,11 @@ fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> 
         || (),
         || Ok(services.library.set_local_played(item_id, played)),
     );
-    Ok(ApiResponse::ok(json!({ "played": played })))
+    Ok(ApiResponse::untyped(json!({ "played": played })))
 }
 
 fn set_favorite(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
-    let favorite = request.body::<FavoriteBody>()?.favorite;
+    let favorite = request.untyped_body::<FavoriteBody>()?.favorite;
     let scope = user_data_write(services, item_id, |client, user_id| {
         items::set_favorite(client, user_id, item_id, favorite)
     })?;
@@ -607,7 +607,7 @@ fn set_favorite(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -
         || (),
         || Ok(services.library.set_local_favorite(item_id, favorite)),
     );
-    Ok(ApiResponse::ok(json!({ "favorite": favorite })))
+    Ok(ApiResponse::untyped(json!({ "favorite": favorite })))
 }
 
 fn user_data_write(

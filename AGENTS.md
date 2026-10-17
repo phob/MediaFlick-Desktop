@@ -19,6 +19,7 @@
 - `plugin/` is the optional Jellyfin Companion. It owns administrator credentials and fixed-origin calls to Seerr, Sonarr, Radarr, MDBList, and TMDB. Never expose service addresses, API keys, bearer tokens, or a generic proxy to Desktop.
 - Keep policy in its owning domain module and protocol details in adapters. For example, segment-skip decisions belong in `src/playback/segments.rs`; the mpv adapter should only translate actions into backend commands.
 - Contract changes must be carried through every affected boundary in the same change: Rust request or response types, `ui/src/lib/api.ts`, UI callers and tests, Companion models and tests, and contract fixtures.
+- API bodies are named Rust types listed in `wire_types!` (`src/shell/cef/api/wire.rs`), answered with `ApiResponse::ok` and decoded with `ApiRequest::body`. `ui/src/lib/api/wire.gen.ts` is generated from them: run `just wire-types` after changing one, and alias the generated type in `ui/src/lib/api/types/` instead of writing a TypeScript copy.
 - `build.rs` embeds the UI bundle. A normal Cargo build may invoke pnpm. Use `MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1` only when a current UI bundle already exists and the task does not need integrated bundle verification.
 
 ## UI stack and components

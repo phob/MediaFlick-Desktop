@@ -12,7 +12,7 @@ pub(super) fn mine(services: &Arc<Services>) -> Handled {
     let account = active_account(services)?;
     let mut profiles = services.collections.account(&account).profiles;
     profiles.sort_by(|left, right| compare_titles(&left.title, &right.title));
-    Ok(ApiResponse::ok(json!({
+    Ok(ApiResponse::untyped(json!({
         "profiles": profiles,
         "errors": services.collections.profile_errors(&account),
     })))
@@ -37,7 +37,7 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> Hand
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => {
             let unavailable = profile.validate().is_err() || refresh.latest_failure.is_some();
-            return Ok(ApiResponse::ok(json!({
+            return Ok(ApiResponse::untyped(json!({
                 "profile": profile,
                 "status": if unavailable { "resultsUnavailable" } else { "updating" },
                 "owned": [],
@@ -79,7 +79,7 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> Hand
         profile.cadence,
         crate::library::now_unix(),
     );
-    Ok(ApiResponse::ok(json!({
+    Ok(ApiResponse::untyped(json!({
         "profile": profile,
         "status": "ready",
         "owned": classified.owned,
@@ -134,7 +134,7 @@ pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> Hand
                 })
             })
             .collect::<Vec<_>>();
-        return Ok(ApiResponse::ok(json!({
+        return Ok(ApiResponse::untyped(json!({
             "franchises": franchises,
             "status": status,
         })));
@@ -162,7 +162,7 @@ pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> Hand
         }
         franchises.retain(|franchise| franchise.owned.len() >= 2);
     }
-    Ok(ApiResponse::ok(json!({
+    Ok(ApiResponse::untyped(json!({
         "status": status,
         "franchises": franchises.into_iter().map(|franchise| json!({
             "collectionId": franchise.collection_id,
@@ -205,7 +205,7 @@ pub(super) fn franchise_detail(
         if services.session.user_restricted() {
             items.clear();
         }
-        return Ok(ApiResponse::ok(json!({
+        return Ok(ApiResponse::untyped(json!({
             "collectionId": snapshot.collection_id,
             "name": snapshot.name,
             "posterPath": snapshot.poster_path,
@@ -254,7 +254,7 @@ pub(super) fn franchise_detail(
         Ok(items) => items,
         Err(error) => return Err(storage_failure(&error)),
     };
-    Ok(ApiResponse::ok(json!({
+    Ok(ApiResponse::untyped(json!({
         "collectionId": franchise.collection_id,
         "name": franchise.name,
         "posterPath": franchise.poster_path,
@@ -296,7 +296,7 @@ pub(super) fn movie_franchise(services: &Arc<Services>, tmdb_id: &str) -> Handle
                 .iter()
                 .any(|item| item.identity.tmdb_id == tmdb_id)
         });
-    Ok(ApiResponse::ok(json!({
+    Ok(ApiResponse::untyped(json!({
         "tmdbId": tmdb_id,
         "collection": collection.map(|item| json!({
             "id": item.collection_id,
@@ -328,7 +328,7 @@ pub(super) fn title(services: &Arc<Services>, media_type: &str, tmdb_id: &str) -
         None => return Err(ApiResponse::error(400, "that is not a TMDB title id")),
     };
     match SnapshotRepository::new(&services.library).title(&account, media_type, tmdb_id) {
-        Ok(Some(item)) => Ok(ApiResponse::ok(json!({ "item": item }))),
+        Ok(Some(item)) => Ok(ApiResponse::untyped(json!({ "item": item }))),
         Ok(None) => Err(ApiResponse::error(
             404,
             "that collection title is not available",

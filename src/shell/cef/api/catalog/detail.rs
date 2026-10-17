@@ -50,7 +50,7 @@ pub(super) fn item_synopsis(services: &Arc<Services>, item_id: &str) -> Handled 
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_item_synopsis(client, user_id, item_id) {
-        Ok(Some(dto)) => Ok(ApiResponse::ok(json!({ "overview": dto.overview }))),
+        Ok(Some(dto)) => Ok(ApiResponse::untyped(json!({ "overview": dto.overview }))),
         Ok(None) => Err(server_lacks_item(services, &scope, item_id)),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
@@ -125,7 +125,7 @@ pub(super) fn item_about(services: &Arc<Services>, item_id: &str) -> Handled {
                 .iter()
                 .filter_map(|studio| studio.name.clone())
                 .collect::<Vec<_>>();
-            Ok(ApiResponse::ok(json!({
+            Ok(ApiResponse::untyped(json!({
                 "overview": dto.overview,
                 "criticRating": dto.critic_rating,
                 "people": people,
@@ -158,7 +158,7 @@ pub(super) fn children(services: &Arc<Services>, item_id: &str, request: &ApiReq
         }
         None => live_children(services, item_id, page)?,
     };
-    Ok(ApiResponse::ok(
+    Ok(ApiResponse::untyped(
         json!({ "items": page.items, "total": page.total }),
     ))
 }

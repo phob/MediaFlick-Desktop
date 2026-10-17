@@ -64,7 +64,17 @@ impl ApiRequest {
     /// field of `T` is optional. A body that is not JSON, or does not match
     /// `T`, is rejected rather than read as defaults: a garbled "mark as
     /// unwatched" must not mark the item watched.
-    fn body<T: DeserializeOwned>(&self) -> Result<T, ApiResponse> {
+    fn body<T: DeserializeOwned + wire::Wire>(&self) -> Result<T, ApiResponse> {
+        self.decode()
+    }
+
+    /// [`Self::body`] for a request type the generated TypeScript does not
+    /// know. `untyped_responses_only_shrink` keeps it from spreading.
+    fn untyped_body<T: DeserializeOwned>(&self) -> Result<T, ApiResponse> {
+        self.decode()
+    }
+
+    fn decode<T: DeserializeOwned>(&self) -> Result<T, ApiResponse> {
         let body: &[u8] = if self.body.iter().all(u8::is_ascii_whitespace) {
             b"{}"
         } else {
@@ -109,18 +119,34 @@ impl ApiResponse {
         }
     }
 
-    fn ok(value: impl Serialize) -> Self {
+    fn ok<T: Serialize + wire::Wire>(value: T) -> Self {
+        Self::json(200, value)
+    }
+
+    /// A response the UI reads without a generated type. Answer with a
+    /// [`wire::Wire`] type through [`Self::ok`] instead;
+    /// `untyped_responses_only_shrink` keeps this from spreading.
+    fn untyped(value: impl Serialize) -> Self {
         Self::json(200, value)
     }
 
     fn error(status: u16, message: impl Into<String>) -> Self {
-        Self::json(status, json!({ "error": message.into() }))
+        Self::json(
+            status,
+            wire::ErrorBody {
+                error: message.into(),
+                expired: None,
+            },
+        )
     }
 
     fn from_api_error(error: &ApiError) -> Self {
         Self::json(
             error.client_status(),
-            json!({ "error": error.to_string(), "expired": *error == ApiError::Unauthorized }),
+            wire::ErrorBody {
+                error: error.to_string(),
+                expired: Some(*error == ApiError::Unauthorized),
+            },
         )
     }
 
@@ -227,6 +253,7 @@ mod ratings;
 mod seerr;
 mod settings;
 mod shell;
+mod wire;
 
 /// Every endpoint the modules below serve, by method and path shape (`*` is
 /// one segment). The modules own the handlers; this table answers what they
@@ -411,7 +438,7 @@ fn route_status(
     Some(response)
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 struct AppStatus {
     #[serde(flatten)]
@@ -482,7 +509,7 @@ fn startup(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         }
     };
     let home_part = |path: &str| if home { part(path) } else { Value::Null };
-    Ok(ApiResponse::ok(json!({
+    Ok(ApiResponse::untyped(json!({
         "settings": part("settings"),
         "viewing": account_part("settings/viewing"),
         "browsing": account_part("settings/browsing"),
@@ -891,7 +918,7 @@ mod tests {
         assert_eq!(response.status, 503, "{}", error_of(&response));
         let response = command(br#"{"command":"set-subtitle-track","subtitleTrack":null}"#);
         assert_eq!(response.status, 503, "{}", error_of(&response));
-        let response = command(br#"{"command":"set-playback-rate","rate":0}"#);
+        let response = command(br#"{"command":"set-subtitle-scale","scale":0}"#);
         assert_eq!(response.status, 400);
     }
 

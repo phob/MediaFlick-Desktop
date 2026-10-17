@@ -63,7 +63,7 @@ pub(super) fn settings(services: &Arc<Services>, force_probe: bool) -> Handled {
         .effective_mode(&account, &readiness, has_results);
     let settings = services.collections.account(&account);
     let recovery = services.collections.take_recovery_notice();
-    Ok(ApiResponse::ok(json!({
+    Ok(ApiResponse::untyped(json!({
         "effectiveMode": effective_mode,
         "mediaFlickAvailable": readiness.tmdb || !settings.profiles.is_empty() || has_results,
         "modeSelection": settings.mode_selection,
@@ -90,7 +90,7 @@ struct ReorderBody {
 }
 
 pub(super) fn patch_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.body::<SettingsPatch>()?;
+    let patch = request.untyped_body::<SettingsPatch>()?;
     let scope = active_scope(services)?;
     let account = scope.account().clone();
     let updates_mode = patch.mode_selection.is_some();
@@ -147,7 +147,7 @@ pub(super) fn templates(services: &Arc<Services>) -> Handled {
             json!({ "template": template, "available": available })
         })
         .collect::<Vec<_>>();
-    Ok(ApiResponse::ok(json!({
+    Ok(ApiResponse::untyped(json!({
         "categories": crate::collections::templates::TemplateCategory::ORDER,
         "templates": templates,
         "readiness": readiness,
@@ -156,7 +156,7 @@ pub(super) fn templates(services: &Arc<Services>) -> Handled {
 
 pub(super) fn preview(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let account = active_account(services)?;
-    let draft = request.body::<ProfileDraft>()?;
+    let draft = request.untyped_body::<ProfileDraft>()?;
     let profile = match draft.into_profile(allocate_profile_id(), allocate_revision_id()) {
         Ok(profile) => profile,
         Err(error) => return Err(configuration_failure(&error)),
@@ -203,19 +203,21 @@ pub(super) fn preview(services: &Arc<Services>, request: &ApiRequest) -> Handled
         .unwrap_or(u32::MAX);
         let series = total.saturating_sub(movies);
         items.truncate(24);
-        return Ok(ApiResponse::ok(json!(crate::collections::ProviderResult {
-            items,
-            total,
-            movies,
-            series,
-            source_identity: result.source_identity,
-        })));
+        return Ok(ApiResponse::untyped(json!(
+            crate::collections::ProviderResult {
+                items,
+                total,
+                movies,
+                series,
+                source_identity: result.source_identity,
+            }
+        )));
     }
     match services
         .companion
         .preview_collection(&provider_request(services, &profile))
     {
-        Ok(result) => Ok(ApiResponse::ok(json!(result))),
+        Ok(result) => Ok(ApiResponse::untyped(json!(result))),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
@@ -224,7 +226,7 @@ pub(super) fn list(services: &Arc<Services>) -> Handled {
     let account = active_account(services)?;
     let settings = services.collections.account(&account);
     let errors = services.collections.profile_errors(&account);
-    Ok(ApiResponse::ok(
+    Ok(ApiResponse::untyped(
         json!({ "profiles": settings.profiles, "errors": errors }),
     ))
 }
@@ -232,14 +234,14 @@ pub(super) fn list(services: &Arc<Services>) -> Handled {
 pub(super) fn read(services: &Arc<Services>, profile_id: &str) -> Handled {
     let account = active_account(services)?;
     match profile(services, &account, profile_id) {
-        Some(profile) => Ok(ApiResponse::ok(json!(profile))),
+        Some(profile) => Ok(ApiResponse::untyped(json!(profile))),
         None => Err(ApiResponse::error(404, "that collection does not exist")),
     }
 }
 
 pub(super) fn create(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let account = active_account(services)?;
-    let draft = request.body::<ProfileDraft>()?;
+    let draft = request.untyped_body::<ProfileDraft>()?;
     let profile = match draft.into_profile(allocate_profile_id(), allocate_revision_id()) {
         Ok(profile) => profile,
         Err(error) => return Err(configuration_failure(&error)),
@@ -258,7 +260,7 @@ pub(super) fn edit(services: &Arc<Services>, profile_id: &str, request: &ApiRequ
     let Some(previous) = profile(services, &account, profile_id) else {
         return Err(ApiResponse::error(404, "that collection does not exist"));
     };
-    let draft = request.body::<ProfileDraft>()?;
+    let draft = request.untyped_body::<ProfileDraft>()?;
     let next = match draft.into_profile(previous.id.clone(), previous.revision.clone()) {
         Ok(profile) => profile,
         Err(error) => return Err(configuration_failure(&error)),
@@ -288,7 +290,7 @@ pub(super) fn edit(services: &Arc<Services>, profile_id: &str, request: &ApiRequ
                 Ok(match services.collections.save_profile(&account, next) {
                     Ok(profile) => {
                         update_next_due(services, &account, &profile);
-                        ApiResponse::ok(json!(profile))
+                        ApiResponse::untyped(json!(profile))
                     }
                     Err(error) => {
                         remove_unreferenced_artwork(services, &account, staged_artwork.as_deref());
@@ -346,7 +348,7 @@ pub(super) fn delete(services: &Arc<Services>, profile_id: &str) -> Handled {
                         tracing::warn!(target: "collections", "could not remove collection cache: {error}");
                     }
                     match services.accounts.forget_home_collection(&account, profile_id) {
-                        Ok(()) => ApiResponse::ok(json!({ "deleted": true })),
+                        Ok(()) => ApiResponse::untyped(json!({ "deleted": true })),
                         Err(error) => configuration_failure(&error),
                     }
                 }
@@ -357,7 +359,7 @@ pub(super) fn delete(services: &Arc<Services>, profile_id: &str) -> Handled {
 }
 
 pub(super) fn reorder(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let ids = request.body::<ReorderBody>()?.profile_ids;
+    let ids = request.untyped_body::<ReorderBody>()?.profile_ids;
     let scope = active_scope(services)?;
     let account = scope.account().clone();
     services
@@ -368,7 +370,7 @@ pub(super) fn reorder(services: &Arc<Services>, request: &ApiRequest) -> Handled
                     Ok(()) => {
                         let settings = services.collections.account(&account);
                         let errors = services.collections.profile_errors(&account);
-                        ApiResponse::ok(json!({
+                        ApiResponse::untyped(json!({
                             "profiles": settings.profiles,
                             "errors": errors,
                         }))
@@ -477,7 +479,7 @@ fn commit_result_profile(
                     initialized: true,
                 },
             );
-            Ok(ApiResponse::ok(
+            Ok(ApiResponse::untyped(
                 json!({ "profile": profile, "total": visible_total }),
             ))
         })

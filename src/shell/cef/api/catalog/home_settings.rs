@@ -237,7 +237,7 @@ pub(super) fn settings_view(home: &ResolvedHome, settings: &HomeSettings) -> Val
 }
 
 fn home_settings_response(home: &ResolvedHome) -> ApiResponse {
-    ApiResponse::ok(json!({
+    ApiResponse::untyped(json!({
         "settings": settings_view(home, &home.settings),
         "defaults": settings_view(home, &home.defaults),
         "collectionMode": if home.mediaflick_collections { "mediaFlick" } else { "jellyfin" },
@@ -249,7 +249,7 @@ pub(super) fn home_settings(services: &Arc<Services>) -> Handled {
 }
 
 pub(super) fn patch_home_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let requested = request.body::<HomeSettings>()?;
+    let requested = request.untyped_body::<HomeSettings>()?;
     if let Err(error) = requested.validate() {
         return Err(ApiResponse::error(400, error.to_string()));
     }

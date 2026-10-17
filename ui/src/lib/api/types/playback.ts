@@ -1,60 +1,16 @@
-export interface PlayerTrack {
-  id: number
-  kind: "audio" | "subtitle"
-  language: string | null
-  title: string | null
-  codec: string | null
-  selected: boolean
-  external: boolean
-}
+import type * as Wire from "../wire.gen.ts"
 
-export interface PlayerChapter {
-  title: string
-  startMs: number
-}
+export type PlayerTrack = Wire.PlayerTrack
 
-export interface PlayerSkipSegment {
-  segmentType: "intro" | "outro" | "recap" | "commercial"
-  startTicks: number
-  endTicks: number
-  triggered: boolean
-}
+export type PlayerChapter = Wire.PlayerChapter
 
-export interface PlaybackDiagnostics {
-  bufferedUntilMs: number | null
-  buffering: boolean
-  droppedFrames: number | null
-  frameRate: number | null
-}
+export type PlayerSkipSegment = Wire.SkipSegment
 
-export type StopReason =
-  | "eof"
-  | "watched-next"
-  | "stop"
-  | "quit"
-  | "error"
-  | "redirect"
-  | "shutdown"
-  | "unknown"
+export type PlaybackDiagnostics = Wire.PlaybackDiagnostics
 
-export interface PlayerState {
-  active: boolean
-  playbackId: number | null
-  itemId: string | null
-  mediaSourceId: string | null
-  playSessionId: string | null
-  playMethod: string | null
-  positionMs: number
-  durationMs: number | null
-  paused: boolean
-  volume: number | null
-  mute: boolean | null
-  tracks: PlayerTrack[]
-  chapters: PlayerChapter[]
-  skipSegments: PlayerSkipSegment[]
-  diagnostics: PlaybackDiagnostics
-  stopReason: StopReason | null
-}
+export type StopReason = Wire.StopReason
+
+export type PlayerState = Wire.PlayerSnapshot
 
 /** The `started: false` shape comes back when there is no next episode. */
 export interface PlayStarted {
@@ -65,22 +21,4 @@ export interface PlayStarted {
   startTicks?: number
 }
 
-export type PlayerCommand =
-  | { command: "mark-watched-next" | "toggle-subtitles" }
-  | { command: "pause" | "resume" | "stop" }
-  | { command: "seek"; positionMs: number }
-  | { command: "set-volume"; volume: number }
-  | { command: "set-mute"; mute: boolean }
-  | { command: "set-audio-delay"; delaySeconds: number }
-  | { command: "set-subtitle-delay"; delaySeconds: number }
-  | { command: "set-subtitle-scale"; scale: number }
-  | { command: "set-video-fit"; fit: "fit" | "fill" }
-  | { command: "set-video-aspect"; aspect: "source" | "4:3" | "16:9" | "21:9" }
-  | { command: "set-deinterlace"; enabled: boolean }
-  | {
-      command: "set-tone-mapping"
-      mode: "auto" | "clip" | "mobius" | "reinhard" | "hable" | "bt.2390"
-    }
-  | { command: "set-audio-track"; audioTrack: number }
-  | { command: "set-subtitle-track"; subtitleTrack: number | null }
-  | { command: "toggle-fullscreen" }
+export type PlayerCommand = Wire.PlayerCommandBody

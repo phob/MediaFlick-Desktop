@@ -47,7 +47,7 @@ pub(super) fn home(services: &Arc<Services>) -> Handled {
             rows.push(row);
         }
     }
-    Ok(ApiResponse::ok(json!({
+    Ok(ApiResponse::untyped(json!({
         "configuration": settings_view(&home, &home.settings),
         "continueWatching": continue_watching,
         "rows": rows,
@@ -198,7 +198,7 @@ fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -
 pub(super) fn home_resume(services: &Arc<Services>) -> Handled {
     let home = resolved_home(services)?;
     if !element_enabled(&home.settings, HomeBuiltIn::Watching) {
-        return Ok(ApiResponse::ok(
+        return Ok(ApiResponse::untyped(
             json!({ "continueWatching": [], "nextUp": [] }),
         ));
     }
@@ -230,7 +230,7 @@ pub(super) fn home_resume(services: &Arc<Services>) -> Handled {
     } else {
         Vec::new()
     };
-    Ok(ApiResponse::ok(json!({
+    Ok(ApiResponse::untyped(json!({
         "continueWatching": resume,
         "nextUp": deduplicate_next_up(&resume, next_up),
     })))
@@ -262,10 +262,10 @@ fn latest_home_items(library: &Library, kind: CatalogKind) -> Vec<ItemSummary> {
 
 pub(super) fn billboard(services: &Arc<Services>) -> Handled {
     if !resolved_home(services)?.settings.billboard {
-        return Ok(ApiResponse::ok(json!({ "items": [] })));
+        return Ok(ApiResponse::untyped(json!({ "items": [] })));
     }
     match services.library.random_billboard_titles(BILLBOARD_LIMIT) {
-        Ok(items) => Ok(ApiResponse::ok(json!({ "items": items }))),
+        Ok(items) => Ok(ApiResponse::untyped(json!({ "items": items }))),
         Err(error) => Err(storage_failure(&error)),
     }
 }

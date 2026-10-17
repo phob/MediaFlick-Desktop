@@ -47,7 +47,7 @@ fn companion_call(
 ) -> Handled {
     let scope = session_scope(services)?;
     match call() {
-        Ok(value) => Ok(ApiResponse::ok(value)),
+        Ok(value) => Ok(ApiResponse::untyped(value)),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
@@ -78,11 +78,11 @@ fn seerr_person_credits(services: &Arc<Services>, tmdb_id: &str, request: &ApiRe
     // failure hides Discover only; the independently loaded server grid stays.
     if let Some(person_id) = request.param("personId") {
         return match join_server_person_availability(services, &scope, &person_id, &mut value) {
-            Ok(()) => Ok(ApiResponse::ok(value)),
+            Ok(()) => Ok(ApiResponse::untyped(value)),
             Err(error) => Err(scoped_failure(services, &scope, &error)),
         };
     }
-    Ok(ApiResponse::ok(value))
+    Ok(ApiResponse::untyped(value))
 }
 
 fn join_server_person_availability(
@@ -382,7 +382,7 @@ struct SeerrRequestBody {
 }
 
 fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<SeerrRequestBody>()?;
+    let body = request.untyped_body::<SeerrRequestBody>()?;
     let profile = match (body.server_id, body.profile_id) {
         (None, None) => None,
         (Some(server_id), Some(profile_id)) if server_id >= 0 && profile_id > 0 => {
