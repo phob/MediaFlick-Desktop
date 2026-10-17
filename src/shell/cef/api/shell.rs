@@ -1,18 +1,13 @@
 use super::*;
 
-pub(super) fn route(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    let response = match segments {
-        ["shell", "window", "ready"] if request.is("POST") => shell_window_ready(services),
-        ["shell", "file-picker"] if request.is("POST") => shell_file_picker(services, request),
-        ["shell", "mpv", "install"] if request.is("POST") => shell_install_mpv(services, request),
-        ["shell", "mpv", "help"] if request.is("POST") => shell_mpv_help(),
-        _ => return None,
-    };
-    Some(response)
+routes! {
+    |services, request|
+    POST ["shell", "window", "ready"] -> ShellQueued = shell_window_ready(services),
+    POST ["shell", "file-picker"] (body: ShellRequestBody) -> ShellRequestQueued =
+        shell_file_picker(services, body),
+    POST ["shell", "mpv", "install"] (body: ShellRequestBody) -> ShellRequestQueued =
+        shell_install_mpv(services, body),
+    POST ["shell", "mpv", "help"] -> MpvHelpOpened = Ok(shell_mpv_help()),
 }
 
 /// `/api/shell/window/ready`: the shell queued the request.
@@ -35,49 +30,55 @@ pub(super) struct MpvHelpOpened {
     opened: bool,
 }
 
-fn shell_window_ready(services: &Arc<Services>) -> Handled {
+fn shell_window_ready(services: &Arc<Services>) -> Result<ShellQueued, ApiResponse> {
     services.sync.release_startup_hold();
     match services.shell.request(ShellRequest::MainWindowReady) {
-        Ok(()) => Ok(ApiResponse::ok(ShellQueued { queued: true })),
+        Ok(()) => Ok(ShellQueued { queued: true }),
         Err(error) => Err(ApiResponse::error(503, error)),
     }
 }
 
-fn shell_file_picker(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let request_id = shell_request_id(request)?;
+fn shell_file_picker(
+    services: &Arc<Services>,
+    body: Body<'_, ShellRequestBody>,
+) -> Result<ShellRequestQueued, ApiResponse> {
+    let request_id = shell_request_id(body)?;
     match services.shell.request(ShellRequest::FilePicker {
         request_id: request_id.clone(),
     }) {
-        Ok(()) => Ok(ApiResponse::ok(ShellRequestQueued {
+        Ok(()) => Ok(ShellRequestQueued {
             request_id,
             queued: true,
-        })),
+        }),
         Err(error) => Err(ApiResponse::error(503, error)),
     }
 }
 
-fn shell_install_mpv(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+fn shell_install_mpv(
+    services: &Arc<Services>,
+    body: Body<'_, ShellRequestBody>,
+) -> Result<ShellRequestQueued, ApiResponse> {
     if !player_setup::supported() {
         return Err(ApiResponse::error(
             409,
             "automatic mpv installation is not available on this platform",
         ));
     }
-    let request_id = shell_request_id(request)?;
+    let request_id = shell_request_id(body)?;
     match services.shell.request(ShellRequest::InstallMpv {
         request_id: request_id.clone(),
     }) {
-        Ok(()) => Ok(ApiResponse::ok(ShellRequestQueued {
+        Ok(()) => Ok(ShellRequestQueued {
             request_id,
             queued: true,
-        })),
+        }),
         Err(error) => Err(ApiResponse::error(503, error)),
     }
 }
 
-fn shell_mpv_help() -> Handled {
+fn shell_mpv_help() -> MpvHelpOpened {
     super::super::bridge::open_external_link(player_setup::MPV_HELP_URL);
-    Ok(ApiResponse::ok(MpvHelpOpened { opened: true }))
+    MpvHelpOpened { opened: true }
 }
 
 #[derive(Deserialize, ts_rs::TS)]
@@ -86,8 +87,8 @@ pub(super) struct ShellRequestBody {
     request_id: String,
 }
 
-fn shell_request_id(request: &ApiRequest) -> Result<String, ApiResponse> {
-    let body = request.body::<ShellRequestBody>()?;
+fn shell_request_id(body: Body<'_, ShellRequestBody>) -> Result<String, ApiResponse> {
+    let body = body.decode()?;
     let value = body.request_id.trim();
     if value.is_empty()
         || value.len() > 128

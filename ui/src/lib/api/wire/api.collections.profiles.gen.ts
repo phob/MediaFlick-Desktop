@@ -63,6 +63,10 @@ export type ProfileDeleted = {
   deleted: boolean,
 };
 
+export type ProfileEdit =
+  | CommittedProfile
+  | CollectionProfile;
+
 export type ProfileOrderBody = {
   profileIds: Array<string>,
 };

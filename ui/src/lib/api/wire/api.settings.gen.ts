@@ -2,6 +2,7 @@
 
 import type { Platform } from "./maintenance.player_setup.gen.ts"
 import type { AppearanceAccent, AppearanceDensity, CloseBehavior, FullscreenBehavior, PlayerBackend, SegmentSkipMode, StreamingQuality } from "./preferences.model.gen.ts"
+import type { AppearanceSettingsPatch, ApplicationSettingsPatch, PlaybackSettingsPatch, PlayerSettingsPatch } from "./preferences.service.gen.ts"
 import type { NextEpisode, PlayerComfort, StartupView, SubtitleMode } from "./preferences.viewing.gen.ts"
 
 export type AppearanceView = {
@@ -99,4 +100,16 @@ export type ViewingView = {
   startupDestination: StartupView,
   rememberFilters: boolean,
   hideWatched: boolean,
+};
+
+export type ApiSettingsRoutes = {
+  "GET /api/settings": { params: null, body: null, kind: "json", response: SettingsView },
+  "GET /api/settings/viewing": { params: null, body: null, kind: "json", response: ViewingView },
+  "PATCH /api/settings/viewing": { params: null, body: ViewingSettingsWrite, kind: "json", response: ViewingView },
+  "GET /api/settings/browsing": { params: null, body: null, kind: "json", response: BrowsingRoutes },
+  "PATCH /api/settings/browsing": { params: null, body: BrowsingBody, kind: "json", response: BrowsingSaved },
+  "PATCH /api/settings/client/player": { params: null, body: PlayerSettingsPatch, kind: "json", response: SettingsView },
+  "PATCH /api/settings/client/playback": { params: null, body: PlaybackSettingsPatch, kind: "json", response: SettingsView },
+  "PATCH /api/settings/client/application": { params: null, body: ApplicationSettingsPatch, kind: "json", response: SettingsView },
+  "PATCH /api/settings/appearance": { params: null, body: AppearanceSettingsPatch, kind: "json", response: SettingsView },
 };

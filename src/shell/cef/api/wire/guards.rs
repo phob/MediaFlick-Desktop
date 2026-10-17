@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use syn::visit::Visit;
 
+use super::super::MODULES;
+use super::super::routes::{Route, Segment};
 use super::{UNTYPED_BODIES, UNTYPED_RESPONSES};
 
 fn rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
@@ -70,8 +72,8 @@ fn untyped_responses_only_shrink() {
     assert!(
         !raised,
         "new untyped API bodies ({responses} responses, {bodies} request bodies; \
-         allowed {UNTYPED_RESPONSES} and {UNTYPED_BODIES}). Answer with \
-         `ApiResponse::ok(<wire type>)` and decode with `request.body::<wire type>()`."
+         allowed {UNTYPED_RESPONSES} and {UNTYPED_BODIES}). Declare the route's answer \
+         and body as wire types in `routes!` and decode the body with `Body::decode`."
     );
     assert!(
         responses == UNTYPED_RESPONSES && bodies == UNTYPED_BODIES,
@@ -475,11 +477,11 @@ const UNCHECKED_CLAIMS: &[(&str, &str)] = &[
     ("PlayerSettingsPatch.default_fullscreen", FROM_ID),
     (
         "PlayerSettingsPatch.mark_watched_next",
-        "`NullablePatch` decodes like `Option`: `null` clears and a missing key keeps",
+        "`NullablePatch` takes `T` or `null`, which `T | null` types; `null` clears and a missing key keeps",
     ),
     (
         "PlayerSettingsPatch.mpv_path",
-        "`NullablePatch` decodes like `Option`: `null` clears and a missing key keeps",
+        "`NullablePatch` takes `T` or `null`, which `T | null` types; `null` clears and a missing key keeps",
     ),
     ("PlayerSettingsPatch.player_backend", FROM_ID),
     (
@@ -610,5 +612,379 @@ fn unchecked_claims_are_listed() {
     assert!(
         stale.is_empty(),
         "UNCHECKED_CLAIMS lists claims nothing makes any more; remove them: {stale:?}"
+    );
+}
+
+fn describe(route: &Route) -> String {
+    let path = route
+        .path
+        .iter()
+        .map(|segment| match segment {
+            Segment::Literal(literal) => *literal,
+            Segment::Param { name } => name,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    format!("{} /api/{path}", route.method)
+}
+
+/// `route` tries the declarations in order and answers with the first that
+/// takes the method and path, so one that an earlier declaration covers
+/// never runs. Its path with every parameter set to a value no literal
+/// segment has reaches it unless such a declaration comes first.
+#[test]
+fn every_declared_route_is_reachable() {
+    let routes = MODULES
+        .iter()
+        .flat_map(|routes| routes.table)
+        .collect::<Vec<_>>();
+    let mut shadowed = Vec::new();
+    for (index, route) in routes.iter().enumerate() {
+        let path = route
+            .path
+            .iter()
+            .map(|segment| match segment {
+                Segment::Literal(literal) => *literal,
+                Segment::Param { .. } => "\0",
+            })
+            .collect::<Vec<_>>();
+        if let Some(earlier) = routes[..index]
+            .iter()
+            .find(|earlier| earlier.method == route.method && earlier.matches(&path))
+        {
+            shadowed.push(format!("{} after {}", describe(route), describe(earlier)));
+        }
+    }
+    assert!(
+        shadowed.is_empty(),
+        "these route declarations never run, because an earlier one takes every request \
+         they would; remove them or declare them first:\n  {}",
+        shadowed.join("\n  ")
+    );
+}
+
+/// The files that may build a success `ApiResponse` or reach past a route's
+/// declaration, and why. Everywhere else a handler answers through its
+/// route's declared type and reads only the body its route declares.
+const ROUTER_FILES: &[(&str, &str)] = &[
+    (
+        "src/shell/cef/api/routes.rs",
+        "turns each route's declared answer into its response and hands the handler its \
+         declared body",
+    ),
+    (
+        "src/shell/cef/api/wire.rs",
+        "the JSON encoder behind `ok`, `untyped` and the errors",
+    ),
+    (
+        "src/shell/cef/api/assets.rs",
+        "builds the responses for the UI bundle's files, which no route declares",
+    ),
+];
+
+/// Paths only [`ROUTER_FILES`] may name: the success builders, the body a
+/// route declares, and the trait that turns a declared answer into a
+/// response, by name, through the answers that are not wire types, or
+/// through a glob of `routes`.
+const ROUTER_ONLY: &[[&str; 2]] = &[
+    ["ApiResponse", "ok"],
+    ["ApiResponse", "untyped"],
+    ["Body", "new"],
+    ["routes", "Answer"],
+    ["routes", "*"],
+    ["Answer", "respond"],
+    ["Answer", "success"],
+    ["Relay", "respond"],
+    ["Relay", "success"],
+    ["Binary", "respond"],
+    ["Binary", "success"],
+];
+
+/// What one file does that only [`ROUTER_FILES`] may.
+struct RouterOnly {
+    api: bool,
+    found: Vec<String>,
+}
+
+impl RouterOnly {
+    fn check(&mut self, path: &[String]) {
+        if path
+            .windows(2)
+            .any(|pair| ROUTER_ONLY.iter().any(|only| pair == only))
+        {
+            self.found.push(format!("names `{}`", path.join("::")));
+        }
+    }
+}
+
+fn is_api_response(path: &syn::Path) -> bool {
+    path.segments
+        .last()
+        .is_some_and(|last| last.ident == "ApiResponse")
+}
+
+fn names(path: &syn::Path) -> Vec<String> {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect()
+}
+
+fn use_paths(tree: &syn::UseTree, prefix: &mut Vec<String>, paths: &mut Vec<Vec<String>>) {
+    let leaf = |prefix: &[String], name: String| [prefix, &[name]].concat();
+    match tree {
+        syn::UseTree::Path(path) => {
+            prefix.push(path.ident.to_string());
+            use_paths(&path.tree, prefix, paths);
+            prefix.pop();
+        }
+        syn::UseTree::Name(name) => paths.push(leaf(prefix, name.ident.to_string())),
+        syn::UseTree::Rename(rename) => paths.push(leaf(prefix, rename.ident.to_string())),
+        syn::UseTree::Glob(_) => paths.push(leaf(prefix, "*".to_string())),
+        syn::UseTree::Group(group) => {
+            for tree in &group.items {
+                use_paths(tree, prefix, paths);
+            }
+        }
+    }
+}
+
+/// The `a::b::c` paths written in a macro's tokens, which syn leaves
+/// unparsed, such as a `vec![..]`'s elements. A turbofish is skipped, so
+/// `a::<T>::b` reads as `a::b`.
+fn macro_paths(mut cursor: syn::buffer::Cursor<'_>, paths: &mut Vec<Vec<String>>) {
+    let mut current = Vec::new();
+    let mut colons = 0;
+    while !cursor.eof() {
+        if let Some((ident, next)) = cursor.ident() {
+            if colons != 2 && !current.is_empty() {
+                paths.push(std::mem::take(&mut current));
+            }
+            current.push(ident.to_string());
+            colons = 0;
+            cursor = next;
+            continue;
+        }
+        if let Some((punct, next)) = cursor.punct() {
+            if punct.as_char() == ':' {
+                colons += 1;
+                cursor = next;
+                continue;
+            }
+            if punct.as_char() == '<' && colons == 2 {
+                colons = 0;
+                cursor = past_generics(next);
+                continue;
+            }
+        }
+        if !current.is_empty() {
+            paths.push(std::mem::take(&mut current));
+        }
+        colons = 0;
+        if let Some((inner, _, _, next)) = cursor.any_group() {
+            macro_paths(inner, paths);
+            cursor = next;
+        } else if let Some((_, next)) = cursor.token_tree() {
+            cursor = next;
+        }
+    }
+    if !current.is_empty() {
+        paths.push(current);
+    }
+}
+
+/// The cursor past the `>` that closes a turbofish's `<`.
+fn past_generics(mut cursor: syn::buffer::Cursor<'_>) -> syn::buffer::Cursor<'_> {
+    let (mut depth, mut arrow) = (1_usize, false);
+    while depth > 0 && !cursor.eof() {
+        if let Some((punct, next)) = cursor.punct() {
+            match punct.as_char() {
+                '<' => depth += 1,
+                '>' if !arrow => depth -= 1,
+                _ => {}
+            }
+            arrow = punct.as_char() == '-';
+            cursor = next;
+        } else if let Some((_, next)) = cursor.token_tree() {
+            arrow = false;
+            cursor = next;
+        }
+    }
+    cursor
+}
+
+/// A `routes!` table's request bodies, answers and calls, so the checks on
+/// ordinary code run on them too.
+struct RouteTable(Vec<(Option<syn::Type>, syn::Type, syn::Expr)>);
+
+impl syn::parse::Parse for RouteTable {
+    fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
+        input.parse::<syn::Token![|]>()?;
+        input.parse::<syn::Ident>()?;
+        input.parse::<syn::Token![,]>()?;
+        input.parse::<syn::Ident>()?;
+        input.parse::<syn::Token![|]>()?;
+        let mut rows = Vec::new();
+        while !input.is_empty() {
+            input.parse::<syn::Ident>()?;
+            input.parse::<syn::ExprArray>()?;
+            let body = if input.peek(syn::token::Paren) {
+                let body;
+                syn::parenthesized!(body in input);
+                body.parse::<syn::Ident>()?;
+                body.parse::<syn::Token![:]>()?;
+                Some(body.parse()?)
+            } else {
+                None
+            };
+            input.parse::<syn::Token![->]>()?;
+            let answer = input.parse()?;
+            input.parse::<syn::Token![=]>()?;
+            rows.push((body, answer, input.parse()?));
+            if !input.is_empty() {
+                input.parse::<syn::Token![,]>()?;
+            }
+        }
+        Ok(Self(rows))
+    }
+}
+
+impl Visit<'_> for RouterOnly {
+    fn visit_path(&mut self, path: &syn::Path) {
+        self.check(&names(path));
+        syn::visit::visit_path(self, path);
+    }
+
+    fn visit_item_use(&mut self, item: &syn::ItemUse) {
+        let mut paths = Vec::new();
+        use_paths(&item.tree, &mut Vec::new(), &mut paths);
+        for path in paths {
+            self.check(&path);
+        }
+    }
+
+    fn visit_macro(&mut self, mac: &syn::Macro) {
+        if mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|last| last.ident == "routes")
+        {
+            match mac.parse_body::<RouteTable>() {
+                Ok(RouteTable(rows)) => {
+                    for (body, answer, call) in &rows {
+                        if let Some(body) = body {
+                            self.visit_type(body);
+                        }
+                        self.visit_type(answer);
+                        self.visit_expr(call);
+                    }
+                }
+                Err(error) => self.found.push(format!(
+                    "has a `routes!` table this check cannot read: {error}"
+                )),
+            }
+        } else {
+            let buffer = syn::buffer::TokenBuffer::new2(mac.tokens.clone());
+            let mut paths = Vec::new();
+            macro_paths(buffer.begin(), &mut paths);
+            for path in paths {
+                self.check(&path);
+            }
+        }
+        syn::visit::visit_macro(self, mac);
+    }
+
+    fn visit_expr_struct(&mut self, expr: &syn::ExprStruct) {
+        if is_api_response(&expr.path) {
+            self.found
+                .push("builds an `ApiResponse { .. }`".to_string());
+        }
+        syn::visit::visit_expr_struct(self, expr);
+    }
+
+    fn visit_item_impl(&mut self, item: &syn::ItemImpl) {
+        if matches!(&*item.self_ty, syn::Type::Path(ty) if is_api_response(&ty.path)) {
+            self.found.push("implements on `ApiResponse`".to_string());
+        }
+        syn::visit::visit_item_impl(self, item);
+    }
+
+    fn visit_expr_assign(&mut self, assign: &syn::ExprAssign) {
+        if self.api
+            && matches!(&*assign.left, syn::Expr::Field(field)
+                if matches!(&field.member, syn::Member::Named(name) if name == "status"))
+        {
+            self.found.push("sets a `.status`".to_string());
+        }
+        syn::visit::visit_expr_assign(self, assign);
+    }
+
+    fn visit_expr_call(&mut self, call: &syn::ExprCall) {
+        if let syn::Expr::Path(func) = &*call.func
+            && names(&func.path).ends_with(&["ApiResponse".to_string(), "error".to_string()])
+            && let Some(syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Int(status),
+                ..
+            })) = call.args.first()
+            && !status
+                .base10_parse::<u16>()
+                .is_ok_and(|status| (400..600).contains(&status))
+        {
+            self.found
+                .push(format!("answers an error with status {status}"));
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+}
+
+/// A handler's success answer is the type its route declares, and nothing
+/// else: `Answer::respond` turns it into the response in `routes.rs`, and a
+/// handler's error side must not smuggle a 2xx past it.
+#[test]
+fn only_the_router_answers_with_success() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut outside = Vec::new();
+    let mut used = BTreeSet::new();
+    for (path, file) in parsed_sources() {
+        let relative = path
+            .strip_prefix(root)
+            .expect("source under the crate")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let mut visitor = RouterOnly {
+            api: relative.starts_with("src/shell/cef/api"),
+            found: Vec::new(),
+        };
+        visitor.visit_file(&file);
+        if visitor.found.is_empty() {
+            continue;
+        }
+        if ROUTER_FILES.iter().any(|(listed, _)| *listed == relative) {
+            used.insert(relative);
+        } else {
+            outside.extend(
+                visitor
+                    .found
+                    .into_iter()
+                    .map(|found| format!("{relative} {found}")),
+            );
+        }
+    }
+    assert!(
+        outside.is_empty(),
+        "only the router builds a success response or reads past a route's declaration. \
+         Return the route's declared answer (a wire type, a `Relay`'s JSON value or a \
+         `BinaryAnswer`) and an `ApiResponse::error` with a 4xx or 5xx status, and read the \
+         body through the `Body` the route declares:\n  {}",
+        outside.join("\n  ")
+    );
+    let stale = ROUTER_FILES
+        .iter()
+        .filter(|(listed, _)| !used.contains(*listed))
+        .collect::<Vec<_>>();
+    assert!(
+        stale.is_empty(),
+        "ROUTER_FILES lists files that no longer need it; remove them: {stale:?}"
     );
 }

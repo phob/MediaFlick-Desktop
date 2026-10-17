@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use cef::*;
 
-use super::api::{self, ApiRequest, ApiResponse};
+use super::api::{self, ApiRequest, ApiResponse, RawBody};
 
 pub const APP_SCHEME: &str = "mediaflick-desktop";
 pub const APP_HOST: &str = "app";
@@ -113,7 +113,7 @@ wrap_scheme_handler_factory! {
                 method: CefString::from(&request.method()).to_string(),
                 path,
                 query,
-                body: read_post_body(request),
+                body: RawBody::new(read_post_body(request)),
                 range: request_header(request, "Range"),
                 cancelled: cancelled.clone(),
             };

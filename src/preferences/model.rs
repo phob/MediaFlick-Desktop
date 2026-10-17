@@ -11,6 +11,8 @@ pub const DEFAULT_MARK_WATCHED_NEXT: &str = "w";
 
 /// Parses a settings value by the enum's serde name, ignoring ASCII case and
 /// surrounding whitespace, so it accepts what the generated TypeScript names.
+/// It lowercases the value first, so it suits only enums whose serde names
+/// are lowercase.
 fn from_serde_name<T: serde::de::DeserializeOwned>(value: &str) -> Option<T> {
     let name = value.trim().to_ascii_lowercase();
     let deserializer: StrDeserializer<'_, serde::de::value::Error> =

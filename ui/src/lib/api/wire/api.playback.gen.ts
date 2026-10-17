@@ -1,6 +1,7 @@
 // Generated from src/shell/cef/api/wire.rs by `just wire-types`. Do not edit.
 
 import type { ItemSummary } from "./library.model.gen.ts"
+import type { PlayerSnapshot } from "./playback.model.gen.ts"
 import type { StreamingQuality } from "./preferences.model.gen.ts"
 
 export type PlayBody = {
@@ -76,3 +77,13 @@ export type VideoAspectBody =
 export type VideoFitBody =
   | "fit"
   | "fill";
+
+export type ApiPlaybackRoutes = {
+  "POST /api/play": { params: null, body: PlayBody, kind: "json", response: PlayStarted },
+  "POST /api/play/next": { params: null, body: PlaybackItemBody, kind: "json", response: PlayStarted },
+  "POST /api/play/previous": { params: null, body: PlaybackItemBody, kind: "json", response: PlayStarted },
+  "POST /api/play/neighbors": { params: null, body: PlaybackItemBody, kind: "json", response: PlaybackNeighbors },
+  "GET /api/player/state": { params: null, body: null, kind: "json", response: PlayerSnapshot },
+  "POST /api/player/command": { params: null, body: PlayerCommandBody, kind: "json", response: PlayerCommandAccepted },
+  "POST /api/sync": { params: null, body: null, kind: "json", response: SyncRequested },
+};

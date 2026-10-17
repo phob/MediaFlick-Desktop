@@ -1,65 +1,49 @@
 use super::images::{cache_key, image_mime_type, store_image};
 use super::*;
 
-pub(super) fn route(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    let response = match segments {
-        ["seerr", "status"] if request.is("GET") => {
-            companion_call(services, || services.companion.seerr_status())
-        }
-        ["seerr", "search"] if request.is("GET") => seerr_search(services, request),
-        ["seerr", "person", tmdb_id, "credits"] if request.is("GET") => {
-            seerr_person_credits(services, &percent_decode(tmdb_id), request)
-        }
-        ["seerr", "discover", kind] if request.is("GET") => {
-            seerr_discover(services, &percent_decode(kind), request)
-        }
-        ["seerr", "genres", media_type] if request.is("GET") => {
-            seerr_genres(services, &percent_decode(media_type))
-        }
-        ["seerr", "media", media_type, tmdb_id] if request.is("GET") => seerr_media(
-            services,
-            &percent_decode(media_type),
-            &percent_decode(tmdb_id),
-        ),
-        ["seerr", "request-options", media_type] if request.is("GET") => {
-            seerr_request_options(services, &percent_decode(media_type), request)
-        }
-        ["seerr", "request"] if request.is("POST") => seerr_request(services, request),
-        ["seerr", "requests"] if request.is("GET") => seerr_requests(services, request),
-        ["seerr", "request", id] if request.is("DELETE") => {
-            seerr_cancel_request(services, &percent_decode(id))
-        }
-        ["seerr", "image", size, file] if request.is("GET") => {
-            seerr_image(services, &percent_decode(size), &percent_decode(file))
-        }
-        _ => return None,
-    };
-    Some(response)
+routes! {
+    |services, request|
+    GET ["seerr", "status"] -> Relay =
+        companion_call(services, || services.companion.seerr_status()),
+    GET ["seerr", "search"] -> Relay = seerr_search(services, request),
+    GET ["seerr", "person", tmdb_id, "credits"] -> Relay =
+        seerr_person_credits(services, &percent_decode(tmdb_id), request),
+    GET ["seerr", "discover", kind] -> Relay =
+        seerr_discover(services, &percent_decode(kind), request),
+    GET ["seerr", "genres", media_type] -> Relay =
+        seerr_genres(services, &percent_decode(media_type)),
+    GET ["seerr", "media", media_type, tmdb_id] -> Relay =
+        seerr_media(services, &percent_decode(media_type), &percent_decode(tmdb_id)),
+    GET ["seerr", "request-options", media_type] -> Relay =
+        seerr_request_options(services, &percent_decode(media_type), request),
+    POST ["seerr", "request"] (body: SeerrRequestBody) -> Relay = seerr_request(services, body),
+    GET ["seerr", "requests"] -> Relay = seerr_requests(services, request),
+    DELETE ["seerr", "request", id] -> SeerrRequestCancelled =
+        seerr_cancel_request(services, &percent_decode(id)),
+    GET ["seerr", "image", size, file] -> Binary =
+        seerr_image(services, &percent_decode(size), &percent_decode(file)),
 }
 
 fn companion_call(
     services: &Arc<Services>,
     call: impl FnOnce() -> Result<Value, ApiError>,
-) -> Handled {
+) -> Result<Value, ApiResponse> {
     let scope = session_scope(services)?;
-    match call() {
-        Ok(value) => Ok(ApiResponse::untyped(value)),
-        Err(error) => Err(scoped_failure(services, &scope, &error)),
-    }
+    call().map_err(|error| scoped_failure(services, &scope, &error))
 }
 
-fn seerr_search(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+fn seerr_search(services: &Arc<Services>, request: &ApiRequest) -> Result<Value, ApiResponse> {
     let query = request.param("q").unwrap_or_default();
     companion_call(services, || {
         services.companion.seerr_search(&query, page_param(request))
     })
 }
 
-fn seerr_person_credits(services: &Arc<Services>, tmdb_id: &str, request: &ApiRequest) -> Handled {
+fn seerr_person_credits(
+    services: &Arc<Services>,
+    tmdb_id: &str,
+    request: &ApiRequest,
+) -> Result<Value, ApiResponse> {
     let Ok(tmdb_id) = tmdb_id.parse::<i64>() else {
         return Err(ApiResponse::error(400, "that is not a TMDB person id"));
     };
@@ -76,13 +60,13 @@ fn seerr_person_credits(services: &Arc<Services>, tmdb_id: &str, request: &ApiRe
     // Seerr credit is non-local. An exact Jellyfin identity lets this secondary
     // section verify ownership against the live complete person relation. A
     // failure hides Discover only; the independently loaded server grid stays.
-    if let Some(person_id) = request.param("personId") {
-        return match join_server_person_availability(services, &scope, &person_id, &mut value) {
-            Ok(()) => Ok(ApiResponse::untyped(value)),
-            Err(error) => Err(scoped_failure(services, &scope, &error)),
-        };
+    if let Some(person_id) = request.param("personId")
+        && let Err(error) =
+            join_server_person_availability(services, &scope, &person_id, &mut value)
+    {
+        return Err(scoped_failure(services, &scope, &error));
     }
-    Ok(ApiResponse::untyped(value))
+    Ok(value)
 }
 
 fn join_server_person_availability(
@@ -316,7 +300,11 @@ fn join_person_items(value: &mut Value, server_items: &[BaseItemDto]) {
     }
 }
 
-fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) -> Handled {
+fn seerr_discover(
+    services: &Arc<Services>,
+    kind: &str,
+    request: &ApiRequest,
+) -> Result<Value, ApiResponse> {
     let Some(kind) = DiscoverKind::from_id(kind) else {
         return Err(ApiResponse::error(404, "unknown discover row"));
     };
@@ -338,14 +326,18 @@ fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) ->
     })
 }
 
-fn seerr_genres(services: &Arc<Services>, media_type: &str) -> Handled {
+fn seerr_genres(services: &Arc<Services>, media_type: &str) -> Result<Value, ApiResponse> {
     if !matches!(media_type, "movie" | "tv") {
         return Err(ApiResponse::error(404, "unknown genre kind"));
     }
     companion_call(services, || services.companion.seerr_genres(media_type))
 }
 
-fn seerr_media(services: &Arc<Services>, media_type: &str, tmdb_id: &str) -> Handled {
+fn seerr_media(
+    services: &Arc<Services>,
+    media_type: &str,
+    tmdb_id: &str,
+) -> Result<Value, ApiResponse> {
     let Ok(tmdb_id) = tmdb_id.parse::<i64>() else {
         return Err(ApiResponse::error(400, "that is not a TMDB id"));
     };
@@ -358,7 +350,7 @@ fn seerr_request_options(
     services: &Arc<Services>,
     media_type: &str,
     request: &ApiRequest,
-) -> Handled {
+) -> Result<Value, ApiResponse> {
     let is_4k = request
         .param("is4k")
         .is_some_and(|value| value.eq_ignore_ascii_case("true"));
@@ -383,8 +375,11 @@ pub(super) struct SeerrRequestBody {
     profile_id: Option<i64>,
 }
 
-fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<SeerrRequestBody>()?;
+fn seerr_request(
+    services: &Arc<Services>,
+    body: Body<'_, SeerrRequestBody>,
+) -> Result<Value, ApiResponse> {
+    let body = body.decode()?;
     let profile = match (body.server_id, body.profile_id) {
         (None, None) => None,
         (Some(server_id), Some(profile_id)) if server_id >= 0 && profile_id > 0 => {
@@ -411,7 +406,7 @@ fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     })
 }
 
-fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> Result<Value, ApiResponse> {
     let number = |key: &str, fallback: i64| {
         request
             .param(key)
@@ -434,16 +429,19 @@ pub(super) struct SeerrRequestCancelled {
     id: i64,
 }
 
-fn seerr_cancel_request(services: &Arc<Services>, request_id: &str) -> Handled {
+fn seerr_cancel_request(
+    services: &Arc<Services>,
+    request_id: &str,
+) -> Result<SeerrRequestCancelled, ApiResponse> {
     let Ok(request_id) = request_id.parse::<i64>() else {
         return Err(ApiResponse::error(400, "that is not a request id"));
     };
     let scope = session_scope(services)?;
     match services.companion.seerr_cancel_request(request_id) {
-        Ok(()) => Ok(ApiResponse::ok(SeerrRequestCancelled {
+        Ok(()) => Ok(SeerrRequestCancelled {
             cancelled: true,
             id: request_id,
-        })),
+        }),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
@@ -455,7 +453,11 @@ fn seerr_cancel_request(services: &Arc<Services>, request_id: &str) -> Handled {
 /// the most bytes, so it shares the pruned on-disk cache the Jellyfin image
 /// proxy already has, and is served as immutable — a TMDB file name addresses
 /// one unchanging image.
-fn seerr_image(services: &Arc<Services>, size: &str, file: &str) -> Handled {
+fn seerr_image(
+    services: &Arc<Services>,
+    size: &str,
+    file: &str,
+) -> Result<BinaryAnswer, ApiResponse> {
     let Some(path) = tmdb_image_path(size, file) else {
         return Err(ApiResponse::error(404, "no such poster"));
     };
@@ -464,7 +466,7 @@ fn seerr_image(services: &Arc<Services>, size: &str, file: &str) -> Handled {
     if let Ok(bytes) = std::fs::read(&cache_path)
         && let Some(content_type) = image_mime_type(&bytes)
     {
-        return Ok(ApiResponse::bytes(
+        return Ok(BinaryAnswer::bytes(
             content_type.to_string(),
             bytes,
             IMMUTABLE_CACHE,
@@ -478,7 +480,7 @@ fn seerr_image(services: &Arc<Services>, size: &str, file: &str) -> Handled {
                 )));
             };
             store_image(&cache_path, &bytes);
-            Ok(ApiResponse::bytes(
+            Ok(BinaryAnswer::bytes(
                 content_type.to_string(),
                 bytes,
                 IMMUTABLE_CACHE,

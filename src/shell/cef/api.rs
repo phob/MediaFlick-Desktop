@@ -47,7 +47,7 @@ pub struct ApiRequest {
     pub method: String,
     pub path: String,
     pub query: String,
-    pub body: Vec<u8>,
+    pub body: RawBody,
     pub range: Option<String>,
     /// Raised by CEF's `cancel` callback when the browser abandons the request
     /// (an aborted fetch, a closed page). Handlers block synchronously, so
@@ -78,53 +78,6 @@ pub struct ApiResponse {
     pub cache_control: &'static str,
     pub headers: Vec<(String, String)>,
 }
-
-impl ApiResponse {
-    fn asset(content_type: &str, body: &'static [u8], cache_control: &'static str) -> Self {
-        Self {
-            status: 200,
-            content_type: content_type.to_string(),
-            body: body.to_vec(),
-            cache_control,
-            headers: Vec::new(),
-        }
-    }
-
-    fn bytes(content_type: String, body: Vec<u8>, cache_control: &'static str) -> Self {
-        Self {
-            status: 200,
-            content_type,
-            body,
-            cache_control,
-            headers: Vec::new(),
-        }
-    }
-
-    fn ranged_bytes(
-        status: u16,
-        content_type: String,
-        body: Vec<u8>,
-        content_range: Option<String>,
-        accept_ranges: Option<String>,
-    ) -> Self {
-        let mut headers = vec![(
-            "Accept-Ranges".to_string(),
-            accept_ranges.unwrap_or_else(|| "bytes".to_string()),
-        )];
-        if let Some(content_range) = content_range {
-            headers.push(("Content-Range".to_string(), content_range));
-        }
-        Self {
-            status,
-            content_type,
-            body,
-            cache_control: NO_STORE,
-            headers,
-        }
-    }
-}
-
-type Handled = Result<ApiResponse, ApiResponse>;
 
 /// The signed-in account this request runs against. Its failures go through
 /// [`scoped_failure`] and its cache writes through `commit_if_current`, so a
@@ -180,135 +133,34 @@ mod libraries;
 mod media;
 mod playback;
 mod ratings;
+mod routes;
 mod seerr;
 mod settings;
 mod shell;
 mod wire;
 
+pub use routes::RawBody;
+use routes::{Binary, BinaryAnswer, Body, Bytes, Relay, routes};
 pub(super) use wire::Wire;
 
-/// Every endpoint the modules below serve, by method and path shape (`*` is
-/// one segment). The modules own the handlers; this table answers what they
-/// cannot: which methods a known path accepts, for a 405 and its `Allow`
-/// header.
-const ENDPOINTS: &[(&str, &str)] = &[
-    ("GET", "status"),
-    ("GET", "startup"),
-    ("GET", "companion/info"),
-    ("POST", "companion/probe"),
-    ("GET", "settings"),
-    ("PATCH", "settings/client/player"),
-    ("PATCH", "settings/client/playback"),
-    ("PATCH", "settings/client/application"),
-    ("PATCH", "settings/appearance"),
-    ("GET", "settings/viewing"),
-    ("PATCH", "settings/viewing"),
-    ("GET", "settings/browsing"),
-    ("PATCH", "settings/browsing"),
-    ("GET", "settings/home"),
-    ("PATCH", "settings/home"),
-    ("GET", "integrations/ratings"),
-    ("POST", "ratings/batch"),
-    ("GET", "collections"),
-    ("GET", "collections/mine"),
-    ("GET", "collections/mine/*"),
-    ("GET", "collections/franchises"),
-    ("GET", "collections/franchises/*"),
-    ("GET", "collections/jellyfin"),
-    ("GET", "collections/jellyfin/*"),
-    ("DELETE", "collections/local-account"),
-    ("GET", "collections/movie/*"),
-    ("GET", "collections/title/*/*"),
-    ("GET", "collections/settings"),
-    ("PATCH", "collections/settings"),
-    ("POST", "collections/settings/reprobe"),
-    ("GET", "collections/templates"),
-    ("POST", "collections/mdblist/search"),
-    ("POST", "collections/mdblist/validate"),
-    ("GET", "collections/provider-artwork"),
-    ("POST", "collections/artwork"),
-    ("GET", "collections/artwork/*"),
-    ("POST", "collections/preview"),
-    ("GET", "collections/profiles"),
-    ("POST", "collections/profiles"),
-    ("PUT", "collections/profiles/order"),
-    ("GET", "collections/profiles/*"),
-    ("PATCH", "collections/profiles/*"),
-    ("DELETE", "collections/profiles/*"),
-    ("POST", "collections/profiles/*/refresh"),
-    ("POST", "shell/window/ready"),
-    ("POST", "shell/file-picker"),
-    ("POST", "shell/mpv/install"),
-    ("POST", "shell/mpv/help"),
-    ("GET", "integrations/letterboxd"),
-    ("POST", "integrations/letterboxd"),
-    ("PATCH", "integrations/letterboxd/*"),
-    ("DELETE", "integrations/letterboxd/*"),
-    ("POST", "integrations/letterboxd/*/refresh"),
-    ("POST", "integrations/letterboxd/*/open"),
-    ("GET", "letterboxd/movie/*"),
-    ("GET", "item/*/letterboxd"),
-    ("POST", "auth/connect"),
-    ("POST", "auth/login"),
-    ("POST", "auth/quickconnect/start"),
-    ("POST", "auth/quickconnect/poll"),
-    ("POST", "auth/logout"),
-    ("GET", "seerr/status"),
-    ("GET", "seerr/search"),
-    ("GET", "seerr/person/*/credits"),
-    ("GET", "seerr/discover/*"),
-    ("GET", "seerr/genres/*"),
-    ("GET", "seerr/media/*/*"),
-    ("GET", "seerr/request-options/*"),
-    ("POST", "seerr/request"),
-    ("GET", "seerr/requests"),
-    ("DELETE", "seerr/request/*"),
-    ("GET", "seerr/image/*/*"),
-    ("GET", "calendar"),
-    ("GET", "home"),
-    ("GET", "home/resume"),
-    ("GET", "billboard"),
-    ("GET", "items"),
-    ("GET", "items/letters"),
-    ("GET", "genres"),
-    ("GET", "official-ratings"),
-    ("GET", "libraries"),
-    ("GET", "libraries/*/items"),
-    ("GET", "libraries/*/letters"),
-    ("GET", "libraries/*/options"),
-    ("GET", "libraries/*/latest"),
-    ("GET", "person/resolve"),
-    ("GET", "item/*"),
-    ("GET", "item/*/synopsis"),
-    ("GET", "item/*/about"),
-    ("GET", "item/*/children"),
-    ("POST", "technical/batch"),
-    ("GET", "item/*/media"),
-    ("PATCH", "item/*/playback-preference"),
-    ("GET", "item/*/trailer"),
-    ("GET", "item/*/nextup"),
-    ("POST", "item/*/external"),
-    ("POST", "item/*/played"),
-    ("POST", "item/*/favorite"),
-    ("GET", "trailer/*/stream"),
-    ("GET", "image/*/*"),
-    ("POST", "play"),
-    ("POST", "play/next"),
-    ("POST", "play/previous"),
-    ("POST", "play/neighbors"),
-    ("GET", "player/state"),
-    ("POST", "player/command"),
-    ("POST", "sync"),
+/// Every module's routes, in the order a request tries them. Each module
+/// declares its own with [`routes::routes!`]; their tables also answer which
+/// methods a known path accepts, for a 405 and its `Allow` header.
+const MODULES: &[&routes::Routes] = &[
+    &ROUTES,
+    &settings::ROUTES,
+    &ratings::ROUTES,
+    &collections::ROUTES,
+    &shell::ROUTES,
+    &letterboxd::ROUTES,
+    &auth::ROUTES,
+    &seerr::ROUTES,
+    &catalog::ROUTES,
+    &libraries::ROUTES,
+    &media::ROUTES,
+    &images::ROUTES,
+    &playback::ROUTES,
 ];
-
-fn endpoint_matches(pattern: &str, segments: &[&str]) -> bool {
-    let parts = pattern.split('/').collect::<Vec<_>>();
-    parts.len() == segments.len()
-        && parts
-            .iter()
-            .zip(segments)
-            .all(|(part, segment)| *part == "*" || part == segment)
-}
 
 fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiResponse {
     let item_id: String;
@@ -320,30 +172,18 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         }
         segments[1] = &item_id;
     }
-    let handled = route_status(services, &segments, request)
-        .or_else(|| settings::route(services, &segments, request))
-        .or_else(|| ratings::route(services, &segments, request))
-        .or_else(|| collections::route(services, &segments, request))
-        .or_else(|| shell::route(services, &segments, request))
-        .or_else(|| letterboxd::route(services, &segments, request))
-        .or_else(|| auth::route(services, &segments, request))
-        .or_else(|| seerr::route(services, &segments, request))
-        .or_else(|| catalog::route(services, &segments, request))
-        .or_else(|| libraries::route(services, &segments, request))
-        .or_else(|| media::route(services, &segments, request))
-        .or_else(|| images::route(services, &segments, request))
-        .or_else(|| playback::route(services, &segments, request));
-    match handled {
-        Some(Ok(response) | Err(response)) => response,
-        None => unrouted(path, &segments),
-    }
+    MODULES
+        .iter()
+        .find_map(|routes| (routes.serve)(services, &segments, request))
+        .unwrap_or_else(|| unrouted(path, &segments))
 }
 
 fn unrouted(path: &str, segments: &[&str]) -> ApiResponse {
-    let allowed = ENDPOINTS
+    let allowed = MODULES
         .iter()
-        .filter(|(_, pattern)| endpoint_matches(pattern, segments))
-        .map(|(method, _)| *method)
+        .flat_map(|routes| routes.table)
+        .filter(|route| route.matches(segments))
+        .map(|route| route.method)
         .collect::<Vec<_>>();
     if allowed.is_empty() {
         return ApiResponse::error(404, format!("unknown endpoint /api/{path}"));
@@ -355,19 +195,12 @@ fn unrouted(path: &str, segments: &[&str]) -> ApiResponse {
     response
 }
 
-fn route_status(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    let response = match segments {
-        ["status"] if request.is("GET") => status(services),
-        ["startup"] if request.is("GET") => startup(services, request),
-        ["companion", "info"] if request.is("GET") => companion_info(services, false),
-        ["companion", "probe"] if request.is("POST") => companion_info(services, true),
-        _ => return None,
-    };
-    Some(response)
+routes! {
+    |services, request|
+    GET ["status"] -> AppStatus = Ok(app_status(services)),
+    GET ["startup"] -> StartupResponse = Ok(startup(services, request)),
+    GET ["companion", "info"] -> CompanionStatus = companion_info(services, false),
+    POST ["companion", "probe"] -> CompanionStatus = companion_info(services, true),
 }
 
 #[derive(Serialize, ts_rs::TS)]
@@ -399,10 +232,6 @@ fn app_status(services: &Services) -> AppStatus {
     }
 }
 
-fn status(services: &Arc<Services>) -> Handled {
-    Ok(ApiResponse::ok(app_status(services)))
-}
-
 /// `/api/startup`: everything the first frame reads, in one request. Without
 /// it the UI asks for status, then waits for the answer before it can ask for
 /// the account's preferences and Home. Each part is what its own route
@@ -420,29 +249,29 @@ struct StartupResponse {
     billboard: Option<catalog::Billboard>,
 }
 
-fn startup(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+fn startup(services: &Arc<Services>, request: &ApiRequest) -> StartupResponse {
     let status = app_status(services);
     let authenticated = status.session.authenticated;
     let home = authenticated
         && status.bootstrap == Bootstrap::Ready
         && request.param("home").as_deref() == Some("1");
-    Ok(ApiResponse::ok(StartupResponse {
+    StartupResponse {
         settings: settings::settings_snapshot(services),
         viewing: startup_part(authenticated, || settings::viewing(services)),
         browsing: startup_part(authenticated, || settings::browsing(services)),
         home: startup_part(home, || catalog::home_view(services)),
         billboard: startup_part(home, || catalog::billboard_view(services)),
         status,
-    }))
+    }
 }
 
 fn startup_part<T>(wanted: bool, answer: impl FnOnce() -> Result<T, ApiResponse>) -> Option<T> {
     if wanted { answer().ok() } else { None }
 }
 
-fn companion_info(services: &Arc<Services>, force: bool) -> Handled {
+fn companion_info(services: &Arc<Services>, force: bool) -> Result<CompanionStatus, ApiResponse> {
     match services.companion.probe(force) {
-        Ok(_) => Ok(ApiResponse::ok(services.companion.status())),
+        Ok(_) => Ok(services.companion.status()),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
@@ -502,7 +331,7 @@ mod tests {
             method: "GET".to_string(),
             path: path.to_string(),
             query: String::new(),
-            body: Vec::new(),
+            body: RawBody::new(Vec::new()),
             range: None,
             cancelled: Default::default(),
         })
@@ -529,7 +358,7 @@ mod tests {
             method: "POST".to_string(),
             path: path.to_string(),
             query: String::new(),
-            body: body.to_vec(),
+            body: RawBody::new(body.to_vec()),
             range: None,
             cancelled: Default::default(),
         }
@@ -548,7 +377,7 @@ mod tests {
                 method: "GET".to_string(),
                 path: "/api/status".to_string(),
                 query: String::new(),
-                body: Vec::new(),
+                body: RawBody::new(Vec::new()),
                 range: None,
                 cancelled: Default::default(),
             },

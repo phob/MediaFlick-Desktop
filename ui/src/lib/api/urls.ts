@@ -1,5 +1,6 @@
 import type { ItemDetail, ItemSummary, Person } from "./types/catalog.ts"
 import type { SeerrMediaDetail } from "./types/seerr.ts"
+import { link } from "./routes.ts"
 
 const POSTER_WIDTH = 400
 export const LANDSCAPE_WIDTH = 560
@@ -10,18 +11,6 @@ export const THUMBNAIL_WIDTH = 800
 const HEADSHOT_WIDTH = 200
 /** Title treatments are drawn at most ~28rem wide; twice that covers HiDPI. */
 const LOGO_WIDTH = 800
-
-type QueryParameterValue = string | number | boolean | null | undefined
-
-export function queryString<T>(params: { [K in keyof T]: QueryParameterValue }) {
-  const search = new URLSearchParams()
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === null || value === "") continue
-    search.set(key, String(value))
-  }
-  const encoded = search.toString()
-  return encoded ? `?${encoded}` : ""
-}
 
 /**
  * Poster/backdrop URL through the Rust image proxy, which keeps the token out
@@ -40,7 +29,10 @@ export function imageUrl(
   // caller has to say which tag goes with the type it asked for.
   tag: string | null = item.primaryImageTag,
 ) {
-  return `/api/image/${encodeURIComponent(item.id)}/${type}${queryString({ maxWidth, tag })}`
+  return link("GET /api/image/{id}/{imageType}", {
+    params: { id: item.id, imageType: type },
+    query: { maxWidth, tag },
+  })
 }
 
 export function backdropUrl(
@@ -115,7 +107,9 @@ export function personImageUrl(person: Person, maxWidth = HEADSHOT_WIDTH) {
  */
 export function seerrImageUrl(path: string | null | undefined, size = "w300") {
   if (!path) return null
-  return `/api/seerr/image/${size}/${encodeURIComponent(path.replace(/^\//, ""))}`
+  return link("GET /api/seerr/image/{size}/{file}", {
+    params: { size, file: path.replace(/^\//, "") },
+  })
 }
 
 /**

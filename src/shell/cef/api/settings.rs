@@ -9,34 +9,23 @@ use super::catalog::still_signed_in;
 
 use super::*;
 
-pub(super) fn route(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    let response = match segments {
-        ["settings"] if request.is("GET") => Ok(ApiResponse::ok(settings_snapshot(services))),
-        ["settings", "viewing"] if request.is("GET") || request.is("PATCH") => {
-            viewing_settings(services, request)
-        }
-        ["settings", "browsing"] if request.is("GET") || request.is("PATCH") => {
-            browsing_settings(services, request)
-        }
-        ["settings", "client", "player"] if request.is("PATCH") => {
-            patch_player_settings(services, request)
-        }
-        ["settings", "client", "playback"] if request.is("PATCH") => {
-            patch_playback_settings(services, request)
-        }
-        ["settings", "client", "application"] if request.is("PATCH") => {
-            patch_application_settings(services, request)
-        }
-        ["settings", "appearance"] if request.is("PATCH") => {
-            patch_appearance_settings(services, request)
-        }
-        _ => return None,
-    };
-    Some(response)
+routes! {
+    |services, request|
+    GET ["settings"] -> SettingsView = Ok(settings_snapshot(services)),
+    GET ["settings", "viewing"] -> ViewingView = viewing(services),
+    PATCH ["settings", "viewing"] (body: ViewingSettingsWrite) -> ViewingView =
+        save_viewing(services, body),
+    GET ["settings", "browsing"] -> BrowsingRoutes = browsing(services),
+    PATCH ["settings", "browsing"] (body: BrowsingBody) -> BrowsingSaved =
+        save_browsing(services, body),
+    PATCH ["settings", "client", "player"] (body: PlayerSettingsPatch) -> SettingsView =
+        patch_player_settings(services, body),
+    PATCH ["settings", "client", "playback"] (body: PlaybackSettingsPatch) -> SettingsView =
+        patch_playback_settings(services, body),
+    PATCH ["settings", "client", "application"] (body: ApplicationSettingsPatch) -> SettingsView =
+        patch_application_settings(services, body),
+    PATCH ["settings", "appearance"] (body: AppearanceSettingsPatch) -> SettingsView =
+        patch_appearance_settings(services, body),
 }
 
 pub(super) fn settings_snapshot(services: &Services) -> SettingsView {
@@ -153,10 +142,6 @@ struct Recovery {
     restored_backup: bool,
 }
 
-fn settings_response(settings: &AppSettings, recoveries: Vec<Recovery>) -> ApiResponse {
-    ApiResponse::ok(settings_view(settings, recoveries))
-}
-
 fn settings_view(settings: &AppSettings, recoveries: Vec<Recovery>) -> SettingsView {
     let appearance = &settings.appearance;
     SettingsView {
@@ -203,40 +188,52 @@ fn settings_view(settings: &AppSettings, recoveries: Vec<Recovery>) -> SettingsV
     }
 }
 
-fn patch_player_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.body::<PlayerSettingsPatch>()?;
+fn patch_player_settings(
+    services: &Arc<Services>,
+    body: Body<'_, PlayerSettingsPatch>,
+) -> Result<SettingsView, ApiResponse> {
+    let patch = body.decode()?;
     match services.preferences.patch_player(patch) {
-        Ok(change) => Ok(settings_response(&change.settings, Vec::new())),
+        Ok(change) => Ok(settings_view(&change.settings, Vec::new())),
         Err(error) => Err(ApiResponse::error(400, error.to_string())),
     }
 }
 
-fn patch_playback_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.body::<PlaybackSettingsPatch>()?;
+fn patch_playback_settings(
+    services: &Arc<Services>,
+    body: Body<'_, PlaybackSettingsPatch>,
+) -> Result<SettingsView, ApiResponse> {
+    let patch = body.decode()?;
     match services.preferences.patch_playback(patch) {
-        Ok(change) => Ok(settings_response(&change.settings, Vec::new())),
+        Ok(change) => Ok(settings_view(&change.settings, Vec::new())),
         Err(error) => Err(ApiResponse::error(400, error.to_string())),
     }
 }
 
-fn patch_application_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.body::<ApplicationSettingsPatch>()?;
+fn patch_application_settings(
+    services: &Arc<Services>,
+    body: Body<'_, ApplicationSettingsPatch>,
+) -> Result<SettingsView, ApiResponse> {
+    let patch = body.decode()?;
     match services.preferences.patch_application(patch) {
-        Ok(change) => Ok(settings_response(&change.settings, Vec::new())),
+        Ok(change) => Ok(settings_view(&change.settings, Vec::new())),
         Err(error) => Err(ApiResponse::error(400, error.to_string())),
     }
 }
 
-fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.body::<AppearanceSettingsPatch>()?;
+fn patch_appearance_settings(
+    services: &Arc<Services>,
+    body: Body<'_, AppearanceSettingsPatch>,
+) -> Result<SettingsView, ApiResponse> {
+    let patch = body.decode()?;
     let scope = session_scope(services)?;
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
-            Ok(match services.preferences.patch_appearance(patch) {
-                Ok(change) => settings_response(&change.settings, Vec::new()),
-                Err(error) => ApiResponse::error(400, error.to_string()),
-            })
+            match services.preferences.patch_appearance(patch) {
+                Ok(change) => Ok(settings_view(&change.settings, Vec::new())),
+                Err(error) => Err(ApiResponse::error(400, error.to_string())),
+            }
         })
 }
 
@@ -324,24 +321,23 @@ pub(super) fn viewing(services: &Services) -> Result<ViewingView, ApiResponse> {
 #[ts(type = "Omit<ViewingView, \"startupDestination\"> & { startupDestination?: StartupView }")]
 pub(super) struct ViewingSettingsWrite(ViewingWrite);
 
-fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    if request.is("GET") {
-        return viewing(services).map(ApiResponse::ok);
-    }
+fn save_viewing(
+    services: &Arc<Services>,
+    body: Body<'_, ViewingSettingsWrite>,
+) -> Result<ViewingView, ApiResponse> {
     let scope = session_scope(services)?;
     let key = scope.account();
     let registry = library_registry(services);
-    let ViewingSettingsWrite(write) = request.body::<ViewingSettingsWrite>()?;
+    let ViewingSettingsWrite(write) = body.decode()?;
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
-            let saved = match services.accounts.save_viewing_with(key, |stored| {
+            match services.accounts.save_viewing_with(key, |stored| {
                 write.apply(stored.startup_destination.clone())
             }) {
-                Ok(saved) => saved,
-                Err(error) => return Ok(ApiResponse::error(400, error.to_string())),
-            };
-            Ok(ApiResponse::ok(viewing_view(saved, &registry)))
+                Ok(saved) => Ok(viewing_view(saved, &registry)),
+                Err(error) => Err(ApiResponse::error(400, error.to_string())),
+            }
         })
 }
 
@@ -365,21 +361,21 @@ pub(super) fn browsing(services: &Services) -> Result<BrowsingRoutes, ApiRespons
     Ok(BrowsingRoutes(services.accounts.browsing(scope.account())))
 }
 
-fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    if request.is("GET") {
-        return browsing(services).map(ApiResponse::ok);
-    }
+fn save_browsing(
+    services: &Arc<Services>,
+    body: Body<'_, BrowsingBody>,
+) -> Result<BrowsingSaved, ApiResponse> {
     let scope = session_scope(services)?;
     let key = scope.account();
-    let body = request.body::<BrowsingBody>()?;
+    let body = body.decode()?;
     let (page, route) = (body.page.as_str(), body.route.as_str());
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
-            Ok(match services.accounts.save_browsing(key, page, route) {
-                Ok(()) => ApiResponse::ok(BrowsingSaved { saved: true }),
-                Err(error) => ApiResponse::error(400, error.to_string()),
-            })
+            match services.accounts.save_browsing(key, page, route) {
+                Ok(()) => Ok(BrowsingSaved { saved: true }),
+                Err(error) => Err(ApiResponse::error(400, error.to_string())),
+            }
         })
 }
 
@@ -398,8 +394,7 @@ mod tests {
             area: "Account settings",
             restored_backup: true,
         }];
-        let response = super::settings_response(&settings, recoveries);
-        let body: serde_json::Value = serde_json::from_slice(&response.body)?;
+        let body = serde_json::to_value(super::settings_view(&settings, recoveries))?;
         assert_has_keys(
             &body,
             &[

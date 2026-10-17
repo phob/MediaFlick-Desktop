@@ -1,3 +1,5 @@
+use crate::collections::{CollectionProfile, ProviderResult};
+
 use super::*;
 
 mod browse;
@@ -9,102 +11,58 @@ pub(super) use browse::{
 };
 pub(super) use profiles::{
     CollectionProfilesIndex, CollectionSettings, CollectionTemplates, CommittedProfile,
-    ProfileDeleted, ProfileDraft, ReorderBody, SettingsPatch,
+    ProfileDeleted, ProfileDraft, ProfileEdit, ReorderBody, SettingsPatch,
 };
 
-pub(super) fn route(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    if let Some(response) = configuration_route(services, segments, request) {
-        return Some(response);
-    }
-    let response = match segments {
-        ["collections"] if request.is("GET") => browse::redirect_state(services),
-        ["collections", "mine"] if request.is("GET") => browse::mine(services),
-        ["collections", "mine", profile_id] if request.is("GET") => {
-            browse::profile_detail(services, &percent_decode(profile_id))
-        }
-        ["collections", "franchises"] if request.is("GET") => browse::franchises(services, request),
-        ["collections", "franchises", collection_id] if request.is("GET") => {
-            browse::franchise_detail(services, &percent_decode(collection_id), request)
-        }
-        ["collections", "jellyfin"] if request.is("GET") => jellyfin_index(services),
-        ["collections", "jellyfin", boxset_id] if request.is("GET") => {
-            jellyfin_detail(services, &percent_decode(boxset_id))
-        }
-        ["collections", "local-account"] if request.is("DELETE") => {
-            delete_local_account(services, request)
-        }
-        ["collections", "movie", tmdb_id] if request.is("GET") => {
-            browse::movie_franchise(services, &percent_decode(tmdb_id))
-        }
-        ["collections", "title", media_type, tmdb_id] if request.is("GET") => browse::title(
-            services,
-            &percent_decode(media_type),
-            &percent_decode(tmdb_id),
-        ),
-        _ => return None,
-    };
-    Some(response)
-}
-
-fn configuration_route(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    match segments {
-        ["collections", "settings"] if request.is("GET") => {
-            Some(profiles::settings(services, false))
-        }
-        ["collections", "settings", "reprobe"] if request.is("POST") => {
-            Some(profiles::settings(services, true))
-        }
-        ["collections", "settings"] if request.is("PATCH") => {
-            Some(profiles::patch_settings(services, request))
-        }
-        ["collections", "templates"] if request.is("GET") => Some(profiles::templates(services)),
-        ["collections", "mdblist", "search"] if request.is("POST") => {
-            Some(search_public_lists(services, request))
-        }
-        ["collections", "mdblist", "validate"] if request.is("POST") => {
-            Some(validate_public_list(services, request))
-        }
-        ["collections", "provider-artwork"] if request.is("GET") => {
-            Some(provider_artwork(services, request))
-        }
-        ["collections", "artwork"] if request.is("POST") => Some(upload_artwork(services, request)),
-        ["collections", "artwork", artwork_id] if request.is("GET") => {
-            Some(custom_artwork(services, &percent_decode(artwork_id)))
-        }
-        ["collections", "preview"] if request.is("POST") => {
-            Some(profiles::preview(services, request))
-        }
-        ["collections", "profiles"] if request.is("GET") => Some(profiles::list(services)),
-        ["collections", "profiles"] if request.is("POST") => {
-            Some(profiles::create(services, request))
-        }
-        ["collections", "profiles", "order"] if request.is("PUT") => {
-            Some(profiles::reorder(services, request))
-        }
-        ["collections", "profiles", profile_id] if request.is("GET") => {
-            Some(profiles::read(services, &percent_decode(profile_id)))
-        }
-        ["collections", "profiles", profile_id] if request.is("PATCH") => Some(profiles::edit(
-            services,
-            &percent_decode(profile_id),
-            request,
-        )),
-        ["collections", "profiles", profile_id] if request.is("DELETE") => {
-            Some(profiles::delete(services, &percent_decode(profile_id)))
-        }
-        ["collections", "profiles", profile_id, "refresh"] if request.is("POST") => {
-            Some(profiles::refresh(services, &percent_decode(profile_id)))
-        }
-        _ => None,
-    }
+routes! {
+    |services, request|
+    GET ["collections", "settings"] -> CollectionSettings = profiles::settings(services, false),
+    POST ["collections", "settings", "reprobe"] -> CollectionSettings =
+        profiles::settings(services, true),
+    PATCH ["collections", "settings"] (body: SettingsPatch) -> CollectionSettings =
+        profiles::patch_settings(services, body),
+    GET ["collections", "templates"] -> CollectionTemplates = profiles::templates(services),
+    POST ["collections", "mdblist", "search"] (body: PublicListSearchBody) -> Relay =
+        search_public_lists(services, body),
+    POST ["collections", "mdblist", "validate"] (body: PublicListValidateBody) -> Relay =
+        validate_public_list(services, body),
+    GET ["collections", "provider-artwork"] -> Binary = provider_artwork(services, request),
+    POST ["collections", "artwork"] (body: Bytes) -> UploadedArtwork =
+        upload_artwork(services, body),
+    GET ["collections", "artwork", artwork_id] -> Binary =
+        custom_artwork(services, &percent_decode(artwork_id)),
+    POST ["collections", "preview"] (body: ProfileDraft) -> ProviderResult =
+        profiles::preview(services, body),
+    GET ["collections", "profiles"] -> CollectionProfilesIndex = profiles::list(services),
+    POST ["collections", "profiles"] (body: ProfileDraft) -> CommittedProfile =
+        profiles::create(services, body),
+    PUT ["collections", "profiles", "order"] (body: ReorderBody) -> CollectionProfilesIndex =
+        profiles::reorder(services, body),
+    GET ["collections", "profiles", profile_id] -> CollectionProfile =
+        profiles::read(services, &percent_decode(profile_id)),
+    PATCH ["collections", "profiles", profile_id] (body: ProfileDraft) -> ProfileEdit =
+        profiles::edit(services, &percent_decode(profile_id), body),
+    DELETE ["collections", "profiles", profile_id] -> ProfileDeleted =
+        profiles::delete(services, &percent_decode(profile_id)),
+    POST ["collections", "profiles", profile_id, "refresh"] -> CommittedProfile =
+        profiles::refresh(services, &percent_decode(profile_id)),
+    GET ["collections"] -> CollectionSettings = browse::redirect_state(services),
+    GET ["collections", "mine"] -> CollectionProfilesIndex = browse::mine(services),
+    GET ["collections", "mine", profile_id] -> CollectionProfileDetail =
+        browse::profile_detail(services, &percent_decode(profile_id)),
+    GET ["collections", "franchises"] -> FranchiseCollectionsIndex =
+        browse::franchises(services, request),
+    GET ["collections", "franchises", collection_id] -> FranchiseCollection =
+        browse::franchise_detail(services, &percent_decode(collection_id), request),
+    GET ["collections", "jellyfin"] -> JellyfinCollections = jellyfin_index(services),
+    GET ["collections", "jellyfin", boxset_id] -> JellyfinCollectionDetail =
+        jellyfin_detail(services, &percent_decode(boxset_id)),
+    DELETE ["collections", "local-account"] (body: ConfirmationBody) -> AppStatus =
+        delete_local_account(services, body),
+    GET ["collections", "movie", tmdb_id] -> MovieCollection =
+        browse::movie_franchise(services, &percent_decode(tmdb_id)),
+    GET ["collections", "title", media_type, tmdb_id] -> CollectionTitle =
+        browse::title(services, &percent_decode(media_type), &percent_decode(tmdb_id)),
 }
 
 fn active_scope(services: &Arc<Services>) -> Result<SessionScope, ApiResponse> {
@@ -152,11 +110,11 @@ pub(super) struct UploadedArtwork {
     id: String,
 }
 
-fn jellyfin_index(services: &Arc<Services>) -> Handled {
+fn jellyfin_index(services: &Arc<Services>) -> Result<JellyfinCollections, ApiResponse> {
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_box_sets(client, user_id) {
-        Ok(response) => Ok(ApiResponse::ok(JellyfinCollections {
+        Ok(response) => Ok(JellyfinCollections {
             collections: response
                 .items
                 .iter()
@@ -168,12 +126,15 @@ fn jellyfin_index(services: &Arc<Services>) -> Handled {
                     item_count: item.child_count,
                 })
                 .collect(),
-        })),
+        }),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
-fn jellyfin_detail(services: &Arc<Services>, id: &str) -> Handled {
+fn jellyfin_detail(
+    services: &Arc<Services>,
+    id: &str,
+) -> Result<JellyfinCollectionDetail, ApiResponse> {
     if id.is_empty() {
         return Err(ApiResponse::error(
             400,
@@ -193,14 +154,14 @@ fn jellyfin_detail(services: &Arc<Services>, id: &str) -> Handled {
         Err(error) => return Err(scoped_failure(services, &scope, &error)),
     };
     match items::fetch_box_set_children(client, user_id, id) {
-        Ok(children) => Ok(ApiResponse::ok(JellyfinCollectionDetail {
+        Ok(children) => Ok(JellyfinCollectionDetail {
             name: set.display_name().to_string(),
             primary_image_tag: set.primary_image_tag().map(str::to_string),
             backdrop_image_tag: set.backdrop_image_tags.first().cloned(),
             items: children.items.iter().map(ItemSummary::from_dto).collect(),
             total_record_count: children.total_record_count,
             id: set.id,
-        })),
+        }),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
@@ -215,15 +176,18 @@ fn configuration_failure(error: &std::io::Error) -> ApiResponse {
     ApiResponse::error(status, error.to_string())
 }
 
-fn upload_artwork(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+fn upload_artwork(
+    services: &Arc<Services>,
+    body: Body<'_, Bytes>,
+) -> Result<UploadedArtwork, ApiResponse> {
     let scope = active_scope(services)?;
-    match services.artwork.stage(&request.body) {
+    match services.artwork.stage(body.bytes()) {
         Ok(id) => match services
             .session
             .commit_if_current(&scope, stale_account_response, || {
-                Ok(ApiResponse::ok(UploadedArtwork { id: id.clone() }))
+                Ok(UploadedArtwork { id: id.clone() })
             }) {
-            Ok(response) => Ok(response),
+            Ok(uploaded) => Ok(uploaded),
             Err(response) => {
                 if let Err(error) = services.artwork.remove(&id) {
                     tracing::warn!(target: "collections", "could not remove stale custom artwork: {error}");
@@ -235,7 +199,7 @@ fn upload_artwork(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     }
 }
 
-fn custom_artwork(services: &Arc<Services>, id: &str) -> Handled {
+fn custom_artwork(services: &Arc<Services>, id: &str) -> Result<BinaryAnswer, ApiResponse> {
     let account = active_account(services)?;
     if !services
         .collections
@@ -255,7 +219,7 @@ fn custom_artwork(services: &Arc<Services>, id: &str) -> Handled {
         _ => return Err(ApiResponse::error(404, "that custom poster does not exist")),
     };
     match std::fs::read(path) {
-        Ok(bytes) => Ok(ApiResponse::bytes(
+        Ok(bytes) => Ok(BinaryAnswer::bytes(
             content_type.to_string(),
             bytes,
             IMMUTABLE_CACHE,
@@ -283,21 +247,27 @@ pub(super) struct ConfirmationBody {
     confirmed: bool,
 }
 
-fn search_public_lists(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<PublicListSearchBody>()?;
+fn search_public_lists(
+    services: &Arc<Services>,
+    body: Body<'_, PublicListSearchBody>,
+) -> Result<Value, ApiResponse> {
+    let body = body.decode()?;
     active_account(services)?;
     let query = body.query.trim();
     if query.is_empty() {
         return Err(ApiResponse::error(400, "enter a public-list search"));
     }
-    match services.companion.search_public_lists(query) {
-        Ok(result) => Ok(ApiResponse::untyped(result)),
-        Err(error) => Err(ApiResponse::from_api_error(&error)),
-    }
+    services
+        .companion
+        .search_public_lists(query)
+        .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
-fn validate_public_list(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<PublicListValidateBody>()?;
+fn validate_public_list(
+    services: &Arc<Services>,
+    body: Body<'_, PublicListValidateBody>,
+) -> Result<Value, ApiResponse> {
+    let body = body.decode()?;
     active_account(services)?;
     let selector = body.selector.trim();
     if selector.is_empty() {
@@ -306,13 +276,16 @@ fn validate_public_list(services: &Arc<Services>, request: &ApiRequest) -> Handl
             "enter a public-list ID or canonical URL",
         ));
     }
-    match services.companion.validate_public_list(selector) {
-        Ok(result) => Ok(ApiResponse::untyped(result)),
-        Err(error) => Err(ApiResponse::from_api_error(&error)),
-    }
+    services
+        .companion
+        .validate_public_list(selector)
+        .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
-fn provider_artwork(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+fn provider_artwork(
+    services: &Arc<Services>,
+    request: &ApiRequest,
+) -> Result<BinaryAnswer, ApiResponse> {
     active_account(services)?;
     let Some(size) = request.param("size") else {
         return Err(ApiResponse::error(400, "artwork size is required"));
@@ -322,15 +295,18 @@ fn provider_artwork(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     };
     match services.companion.collection_artwork(&size, &path) {
         Ok((bytes, content_type)) if content_type.starts_with("image/") => {
-            Ok(ApiResponse::bytes(content_type, bytes, IMMUTABLE_CACHE))
+            Ok(BinaryAnswer::bytes(content_type, bytes, IMMUTABLE_CACHE))
         }
         Ok(_) => Err(ApiResponse::error(502, "provider returned invalid artwork")),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-fn delete_local_account(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let confirmed = request.body::<ConfirmationBody>()?.confirmed;
+fn delete_local_account(
+    services: &Arc<Services>,
+    body: Body<'_, ConfirmationBody>,
+) -> Result<AppStatus, ApiResponse> {
+    let confirmed = body.decode()?.confirmed;
     if !confirmed {
         return Err(ApiResponse::error(
             400,
@@ -338,7 +314,7 @@ fn delete_local_account(services: &Arc<Services>, request: &ApiRequest) -> Handl
         ));
     }
     match crate::app::services::delete_local_account_data(services) {
-        Ok(()) => super::status(services),
+        Ok(()) => Ok(app_status(services)),
         Err(error) => Err(ApiResponse::error(500, error)),
     }
 }

@@ -7,5 +7,3 @@ export type RatingsIntegrationStatus = Wire.RatingsIntegrationStatus
 export type NormalizedRating = Wire.NormalizedRating
 
 export type ItemRatings = Wire.ItemRatings
-
-export type RatingsBatchResponse = Wire.RatingsBatchResponse

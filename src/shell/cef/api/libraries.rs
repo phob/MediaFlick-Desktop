@@ -1,4 +1,4 @@
-use crate::library::browse::{self, BrowseError, Grid};
+use crate::library::browse::{self, BrowseError, FilterOptions, Grid};
 use crate::library::libraries::{
     BrowseCapabilities, CROSS_LIBRARY_BROWSE, LibraryId, LibraryKind, LibraryRegistry, Membership,
 };
@@ -43,23 +43,16 @@ pub(super) struct LibraryLatest {
     sort: SortKey,
 }
 
-pub(super) fn route(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    let response = match segments {
-        ["libraries"] if request.is("GET") => libraries(services),
-        ["libraries", id, "items"] if request.is("GET") => items(services, id, request),
-        ["libraries", id, "letters"] if request.is("GET") => letters(services, id, request),
-        ["libraries", id, "options"] if request.is("GET") => options(services, id),
-        ["libraries", id, "latest"] if request.is("GET") => latest(services, id, request),
-        _ => return None,
-    };
-    Some(response)
+routes! {
+    |services, request|
+    GET ["libraries"] -> LibrariesResponse = libraries(services),
+    GET ["libraries", id, "items"] -> ItemPage = items(services, id, request),
+    GET ["libraries", id, "letters"] -> ItemLetters = letters(services, id, request),
+    GET ["libraries", id, "options"] -> FilterOptions = options(services, id),
+    GET ["libraries", id, "latest"] -> LibraryLatest = latest(services, id, request),
 }
 
-fn libraries(services: &Arc<Services>) -> Handled {
+fn libraries(services: &Arc<Services>) -> Result<LibrariesResponse, ApiResponse> {
     let registry = services
         .library
         .libraries()
@@ -88,35 +81,45 @@ fn libraries(services: &Arc<Services>) -> Handled {
             }
         })
         .collect();
-    Ok(ApiResponse::ok(LibrariesResponse {
+    Ok(LibrariesResponse {
         known,
         libraries,
         cross_library: &CROSS_LIBRARY_BROWSE,
-    }))
+    })
 }
 
-fn items(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
+fn items(
+    services: &Arc<Services>,
+    id: &str,
+    request: &ApiRequest,
+) -> Result<ItemPage, ApiResponse> {
     let query = library_query(request, Params::Strict)?;
     let id = library_id(id)?;
     let scope = services.session.scope();
     let grid = browse::library_page(&services.library, &id, &query).map_err(browse_failure)?;
-    Ok(ApiResponse::ok(answer(services, scope, grid)?))
+    answer(services, scope, grid)
 }
 
-fn letters(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
+fn letters(
+    services: &Arc<Services>,
+    id: &str,
+    request: &ApiRequest,
+) -> Result<ItemLetters, ApiResponse> {
     let query = library_query(request, Params::Strict)?;
     let letters = browse::library_letters(&services.library, &library_id(id)?, &query)
         .map_err(browse_failure)?;
-    Ok(ApiResponse::ok(ItemLetters::new(letters)))
+    Ok(ItemLetters::new(letters))
 }
 
-fn options(services: &Arc<Services>, id: &str) -> Handled {
-    browse::library_options(&services.library, &library_id(id)?)
-        .map(ApiResponse::ok)
-        .map_err(browse_failure)
+fn options(services: &Arc<Services>, id: &str) -> Result<FilterOptions, ApiResponse> {
+    browse::library_options(&services.library, &library_id(id)?).map_err(browse_failure)
 }
 
-fn latest(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
+fn latest(
+    services: &Arc<Services>,
+    id: &str,
+    request: &ApiRequest,
+) -> Result<LibraryLatest, ApiResponse> {
     let limit = param(request, Params::Strict, "limit", |value| {
         value.parse::<i64>().ok()
     })?
@@ -126,10 +129,10 @@ fn latest(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
     let scope = services.session.scope();
     let latest = browse::latest(&services.library, &id, limit).map_err(browse_failure)?;
     let page = answer(services, scope, latest.grid)?;
-    Ok(ApiResponse::ok(LibraryLatest {
+    Ok(LibraryLatest {
         items: page.items,
         sort: latest.sort,
-    }))
+    })
 }
 
 fn answer(

@@ -1,23 +1,16 @@
+use crate::jellyfin::session::{QuickConnectPoll, QuickConnectStart, ServerInfo};
+
 use super::*;
 
-pub(super) fn route(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    let response = match segments {
-        ["auth", "connect"] if request.is("POST") => auth_connect(services, request),
-        ["auth", "login"] if request.is("POST") => auth_login(services, request),
-        ["auth", "quickconnect", "start"] if request.is("POST") => {
-            quick_connect_start(services, request)
-        }
-        ["auth", "quickconnect", "poll"] if request.is("POST") => {
-            quick_connect_poll(services, request)
-        }
-        ["auth", "logout"] if request.is("POST") => auth_logout(services, request),
-        _ => return None,
-    };
-    Some(response)
+routes! {
+    |services, request|
+    POST ["auth", "connect"] (body: ServerBody) -> ServerInfo = auth_connect(services, body),
+    POST ["auth", "login"] (body: LoginBody) -> AppStatus = auth_login(services, body),
+    POST ["auth", "quickconnect", "start"] (body: ServerBody) -> QuickConnectStart =
+        quick_connect_start(services, body),
+    POST ["auth", "quickconnect", "poll"] (body: QuickConnectPollBody) -> QuickConnectPoll =
+        quick_connect_poll(services, body),
+    POST ["auth", "logout"] (body: LogoutBody) -> AppStatus = auth_logout(services, body),
 }
 
 #[derive(Deserialize, ts_rs::TS)]
@@ -46,16 +39,22 @@ pub(super) struct LogoutBody {
     forget_library: bool,
 }
 
-fn auth_connect(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<ServerBody>()?;
+fn auth_connect(
+    services: &Arc<Services>,
+    body: Body<'_, ServerBody>,
+) -> Result<ServerInfo, ApiResponse> {
+    let body = body.decode()?;
     match services.session.connect(&body.server) {
-        Ok(server) => Ok(ApiResponse::ok(server)),
+        Ok(server) => Ok(server),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<LoginBody>()?;
+fn auth_login(
+    services: &Arc<Services>,
+    body: Body<'_, LoginBody>,
+) -> Result<AppStatus, ApiResponse> {
+    let body = body.decode()?;
     let result = services
         .session
         .login(&body.server, &body.username, &body.password);
@@ -69,22 +68,28 @@ fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> Handled {
             }
             services.sync.request();
             crate::collections::scheduler::request_run(services.clone());
-            status(services)
+            Ok(app_status(services))
         }
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-fn quick_connect_start(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<ServerBody>()?;
+fn quick_connect_start(
+    services: &Arc<Services>,
+    body: Body<'_, ServerBody>,
+) -> Result<QuickConnectStart, ApiResponse> {
+    let body = body.decode()?;
     match services.session.quick_connect_start(&body.server) {
-        Ok(start) => Ok(ApiResponse::ok(start)),
+        Ok(start) => Ok(start),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<QuickConnectPollBody>()?;
+fn quick_connect_poll(
+    services: &Arc<Services>,
+    body: Body<'_, QuickConnectPollBody>,
+) -> Result<QuickConnectPoll, ApiResponse> {
+    let body = body.decode()?;
     let result = services
         .session
         .quick_connect_poll(&body.server, &body.secret);
@@ -100,14 +105,17 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> Handled
                 services.sync.request();
                 crate::collections::scheduler::request_run(services.clone());
             }
-            Ok(ApiResponse::ok(poll))
+            Ok(poll)
         }
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-fn auth_logout(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<LogoutBody>()?;
+fn auth_logout(
+    services: &Arc<Services>,
+    body: Body<'_, LogoutBody>,
+) -> Result<AppStatus, ApiResponse> {
+    let body = body.decode()?;
     if let Err(error) = services.session.logout(body.forget_library) {
         tracing::error!("could not clear the local session after logout: {error}");
         return Err(ApiResponse::error(500, "could not clear the local session"));
@@ -120,7 +128,7 @@ fn auth_logout(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         ));
     }
     services.companion.clear();
-    status(services)
+    Ok(app_status(services))
 }
 
 fn remember_server_url(services: &Services) {

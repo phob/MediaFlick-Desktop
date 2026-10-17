@@ -30,3 +30,10 @@ export type StartupResponse = {
   home: HomeResponse | null,
   billboard: Billboard | null,
 };
+
+export type ApiRoutes = {
+  "GET /api/status": { params: null, body: null, kind: "json", response: AppStatus },
+  "GET /api/startup": { params: null, body: null, kind: "json", response: StartupResponse },
+  "GET /api/companion/info": { params: null, body: null, kind: "json", response: CompanionStatus },
+  "POST /api/companion/probe": { params: null, body: null, kind: "json", response: CompanionStatus },
+};

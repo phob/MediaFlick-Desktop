@@ -1,13 +1,12 @@
-//! The JSON contract with the UI. `ApiResponse::ok` and `ApiRequest::body`
+//! The JSON contract with the UI. `ApiResponse::ok` and `Body::decode`
 //! take only types listed in [`wire_types!`], and `generated_typescript_is_current`
-//! renders that list into one file per Rust module in `ui/src/lib/api/wire/`,
-//! re-exported by `ui/src/lib/api/wire.gen.ts`. The JSON encoder they
-//! share is private to this module; the handlers that predate it answer
-//! through `ApiResponse::untyped`, which `untyped_responses_only_shrink`
-//! counts.
+//! renders that list, with the route declarations of `super::routes`, into
+//! one file per Rust module in `ui/src/lib/api/wire/`, re-exported by
+//! `ui/src/lib/api/wire.gen.ts`. The JSON encoder is private to this module;
+//! the router, alone, calls `ok` for wire answers and `untyped` for the
+//! Companion JSON that `Relay` routes pass through.
 
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 use ts_rs::TS;
 
 use crate::jellyfin::api::ApiError;
@@ -39,8 +38,8 @@ use super::collections::{
     CollectionProfileDetail, CollectionProfilesIndex, CollectionSettings, CollectionTemplates,
     CollectionTitle, CommittedProfile, ConfirmationBody, FranchiseCollection,
     FranchiseCollectionsIndex, JellyfinCollectionDetail, JellyfinCollections, MovieCollection,
-    ProfileDeleted, ProfileDraft, PublicListSearchBody, PublicListValidateBody, ReorderBody,
-    SettingsPatch, UploadedArtwork,
+    ProfileDeleted, ProfileDraft, ProfileEdit, PublicListSearchBody, PublicListValidateBody,
+    ReorderBody, SettingsPatch, UploadedArtwork,
 };
 use super::letterboxd::{
     AddProfileBody, EnabledBody, LetterboxdProfileRemoved, LetterboxdProfileSaved,
@@ -62,7 +61,7 @@ use super::settings::{
     BrowsingBody, BrowsingRoutes, BrowsingSaved, SettingsView, ViewingSettingsWrite, ViewingView,
 };
 use super::shell::{MpvHelpOpened, ShellQueued, ShellRequestBody, ShellRequestQueued};
-use super::{ApiRequest, ApiResponse, AppStatus, NO_STORE, StartupResponse};
+use super::{ApiResponse, AppStatus, NO_STORE, StartupResponse};
 
 /// A type the UI reads or sends by name. Only [`wire_types!`] implements it,
 /// so a handler cannot answer with `json!` or with a type the generated
@@ -163,6 +162,7 @@ wire_types! {
     PlayerSnapshot,
     ProfileDeleted,
     ProfileDraft,
+    ProfileEdit,
     ProviderResult,
     PublicListSearchBody,
     PublicListValidateBody,
@@ -205,23 +205,6 @@ struct ErrorBody {
     expired: Option<bool>,
 }
 
-impl ApiRequest {
-    /// Decodes the JSON body into the endpoint's request type. A request sent
-    /// without a body decodes like `{}`, so it is accepted exactly when every
-    /// field of `T` is optional. A body that is not JSON, or does not match
-    /// `T`, is rejected rather than read as defaults: a garbled "mark as
-    /// unwatched" must not mark the item watched.
-    pub(super) fn body<T: DeserializeOwned + Wire>(&self) -> Result<T, ApiResponse> {
-        let body: &[u8] = if self.body.iter().all(u8::is_ascii_whitespace) {
-            b"{}"
-        } else {
-            &self.body
-        };
-        serde_json::from_slice(body)
-            .map_err(|error| ApiResponse::error(400, format!("invalid request body: {error}")))
-    }
-}
-
 impl ApiResponse {
     fn json(status: u16, value: impl Serialize) -> Self {
         let body = serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec());
@@ -239,9 +222,10 @@ impl ApiResponse {
         Self::json(200, value)
     }
 
-    /// A response the UI reads without a generated type. Answer with a
-    /// [`Wire`] type through [`Self::ok`] instead;
-    /// `untyped_responses_only_shrink` keeps this from spreading.
+    /// A response the UI reads without a generated type, for a route
+    /// declared `-> Relay`. Declare a [`Wire`] answer instead;
+    /// `untyped_responses_only_shrink` keeps this from spreading, and
+    /// `only_the_router_answers_with_success` keeps it in the router.
     pub(super) fn untyped(value: impl Serialize) -> Self {
         Self::json(200, value)
     }
@@ -267,11 +251,11 @@ impl ApiResponse {
     }
 }
 
-/// Handlers that predate this module answer through `ApiResponse::untyped`.
-/// Moving one to a wire type lowers these; nothing raises them, and request
-/// bodies, all typed now, stay at zero.
+/// Calls to `ApiResponse::untyped`: the one that answers every `Relay`
+/// route. Nothing raises these, and request bodies, all typed now, stay at
+/// zero.
 #[cfg(test)]
-const UNTYPED_RESPONSES: usize = 6; // guard-ratchet
+const UNTYPED_RESPONSES: usize = 1; // guard-ratchet
 #[cfg(test)]
 const UNTYPED_BODIES: usize = 0; // guard-ratchet
 

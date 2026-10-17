@@ -4,6 +4,9 @@ use std::path::Path;
 
 use ts_rs::{Config, TS, TypeVisitor};
 
+use super::super::MODULES;
+use super::super::routes::{AnswerSpec, BodySpec, Route, Segment, WireRef};
+
 const GENERATED: &str = "ui/src/lib/api/wire.gen.ts";
 const GENERATED_DIR: &str = "ui/src/lib/api/wire";
 const HEADER: &str =
@@ -27,8 +30,13 @@ struct Collect<'a> {
 fn module_of<T: ?Sized>() -> String {
     let path = std::any::type_name::<T>();
     let path = path.split_once('<').map_or(path, |(path, _)| path);
-    let module = path.rsplit_once("::").map_or("", |(module, _)| module);
-    let module = module.split_once("::").map_or("", |(_, module)| module);
+    module_name(path.rsplit_once("::").map_or("", |(module, _)| module))
+}
+
+/// A module path without the crate: `mediaflick_desktop::shell::cef::api`
+/// is `api`.
+fn module_name(path: &str) -> String {
+    let module = path.split_once("::").map_or("", |(_, module)| module);
     let module = module.strip_prefix("shell::cef::").unwrap_or(module);
     module.replace("::", ".")
 }
@@ -190,9 +198,71 @@ fn tidy_inline(text: &str) -> String {
     out
 }
 
+/// The name of a module's route map: `api.collections` is
+/// `ApiCollectionsRoutes`.
+fn route_map_name(module: &str) -> String {
+    let words = module
+        .split(['.', '_'])
+        .map(capitalized)
+        .collect::<String>();
+    format!("{words}Routes")
+}
+
+fn capitalized(word: &str) -> String {
+    let mut chars = word.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_ascii_uppercase().to_string() + chars.as_str()
+    })
+}
+
+fn camel_case(name: &str) -> String {
+    let mut words = name.split('_');
+    let first = words.next().unwrap_or_default().to_string();
+    first + &words.map(capitalized).collect::<String>()
+}
+
+/// One route as a member of its module's route map, keyed by its method
+/// and path. `kind` says how the UI reads the answer: as the generated
+/// `response` type (`json`), as Companion JSON it describes by hand
+/// (`relay`), or not at all, because it only links to the bytes
+/// (`binary`).
+fn route_member(route: &Route, mut name: impl FnMut(&WireRef) -> String) -> String {
+    let mut path = String::from("/api");
+    let mut params = Vec::new();
+    for segment in route.path {
+        match segment {
+            Segment::Literal(literal) => path.push_str(&format!("/{literal}")),
+            Segment::Param { name } => {
+                let name = camel_case(name);
+                path.push_str(&format!("/{{{name}}}"));
+                params.push(format!("{name}: string | number"));
+            }
+        }
+    }
+    let params = if params.is_empty() {
+        "null".to_string()
+    } else {
+        format!("{{ {} }}", params.join(", "))
+    };
+    let body = match &route.body {
+        BodySpec::None => "null".to_string(),
+        BodySpec::Json(wire) => name(wire),
+        BodySpec::Bytes => "ArrayBuffer".to_string(),
+    };
+    let answer = match &route.answer {
+        AnswerSpec::Json(wire) => format!("kind: \"json\", response: {}", name(wire)),
+        AnswerSpec::Relay => "kind: \"relay\"".to_string(),
+        AnswerSpec::Binary => "kind: \"binary\"".to_string(),
+    };
+    format!(
+        "  \"{} {path}\": {{ params: {params}, body: {body}, {answer} }},\n",
+        route.method
+    )
+}
+
 /// Every generated file by its path from the repository root: one per
 /// Rust module, importing what it names from the others, and the index
-/// that re-exports them.
+/// that re-exports them and joins the modules' route maps into `Routes`.
 fn render() -> BTreeMap<String, String> {
     let cfg = Config::new().with_large_int("number");
     let mut collect = Collect {
@@ -202,18 +272,46 @@ fn render() -> BTreeMap<String, String> {
     };
     super::visit_roots(&mut collect);
     collect.visit::<super::ErrorBody>();
-    let mut modules = BTreeMap::<&str, (BTreeMap<&str, BTreeSet<&str>>, String)>::new();
-    for decl in collect.decls.values() {
-        let (imports, body) = modules.entry(&decl.module).or_default();
+    let decls = collect.decls;
+    let mut modules = BTreeMap::<String, (BTreeMap<String, BTreeSet<String>>, String)>::new();
+    for decl in decls.values() {
+        let (imports, body) = modules.entry(decl.module.clone()).or_default();
         for dep in &decl.deps {
-            let from = &collect.decls[dep].module;
+            let from = &decls[dep].module;
             if *from != decl.module {
-                imports.entry(from).or_default().insert(dep);
+                imports.entry(from.clone()).or_default().insert(dep.clone());
             }
         }
         body.push_str("\nexport ");
         body.push_str(&decl.text);
         body.push('\n');
+    }
+    let mut route_maps = Vec::new();
+    for routes in MODULES {
+        let module = module_name(routes.module);
+        let (imports, body) = modules.entry(module.clone()).or_default();
+        let mut name = |wire: &WireRef| {
+            let name = wire(&cfg);
+            let from = &decls
+                .get(&name)
+                .unwrap_or_else(|| panic!("`{name}` is not in wire_types!"))
+                .module;
+            if *from != module {
+                imports
+                    .entry(from.clone())
+                    .or_default()
+                    .insert(name.clone());
+            }
+            name
+        };
+        let members = routes
+            .table
+            .iter()
+            .map(|route| route_member(route, &mut name))
+            .collect::<String>();
+        let map = route_map_name(&module);
+        body.push_str(&format!("\nexport type {map} = {{\n{members}}};\n"));
+        route_maps.push((module, map));
     }
     let mut files = BTreeMap::new();
     let mut index = format!("{HEADER}\n");
@@ -232,6 +330,18 @@ fn render() -> BTreeMap<String, String> {
         index.push_str(&format!("export type * from \"./wire/{module}.gen.ts\"\n"));
         files.insert(format!("{GENERATED_DIR}/{module}.gen.ts"), out);
     }
+    index.push('\n');
+    for (module, map) in &route_maps {
+        index.push_str(&format!(
+            "import type {{ {map} }} from \"./wire/{module}.gen.ts\"\n"
+        ));
+    }
+    let maps = route_maps
+        .iter()
+        .map(|(_, map)| format!("\n  & {map}"))
+        .collect::<String>();
+    index.push_str("\n/** Every route the native app serves, by method and path. */\n");
+    index.push_str(&format!("export type Routes ={maps};\n"));
     files.insert(GENERATED.to_string(), index);
     files
 }
