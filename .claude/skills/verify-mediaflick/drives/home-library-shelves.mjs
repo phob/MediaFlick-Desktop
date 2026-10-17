@@ -6,10 +6,10 @@
 // movies and TV shows libraries the Jellyfin data the cache sorts by (date
 // added; a show's newest episode). /latest names the library sort that
 // matches the shelf (episode-added for TV shows, added otherwise), and the
-// shelf's All link opens the library with it. Then, in the disposable profile's accounts.json: one shelf
-// turned off and saved, another toggled and discarded (the file keeps its
-// hash), and Restore defaults saved (every library shelf on, in server
-// order). Read-only on the server.
+// shelf's All link opens the library with it. Then, in the disposable
+// profile's accounts.json: one shelf turned off and saved, another toggled
+// and discarded (the file keeps its hash), and Restore defaults saved (every
+// library shelf on, in server order). Read-only on the server.
 //   just verify home-library-shelves
 //   just verify home-library-shelves --account https://jellyfin.example.com
 import { createHash } from "node:crypto"
@@ -292,8 +292,8 @@ export default async function homeLibraryShelves(ctx) {
       : `${label(library.name)} matches its profile's Jellyfin query (${entry.source}): ${entry.shelfIds.length} ids (${order})`)
     entry.viewAll = { expected: { sort: entry.sort.returned, href: viewAllHref(library, entry.sort.returned) }, shown: shelf.viewAll }
     expect(shelf.viewAll === entry.viewAll.expected.href, `${label(library.name)}: All links to the sort /latest named, ${entry.viewAll.expected.href} (${shelf.viewAll})`)
-    if (library.kind === "shows") expect(shelf.viewAll === viewAllHref(library, "episode-added"), `${label(library.name)}: a TV shows shelf's All is sort=episode-added`)
     if (library.kind === "shows") {
+      expect(shelf.viewAll === viewAllHref(library, "episode-added"), `${label(library.name)}: a TV shows shelf's All is sort=episode-added`)
       ctx.step(`measured: ${library.name} SortBy=DateLastContentAdded ${entry.oracle.dateLastContentAdded.match ? "matches" : "does not match"} the newest-episode order`)
     }
   }
@@ -338,8 +338,8 @@ export default async function homeLibraryShelves(ctx) {
   await showShelf(ctx, remaining[0] ?? "")
   await ctx.screenshot("03-home-one-off")
 
+  await openHomeSettings(ctx)
   if (toggled) {
-    await openHomeSettings(ctx)
     report.discarded = { id: toggled.id, name: toggled.name, before: fileState(ctx, userId) }
     const checkbox = { role: "checkbox", name: `Show ${label(toggled.name)}` }
     const was = (await ctx.state(checkbox)).checked
@@ -352,7 +352,6 @@ export default async function homeLibraryShelves(ctx) {
     expect((await ctx.state(checkbox)).checked === was, `Discard returns ${label(toggled.name)} to its saved state`)
     expect(report.discarded.after.sha256 === report.discarded.before.sha256, `accounts.json keeps its SHA-256 through toggle and Discard (${report.discarded.after.sha256})`)
   } else {
-    await openHomeSettings(ctx)
     ctx.step("only one library; Discard is not exercised")
   }
 
