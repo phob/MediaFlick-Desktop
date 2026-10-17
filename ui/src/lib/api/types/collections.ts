@@ -1,7 +1,8 @@
 import type { JsonObject } from "../../json.ts"
+import type * as Wire from "../wire.gen.ts"
 import type { ItemSummary } from "./catalog.ts"
 
-export type CollectionMode = "mediaFlick" | "jellyfin"
+export type CollectionMode = Wire.CollectionMode
 
 export type CollectionMediaType = "movie" | "series" | "mixed"
 

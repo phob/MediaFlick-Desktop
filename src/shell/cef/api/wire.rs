@@ -12,23 +12,26 @@ use ts_rs::TS;
 use crate::jellyfin::api::ApiError;
 
 use crate::companion::CompanionStatus;
+use crate::integrations::letterboxd::ReviewLookup;
+use crate::integrations::mdblist::{RatingsBatchResponse, RatingsIntegrationStatus};
 use crate::library::ItemPage;
 use crate::library::browse::FilterOptions;
 use crate::library::model::{DetailView, ItemSummary};
 use crate::playback::PlayerSnapshot;
 
 use super::catalog::{
-    Billboard, Genres, HomeResponse, HomeResumeResponse, ItemAbout, ItemLetters, ItemSynopsis,
-    OfficialRatings, PersonResolution,
+    Billboard, Genres, HomeResponse, HomeResumeResponse, HomeSettingsResponse, ItemAbout,
+    ItemLetters, ItemSynopsis, OfficialRatings, PersonResolution,
 };
+use super::letterboxd::{LetterboxdProfileRemoved, LetterboxdProfileSaved, LetterboxdProfiles};
 use super::libraries::{LibrariesResponse, LibraryLatest};
 use super::media::{
     ExternalLinkOpened, FavoriteState, MediaInfoResponse, NextUpResponse, PlaybackPreferenceSaved,
     PlayedState, TechnicalBatch, TrailerResponse,
 };
 use super::playback::PlayerCommandBody;
-use super::settings::SettingsView;
-use super::{ApiRequest, ApiResponse, AppStatus, NO_STORE};
+use super::settings::{BrowsingRoutes, BrowsingSaved, SettingsView, ViewingView};
+use super::{ApiRequest, ApiResponse, AppStatus, NO_STORE, StartupResponse};
 
 /// A type the UI reads or sends by name. Only [`wire_types!`] implements it,
 /// so a handler cannot answer with `json!` or with a type the generated
@@ -61,6 +64,8 @@ macro_rules! wire_types {
 wire_types! {
     AppStatus,
     Billboard,
+    BrowsingRoutes,
+    BrowsingSaved,
     CompanionStatus,
     DetailView,
     ExternalLinkOpened,
@@ -69,11 +74,15 @@ wire_types! {
     Genres,
     HomeResponse,
     HomeResumeResponse,
+    HomeSettingsResponse,
     ItemAbout,
     ItemLetters,
     ItemPage,
     ItemSummary,
     ItemSynopsis,
+    LetterboxdProfileRemoved,
+    LetterboxdProfileSaved,
+    LetterboxdProfiles,
     LibrariesResponse,
     LibraryLatest,
     MediaInfoResponse,
@@ -84,9 +93,14 @@ wire_types! {
     PlayedState,
     PlayerCommandBody,
     PlayerSnapshot,
+    RatingsBatchResponse,
+    RatingsIntegrationStatus,
+    ReviewLookup,
     SettingsView,
+    StartupResponse,
     TechnicalBatch,
     TrailerResponse,
+    ViewingView,
 }
 
 /// The body of every non-2xx JSON response. It is generated for the UI but
@@ -185,7 +199,7 @@ mod tests {
     /// Handlers that predate this module answer through `ApiResponse::untyped`
     /// and decode through `ApiRequest::untyped_body`. Moving one to a wire
     /// type lowers these; nothing raises them.
-    const UNTYPED_RESPONSES: usize = 58; // guard-ratchet
+    const UNTYPED_RESPONSES: usize = 41; // guard-ratchet
     const UNTYPED_BODIES: usize = 32; // guard-ratchet
 
     struct Collect<'a> {
@@ -286,7 +300,10 @@ mod tests {
                 object_end = Some(index);
             }
         });
-        if rhs.starts_with('{') && object_end == Some(rhs.len() - 1) {
+        // A mapped type, `{ [key in string]: T }`, is one member and takes no
+        // comma.
+        let mapped = rhs[1..].trim_start().starts_with('[');
+        if rhs.starts_with('{') && object_end == Some(rhs.len() - 1) && !mapped {
             let fields = split_top_level(&rhs[1..rhs.len() - 1], b',')
                 .into_iter()
                 .map(str::trim)

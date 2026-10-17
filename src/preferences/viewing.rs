@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::library::libraries::{LibraryId, LibraryKind, LibraryRegistry, MediaLibrary};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub enum NextEpisode {
     Off,
@@ -14,7 +14,7 @@ pub enum NextEpisode {
     Auto,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub enum SubtitleMode {
     #[default]
@@ -45,17 +45,34 @@ impl StartupDestination {
     }
 }
 
-pub fn startup_view(stored: &StartupDestination, registry: &LibraryRegistry) -> StartupDestination {
+/// The page the app opens on, as the UI reads it: a legacy Movies or Series
+/// destination is already resolved to a library.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub enum StartupView {
+    Home,
+    Calendar,
+    Last,
+    Library(LibraryId),
+}
+
+pub fn startup_view(stored: &StartupDestination, registry: &LibraryRegistry) -> StartupView {
     let first_of = |libraries: &[MediaLibrary], kind| {
         libraries
             .iter()
             .find(|library| library.kind() == kind)
-            .map_or(StartupDestination::Home, |library| {
-                StartupDestination::Library(library.id.clone())
+            .map_or(StartupView::Home, |library| {
+                StartupView::Library(library.id.clone())
             })
     };
     match (stored, registry) {
-        (stored, LibraryRegistry::Unknown) if stored.is_legacy() => StartupDestination::Home,
+        (StartupDestination::Home, _) => StartupView::Home,
+        (StartupDestination::Calendar, _) => StartupView::Calendar,
+        (StartupDestination::Last, _) => StartupView::Last,
+        (
+            StartupDestination::LegacyMovies | StartupDestination::LegacySeries,
+            LibraryRegistry::Unknown,
+        ) => StartupView::Home,
         (StartupDestination::LegacyMovies, LibraryRegistry::Known(libraries)) => {
             first_of(libraries, LibraryKind::Movies)
         }
@@ -65,9 +82,9 @@ pub fn startup_view(stored: &StartupDestination, registry: &LibraryRegistry) -> 
         (StartupDestination::Library(id), LibraryRegistry::Known(libraries))
             if !libraries.iter().any(|library| library.id == *id) =>
         {
-            StartupDestination::Home
+            StartupView::Home
         }
-        _ => stored.clone(),
+        (StartupDestination::Library(id), _) => StartupView::Library(id.clone()),
     }
 }
 
@@ -290,7 +307,9 @@ impl PlayerComfort {
 
 #[cfg(test)]
 mod tests {
-    use super::{PlayerComfort, StartupDestination, ViewingSettings, ViewingWrite, startup_view};
+    use super::{
+        PlayerComfort, StartupDestination, StartupView, ViewingSettings, ViewingWrite, startup_view,
+    };
     use crate::jellyfin::api::model::UserViewDto;
     use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
 
@@ -315,8 +334,16 @@ mod tests {
         )
     }
 
+    fn library_id(id: &str) -> LibraryId {
+        LibraryId::parse(id).expect("test id")
+    }
+
     fn library(id: &str) -> StartupDestination {
-        StartupDestination::Library(LibraryId::parse(id).expect("test id"))
+        StartupDestination::Library(library_id(id))
+    }
+
+    fn library_view(id: &str) -> StartupView {
+        StartupView::Library(library_id(id))
     }
 
     #[test]
@@ -329,11 +356,11 @@ mod tests {
         ]);
         assert_eq!(
             startup_view(&StartupDestination::LegacyMovies, &registry),
-            library(MOVIES_A)
+            library_view(MOVIES_A)
         );
         assert_eq!(
             startup_view(&StartupDestination::LegacySeries, &registry),
-            library(SHOWS)
+            library_view(SHOWS)
         );
     }
 
@@ -342,11 +369,11 @@ mod tests {
         let shows_only = known(&[(MIXED, None), (SHOWS, Some("tvshows"))]);
         assert_eq!(
             startup_view(&StartupDestination::LegacyMovies, &shows_only),
-            StartupDestination::Home
+            StartupView::Home
         );
         assert_eq!(
             startup_view(&StartupDestination::LegacySeries, &known(&[])),
-            StartupDestination::Home
+            StartupView::Home
         );
         for legacy in [
             StartupDestination::LegacyMovies,
@@ -354,7 +381,7 @@ mod tests {
         ] {
             assert_eq!(
                 startup_view(&legacy, &LibraryRegistry::Unknown),
-                StartupDestination::Home
+                StartupView::Home
             );
         }
     }
@@ -362,26 +389,26 @@ mod tests {
     #[test]
     fn a_library_destination_opens_home_only_when_a_known_list_lacks_it() {
         let registry = known(&[(SHOWS, Some("tvshows"))]);
-        assert_eq!(startup_view(&library(SHOWS), &registry), library(SHOWS));
         assert_eq!(
-            startup_view(&library(GONE), &registry),
-            StartupDestination::Home
+            startup_view(&library(SHOWS), &registry),
+            library_view(SHOWS)
         );
+        assert_eq!(startup_view(&library(GONE), &registry), StartupView::Home);
         assert_eq!(
             startup_view(&library(GONE), &LibraryRegistry::Unknown),
-            library(GONE)
+            library_view(GONE)
         );
     }
 
     #[test]
     fn other_destinations_pass_through() {
         for registry in [LibraryRegistry::Unknown, known(&[(SHOWS, Some("tvshows"))])] {
-            for destination in [
-                StartupDestination::Home,
-                StartupDestination::Calendar,
-                StartupDestination::Last,
+            for (destination, view) in [
+                (StartupDestination::Home, StartupView::Home),
+                (StartupDestination::Calendar, StartupView::Calendar),
+                (StartupDestination::Last, StartupView::Last),
             ] {
-                assert_eq!(startup_view(&destination, &registry), destination);
+                assert_eq!(startup_view(&destination, &registry), view);
             }
         }
     }

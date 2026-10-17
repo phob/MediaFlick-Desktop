@@ -1,10 +1,23 @@
 use std::collections::BTreeMap;
 
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
 
 const MAX_VOTES: i64 = 1_000_000_000_000;
 
-pub(super) fn normalize_rating_array(value: &Value) -> Value {
+/// One rating on its source's native scale, from 0 to `scaleMax`.
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct NormalizedRating {
+    source_id: &'static str,
+    value: f64,
+    /// The source's 0 to 100 score, when it reports one.
+    score: Option<f64>,
+    votes: Option<i64>,
+    scale_max: f64,
+}
+
+pub(super) fn normalize_rating_array(value: &Value) -> Vec<NormalizedRating> {
     let mut ratings = Vec::new();
     for rating in value.as_array().into_iter().flatten() {
         let Some(source) = rating
@@ -25,39 +38,28 @@ pub(super) fn normalize_rating_array(value: &Value) -> Value {
                 .or_else(|| votes.as_str()?.parse::<i64>().ok())
                 .filter(|votes| (0..=MAX_VOTES).contains(votes))
         });
-        ratings.push(normalized_rating(source, scale, value, score, votes));
+        ratings.push(NormalizedRating {
+            source_id: source,
+            value,
+            score,
+            votes,
+            scale_max: scale,
+        });
     }
     deduplicate_ratings(ratings)
 }
 
-fn deduplicate_ratings(ratings: Vec<Value>) -> Value {
-    let mut by_source = BTreeMap::<&'static str, Value>::new();
-    for rating in ratings {
-        if let Some(source) = rating
-            .get("sourceId")
-            .and_then(Value::as_str)
-            .and_then(canonical_source)
-        {
-            by_source.insert(source, rating);
-        }
-    }
-    Value::Array(by_source.into_values().collect())
+/// The rating cache stores a normalized list as its JSON.
+pub(super) fn rating_cache_value(ratings: &[NormalizedRating]) -> Value {
+    serde_json::to_value(ratings).unwrap_or_else(|_| Value::Array(Vec::new()))
 }
 
-fn normalized_rating(
-    source: &'static str,
-    scale: f64,
-    value: f64,
-    score: Option<f64>,
-    votes: Option<i64>,
-) -> Value {
-    json!({
-        "sourceId": source,
-        "value": value,
-        "score": score,
-        "votes": votes,
-        "scaleMax": scale,
-    })
+fn deduplicate_ratings(ratings: Vec<NormalizedRating>) -> Vec<NormalizedRating> {
+    let mut by_source = BTreeMap::new();
+    for rating in ratings {
+        by_source.insert(rating.source_id, rating);
+    }
+    by_source.into_values().collect()
 }
 
 fn number(value: Option<&Value>) -> Option<f64> {
@@ -146,60 +148,78 @@ pub(super) fn normalized_source_updated_at(value: Option<&str>) -> Option<String
     Some(value.to_string())
 }
 
-pub(super) fn known_source_definitions() -> Vec<Value> {
+/// A rating source the app can show, with how its value is written.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RatingSourceDefinition {
+    id: &'static str,
+    label: &'static str,
+    short_label: &'static str,
+    scale_max: f64,
+    format: RatingFormat,
+    known: bool,
+}
+
+#[derive(Clone, Copy, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+enum RatingFormat {
+    Percent,
+    Decimal,
+    Integer,
+    Stars,
+}
+
+pub(super) fn known_source_definitions() -> Vec<RatingSourceDefinition> {
+    use RatingFormat::{Decimal, Integer, Percent, Stars};
     vec![
-        source_definition("mdblist_score", "MDBList Score", "MDB", 100.0, "percent"),
+        source_definition("mdblist_score", "MDBList Score", "MDB", 100.0, Percent),
         source_definition(
             "mdblist_score_average",
             "MDBList Score Average",
             "AVG",
             100.0,
-            "percent",
+            Percent,
         ),
-        source_definition("imdb", "IMDb", "IMDb", 10.0, "decimal"),
-        source_definition("trakt", "Trakt", "Trakt", 100.0, "percent"),
-        source_definition("tmdb", "TMDB", "TMDB", 10.0, "decimal"),
-        source_definition("letterboxd", "Letterboxd", "LB", 5.0, "stars"),
-        source_definition(
-            "tomatoes",
-            "Rotten Tomatoes Critics",
-            "RT",
-            100.0,
-            "percent",
-        ),
+        source_definition("imdb", "IMDb", "IMDb", 10.0, Decimal),
+        source_definition("trakt", "Trakt", "Trakt", 100.0, Percent),
+        source_definition("tmdb", "TMDB", "TMDB", 10.0, Decimal),
+        source_definition("letterboxd", "Letterboxd", "LB", 5.0, Stars),
+        source_definition("tomatoes", "Rotten Tomatoes Critics", "RT", 100.0, Percent),
         source_definition(
             "popcorn",
             "Rotten Tomatoes Audience",
             "RT A",
             100.0,
-            "percent",
+            Percent,
         ),
-        source_definition("metacritic", "Metacritic Critics", "MC", 100.0, "integer"),
-        source_definition(
-            "metacriticuser",
-            "Metacritic Users",
-            "MC U",
-            10.0,
-            "decimal",
-        ),
-        source_definition("rogerebert", "Roger Ebert", "Ebert", 4.0, "stars"),
-        source_definition("myanimelist", "MyAnimeList", "MAL", 10.0, "decimal"),
+        source_definition("metacritic", "Metacritic Critics", "MC", 100.0, Integer),
+        source_definition("metacriticuser", "Metacritic Users", "MC U", 10.0, Decimal),
+        source_definition("rogerebert", "Roger Ebert", "Ebert", 4.0, Stars),
+        source_definition("myanimelist", "MyAnimeList", "MAL", 10.0, Decimal),
     ]
 }
 
-fn source_definition(id: &str, label: &str, short_label: &str, scale: f64, format: &str) -> Value {
-    json!({
-        "id": id,
-        "label": label,
-        "shortLabel": short_label,
-        "scaleMax": scale,
-        "format": format,
-        "known": true,
-    })
+fn source_definition(
+    id: &'static str,
+    label: &'static str,
+    short_label: &'static str,
+    scale_max: f64,
+    format: RatingFormat,
+) -> RatingSourceDefinition {
+    RatingSourceDefinition {
+        id,
+        label,
+        short_label,
+        scale_max,
+        format,
+        known: true,
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -214,7 +234,7 @@ mod tests {
             { "sourceId": "future_meter", "value": 7.25, "score": 73 }
         ]));
         assert_eq!(
-            ratings,
+            rating_cache_value(&ratings),
             json!([
                 { "sourceId": "imdb", "value": 8.1, "score": 81.0, "votes": 10, "scaleMax": 10.0 },
                 { "sourceId": "letterboxd", "value": 4.0, "score": 80.0, "votes": null, "scaleMax": 5.0 },

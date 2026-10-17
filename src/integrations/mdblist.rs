@@ -15,14 +15,52 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use serde_json::{Value, json};
+use serde::Serialize;
 
 use crate::companion::CompanionSession;
 use crate::library::Library;
 
-use self::schema::known_source_definitions;
+use self::schema::{RatingSourceDefinition, known_source_definitions};
 
-const CACHE_ORIGIN: &str = "plugin";
+pub use self::cache::RatingsBatchResponse;
+
+/// Where a card's ratings came from. The Companion is the only source.
+#[derive(Clone, Copy, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+enum RatingOrigin {
+    Plugin,
+}
+
+/// Where new ratings come from, `none` while the Companion offers none.
+#[derive(Clone, Copy, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+enum EffectiveOrigin {
+    Plugin,
+    None,
+}
+
+/// `/api/integrations/ratings`: whether card ratings are available and which
+/// sources the app knows.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RatingsIntegrationStatus {
+    boundary_version: u8,
+    effective_origin: EffectiveOrigin,
+    available: bool,
+    selection_enabled: bool,
+    plugin: RatingsPluginStatus,
+    sources: Vec<RatingSourceDefinition>,
+    selected_sources: Vec<String>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct RatingsPluginStatus {
+    available: bool,
+    capability: &'static str,
+    boundary_version: u8,
+    detail: &'static str,
+}
 
 #[derive(Debug)]
 pub struct RatingsError(String);
@@ -56,26 +94,30 @@ impl RatingsService {
         }
     }
 
-    pub fn status(&self, selected_sources: &[String]) -> Value {
+    pub fn status(&self, selected_sources: Vec<String>) -> RatingsIntegrationStatus {
         let _ = self.companion.probe(false);
         let available = self.companion.supports("ratings-v1");
-        json!({
-            "boundaryVersion": 1,
-            "effectiveOrigin": if available { CACHE_ORIGIN } else { "none" },
-            "available": available,
-            "selectionEnabled": available,
-            "plugin": {
-                "available": available,
-                "capability": "ratings-v1",
-                "boundaryVersion": 1,
-                "detail": if available {
+        RatingsIntegrationStatus {
+            boundary_version: 1,
+            effective_origin: if available {
+                EffectiveOrigin::Plugin
+            } else {
+                EffectiveOrigin::None
+            },
+            available,
+            selection_enabled: available,
+            plugin: RatingsPluginStatus {
+                available,
+                capability: "ratings-v1",
+                boundary_version: 1,
+                detail: if available {
                     "Server ratings are available."
                 } else {
                     "Server ratings are unavailable."
                 },
             },
-            "sources": known_source_definitions(),
-            "selectedSources": selected_sources,
-        })
+            sources: known_source_definitions(),
+            selected_sources,
+        }
     }
 }

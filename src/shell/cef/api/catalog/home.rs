@@ -41,6 +41,10 @@ pub(in super::super) struct Billboard {
 }
 
 pub(super) fn home(services: &Arc<Services>) -> Handled {
+    home_view(services).map(ApiResponse::ok)
+}
+
+pub(in super::super) fn home_view(services: &Services) -> Result<HomeResponse, ApiResponse> {
     let home = resolved_home(services)?;
     let watching_enabled = element_enabled(&home.settings, HomeBuiltIn::Watching);
     let continue_watching = if watching_enabled && home.settings.watching.continue_watching {
@@ -83,11 +87,11 @@ pub(super) fn home(services: &Arc<Services>) -> Handled {
             rows.push(row);
         }
     }
-    Ok(ApiResponse::ok(HomeResponse {
+    Ok(HomeResponse {
         configuration: settings_view(&home, &home.settings),
         continue_watching,
         rows,
-    }))
+    })
 }
 
 fn built_in_home_row(
@@ -309,11 +313,15 @@ fn latest_home_items(library: &Library, kind: CatalogKind) -> Vec<ItemSummary> {
 }
 
 pub(super) fn billboard(services: &Arc<Services>) -> Handled {
+    billboard_view(services).map(ApiResponse::ok)
+}
+
+pub(in super::super) fn billboard_view(services: &Services) -> Result<Billboard, ApiResponse> {
     if !resolved_home(services)?.settings.billboard {
-        return Ok(ApiResponse::ok(Billboard { items: Vec::new() }));
+        return Ok(Billboard { items: Vec::new() });
     }
     match services.library.random_billboard_titles(BILLBOARD_LIMIT) {
-        Ok(items) => Ok(ApiResponse::ok(Billboard { items })),
+        Ok(items) => Ok(Billboard { items }),
         Err(error) => Err(storage_failure(&error)),
     }
 }

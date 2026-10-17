@@ -28,7 +28,7 @@ pub struct Profile {
     pub canonical_url: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExternalProfile {
     pub id: String,
@@ -98,22 +98,25 @@ impl Verification {
 /// when a review is present, `entry_url` and `watched_date` describe that
 /// review rather than a newer rating-only rewatch. The URL is present only
 /// when it is a canonical film URL below that same member profile.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MemberReview {
     pub profile_id: String,
     pub username: String,
     pub display_name: String,
     pub profile_url: String,
+    /// Canonical Letterboxd film entry; absent if the feed supplied an unsafe URL.
     pub entry_url: Option<String>,
     pub rating: Option<f64>,
+    /// Native code strips provider HTML before this reaches React.
     pub review: Option<String>,
     pub review_truncated: bool,
     pub watched_date: Option<String>,
+    /// True when a failed refresh fell back to an older in-memory feed.
     pub stale: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewLookup {
     pub reviews: Vec<MemberReview>,

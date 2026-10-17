@@ -142,8 +142,8 @@ pub(super) struct NextUpResponse {
 
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct ExternalLinkOpened {
-    opened: bool,
-    url: String,
+    pub(super) opened: bool,
+    pub(super) url: String,
 }
 
 #[derive(Serialize, ts_rs::TS)]

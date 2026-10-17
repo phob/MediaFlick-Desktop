@@ -1,6 +1,4 @@
 import type * as Wire from "../wire.gen.ts"
-import type { HomeResponse } from "./home.ts"
-import type { ClientSettings, ViewingSettings } from "./settings.ts"
 
 export type Status = Wire.AppStatus
 
@@ -8,14 +6,7 @@ export type Status = Wire.AppStatus
  * `/api/startup`: what the first frame reads, in one request. A part that its
  * own route could not answer is `null`, and its query then asks for it.
  */
-export interface StartupResponse {
-  status: Status | null
-  settings: ClientSettings | null
-  viewing: ViewingSettings | null
-  browsing: Record<string, string> | null
-  home: HomeResponse | null
-  billboard: Wire.Billboard | null
-}
+export type StartupResponse = Wire.StartupResponse
 
 export type CompanionService = "sonarr" | "radarr" | "seerr" | "mdblist" | "tmdb"
 

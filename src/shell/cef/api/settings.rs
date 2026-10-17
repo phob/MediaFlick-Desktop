@@ -1,5 +1,9 @@
+use std::collections::BTreeMap;
+
 use crate::library::libraries::LibraryRegistry;
-use crate::preferences::{ViewingSettings, ViewingWrite, startup_view};
+use crate::preferences::{
+    NextEpisode, StartupView, SubtitleMode, ViewingSettings, ViewingWrite, startup_view,
+};
 
 use super::catalog::still_signed_in;
 
@@ -11,7 +15,7 @@ pub(super) fn route(
     request: &ApiRequest,
 ) -> Option<Handled> {
     let response = match segments {
-        ["settings"] if request.is("GET") => settings_snapshot(services),
+        ["settings"] if request.is("GET") => Ok(ApiResponse::ok(settings_snapshot(services))),
         ["settings", "viewing"] if request.is("GET") || request.is("PATCH") => {
             viewing_settings(services, request)
         }
@@ -35,7 +39,7 @@ pub(super) fn route(
     Some(response)
 }
 
-fn settings_snapshot(services: &Arc<Services>) -> Handled {
+pub(super) fn settings_snapshot(services: &Services) -> SettingsView {
     let mut recoveries = Vec::new();
     push_recovery(
         &mut recoveries,
@@ -57,10 +61,7 @@ fn settings_snapshot(services: &Arc<Services>) -> Handled {
         "Deletion journal",
         services.pending_deletions.take_recovery_notice(),
     );
-    Ok(settings_response(
-        &services.preferences.snapshot(),
-        recoveries,
-    ))
+    settings_view(&services.preferences.snapshot(), recoveries)
 }
 
 fn push_recovery(
@@ -153,8 +154,12 @@ struct Recovery {
 }
 
 fn settings_response(settings: &AppSettings, recoveries: Vec<Recovery>) -> ApiResponse {
+    ApiResponse::ok(settings_view(settings, recoveries))
+}
+
+fn settings_view(settings: &AppSettings, recoveries: Vec<Recovery>) -> SettingsView {
     let appearance = &settings.appearance;
-    ApiResponse::ok(SettingsView {
+    SettingsView {
         client: ClientView {
             player: PlayerView {
                 player_backend: settings.effective_backend(),
@@ -195,7 +200,7 @@ fn settings_response(settings: &AppSettings, recoveries: Vec<Recovery>) -> ApiRe
         },
         recoveries,
         server_url: settings.jellyfin_url.clone(),
-    })
+    }
 }
 
 fn patch_player_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
@@ -235,19 +240,88 @@ fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> 
         })
 }
 
-fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let scope = session_scope(services)?;
-    let key = scope.account();
-    let registry = services.library.libraries().unwrap_or_else(|error| {
+/// `/api/settings/viewing`: the account's viewing settings, with the startup
+/// destination resolved against the current libraries.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ViewingView {
+    spoiler_protection: bool,
+    next_episode: NextEpisode,
+    countdown_seconds: u8,
+    /// Zero leaves continuous playback unlimited.
+    episode_limit: u8,
+    audio_languages: Vec<String>,
+    subtitle_languages: Vec<String>,
+    prefer_original_audio: bool,
+    subtitle_mode: SubtitleMode,
+    resume_rewind_seconds: u8,
+    text_scale: u16,
+    poster_size: u16,
+    preview_delay_ms: u16,
+    startup_destination: StartupView,
+    remember_filters: bool,
+    hide_watched: bool,
+}
+
+fn viewing_view(settings: ViewingSettings, registry: &LibraryRegistry) -> ViewingView {
+    let ViewingSettings {
+        spoiler_protection,
+        next_episode,
+        countdown_seconds,
+        episode_limit,
+        audio_languages,
+        subtitle_languages,
+        prefer_original_audio,
+        subtitle_mode,
+        resume_rewind_seconds,
+        text_scale,
+        poster_size,
+        preview_delay_ms,
+        startup_destination,
+        remember_filters,
+        hide_watched,
+    } = settings;
+    ViewingView {
+        spoiler_protection,
+        next_episode,
+        countdown_seconds,
+        episode_limit,
+        audio_languages,
+        subtitle_languages,
+        prefer_original_audio,
+        subtitle_mode,
+        resume_rewind_seconds,
+        text_scale,
+        poster_size,
+        preview_delay_ms,
+        startup_destination: startup_view(&startup_destination, registry),
+        remember_filters,
+        hide_watched,
+    }
+}
+
+fn library_registry(services: &Services) -> LibraryRegistry {
+    services.library.libraries().unwrap_or_else(|error| {
         tracing::warn!(target: "config", "could not read the library list: {error}");
         LibraryRegistry::Unknown
-    });
+    })
+}
+
+pub(super) fn viewing(services: &Services) -> Result<ViewingView, ApiResponse> {
+    let scope = session_scope(services)?;
+    let registry = library_registry(services);
+    let viewing = viewing_view(services.accounts.viewing(scope.account()), &registry);
+    still_signed_in(services, &scope)?;
+    Ok(viewing)
+}
+
+fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     if request.is("GET") {
-        let mut viewing = services.accounts.viewing(key);
-        viewing.startup_destination = startup_view(&viewing.startup_destination, &registry);
-        still_signed_in(services, &scope)?;
-        return Ok(ApiResponse::untyped(json!(viewing)));
+        return viewing(services).map(ApiResponse::ok);
     }
+    let scope = session_scope(services)?;
+    let key = scope.account();
+    let registry = library_registry(services);
     let write = request.untyped_body::<ViewingWrite>()?;
     services
         .session
@@ -258,11 +332,17 @@ fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
                 Ok(saved) => saved,
                 Err(error) => return Ok(ApiResponse::error(400, error.to_string())),
             };
-            Ok(ApiResponse::untyped(json!(ViewingSettings {
-                startup_destination: startup_view(&saved.startup_destination, &registry),
-                ..saved
-            })))
+            Ok(ApiResponse::ok(viewing_view(saved, &registry)))
         })
+}
+
+/// `/api/settings/browsing`: the route each page last showed, by page.
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct BrowsingRoutes(BTreeMap<String, String>);
+
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct BrowsingSaved {
+    saved: bool,
 }
 
 #[derive(Deserialize)]
@@ -271,19 +351,24 @@ struct BrowsingBody {
     route: String,
 }
 
+pub(super) fn browsing(services: &Services) -> Result<BrowsingRoutes, ApiResponse> {
+    let scope = session_scope(services)?;
+    Ok(BrowsingRoutes(services.accounts.browsing(scope.account())))
+}
+
 fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    if request.is("GET") {
+        return browsing(services).map(ApiResponse::ok);
+    }
     let scope = session_scope(services)?;
     let key = scope.account();
-    if request.is("GET") {
-        return Ok(ApiResponse::untyped(json!(services.accounts.browsing(key))));
-    }
     let body = request.untyped_body::<BrowsingBody>()?;
     let (page, route) = (body.page.as_str(), body.route.as_str());
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
             Ok(match services.accounts.save_browsing(key, page, route) {
-                Ok(()) => ApiResponse::untyped(json!({"saved": true})),
+                Ok(()) => ApiResponse::ok(BrowsingSaved { saved: true }),
                 Err(error) => ApiResponse::error(400, error.to_string()),
             })
         })

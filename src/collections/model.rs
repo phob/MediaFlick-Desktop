@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::app::ids::valid_opaque_id;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub enum CollectionMode {
     MediaFlick,

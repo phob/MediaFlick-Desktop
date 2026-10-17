@@ -15,25 +15,9 @@ export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWri
   }
 }
 
-export type StartupDestination = "home" | "calendar" | "last" | { library: string }
+export type StartupDestination = Wire.StartupView
 
-export interface ViewingSettings {
-  spoilerProtection: boolean
-  nextEpisode: "off" | "ask" | "auto"
-  countdownSeconds: number
-  episodeLimit: number
-  audioLanguages: string[]
-  subtitleLanguages: string[]
-  preferOriginalAudio: boolean
-  subtitleMode: "server" | "off" | "forced" | "always" | "foreignAudio"
-  resumeRewindSeconds: number
-  textScale: number
-  posterSize: number
-  previewDelayMs: number
-  startupDestination: StartupDestination
-  rememberFilters: boolean
-  hideWatched: boolean
-}
+export type ViewingSettings = Wire.ViewingView
 
 export type ViewingSettingsWrite = Omit<ViewingSettings, "startupDestination"> & {
   startupDestination?: StartupDestination
