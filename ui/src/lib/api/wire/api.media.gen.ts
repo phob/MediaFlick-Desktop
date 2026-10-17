@@ -104,3 +104,15 @@ export type TrailerSummary = {
   name: string,
   embedUrl: string | null,
 };
+
+export type ApiMediaRoutes = {
+  "POST /api/technical/batch": { params: null, body: TechnicalBatchBody, kind: "json", response: TechnicalBatch },
+  "GET /api/item/{id}/media": { params: { id: string | number }, body: null, kind: "json", response: MediaInfoResponse },
+  "PATCH /api/item/{id}/playback-preference": { params: { id: string | number }, body: PlaybackTrackPreferenceWrite, kind: "json", response: PlaybackPreferenceSaved },
+  "GET /api/item/{id}/trailer": { params: { id: string | number }, body: null, kind: "json", response: TrailerResponse },
+  "GET /api/item/{id}/nextup": { params: { id: string | number }, body: null, kind: "json", response: NextUpResponse },
+  "POST /api/item/{id}/external": { params: { id: string | number }, body: ExternalLinkBody, kind: "json", response: ExternalLinkOpened },
+  "POST /api/item/{id}/played": { params: { id: string | number }, body: PlayedBody, kind: "json", response: PlayedState },
+  "POST /api/item/{id}/favorite": { params: { id: string | number }, body: FavoriteBody, kind: "json", response: FavoriteState },
+  "GET /api/trailer/{id}/stream": { params: { id: string | number }, body: null, kind: "binary" },
+};

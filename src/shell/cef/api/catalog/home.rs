@@ -40,10 +40,6 @@ pub(in super::super) struct Billboard {
     items: Vec<ItemSummary>,
 }
 
-pub(super) fn home(services: &Arc<Services>) -> Handled {
-    home_view(services).map(ApiResponse::ok)
-}
-
 pub(in super::super) fn home_view(services: &Services) -> Result<HomeResponse, ApiResponse> {
     let home = resolved_home(services)?;
     let watching_enabled = element_enabled(&home.settings, HomeBuiltIn::Watching);
@@ -245,13 +241,13 @@ fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -
     ))
 }
 
-pub(super) fn home_resume(services: &Arc<Services>) -> Handled {
+pub(super) fn home_resume(services: &Arc<Services>) -> Result<HomeResumeResponse, ApiResponse> {
     let home = resolved_home(services)?;
     if !element_enabled(&home.settings, HomeBuiltIn::Watching) {
-        return Ok(ApiResponse::ok(HomeResumeResponse {
+        return Ok(HomeResumeResponse {
             continue_watching: Vec::new(),
             next_up: Vec::new(),
-        }));
+        });
     }
     let resume = if home.settings.watching.continue_watching {
         services
@@ -282,10 +278,10 @@ pub(super) fn home_resume(services: &Arc<Services>) -> Handled {
         Vec::new()
     };
     let next_up = deduplicate_next_up(&resume, next_up);
-    Ok(ApiResponse::ok(HomeResumeResponse {
+    Ok(HomeResumeResponse {
         continue_watching: resume,
         next_up,
-    }))
+    })
 }
 
 fn deduplicate_next_up(resume: &[ItemSummary], next_up: Vec<ItemSummary>) -> Vec<ItemSummary> {
@@ -310,10 +306,6 @@ fn latest_home_items(library: &Library, kind: CatalogKind) -> Vec<ItemSummary> {
             ..Default::default()
         },
     )
-}
-
-pub(super) fn billboard(services: &Arc<Services>) -> Handled {
-    billboard_view(services).map(ApiResponse::ok)
 }
 
 pub(in super::super) fn billboard_view(services: &Services) -> Result<Billboard, ApiResponse> {

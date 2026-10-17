@@ -286,8 +286,8 @@ pub(in super::super) struct HomeSettingsResponse {
     collection_mode: CollectionMode,
 }
 
-fn home_settings_response(home: &ResolvedHome) -> ApiResponse {
-    ApiResponse::ok(HomeSettingsResponse {
+fn home_settings_response(home: &ResolvedHome) -> HomeSettingsResponse {
+    HomeSettingsResponse {
         settings: settings_view(home, &home.settings),
         defaults: settings_view(home, &home.defaults),
         collection_mode: if home.mediaflick_collections {
@@ -295,15 +295,18 @@ fn home_settings_response(home: &ResolvedHome) -> ApiResponse {
         } else {
             CollectionMode::Jellyfin
         },
-    })
+    }
 }
 
-pub(super) fn home_settings(services: &Arc<Services>) -> Handled {
+pub(super) fn home_settings(services: &Arc<Services>) -> Result<HomeSettingsResponse, ApiResponse> {
     Ok(home_settings_response(&resolved_home(services)?))
 }
 
-pub(super) fn patch_home_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let requested = request.body::<HomeSettings>()?;
+pub(super) fn patch_home_settings(
+    services: &Arc<Services>,
+    body: Body<'_, HomeSettings>,
+) -> Result<HomeSettingsResponse, ApiResponse> {
+    let requested = body.decode()?;
     if let Err(error) = requested.validate() {
         return Err(ApiResponse::error(400, error.to_string()));
     }

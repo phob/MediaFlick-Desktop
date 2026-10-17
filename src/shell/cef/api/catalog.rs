@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::library::libraries::FilterKey;
+use crate::library::model::DetailView;
 use crate::library::{DEFAULT_PAGE_SIZE, ItemPage};
 
 use super::*;
@@ -12,8 +13,8 @@ mod person;
 
 pub(super) use detail::{ItemAbout, ItemSynopsis};
 use detail::{children, item_about, item_detail, item_synopsis};
+use home::home_resume;
 pub(super) use home::{Billboard, HomeResponse, HomeResumeResponse, billboard_view, home_view};
-use home::{billboard, home, home_resume};
 pub(super) use home_settings::HomeSettingsResponse;
 use home_settings::{home_settings, patch_home_settings};
 pub(super) use person::PersonResolution;
@@ -44,33 +45,27 @@ impl ItemLetters {
     }
 }
 
-pub(super) fn route(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    let response = match segments {
-        ["calendar"] if request.is("GET") => calendar(services, request),
-        ["settings", "home"] if request.is("GET") => home_settings(services),
-        ["settings", "home"] if request.is("PATCH") => patch_home_settings(services, request),
-        ["home", "resume"] if request.is("GET") => home_resume(services),
-        ["home"] if request.is("GET") => home(services),
-        ["billboard"] if request.is("GET") => billboard(services),
-        ["items"] if request.is("GET") => query_items(services, request),
-        ["items", "letters"] if request.is("GET") => item_letters(services, request),
-        ["genres"] if request.is("GET") => Ok(match services.library.genres(None) {
-            Ok(genres) => ApiResponse::ok(Genres { genres }),
-            Err(error) => storage_failure(&error),
-        }),
-        ["official-ratings"] if request.is("GET") => official_ratings(services, request),
-        ["person", "resolve"] if request.is("GET") => resolve_person(services, request),
-        ["item", id] if request.is("GET") => item_detail(services, id),
-        ["item", id, "synopsis"] if request.is("GET") => item_synopsis(services, id),
-        ["item", id, "about"] if request.is("GET") => item_about(services, id),
-        ["item", id, "children"] if request.is("GET") => children(services, id, request),
-        _ => return None,
-    };
-    Some(response)
+routes! {
+    |services, request|
+    GET ["calendar"] -> Relay = calendar(services, request),
+    GET ["settings", "home"] -> HomeSettingsResponse = home_settings(services),
+    PATCH ["settings", "home"] (body: HomeSettings) -> HomeSettingsResponse =
+        patch_home_settings(services, body),
+    GET ["home", "resume"] -> HomeResumeResponse = home_resume(services),
+    GET ["home"] -> HomeResponse = home_view(services),
+    GET ["billboard"] -> Billboard = billboard_view(services),
+    GET ["items"] -> ItemPage = query_items(services, request),
+    GET ["items", "letters"] -> ItemLetters = item_letters(services, request),
+    GET ["genres"] -> Genres = match services.library.genres(None) {
+        Ok(genres) => Ok(Genres { genres }),
+        Err(error) => Err(storage_failure(&error)),
+    },
+    GET ["official-ratings"] -> OfficialRatings = official_ratings(services, request),
+    GET ["person", "resolve"] -> PersonResolution = resolve_person(services, request),
+    GET ["item", id] -> DetailView = item_detail(services, id),
+    GET ["item", id, "synopsis"] -> ItemSynopsis = item_synopsis(services, id),
+    GET ["item", id, "about"] -> ItemAbout = item_about(services, id),
+    GET ["item", id, "children"] -> ItemPage = children(services, id, request),
 }
 
 fn calendar(services: &Arc<Services>, request: &ApiRequest) -> Handled {
@@ -103,26 +98,32 @@ fn is_iso_date(value: &str) -> bool {
             .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
 }
 
-fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Result<ItemPage, ApiResponse> {
     if let Some(person_id) = request.param("personId") {
         return query_person_items(services, &person_id, request);
     }
 
     let query = item_query(request)?;
     match services.library.query(&query) {
-        Ok(page) => Ok(ApiResponse::ok(page)),
+        Ok(page) => Ok(page),
         Err(error) => Err(storage_failure(&error)),
     }
 }
 
-fn item_letters(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+fn item_letters(
+    services: &Arc<Services>,
+    request: &ApiRequest,
+) -> Result<ItemLetters, ApiResponse> {
     match services.library.letter_index(&item_query(request)?) {
-        Ok(letters) => Ok(ApiResponse::ok(ItemLetters::new(letters))),
+        Ok(letters) => Ok(ItemLetters::new(letters)),
         Err(error) => Err(storage_failure(&error)),
     }
 }
 
-fn official_ratings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+fn official_ratings(
+    services: &Arc<Services>,
+    request: &ApiRequest,
+) -> Result<OfficialRatings, ApiResponse> {
     let kinds = request
         .param("kind")
         .map(|value| {
@@ -135,9 +136,9 @@ fn official_ratings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         .filter(|kinds| !kinds.is_empty())
         .unwrap_or_else(|| CatalogKind::TOP_LEVEL.to_vec());
     match services.library.official_ratings(&kinds, None) {
-        Ok(ratings) => Ok(ApiResponse::ok(OfficialRatings {
+        Ok(ratings) => Ok(OfficialRatings {
             official_ratings: ratings,
-        })),
+        }),
         Err(error) => Err(storage_failure(&error)),
     }
 }

@@ -1,20 +1,9 @@
 use super::*;
 
-pub(super) fn route(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    let response = match segments {
-        ["image", id, image_type] if request.is("GET") => image(
-            services,
-            &percent_decode(id),
-            &percent_decode(image_type),
-            request,
-        ),
-        _ => return None,
-    };
-    Some(response)
+routes! {
+    |services, request|
+    GET ["image", id, image_type] -> Binary =
+        image(services, &percent_decode(id), &percent_decode(image_type), request),
 }
 
 static IMAGE_WRITES: AtomicUsize = AtomicUsize::new(0);

@@ -77,6 +77,15 @@ pub(in super::super) struct CommittedProfile {
     total: u32,
 }
 
+/// `PATCH /api/collections/profiles/{id}`: a change to what the collection
+/// lists fetches and commits its results; any other change only saves it.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(untagged)]
+pub(in super::super) enum ProfileEdit {
+    Committed(CommittedProfile),
+    Saved(CollectionProfile),
+}
+
 #[derive(Serialize, ts_rs::TS)]
 pub(in super::super) struct ProfileDeleted {
     deleted: bool,
@@ -125,7 +134,10 @@ impl ProfileDraft {
     }
 }
 
-pub(super) fn settings(services: &Arc<Services>, force_probe: bool) -> Handled {
+pub(super) fn settings(
+    services: &Arc<Services>,
+    force_probe: bool,
+) -> Result<CollectionSettings, ApiResponse> {
     let account = active_account(services)?;
     let readiness = services.companion.collection_readiness(force_probe);
     let repository = SnapshotRepository::new(&services.library);
@@ -135,7 +147,7 @@ pub(super) fn settings(services: &Arc<Services>, force_probe: bool) -> Handled {
         .effective_mode(&account, &readiness, has_results);
     let settings = services.collections.account(&account);
     let recovery = services.collections.take_recovery_notice();
-    Ok(ApiResponse::ok(CollectionSettings {
+    Ok(CollectionSettings {
         effective_mode,
         media_flick_available: readiness.tmdb || !settings.profiles.is_empty() || has_results,
         mode_selection: settings.mode_selection,
@@ -145,7 +157,7 @@ pub(super) fn settings(services: &Arc<Services>, force_probe: bool) -> Handled {
             restored_backup: notice.restored_backup,
         }),
         readiness,
-    }))
+    })
 }
 
 #[derive(Deserialize, ts_rs::TS)]
@@ -164,8 +176,11 @@ pub(in super::super) struct ReorderBody {
     profile_ids: Vec<String>,
 }
 
-pub(super) fn patch_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.body::<SettingsPatch>()?;
+pub(super) fn patch_settings(
+    services: &Arc<Services>,
+    body: Body<'_, SettingsPatch>,
+) -> Result<CollectionSettings, ApiResponse> {
+    let patch = body.decode()?;
     let scope = active_scope(services)?;
     let account = scope.account().clone();
     let updates_mode = patch.mode_selection.is_some();
@@ -210,7 +225,7 @@ pub(super) fn patch_settings(services: &Arc<Services>, request: &ApiRequest) -> 
     }
 }
 
-pub(super) fn templates(services: &Arc<Services>) -> Handled {
+pub(super) fn templates(services: &Arc<Services>) -> Result<CollectionTemplates, ApiResponse> {
     let readiness = services.companion.collection_readiness(false);
     let templates = crate::collections::templates::catalog()
         .into_iter()
@@ -225,16 +240,19 @@ pub(super) fn templates(services: &Arc<Services>) -> Handled {
             }
         })
         .collect();
-    Ok(ApiResponse::ok(CollectionTemplates {
+    Ok(CollectionTemplates {
         categories: TemplateCategory::ORDER.to_vec(),
         templates,
         readiness,
-    }))
+    })
 }
 
-pub(super) fn preview(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+pub(super) fn preview(
+    services: &Arc<Services>,
+    body: Body<'_, ProfileDraft>,
+) -> Result<ProviderResult, ApiResponse> {
     let account = active_account(services)?;
-    let draft = request.body::<ProfileDraft>()?;
+    let draft = body.decode()?;
     let profile = match draft.into_profile(allocate_profile_id(), allocate_revision_id()) {
         Ok(profile) => profile,
         Err(error) => return Err(configuration_failure(&error)),
@@ -281,60 +299,68 @@ pub(super) fn preview(services: &Arc<Services>, request: &ApiRequest) -> Handled
         .unwrap_or(u32::MAX);
         let series = total.saturating_sub(movies);
         items.truncate(24);
-        return Ok(ApiResponse::ok(ProviderResult {
+        return Ok(ProviderResult {
             items,
             total,
             movies,
             series,
             source_identity: result.source_identity,
-        }));
+        });
     }
     match services
         .companion
         .preview_collection(&provider_request(services, &profile))
     {
-        Ok(result) => Ok(ApiResponse::ok(result)),
+        Ok(result) => Ok(result),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-pub(super) fn list(services: &Arc<Services>) -> Handled {
+pub(super) fn list(services: &Arc<Services>) -> Result<CollectionProfilesIndex, ApiResponse> {
     let account = active_account(services)?;
-    Ok(ApiResponse::ok(CollectionProfilesIndex::of(
-        services, &account,
-    )))
+    Ok(CollectionProfilesIndex::of(services, &account))
 }
 
-pub(super) fn read(services: &Arc<Services>, profile_id: &str) -> Handled {
+pub(super) fn read(
+    services: &Arc<Services>,
+    profile_id: &str,
+) -> Result<CollectionProfile, ApiResponse> {
     let account = active_account(services)?;
     match profile(services, &account, profile_id) {
-        Some(profile) => Ok(ApiResponse::ok(profile)),
+        Some(profile) => Ok(profile),
         None => Err(ApiResponse::error(404, "that collection does not exist")),
     }
 }
 
-pub(super) fn create(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+pub(super) fn create(
+    services: &Arc<Services>,
+    body: Body<'_, ProfileDraft>,
+) -> Result<CommittedProfile, ApiResponse> {
     let account = active_account(services)?;
-    let draft = request.body::<ProfileDraft>()?;
+    let draft = body.decode()?;
     let profile = match draft.into_profile(allocate_profile_id(), allocate_revision_id()) {
         Ok(profile) => profile,
         Err(error) => return Err(configuration_failure(&error)),
     };
     let staged_artwork = profile.custom_poster_id.clone();
-    let response = commit_result_profile(services, &account, profile, true);
-    if response.status >= 400 {
+    let committed = commit_result_profile(services, &account, profile, true);
+    if committed.is_err() {
         remove_unreferenced_artwork(services, &account, staged_artwork.as_deref());
     }
-    Ok(response)
+    committed
 }
 
-pub(super) fn edit(services: &Arc<Services>, profile_id: &str, request: &ApiRequest) -> Handled {
+pub(super) fn edit(
+    services: &Arc<Services>,
+    profile_id: &str,
+    body: Body<'_, ProfileDraft>,
+) -> Result<ProfileEdit, ApiResponse> {
     let scope = active_scope(services)?;
     let account = scope.account().clone();
     let Some(previous) = profile(services, &account, profile_id) else {
         return Err(ApiResponse::error(404, "that collection does not exist"));
     };
-    let draft = request.body::<ProfileDraft>()?;
+    let draft = body.decode()?;
     let next = match draft.into_profile(previous.id.clone(), previous.revision.clone()) {
         Ok(profile) => profile,
         Err(error) => return Err(configuration_failure(&error)),
@@ -343,8 +369,8 @@ pub(super) fn edit(services: &Arc<Services>, profile_id: &str, request: &ApiRequ
         .then(|| next.custom_poster_id.clone())
         .flatten();
     let forget_home = previous.available_on_home && !next.available_on_home;
-    let response = if result_configuration_changed(&previous, &next) {
-        let response = commit_result_profile(
+    let edited = if result_configuration_changed(&previous, &next) {
+        let committed = commit_result_profile(
             services,
             &account,
             CollectionProfile {
@@ -353,28 +379,27 @@ pub(super) fn edit(services: &Arc<Services>, profile_id: &str, request: &ApiRequ
             },
             true,
         );
-        if response.status >= 400 {
+        if committed.is_err() {
             remove_unreferenced_artwork(services, &account, staged_artwork.as_deref());
         }
-        response
+        committed.map(ProfileEdit::Committed)
     } else {
         services
             .session
             .commit_if_current(&scope, stale_account_response, || {
-                Ok(match services.collections.save_profile(&account, next) {
+                match services.collections.save_profile(&account, next) {
                     Ok(profile) => {
                         update_next_due(services, &account, &profile);
-                        ApiResponse::ok(profile)
+                        Ok(ProfileEdit::Saved(profile))
                     }
                     Err(error) => {
                         remove_unreferenced_artwork(services, &account, staged_artwork.as_deref());
-                        configuration_failure(&error)
+                        Err(configuration_failure(&error))
                     }
-                })
+                }
             })
-            .unwrap_or_else(|response| response)
     };
-    if response.status < 400
+    if edited.is_ok()
         && forget_home
         && let Err(error) = services
             .accounts
@@ -382,7 +407,7 @@ pub(super) fn edit(services: &Arc<Services>, profile_id: &str, request: &ApiRequ
     {
         return Err(configuration_failure(&error));
     }
-    Ok(response)
+    edited
 }
 
 fn update_next_due(services: &Services, account: &AccountKey, profile: &CollectionProfile) {
@@ -398,7 +423,10 @@ fn update_next_due(services: &Services, account: &AccountKey, profile: &Collecti
     }
 }
 
-pub(super) fn refresh(services: &Arc<Services>, profile_id: &str) -> Handled {
+pub(super) fn refresh(
+    services: &Arc<Services>,
+    profile_id: &str,
+) -> Result<CommittedProfile, ApiResponse> {
     let account = active_account(services)?;
     let Some(profile) = profile(services, &account, profile_id) else {
         return Err(ApiResponse::error(404, "that collection does not exist"));
@@ -406,45 +434,49 @@ pub(super) fn refresh(services: &Arc<Services>, profile_id: &str) -> Handled {
     if let Err(error) = profile.validate() {
         return Err(ApiResponse::error(409, error));
     }
-    Ok(commit_result_profile(services, &account, profile, false))
+    commit_result_profile(services, &account, profile, false)
 }
 
-pub(super) fn delete(services: &Arc<Services>, profile_id: &str) -> Handled {
+pub(super) fn delete(
+    services: &Arc<Services>,
+    profile_id: &str,
+) -> Result<ProfileDeleted, ApiResponse> {
     let scope = active_scope(services)?;
     let account = scope.account().clone();
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
-            Ok(match services.collections.remove_profile(&account, profile_id) {
+            match services.collections.remove_profile(&account, profile_id) {
                 Ok(Some(_)) => {
                     let repository = SnapshotRepository::new(&services.library);
                     if let Err(error) = repository.remove_profile(&account, profile_id) {
                         tracing::warn!(target: "collections", "could not remove collection cache: {error}");
                     }
                     match services.accounts.forget_home_collection(&account, profile_id) {
-                        Ok(()) => ApiResponse::ok(ProfileDeleted { deleted: true }),
-                        Err(error) => configuration_failure(&error),
+                        Ok(()) => Ok(ProfileDeleted { deleted: true }),
+                        Err(error) => Err(configuration_failure(&error)),
                     }
                 }
-                Ok(None) => ApiResponse::error(404, "that collection does not exist"),
-                Err(error) => configuration_failure(&error),
-            })
+                Ok(None) => Err(ApiResponse::error(404, "that collection does not exist")),
+                Err(error) => Err(configuration_failure(&error)),
+            }
         })
 }
 
-pub(super) fn reorder(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let ids = request.body::<ReorderBody>()?.profile_ids;
+pub(super) fn reorder(
+    services: &Arc<Services>,
+    body: Body<'_, ReorderBody>,
+) -> Result<CollectionProfilesIndex, ApiResponse> {
+    let ids = body.decode()?.profile_ids;
     let scope = active_scope(services)?;
     let account = scope.account().clone();
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
-            Ok(
-                match services.collections.reorder_profiles(&account, &ids) {
-                    Ok(()) => ApiResponse::ok(CollectionProfilesIndex::of(services, &account)),
-                    Err(error) => configuration_failure(&error),
-                },
-            )
+            match services.collections.reorder_profiles(&account, &ids) {
+                Ok(()) => Ok(CollectionProfilesIndex::of(services, &account)),
+                Err(error) => Err(configuration_failure(&error)),
+            }
         })
 }
 
@@ -453,10 +485,10 @@ fn commit_result_profile(
     account: &AccountKey,
     mut profile: CollectionProfile,
     save_configuration: bool,
-) -> ApiResponse {
+) -> Result<CommittedProfile, ApiResponse> {
     let scope = match services.session.scope() {
         Ok(scope) if scope.account() == account => scope,
-        _ => return stale_account_response(),
+        _ => return Err(stale_account_response()),
     };
     let repository = SnapshotRepository::new(&services.library);
     let attempt = crate::library::now_unix();
@@ -466,17 +498,13 @@ fn commit_result_profile(
     {
         Ok(result) => result,
         Err(error) => {
-            if let Err(response) =
-                services
-                    .session
-                    .commit_if_current(&scope, stale_account_response, || {
-                        save_failed_refresh(&repository, account, &profile.id, attempt);
-                        Ok(())
-                    })
-            {
-                return response;
-            }
-            return ApiResponse::from_api_error(&error);
+            services
+                .session
+                .commit_if_current(&scope, stale_account_response, || {
+                    save_failed_refresh(&repository, account, &profile.id, attempt);
+                    Ok(())
+                })?;
+            return Err(ApiResponse::from_api_error(&error));
         }
     };
     if let (CollectionSource::MdbListPublicList { list_id, .. }, Some(source_identity)) =
@@ -509,7 +537,7 @@ fn commit_result_profile(
         .session
         .commit_if_current(&scope, stale_account_response, || {
             if let Err(error) = repository.commit_profile(account, &snapshot) {
-                return Ok(storage_failure(&error));
+                return Err(storage_failure(&error));
             }
             if save_configuration
                 && let Err(error) = services.collections.save_profile(account, profile.clone())
@@ -522,7 +550,7 @@ fn commit_result_profile(
                         "could not roll back an unreferenced collection revision: {cleanup_error}"
                     );
                 }
-                return Ok(configuration_failure(&error));
+                return Err(configuration_failure(&error));
             }
             if save_configuration {
                 let active = services
@@ -546,12 +574,11 @@ fn commit_result_profile(
                     initialized: true,
                 },
             );
-            Ok(ApiResponse::ok(CommittedProfile {
+            Ok(CommittedProfile {
                 profile,
                 total: visible_total,
-            }))
+            })
         })
-        .unwrap_or_else(|response| response)
 }
 
 fn save_failed_refresh(

@@ -1,44 +1,27 @@
 use super::images::{cache_key, image_mime_type, store_image};
 use super::*;
 
-pub(super) fn route(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    let response = match segments {
-        ["seerr", "status"] if request.is("GET") => {
-            companion_call(services, || services.companion.seerr_status())
-        }
-        ["seerr", "search"] if request.is("GET") => seerr_search(services, request),
-        ["seerr", "person", tmdb_id, "credits"] if request.is("GET") => {
-            seerr_person_credits(services, &percent_decode(tmdb_id), request)
-        }
-        ["seerr", "discover", kind] if request.is("GET") => {
-            seerr_discover(services, &percent_decode(kind), request)
-        }
-        ["seerr", "genres", media_type] if request.is("GET") => {
-            seerr_genres(services, &percent_decode(media_type))
-        }
-        ["seerr", "media", media_type, tmdb_id] if request.is("GET") => seerr_media(
-            services,
-            &percent_decode(media_type),
-            &percent_decode(tmdb_id),
-        ),
-        ["seerr", "request-options", media_type] if request.is("GET") => {
-            seerr_request_options(services, &percent_decode(media_type), request)
-        }
-        ["seerr", "request"] if request.is("POST") => seerr_request(services, request),
-        ["seerr", "requests"] if request.is("GET") => seerr_requests(services, request),
-        ["seerr", "request", id] if request.is("DELETE") => {
-            seerr_cancel_request(services, &percent_decode(id))
-        }
-        ["seerr", "image", size, file] if request.is("GET") => {
-            seerr_image(services, &percent_decode(size), &percent_decode(file))
-        }
-        _ => return None,
-    };
-    Some(response)
+routes! {
+    |services, request|
+    GET ["seerr", "status"] -> Relay =
+        companion_call(services, || services.companion.seerr_status()),
+    GET ["seerr", "search"] -> Relay = seerr_search(services, request),
+    GET ["seerr", "person", tmdb_id, "credits"] -> Relay =
+        seerr_person_credits(services, &percent_decode(tmdb_id), request),
+    GET ["seerr", "discover", kind] -> Relay =
+        seerr_discover(services, &percent_decode(kind), request),
+    GET ["seerr", "genres", media_type] -> Relay =
+        seerr_genres(services, &percent_decode(media_type)),
+    GET ["seerr", "media", media_type, tmdb_id] -> Relay =
+        seerr_media(services, &percent_decode(media_type), &percent_decode(tmdb_id)),
+    GET ["seerr", "request-options", media_type] -> Relay =
+        seerr_request_options(services, &percent_decode(media_type), request),
+    POST ["seerr", "request"] (body: SeerrRequestBody) -> Relay = seerr_request(services, body),
+    GET ["seerr", "requests"] -> Relay = seerr_requests(services, request),
+    DELETE ["seerr", "request", id] -> SeerrRequestCancelled =
+        seerr_cancel_request(services, &percent_decode(id)),
+    GET ["seerr", "image", size, file] -> Binary =
+        seerr_image(services, &percent_decode(size), &percent_decode(file)),
 }
 
 fn companion_call(
@@ -383,8 +366,8 @@ pub(super) struct SeerrRequestBody {
     profile_id: Option<i64>,
 }
 
-fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<SeerrRequestBody>()?;
+fn seerr_request(services: &Arc<Services>, body: Body<'_, SeerrRequestBody>) -> Handled {
+    let body = body.decode()?;
     let profile = match (body.server_id, body.profile_id) {
         (None, None) => None,
         (Some(server_id), Some(profile_id)) if server_id >= 0 && profile_id > 0 => {
@@ -434,16 +417,19 @@ pub(super) struct SeerrRequestCancelled {
     id: i64,
 }
 
-fn seerr_cancel_request(services: &Arc<Services>, request_id: &str) -> Handled {
+fn seerr_cancel_request(
+    services: &Arc<Services>,
+    request_id: &str,
+) -> Result<SeerrRequestCancelled, ApiResponse> {
     let Ok(request_id) = request_id.parse::<i64>() else {
         return Err(ApiResponse::error(400, "that is not a request id"));
     };
     let scope = session_scope(services)?;
     match services.companion.seerr_cancel_request(request_id) {
-        Ok(()) => Ok(ApiResponse::ok(SeerrRequestCancelled {
+        Ok(()) => Ok(SeerrRequestCancelled {
             cancelled: true,
             id: request_id,
-        })),
+        }),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }

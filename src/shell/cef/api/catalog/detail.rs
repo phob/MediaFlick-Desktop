@@ -32,11 +32,14 @@ struct Person {
     image_tag: Option<String>,
 }
 
-pub(super) fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
+pub(super) fn item_detail(
+    services: &Arc<Services>,
+    item_id: &str,
+) -> Result<DetailView, ApiResponse> {
     let cached = browse::cached_title(&services.library, item_id)
         .map_err(|error| storage_failure(&error))?;
     if let Some(title) = cached {
-        return Ok(ApiResponse::ok(DetailView::Title(title)));
+        return Ok(DetailView::Title(title));
     }
     let scope = session_scope(services)?;
     let dto = match items::fetch_detailed_item(scope.client(), scope.user_id(), item_id) {
@@ -52,7 +55,7 @@ pub(super) fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
     let title = match browse::live_detail(&dto) {
         LiveDetail::Generic(generic) => {
             still_signed_in(services, &scope)?;
-            return Ok(ApiResponse::ok(DetailView::Generic(*generic)));
+            return Ok(DetailView::Generic(*generic));
         }
         LiveDetail::Title(title) => services.session.commit_if_current(
             &scope,
@@ -63,7 +66,7 @@ pub(super) fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
     match title {
         Ok(title) => {
             tracing::debug!(target: "library.browse", item_id, "served a title the cache did not hold");
-            Ok(ApiResponse::ok(DetailView::Title(title)))
+            Ok(DetailView::Title(title))
         }
         Err(DetailError::AccountChanged) => Err(stale_account_response()),
         Err(DetailError::Storage(error)) => Err(storage_failure(&error)),
@@ -75,13 +78,16 @@ fn server_lacks_item(services: &Arc<Services>, scope: &SessionScope, item_id: &s
     ApiResponse::error(404, "the server has no item with that id")
 }
 
-pub(super) fn item_synopsis(services: &Arc<Services>, item_id: &str) -> Handled {
+pub(super) fn item_synopsis(
+    services: &Arc<Services>,
+    item_id: &str,
+) -> Result<ItemSynopsis, ApiResponse> {
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_item_synopsis(client, user_id, item_id) {
-        Ok(Some(dto)) => Ok(ApiResponse::ok(ItemSynopsis {
+        Ok(Some(dto)) => Ok(ItemSynopsis {
             overview: dto.overview,
-        })),
+        }),
         Ok(None) => Err(server_lacks_item(services, &scope, item_id)),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
@@ -145,7 +151,10 @@ fn bounded_about_people(people: &[BaseItemPerson]) -> Vec<Person> {
     selected
 }
 
-pub(super) fn item_about(services: &Arc<Services>, item_id: &str) -> Handled {
+pub(super) fn item_about(
+    services: &Arc<Services>,
+    item_id: &str,
+) -> Result<ItemAbout, ApiResponse> {
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_item_about(client, user_id, item_id) {
@@ -156,20 +165,24 @@ pub(super) fn item_about(services: &Arc<Services>, item_id: &str) -> Handled {
                 .iter()
                 .filter_map(|studio| studio.name.clone())
                 .collect::<Vec<_>>();
-            Ok(ApiResponse::ok(ItemAbout {
+            Ok(ItemAbout {
                 overview: dto.overview,
                 critic_rating: dto.critic_rating,
                 people,
                 tags: dto.tags,
                 studios,
-            }))
+            })
         }
         Ok(None) => Err(server_lacks_item(services, &scope, item_id)),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
-pub(super) fn children(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
+pub(super) fn children(
+    services: &Arc<Services>,
+    item_id: &str,
+    request: &ApiRequest,
+) -> Result<ItemPage, ApiResponse> {
     let parse = |value: &str| value.parse::<i64>().ok();
     let page = ChildPage::new(
         param(request, Params::Strict, "offset", parse)?,
@@ -189,7 +202,7 @@ pub(super) fn children(services: &Arc<Services>, item_id: &str, request: &ApiReq
         }
         None => live_children(services, item_id, page)?,
     };
-    Ok(ApiResponse::ok(page))
+    Ok(page)
 }
 
 fn live_children(

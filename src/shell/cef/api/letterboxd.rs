@@ -19,35 +19,22 @@ pub(super) struct LetterboxdProfileRemoved {
     removed: bool,
 }
 
-pub(super) fn route(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    let response = match segments {
-        ["integrations", "letterboxd"] if request.is("GET") => letterboxd_profiles(services),
-        ["integrations", "letterboxd"] if request.is("POST") => {
-            letterboxd_add_profile(services, request)
-        }
-        ["integrations", "letterboxd", id] if request.is("PATCH") => {
-            letterboxd_set_enabled(services, &percent_decode(id), request)
-        }
-        ["integrations", "letterboxd", id] if request.is("DELETE") => {
-            letterboxd_remove_profile(services, &percent_decode(id))
-        }
-        ["integrations", "letterboxd", id, "refresh"] if request.is("POST") => {
-            letterboxd_refresh_profile(services, &percent_decode(id))
-        }
-        ["integrations", "letterboxd", id, "open"] if request.is("POST") => {
-            letterboxd_open_profile(services, &percent_decode(id))
-        }
-        ["letterboxd", "movie", tmdb_id] if request.is("GET") => {
-            movie_letterboxd(services, &percent_decode(tmdb_id))
-        }
-        ["item", id, "letterboxd"] if request.is("GET") => item_letterboxd(services, id),
-        _ => return None,
-    };
-    Some(response)
+routes! {
+    |services, request|
+    GET ["integrations", "letterboxd"] -> LetterboxdProfiles = letterboxd_profiles(services),
+    POST ["integrations", "letterboxd"] (body: AddProfileBody) -> LetterboxdProfileSaved =
+        letterboxd_add_profile(services, body),
+    PATCH ["integrations", "letterboxd", id] (body: EnabledBody) -> LetterboxdProfileSaved =
+        letterboxd_set_enabled(services, &percent_decode(id), body),
+    DELETE ["integrations", "letterboxd", id] -> LetterboxdProfileRemoved =
+        letterboxd_remove_profile(services, &percent_decode(id)),
+    POST ["integrations", "letterboxd", id, "refresh"] -> LetterboxdProfileSaved =
+        letterboxd_refresh_profile(services, &percent_decode(id)),
+    POST ["integrations", "letterboxd", id, "open"] -> ExternalLinkOpened =
+        letterboxd_open_profile(services, &percent_decode(id)),
+    GET ["letterboxd", "movie", tmdb_id] -> ReviewLookup =
+        movie_letterboxd(services, &percent_decode(tmdb_id)),
+    GET ["item", id, "letterboxd"] -> ReviewLookup = item_letterboxd(services, id),
 }
 
 fn letterboxd_scope(services: &Arc<Services>) -> Result<SessionScope, ApiResponse> {
@@ -68,10 +55,10 @@ fn unix_now() -> i64 {
         .as_secs() as i64
 }
 
-fn letterboxd_profiles(services: &Arc<Services>) -> Handled {
+fn letterboxd_profiles(services: &Arc<Services>) -> Result<LetterboxdProfiles, ApiResponse> {
     let scope = letterboxd_scope(services)?;
     let profiles = services.accounts.letterboxd_profiles(scope.account());
-    Ok(ApiResponse::ok(LetterboxdProfiles { profiles }))
+    Ok(LetterboxdProfiles { profiles })
 }
 
 #[derive(Deserialize, ts_rs::TS)]
@@ -86,8 +73,11 @@ pub(super) struct EnabledBody {
     enabled: bool,
 }
 
-fn letterboxd_add_profile(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<AddProfileBody>()?;
+fn letterboxd_add_profile(
+    services: &Arc<Services>,
+    body: Body<'_, AddProfileBody>,
+) -> Result<LetterboxdProfileSaved, ApiResponse> {
+    let body = body.decode()?;
     let scope = letterboxd_scope(services)?;
     let account = scope.account().clone();
     let profile = match letterboxd_integration::normalize_profile(&body.profile) {
@@ -130,39 +120,42 @@ fn letterboxd_add_profile(services: &Arc<Services>, request: &ApiRequest) -> Han
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
-            Ok(
-                match services.accounts.save_letterboxd_profile(&account, &record) {
-                    Ok(profile) => ApiResponse::ok(LetterboxdProfileSaved { profile }),
-                    Err(error) => account_config_failure(&error),
-                },
-            )
+            match services.accounts.save_letterboxd_profile(&account, &record) {
+                Ok(profile) => Ok(LetterboxdProfileSaved { profile }),
+                Err(error) => Err(account_config_failure(&error)),
+            }
         })
 }
 
-fn letterboxd_set_enabled(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
+fn letterboxd_set_enabled(
+    services: &Arc<Services>,
+    id: &str,
+    body: Body<'_, EnabledBody>,
+) -> Result<LetterboxdProfileSaved, ApiResponse> {
     if !valid_profile_id(id) {
         return Err(ApiResponse::error(404, "profile not found"));
     }
-    let enabled = request.body::<EnabledBody>()?.enabled;
+    let enabled = body.decode()?.enabled;
     let scope = letterboxd_scope(services)?;
     let account = scope.account().clone();
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
-            Ok(
-                match services
-                    .accounts
-                    .set_letterboxd_profile_enabled(&account, id, enabled)
-                {
-                    Ok(Some(profile)) => ApiResponse::ok(LetterboxdProfileSaved { profile }),
-                    Ok(None) => ApiResponse::error(404, "profile not found"),
-                    Err(error) => account_config_failure(&error),
-                },
-            )
+            match services
+                .accounts
+                .set_letterboxd_profile_enabled(&account, id, enabled)
+            {
+                Ok(Some(profile)) => Ok(LetterboxdProfileSaved { profile }),
+                Ok(None) => Err(ApiResponse::error(404, "profile not found")),
+                Err(error) => Err(account_config_failure(&error)),
+            }
         })
 }
 
-fn letterboxd_remove_profile(services: &Arc<Services>, id: &str) -> Handled {
+fn letterboxd_remove_profile(
+    services: &Arc<Services>,
+    id: &str,
+) -> Result<LetterboxdProfileRemoved, ApiResponse> {
     if !valid_profile_id(id) {
         return Err(ApiResponse::error(404, "profile not found"));
     }
@@ -171,17 +164,18 @@ fn letterboxd_remove_profile(services: &Arc<Services>, id: &str) -> Handled {
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
-            Ok(
-                match services.accounts.remove_letterboxd_profile(&account, id) {
-                    Ok(true) => ApiResponse::ok(LetterboxdProfileRemoved { removed: true }),
-                    Ok(false) => ApiResponse::error(404, "profile not found"),
-                    Err(error) => account_config_failure(&error),
-                },
-            )
+            match services.accounts.remove_letterboxd_profile(&account, id) {
+                Ok(true) => Ok(LetterboxdProfileRemoved { removed: true }),
+                Ok(false) => Err(ApiResponse::error(404, "profile not found")),
+                Err(error) => Err(account_config_failure(&error)),
+            }
         })
 }
 
-fn letterboxd_refresh_profile(services: &Arc<Services>, id: &str) -> Handled {
+fn letterboxd_refresh_profile(
+    services: &Arc<Services>,
+    id: &str,
+) -> Result<LetterboxdProfileSaved, ApiResponse> {
     if !valid_profile_id(id) {
         return Err(ApiResponse::error(404, "profile not found"));
     }
@@ -215,16 +209,17 @@ fn letterboxd_refresh_profile(services: &Arc<Services>, id: &str) -> Handled {
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
-            Ok(
-                match services.accounts.save_letterboxd_profile(&account, &record) {
-                    Ok(profile) => ApiResponse::ok(LetterboxdProfileSaved { profile }),
-                    Err(error) => account_config_failure(&error),
-                },
-            )
+            match services.accounts.save_letterboxd_profile(&account, &record) {
+                Ok(profile) => Ok(LetterboxdProfileSaved { profile }),
+                Err(error) => Err(account_config_failure(&error)),
+            }
         })
 }
 
-fn letterboxd_open_profile(services: &Arc<Services>, id: &str) -> Handled {
+fn letterboxd_open_profile(
+    services: &Arc<Services>,
+    id: &str,
+) -> Result<ExternalLinkOpened, ApiResponse> {
     if !valid_profile_id(id) {
         return Err(ApiResponse::error(404, "profile not found"));
     }
@@ -232,16 +227,16 @@ fn letterboxd_open_profile(services: &Arc<Services>, id: &str) -> Handled {
     match services.accounts.letterboxd_profile(scope.account(), id) {
         Some(profile) if profile.provider == "letterboxd" => {
             super::super::bridge::open_external_link(&profile.canonical_url);
-            Ok(ApiResponse::ok(ExternalLinkOpened {
+            Ok(ExternalLinkOpened {
                 opened: true,
                 url: profile.canonical_url,
-            }))
+            })
         }
         _ => Err(ApiResponse::error(404, "profile not found")),
     }
 }
 
-fn item_letterboxd(services: &Arc<Services>, item_id: &str) -> Handled {
+fn item_letterboxd(services: &Arc<Services>, item_id: &str) -> Result<ReviewLookup, ApiResponse> {
     let scope = letterboxd_scope(services)?;
     let item = match services.library.item(item_id) {
         Ok(Some(item)) => item,
@@ -252,7 +247,7 @@ fn item_letterboxd(services: &Arc<Services>, item_id: &str) -> Handled {
     // series or episode even if it happens to carry the same numeric provider
     // id, or a TV record could inherit an unrelated film review.
     if item.summary.kind != "Movie" {
-        return Ok(ApiResponse::ok(ReviewLookup::default()));
+        return Ok(ReviewLookup::default());
     }
     let Some(tmdb_id) = item
         .provider_ids
@@ -260,17 +255,25 @@ fn item_letterboxd(services: &Arc<Services>, item_id: &str) -> Handled {
         .as_deref()
         .filter(|value| !value.is_empty())
     else {
-        return Ok(ApiResponse::ok(ReviewLookup::default()));
+        return Ok(ReviewLookup::default());
     };
-    letterboxd_reviews_for_movie(services, scope.account(), tmdb_id)
+    Ok(letterboxd_reviews_for_movie(
+        services,
+        scope.account(),
+        tmdb_id,
+    ))
 }
 
-fn movie_letterboxd(services: &Arc<Services>, tmdb_id: &str) -> Handled {
+fn movie_letterboxd(services: &Arc<Services>, tmdb_id: &str) -> Result<ReviewLookup, ApiResponse> {
     let Some(tmdb_id) = canonical_tmdb_movie_id(tmdb_id) else {
         return Err(ApiResponse::error(400, "that is not a TMDB movie id"));
     };
     let scope = letterboxd_scope(services)?;
-    letterboxd_reviews_for_movie(services, scope.account(), &tmdb_id)
+    Ok(letterboxd_reviews_for_movie(
+        services,
+        scope.account(),
+        &tmdb_id,
+    ))
 }
 
 fn canonical_tmdb_movie_id(value: &str) -> Option<String> {
@@ -285,11 +288,9 @@ fn letterboxd_reviews_for_movie(
     services: &Arc<Services>,
     account: &AccountKey,
     tmdb_id: &str,
-) -> Handled {
+) -> ReviewLookup {
     let profiles = services.accounts.letterboxd_profiles(account);
-    Ok(ApiResponse::ok(
-        services.letterboxd.reviews_for_item(&profiles, tmdb_id),
-    ))
+    services.letterboxd.reviews_for_item(&profiles, tmdb_id)
 }
 
 fn account_config_failure(error: &std::io::Error) -> ApiResponse {

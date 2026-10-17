@@ -16,3 +16,10 @@ export type ShellRequestQueued = {
   requestId: string,
   queued: boolean,
 };
+
+export type ApiShellRoutes = {
+  "POST /api/shell/window/ready": { params: null, body: null, kind: "json", response: ShellQueued },
+  "POST /api/shell/file-picker": { params: null, body: ShellRequestBody, kind: "json", response: ShellRequestQueued },
+  "POST /api/shell/mpv/install": { params: null, body: ShellRequestBody, kind: "json", response: ShellRequestQueued },
+  "POST /api/shell/mpv/help": { params: null, body: null, kind: "json", response: MpvHelpOpened },
+};

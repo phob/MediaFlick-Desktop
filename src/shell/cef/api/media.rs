@@ -2,28 +2,22 @@ use crate::library::model::ResolvedPlaybackPreference;
 
 use super::*;
 
-pub(super) fn route(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    let response = match segments {
-        ["technical", "batch"] if request.is("POST") => technical_batch(services, request),
-        ["item", id, "media"] if request.is("GET") => media_info(services, id),
-        ["item", id, "playback-preference"] if request.is("PATCH") => {
-            set_item_playback_preference(services, id, request)
-        }
-        ["item", id, "trailer"] if request.is("GET") => trailer_info(services, id),
-        ["item", id, "nextup"] if request.is("GET") => next_up(services, id),
-        ["item", id, "external"] if request.is("POST") => open_external(services, id, request),
-        ["item", id, "played"] if request.is("POST") => set_played(services, id, request),
-        ["item", id, "favorite"] if request.is("POST") => set_favorite(services, id, request),
-        ["trailer", id, "stream"] if request.is("GET") => {
-            trailer_stream(services, &percent_decode(id), request)
-        }
-        _ => return None,
-    };
-    Some(response)
+routes! {
+    |services, request|
+    POST ["technical", "batch"] (body: IdsBody) -> TechnicalBatch =
+        technical_batch(services, body, request),
+    GET ["item", id, "media"] -> MediaInfoResponse = media_info(services, id),
+    PATCH ["item", id, "playback-preference"] (body: PlaybackPreferenceBody) ->
+        PlaybackPreferenceSaved = set_item_playback_preference(services, id, body),
+    GET ["item", id, "trailer"] -> TrailerResponse = trailer_info(services, id),
+    GET ["item", id, "nextup"] -> NextUpResponse = next_up(services, id),
+    POST ["item", id, "external"] (body: ExternalBody) -> ExternalLinkOpened =
+        open_external(services, id, body),
+    POST ["item", id, "played"] (body: PlayedBody) -> PlayedState = set_played(services, id, body),
+    POST ["item", id, "favorite"] (body: FavoriteBody) -> FavoriteState =
+        set_favorite(services, id, body),
+    GET ["trailer", id, "stream"] -> Binary =
+        trailer_stream(services, &percent_decode(id), request),
 }
 
 const TECHNICAL_BATCH_SIZE: usize = 40;
@@ -163,8 +157,12 @@ pub(super) struct FavoriteState {
 /// badge scheduler. Container ids (Series, Season) answer with the streams of
 /// a representative episode. Nothing is persisted; a failure is silent on
 /// cards.
-fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<IdsBody>()?;
+fn technical_batch(
+    services: &Arc<Services>,
+    body: Body<'_, IdsBody>,
+    request: &ApiRequest,
+) -> Result<TechnicalBatch, ApiResponse> {
+    let body = body.decode()?;
     let mut seen = HashSet::new();
     let ids = body
         .ids
@@ -176,7 +174,7 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         .map(str::to_string)
         .collect::<Vec<_>>();
     if ids.is_empty() {
-        return Ok(ApiResponse::ok(TechnicalBatch { items: Vec::new() }));
+        return Ok(TechnicalBatch { items: Vec::new() });
     }
     // Series and Season cards advertise the same badges as movies, but their
     // rows are containers Jellyfin reports without streams. Each is answered
@@ -196,7 +194,7 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         cards.push(card_id);
     }
     if source_ids.is_empty() {
-        return Ok(ApiResponse::ok(TechnicalBatch { items: Vec::new() }));
+        return Ok(TechnicalBatch { items: Vec::new() });
     }
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
@@ -227,7 +225,7 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
             }
         }
     }
-    Ok(ApiResponse::ok(TechnicalBatch { items: results }))
+    Ok(TechnicalBatch { items: results })
 }
 
 /// Only fields useful to a concise technical readout are retained. Subtitle
@@ -257,15 +255,15 @@ fn cached_kind(services: &Services, item_id: &str) -> Result<Option<CatalogKind>
 ///
 /// Folders have no streams of their own, so they are answered from here without
 /// a round trip rather than letting the server return an empty source list.
-fn media_info(services: &Arc<Services>, item_id: &str) -> Handled {
+fn media_info(services: &Arc<Services>, item_id: &str) -> Result<MediaInfoResponse, ApiResponse> {
     if matches!(
         cached_kind(services, item_id)?,
         Some(CatalogKind::Series | CatalogKind::Season)
     ) {
-        return Ok(ApiResponse::ok(MediaInfoResponse {
+        return Ok(MediaInfoResponse {
             sources: Vec::new(),
             playback_preference: None,
-        }));
+        });
     }
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
@@ -275,10 +273,10 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> Handled {
                 .session
                 .account_key()
                 .and_then(|account| services.playback_preferences.get(&account, item_id));
-            Ok(ApiResponse::ok(MediaInfoResponse {
+            Ok(MediaInfoResponse {
                 sources: sources.iter().map(MediaSourceView::of).collect(),
                 playback_preference: resolve_playback_preference(preference.as_ref(), &sources),
-            }))
+            })
         }
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
@@ -292,8 +290,8 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> Handled {
 fn set_item_playback_preference(
     services: &Arc<Services>,
     item_id: &str,
-    request: &ApiRequest,
-) -> Handled {
+    body: Body<'_, PlaybackPreferenceBody>,
+) -> Result<PlaybackPreferenceSaved, ApiResponse> {
     if matches!(
         cached_kind(services, item_id)?,
         None | Some(CatalogKind::Series | CatalogKind::Season)
@@ -303,7 +301,7 @@ fn set_item_playback_preference(
             "this item has no selectable media tracks",
         ));
     }
-    let body = request.body::<PlaybackPreferenceBody>()?;
+    let body = body.decode()?;
     let source_index = body.media_source_index;
     let requested_source_id = body
         .media_source_id
@@ -392,13 +390,13 @@ fn set_item_playback_preference(
                     format!("could not save playback preference: {error}"),
                 ));
             }
-            Ok(ApiResponse::ok(PlaybackPreferenceSaved {
+            Ok(PlaybackPreferenceSaved {
                 playback_preference: resolve_playback_preference(Some(&preference), &sources),
-            }))
+            })
         })
 }
 
-fn trailer_info(services: &Arc<Services>, item_id: &str) -> Handled {
+fn trailer_info(services: &Arc<Services>, item_id: &str) -> Result<TrailerResponse, ApiResponse> {
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_local_trailers(client, user_id, item_id) {
@@ -406,20 +404,24 @@ fn trailer_info(services: &Arc<Services>, item_id: &str) -> Handled {
             .into_iter()
             .find(|trailer| !trailer.id.trim().is_empty())
         {
-            Some(trailer) => Ok(ApiResponse::ok(TrailerResponse {
+            Some(trailer) => Ok(TrailerResponse {
                 trailer: Some(TrailerSummary {
                     name: trailer.display_name().to_string(),
                     id: Some(trailer.id),
                     embed_url: None,
                 }),
-            })),
+            }),
             None => remote_trailer_info(services, &scope, item_id),
         },
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
-fn remote_trailer_info(services: &Arc<Services>, scope: &SessionScope, item_id: &str) -> Handled {
+fn remote_trailer_info(
+    services: &Arc<Services>,
+    scope: &SessionScope,
+    item_id: &str,
+) -> Result<TrailerResponse, ApiResponse> {
     match items::fetch_remote_trailers(scope.client(), scope.user_id(), item_id) {
         Ok(trailers) => {
             let trailer = trailers.into_iter().find_map(|trailer| {
@@ -429,7 +431,7 @@ fn remote_trailer_info(services: &Arc<Services>, scope: &SessionScope, item_id: 
                     embed_url: Some(embed_url),
                 })
             });
-            Ok(ApiResponse::ok(TrailerResponse { trailer }))
+            Ok(TrailerResponse { trailer })
         }
         Err(error) => Err(scoped_failure(services, scope, &error)),
     }
@@ -592,9 +594,9 @@ fn file_name_of(path: &str) -> Option<&str> {
 /// page agrees with the Next Up row. It runs out on a fully watched show and is
 /// unavailable offline, and in both cases the first episode is a better answer
 /// than a page with nothing to play.
-fn next_up(services: &Arc<Services>, item_id: &str) -> Handled {
+fn next_up(services: &Arc<Services>, item_id: &str) -> Result<NextUpResponse, ApiResponse> {
     if cached_kind(services, item_id)? != Some(CatalogKind::Series) {
-        return Ok(ApiResponse::ok(NextUpResponse { item: None }));
+        return Ok(NextUpResponse { item: None });
     }
     let from_server = match services.session.scope() {
         Ok(scope) => items::fetch_next_up(scope.client(), scope.user_id(), Some(item_id), 1)
@@ -610,7 +612,7 @@ fn next_up(services: &Arc<Services>, item_id: &str) -> Handled {
         Some(item) => Some(item),
         None => services.library.first_episode(item_id).unwrap_or_default(),
     };
-    Ok(ApiResponse::ok(NextUpResponse { item }))
+    Ok(NextUpResponse { item })
 }
 
 #[derive(Clone, Copy)]
@@ -670,8 +672,12 @@ impl ExternalProvider {
 /// The UI names a provider, never a URL: the id and the item kind both come
 /// from the cached row here, so nothing the page can say turns into a launched
 /// address.
-fn open_external(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
-    let body = request.body::<ExternalBody>()?;
+fn open_external(
+    services: &Arc<Services>,
+    item_id: &str,
+    body: Body<'_, ExternalBody>,
+) -> Result<ExternalLinkOpened, ApiResponse> {
+    let body = body.decode()?;
     let Some(provider) = ExternalProvider::parse(&body.provider) else {
         return Err(ApiResponse::error(
             404,
@@ -692,7 +698,7 @@ fn open_external(services: &Arc<Services>, item_id: &str, request: &ApiRequest) 
         ));
     };
     super::super::bridge::open_external_link(&url);
-    Ok(ApiResponse::ok(ExternalLinkOpened { opened: true, url }))
+    Ok(ExternalLinkOpened { opened: true, url })
 }
 
 fn valid_external_id(source: &str, id: &str) -> bool {
@@ -710,8 +716,12 @@ fn valid_external_id(source: &str, id: &str) -> bool {
     }
 }
 
-fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
-    let played = request.body::<PlayedBody>()?.played;
+fn set_played(
+    services: &Arc<Services>,
+    item_id: &str,
+    body: Body<'_, PlayedBody>,
+) -> Result<PlayedState, ApiResponse> {
+    let played = body.decode()?.played;
     let scope = user_data_write(services, item_id, |client, user_id| {
         items::set_played(client, user_id, item_id, played)
     })?;
@@ -720,11 +730,15 @@ fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> 
         || (),
         || Ok(services.library.set_local_played(item_id, played)),
     );
-    Ok(ApiResponse::ok(PlayedState { played }))
+    Ok(PlayedState { played })
 }
 
-fn set_favorite(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
-    let favorite = request.body::<FavoriteBody>()?.favorite;
+fn set_favorite(
+    services: &Arc<Services>,
+    item_id: &str,
+    body: Body<'_, FavoriteBody>,
+) -> Result<FavoriteState, ApiResponse> {
+    let favorite = body.decode()?.favorite;
     let scope = user_data_write(services, item_id, |client, user_id| {
         items::set_favorite(client, user_id, item_id, favorite)
     })?;
@@ -733,7 +747,7 @@ fn set_favorite(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -
         || (),
         || Ok(services.library.set_local_favorite(item_id, favorite)),
     );
-    Ok(ApiResponse::ok(FavoriteState { favorite }))
+    Ok(FavoriteState { favorite })
 }
 
 fn user_data_write(

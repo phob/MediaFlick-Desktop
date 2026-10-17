@@ -1,24 +1,21 @@
+use crate::playback::PlayerSnapshot;
+
 use super::*;
 
-pub(super) fn route(
-    services: &Arc<Services>,
-    segments: &[&str],
-    request: &ApiRequest,
-) -> Option<Handled> {
-    let response = match segments {
-        ["play"] if request.is("POST") => play_item(services, request),
-        ["play", "next"] if request.is("POST") => play_next(services, request),
-        ["play", "previous"] if request.is("POST") => play_previous(services, request),
-        ["play", "neighbors"] if request.is("POST") => playback_neighbors(services, request),
-        ["player", "state"] if request.is("GET") => player_state(services),
-        ["player", "command"] if request.is("POST") => player_command(services, request),
-        ["sync"] if request.is("POST") => {
-            services.sync.request();
-            Ok(ApiResponse::ok(SyncRequested { requested: true }))
-        }
-        _ => return None,
-    };
-    Some(response)
+routes! {
+    |services, request|
+    POST ["play"] (body: PlayBody) -> PlayStarted = play_item(services, body),
+    POST ["play", "next"] (body: ItemBody) -> PlayStarted = play_next(services, body),
+    POST ["play", "previous"] (body: ItemBody) -> PlayStarted = play_previous(services, body),
+    POST ["play", "neighbors"] (body: ItemBody) -> PlaybackNeighbors =
+        playback_neighbors(services, body),
+    GET ["player", "state"] -> PlayerSnapshot = Ok(player_state(services)),
+    POST ["player", "command"] (body: PlayerCommandBody) -> PlayerCommandAccepted =
+        player_command(services, body),
+    POST ["sync"] -> SyncRequested = {
+        services.sync.request();
+        Ok(SyncRequested { requested: true })
+    },
 }
 
 /// `/api/sync`: a library sync was queued.
@@ -93,16 +90,19 @@ pub(super) struct ItemBody {
     item_id: String,
 }
 
-fn item_id_of(request: &ApiRequest) -> Result<String, ApiResponse> {
-    let body = request.body::<ItemBody>()?;
+fn item_id_of(body: Body<'_, ItemBody>) -> Result<String, ApiResponse> {
+    let body = body.decode()?;
     if body.item_id.is_empty() {
         return Err(ApiResponse::error(400, "itemId is required"));
     }
     Ok(body.item_id)
 }
 
-fn play_item(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<PlayBody>()?;
+fn play_item(
+    services: &Arc<Services>,
+    body: Body<'_, PlayBody>,
+) -> Result<PlayStarted, ApiResponse> {
+    let body = body.decode()?;
     if body.item_id.is_empty() {
         return Err(ApiResponse::error(400, "itemId is required"));
     }
@@ -120,11 +120,14 @@ fn play_item(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     start_playback(services, &options)
 }
 
-fn play_next(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let item_id = item_id_of(request)?;
+fn play_next(
+    services: &Arc<Services>,
+    body: Body<'_, ItemBody>,
+) -> Result<PlayStarted, ApiResponse> {
+    let item_id = item_id_of(body)?;
     let next = match services.library.next_episode(&item_id) {
         Ok(Some(next)) => next,
-        Ok(None) => return Ok(ApiResponse::ok(PlayStarted::NOT_STARTED)),
+        Ok(None) => return Ok(PlayStarted::NOT_STARTED),
         Err(error) => return Err(storage_failure(&error)),
     };
     start_playback(
@@ -137,11 +140,14 @@ fn play_next(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     )
 }
 
-fn play_previous(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let item_id = item_id_of(request)?;
+fn play_previous(
+    services: &Arc<Services>,
+    body: Body<'_, ItemBody>,
+) -> Result<PlayStarted, ApiResponse> {
+    let item_id = item_id_of(body)?;
     let previous = match services.library.previous_episode(&item_id) {
         Ok(Some(previous)) => previous,
-        Ok(None) => return Ok(ApiResponse::ok(PlayStarted::NOT_STARTED)),
+        Ok(None) => return Ok(PlayStarted::NOT_STARTED),
         Err(error) => return Err(storage_failure(&error)),
     };
     start_playback(
@@ -154,8 +160,11 @@ fn play_previous(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     )
 }
 
-fn playback_neighbors(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let item_id = item_id_of(request)?;
+fn playback_neighbors(
+    services: &Arc<Services>,
+    body: Body<'_, ItemBody>,
+) -> Result<PlaybackNeighbors, ApiResponse> {
+    let item_id = item_id_of(body)?;
     let previous = match services.library.previous_episode(&item_id) {
         Ok(previous) => previous,
         Err(error) => return Err(storage_failure(&error)),
@@ -164,19 +173,22 @@ fn playback_neighbors(services: &Arc<Services>, request: &ApiRequest) -> Handled
         Ok(next) => next,
         Err(error) => return Err(storage_failure(&error)),
     };
-    Ok(ApiResponse::ok(PlaybackNeighbors { previous, next }))
+    Ok(PlaybackNeighbors { previous, next })
 }
 
-fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> Handled {
+fn start_playback(
+    services: &Arc<Services>,
+    options: &PlayOptions,
+) -> Result<PlayStarted, ApiResponse> {
     let scope = session_scope(services)?;
     match play::start(services, &scope, options, "own UI") {
-        Ok(prepared) => Ok(ApiResponse::ok(PlayStarted {
+        Ok(prepared) => Ok(PlayStarted {
             started: true,
             item_id: Some(options.item_id.clone()),
             play_method: Some(prepared.play_method),
             media_source: Some(prepared.media_source_name),
             start_ticks: Some(prepared.request.start_time_ticks.unwrap_or(0)),
-        })),
+        }),
         Err(play::StartError::NoPlayer) => Err(ApiResponse::error(
             409,
             "No media player is configured. Open Settings to set up the built-in player or mpv.",
@@ -195,12 +207,11 @@ fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> Handled {
     }
 }
 
-fn player_state(services: &Arc<Services>) -> Handled {
-    let snapshot = services
+fn player_state(services: &Arc<Services>) -> PlayerSnapshot {
+    services
         .playback()
         .map(|playback| playback.snapshot())
-        .unwrap_or_default();
-    Ok(ApiResponse::ok(snapshot))
+        .unwrap_or_default()
 }
 
 #[derive(Deserialize, ts_rs::TS)]
@@ -340,8 +351,11 @@ impl PlayerCommandBody {
     }
 }
 
-fn player_command(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.body::<PlayerCommandBody>()?;
+fn player_command(
+    services: &Arc<Services>,
+    body: Body<'_, PlayerCommandBody>,
+) -> Result<PlayerCommandAccepted, ApiResponse> {
+    let body = body.decode()?;
     let Some(command) = body.into_command() else {
         return Err(ApiResponse::error(400, "unsupported player command"));
     };
@@ -352,5 +366,5 @@ fn player_command(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         ));
     };
     playback.control(command);
-    Ok(ApiResponse::ok(PlayerCommandAccepted { accepted: true }))
+    Ok(PlayerCommandAccepted { accepted: true })
 }

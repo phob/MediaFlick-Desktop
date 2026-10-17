@@ -30,7 +30,7 @@ pub(super) fn query_person_items(
     services: &Arc<Services>,
     person_id: &str,
     request: &ApiRequest,
-) -> Handled {
+) -> Result<ItemPage, ApiResponse> {
     let offset = request
         .param("offset")
         .and_then(|value| value.parse().ok())
@@ -42,10 +42,10 @@ pub(super) fn query_person_items(
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_person_items(client, user_id, person_id, offset, limit) {
-        Ok(response) => Ok(ApiResponse::ok(ItemPage {
+        Ok(response) => Ok(ItemPage {
             items: response.items.iter().map(ItemSummary::from_dto).collect(),
             total: response.total_record_count,
-        })),
+        }),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
@@ -66,7 +66,10 @@ fn person_identity(dto: &BaseItemDto, fallback_tmdb_id: Option<i64>) -> PersonId
 /// Bridges Jellyfin and TMDB person namespaces without ever treating a fuzzy
 /// name match as identity. A missing provider id may use one unambiguous exact
 /// name; a known conflicting id is always excluded.
-pub(super) fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+pub(super) fn resolve_person(
+    services: &Arc<Services>,
+    request: &ApiRequest,
+) -> Result<PersonResolution, ApiResponse> {
     let jellyfin_id = request.param("jellyfinId");
     let tmdb_id = request
         .param("tmdbId")
@@ -89,9 +92,7 @@ pub(super) fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> 
                         "the Jellyfin and TMDB person ids do not match",
                     ));
                 }
-                Ok(ApiResponse::ok(PersonResolution::found(person_identity(
-                    &person, tmdb_id,
-                ))))
+                Ok(PersonResolution::found(person_identity(&person, tmdb_id)))
             }
             Ok(Some(_)) => Err(ApiResponse::error(409, "that Jellyfin id is not a person")),
             Ok(None) => Err(ApiResponse::error(
@@ -131,19 +132,17 @@ pub(super) fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> 
                 })
                 .collect::<Vec<_>>();
             if exact.len() == 1 {
-                return Ok(ApiResponse::ok(PersonResolution::found(person_identity(
-                    &exact[0], tmdb_id,
-                ))));
+                return Ok(PersonResolution::found(person_identity(&exact[0], tmdb_id)));
             }
             let candidates = exact
                 .iter()
                 .map(|person| person_identity(person, tmdb_id))
                 .collect::<Vec<_>>();
-            Ok(ApiResponse::ok(PersonResolution {
+            Ok(PersonResolution {
                 person: None,
                 ambiguous: candidates.len() > 1,
                 candidates,
-            }))
+            })
         }
         Err(error) => Err(scoped_failure(services, &scope, &error)),
     }

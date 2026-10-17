@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use syn::visit::Visit;
 
+use super::super::MODULES;
+use super::super::routes::{Route, Segment};
 use super::{UNTYPED_BODIES, UNTYPED_RESPONSES};
 
 fn rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
@@ -70,8 +72,8 @@ fn untyped_responses_only_shrink() {
     assert!(
         !raised,
         "new untyped API bodies ({responses} responses, {bodies} request bodies; \
-         allowed {UNTYPED_RESPONSES} and {UNTYPED_BODIES}). Answer with \
-         `ApiResponse::ok(<wire type>)` and decode with `request.body::<wire type>()`."
+         allowed {UNTYPED_RESPONSES} and {UNTYPED_BODIES}). Declare the route's answer \
+         and body as wire types in `routes!` and decode the body with `Body::decode`."
     );
     assert!(
         responses == UNTYPED_RESPONSES && bodies == UNTYPED_BODIES,
@@ -610,5 +612,53 @@ fn unchecked_claims_are_listed() {
     assert!(
         stale.is_empty(),
         "UNCHECKED_CLAIMS lists claims nothing makes any more; remove them: {stale:?}"
+    );
+}
+
+fn describe(route: &Route) -> String {
+    let path = route
+        .path
+        .iter()
+        .map(|segment| match segment {
+            Segment::Literal(literal) => *literal,
+            Segment::Param { name } => name,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    format!("{} /api/{path}", route.method)
+}
+
+/// `route` tries the declarations in order and answers with the first that
+/// takes the method and path, so one that an earlier declaration covers
+/// never runs. Its path with every parameter set to a value no literal
+/// segment has reaches it unless such a declaration comes first.
+#[test]
+fn every_declared_route_is_reachable() {
+    let routes = MODULES
+        .iter()
+        .flat_map(|routes| routes.table)
+        .collect::<Vec<_>>();
+    let mut shadowed = Vec::new();
+    for (index, route) in routes.iter().enumerate() {
+        let path = route
+            .path
+            .iter()
+            .map(|segment| match segment {
+                Segment::Literal(literal) => *literal,
+                Segment::Param { .. } => "\0",
+            })
+            .collect::<Vec<_>>();
+        if let Some(earlier) = routes[..index]
+            .iter()
+            .find(|earlier| earlier.method == route.method && earlier.matches(&path))
+        {
+            shadowed.push(format!("{} after {}", describe(route), describe(earlier)));
+        }
+    }
+    assert!(
+        shadowed.is_empty(),
+        "these route declarations never run, because an earlier one takes every request \
+         they would; remove them or declare them first:\n  {}",
+        shadowed.join("\n  ")
     );
 }
