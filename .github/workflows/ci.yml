@@ -190,11 +190,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-          targets: ${{ matrix.target }}
+      # Run in the checkout so rustup adds the target to the toolchain that
+      # rust-toolchain.toml pins, not to `stable`.
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
 
       - name: Install just
         uses: taiki-e/install-action@v2
