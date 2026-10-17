@@ -1,49 +1,49 @@
+mod close_hooks;
 mod compositor;
+mod display;
+mod input;
 
 use std::cell::{Cell, RefCell};
 use std::io;
-use std::mem::size_of;
 use std::ptr::{null, null_mut};
 use std::rc::Rc;
 use std::slice;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use cef::*;
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{
-    ClientToScreen, DEVMODEW, ENUM_CURRENT_SETTINGS, EnumDisplaySettingsW, GetMonitorInfoW,
-    MONITOR_DEFAULTTONULL, MONITORINFO, MONITORINFOEXW, MonitorFromWindow, ScreenToClient,
-};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, ReleaseCapture, SetCapture, SetFocus, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
-    VK_CAPITAL, VK_CONTROL, VK_F4, VK_LWIN, VK_MENU, VK_NUMLOCK, VK_RWIN, VK_SHIFT,
-};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CREATESTRUCTW, CS_DBLCLKS, CWPRETSTRUCT, CallNextHookEx, CreateWindowExW, DefWindowProcW,
-    DestroyWindow, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, GetWindowRect,
-    GetWindowThreadProcessId, HHOOK, HTCLIENT, HWND_TOP, IDC_APPSTARTING, IDC_ARROW, IDC_CROSS,
-    IDC_HAND, IDC_HELP, IDC_IBEAM, IDC_NO, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
-    IDC_SIZEWE, IDC_WAIT, IsIconic, IsWindow, IsZoomed, LoadCursorW, MSG, PostMessageW,
-    RegisterClassW, SW_MAXIMIZE, SW_MINIMIZE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
-    SWP_SHOWWINDOW, SetCursor, SetWindowLongPtrW, SetWindowPos, SetWindowsHookExW, ShowWindow,
-    UnhookWindowsHookEx, WH_CALLWNDPROCRET, WH_GETMESSAGE, WM_APP, WM_CHAR, WM_CLOSE,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WM_SETCURSOR, WM_SETFOCUS, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDBLCLK,
-    WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WS_CHILD, WS_VISIBLE, XBUTTON1, XBUTTON2,
+    CREATESTRUCTW, CS_DBLCLKS, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
+    GetWindowLongPtrW, HTCLIENT, HWND_TOP, IDC_ARROW, IsWindow, LoadCursorW, PostMessageW,
+    RegisterClassW, SW_MINIMIZE, SW_SHOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, WM_APP, WM_CHAR, WM_CLOSE, WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP,
+    WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN,
+    WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY,
+    WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS, WM_SYSCHAR,
+    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW,
+    WS_CHILD, WS_VISIBLE,
 };
-use windows_sys::core::PCWSTR;
 
 use crate::playback::{NativeWindowHandle, PlaybackCoordinator, PlayerCommand};
 use crate::preferences::{AppSettings, PlayerBackend, WebUiWindowSettings};
 use crate::shell::cef::{BrowserState, app_scheme, request_main_window_close};
 
+use self::close_hooks::{CLOSE_TARGET, HOOKED_HOST, HostCloseHooks, install_host_close_hooks};
 use self::compositor::Compositor;
+use self::display::{
+    apply_saved_window_settings, display_frame_rate, logical_to_physical, physical_to_logical,
+    sample_metrics, sample_window_settings,
+};
+use self::input::{
+    apply_cursor, is_alt_f4, key_event, low_word, mouse_button, mouse_modifiers,
+    navigation_mouse_button, right_button_pause, signed_high_word, signed_low_word,
+    track_mouse_leave,
+};
 
 const WM_MOUSELEAVE: u32 = 0x02A3;
 const WM_HOST_CLOSE_REQUESTED: u32 = WM_APP + 0x2A1;
@@ -55,8 +55,6 @@ const INPUT_CLASS: &[u16] = &[
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static CLASS_REGISTERED: OnceLock<bool> = OnceLock::new();
-static HOOKED_HOST: AtomicUsize = AtomicUsize::new(0);
-static CLOSE_TARGET: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct ViewMetrics {
@@ -80,33 +78,6 @@ impl ViewMetrics {
             physical_height: height,
             dpi: DEFAULT_DPI,
             ..Self::default()
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct HostCloseHooks {
-    dispatched: HHOOK,
-    queued: HHOOK,
-}
-
-impl HostCloseHooks {
-    fn uninstall(self) {
-        for hook in [self.dispatched, self.queued] {
-            if !hook.is_null() {
-                // SAFETY: `hook` came from SetWindowsHookExW and is unhooked once,
-                // because `uninstall` consumes the pair that owns it.
-                unsafe { UnhookWindowsHookEx(hook) };
-            }
-        }
-    }
-}
-
-impl Default for HostCloseHooks {
-    fn default() -> Self {
-        Self {
-            dispatched: null_mut(),
-            queued: null_mut(),
         }
     }
 }
@@ -707,89 +678,6 @@ fn input_class_registered() -> bool {
     })
 }
 
-fn install_host_close_hooks(host: HWND, input: HWND) -> io::Result<HostCloseHooks> {
-    // SAFETY: a null process-id pointer is allowed; only the thread id is read.
-    let thread_id = unsafe { GetWindowThreadProcessId(host, null_mut()) };
-    if thread_id == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    HOOKED_HOST.store(host as usize, Ordering::Release);
-    CLOSE_TARGET.store(input as usize, Ordering::Release);
-    // SAFETY: the hook procedure is a static function with the hook signature,
-    // installed for one thread of this process, and removed by `uninstall`.
-    let dispatched = unsafe {
-        SetWindowsHookExW(
-            WH_CALLWNDPROCRET,
-            Some(dispatched_host_message_hook),
-            null_mut(),
-            thread_id,
-        )
-    };
-    if dispatched.is_null() {
-        CLOSE_TARGET.store(0, Ordering::Release);
-        HOOKED_HOST.store(0, Ordering::Release);
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: as for the dispatched-message hook above.
-    let queued = unsafe {
-        SetWindowsHookExW(
-            WH_GETMESSAGE,
-            Some(queued_host_message_hook),
-            null_mut(),
-            thread_id,
-        )
-    };
-    if queued.is_null() {
-        HostCloseHooks { dispatched, queued }.uninstall();
-        CLOSE_TARGET.store(0, Ordering::Release);
-        HOOKED_HOST.store(0, Ordering::Release);
-        return Err(io::Error::last_os_error());
-    }
-    Ok(HostCloseHooks { dispatched, queued })
-}
-
-unsafe extern "system" fn dispatched_host_message_hook(
-    code: i32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    if code >= 0 && lparam != 0 {
-        // SAFETY: for a non-negative code, a WH_CALLWNDPROCRET hook receives a
-        // valid CWPRETSTRUCT for the duration of the call.
-        let message = unsafe { &*(lparam as *const CWPRETSTRUCT) };
-        forward_host_close(message.hwnd, message.message);
-    }
-    // SAFETY: passes the hook arguments through unchanged, as required.
-    unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) }
-}
-
-unsafe extern "system" fn queued_host_message_hook(
-    code: i32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    if code >= 0 && lparam != 0 {
-        // SAFETY: for a non-negative code, a WH_GETMESSAGE hook receives a
-        // valid MSG for the duration of the call.
-        let message = unsafe { &*(lparam as *const MSG) };
-        forward_host_close(message.hwnd, message.message);
-    }
-    // SAFETY: passes the hook arguments through unchanged, as required.
-    unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) }
-}
-
-fn forward_host_close(window: HWND, message: u32) {
-    let host = HOOKED_HOST.load(Ordering::Acquire) as HWND;
-    if host.is_null() || window != host || message != WM_CLOSE {
-        return;
-    }
-    let input = CLOSE_TARGET.load(Ordering::Acquire) as HWND;
-    if !input.is_null() {
-        // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
-        unsafe { PostMessageW(input, WM_HOST_CLOSE_REQUESTED, 0, 0) };
-    }
-}
-
 unsafe extern "system" fn input_wndproc(
     window: HWND,
     message: u32,
@@ -825,17 +713,6 @@ unsafe extern "system" fn input_wndproc(
     }
     // SAFETY: default handling for messages the surface does not consume.
     handled.unwrap_or_else(|| unsafe { DefWindowProcW(window, message, wparam, lparam) })
-}
-
-fn navigation_mouse_button(message: u32, wparam: WPARAM) -> Option<bool> {
-    if message != WM_XBUTTONUP {
-        return None;
-    }
-    match ((wparam >> 16) & 0xffff) as u16 {
-        XBUTTON1 => Some(true),
-        XBUTTON2 => Some(false),
-        _ => None,
-    }
 }
 
 fn dispatch_window_message(
@@ -948,386 +825,8 @@ fn dispatch_window_message(
     }
 }
 
-fn apply_saved_window_settings(host: HWND, settings: WebUiWindowSettings) {
-    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
-    let dpi = unsafe { GetDpiForWindow(host) }.max(DEFAULT_DPI);
-    let (width, height) = settings.size();
-    let width = logical_to_physical(width, dpi).max(1);
-    let height = logical_to_physical(height, dpi).max(1);
-    let (x, y, flags) = settings.position().map_or(
-        (0, 0, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE),
-        |(x, y)| {
-            (
-                logical_to_physical(x, dpi),
-                logical_to_physical(y, dpi),
-                SWP_NOZORDER | SWP_NOACTIVATE,
-            )
-        },
-    );
-    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
-    unsafe {
-        SetWindowPos(host, null_mut(), x, y, width, height, flags);
-        if settings.maximized {
-            ShowWindow(host, SW_MAXIMIZE);
-        }
-    }
-}
-
-fn sample_window_settings(
-    host: HWND,
-    mut settings: WebUiWindowSettings,
-) -> Option<WebUiWindowSettings> {
-    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
-    if unsafe { IsIconic(host) } != 0 {
-        return None;
-    }
-    let mut rect = RECT::default();
-    // SAFETY: `rect` is a live local the call writes.
-    if unsafe { GetWindowRect(host, &raw mut rect) } == 0 {
-        return None;
-    }
-    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
-    let maximized = unsafe { IsZoomed(host) } != 0;
-    if !maximized && window_fills_monitor(host, &rect) {
-        return None;
-    }
-    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
-    let dpi = unsafe { GetDpiForWindow(host) }.max(DEFAULT_DPI);
-    settings.record_bounds(
-        physical_to_logical(rect.left, dpi),
-        physical_to_logical(rect.top, dpi),
-        physical_to_logical(rect.right - rect.left, dpi),
-        physical_to_logical(rect.bottom - rect.top, dpi),
-        maximized,
-    );
-    Some(settings)
-}
-
-fn display_frame_rate(host: HWND) -> i32 {
-    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
-    let monitor = unsafe { MonitorFromWindow(host, MONITOR_DEFAULTTONULL) };
-    let mut info = MONITORINFOEXW::default();
-    info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
-    let mut mode = DEVMODEW {
-        dmSize: size_of::<DEVMODEW>() as u16,
-        ..DEVMODEW::default()
-    };
-    if monitor.is_null()
-        // SAFETY: `info` is a live MONITORINFOEXW with cbSize set, so the call
-        // may write the extended layout.
-        || unsafe { GetMonitorInfoW(monitor, &raw mut info.monitorInfo) } == 0
-        // SAFETY: `mode` is a live DEVMODEW with dmSize set, and `szDevice` is
-        // the NUL-terminated device name the previous call filled in.
-        || unsafe {
-            EnumDisplaySettingsW(info.szDevice.as_ptr(), ENUM_CURRENT_SETTINGS, &raw mut mode)
-        } == 0
-    {
-        return 60;
-    }
-    usable_frame_rate(mode.dmDisplayFrequency)
-}
-
-fn usable_frame_rate(frequency: u32) -> i32 {
-    // Windows uses 0 or 1 for an unspecified/default refresh rate.
-    if frequency <= 1 {
-        60
-    } else {
-        frequency.min(240) as i32
-    }
-}
-
-fn window_fills_monitor(host: HWND, window_rect: &RECT) -> bool {
-    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
-    let monitor = unsafe { MonitorFromWindow(host, MONITOR_DEFAULTTONULL) };
-    if monitor.is_null() {
-        return false;
-    }
-    let mut info = MONITORINFO {
-        cbSize: size_of::<MONITORINFO>() as u32,
-        ..MONITORINFO::default()
-    };
-    // SAFETY: `info` is a live MONITORINFO with cbSize set.
-    if unsafe { GetMonitorInfoW(monitor, &raw mut info) } == 0 {
-        return false;
-    }
-    window_rect.left == info.rcMonitor.left
-        && window_rect.top == info.rcMonitor.top
-        && window_rect.right == info.rcMonitor.right
-        && window_rect.bottom == info.rcMonitor.bottom
-}
-
-fn sample_metrics(host: HWND) -> Option<ViewMetrics> {
-    let mut rect = RECT::default();
-    // SAFETY: `rect` is a live local the call writes.
-    if unsafe { GetClientRect(host, &raw mut rect) } == 0 {
-        return None;
-    }
-    let physical_width = rect.right - rect.left;
-    let physical_height = rect.bottom - rect.top;
-    if physical_width <= 0 || physical_height <= 0 {
-        return None;
-    }
-    let mut origin = POINT { x: 0, y: 0 };
-    // SAFETY: `origin` is a live local the call converts in place.
-    if unsafe { ClientToScreen(host, &raw mut origin) } == 0 {
-        return None;
-    }
-    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
-    let dpi = unsafe { GetDpiForWindow(host) }.max(DEFAULT_DPI);
-    Some(ViewMetrics {
-        logical_width: physical_to_logical(physical_width, dpi).max(1),
-        logical_height: physical_to_logical(physical_height, dpi).max(1),
-        physical_width,
-        physical_height,
-        screen_x: origin.x,
-        screen_y: origin.y,
-        dpi,
-    })
-}
-
 fn paint_buffer_len(width: i32, height: i32) -> Option<usize> {
     let width = usize::try_from(width).ok()?;
     let height = usize::try_from(height).ok()?;
     width.checked_mul(height)?.checked_mul(4)
-}
-
-fn track_mouse_leave(window: HWND) {
-    let mut event = TRACKMOUSEEVENT {
-        cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
-        dwFlags: TME_LEAVE,
-        hwndTrack: window,
-        dwHoverTime: 0,
-    };
-    // SAFETY: `event` is a live TRACKMOUSEEVENT with cbSize set.
-    unsafe { TrackMouseEvent(&raw mut event) };
-}
-
-fn apply_cursor(cursor: CursorType) {
-    let Some(resource) = cursor_resource(cursor) else {
-        // SAFETY: a null cursor hides the pointer.
-        unsafe { SetCursor(null_mut()) };
-        return;
-    };
-    // SAFETY: `resource` is one of the stock IDC_* cursor identifiers.
-    let handle = unsafe { LoadCursorW(null_mut(), resource) };
-    // SAFETY: `handle` is a shared stock cursor, or null, which hides it.
-    unsafe { SetCursor(handle) };
-}
-
-fn cursor_resource(cursor: CursorType) -> Option<PCWSTR> {
-    let resource = if cursor == CursorType::NONE {
-        return None;
-    } else if cursor == CursorType::CROSS {
-        IDC_CROSS
-    } else if matches!(
-        cursor,
-        CursorType::HAND | CursorType::GRAB | CursorType::GRABBING
-    ) {
-        IDC_HAND
-    } else if matches!(cursor, CursorType::IBEAM | CursorType::VERTICALTEXT) {
-        IDC_IBEAM
-    } else if cursor == CursorType::WAIT {
-        IDC_WAIT
-    } else if cursor == CursorType::HELP {
-        IDC_HELP
-    } else if matches!(
-        cursor,
-        CursorType::EASTRESIZE
-            | CursorType::WESTRESIZE
-            | CursorType::EASTWESTRESIZE
-            | CursorType::COLUMNRESIZE
-    ) {
-        IDC_SIZEWE
-    } else if matches!(
-        cursor,
-        CursorType::NORTHRESIZE
-            | CursorType::SOUTHRESIZE
-            | CursorType::NORTHSOUTHRESIZE
-            | CursorType::ROWRESIZE
-    ) {
-        IDC_SIZENS
-    } else if matches!(
-        cursor,
-        CursorType::NORTHEASTRESIZE
-            | CursorType::SOUTHWESTRESIZE
-            | CursorType::NORTHEASTSOUTHWESTRESIZE
-    ) {
-        IDC_SIZENESW
-    } else if matches!(
-        cursor,
-        CursorType::NORTHWESTRESIZE
-            | CursorType::SOUTHEASTRESIZE
-            | CursorType::NORTHWESTSOUTHEASTRESIZE
-    ) {
-        IDC_SIZENWSE
-    } else if matches!(
-        cursor,
-        CursorType::MOVE
-            | CursorType::MIDDLEPANNING
-            | CursorType::MIDDLE_PANNING_VERTICAL
-            | CursorType::MIDDLE_PANNING_HORIZONTAL
-    ) {
-        IDC_SIZEALL
-    } else if cursor == CursorType::PROGRESS {
-        IDC_APPSTARTING
-    } else if matches!(cursor, CursorType::NODROP | CursorType::NOTALLOWED) {
-        IDC_NO
-    } else {
-        IDC_ARROW
-    };
-    Some(resource)
-}
-
-fn is_alt_f4(wparam: WPARAM) -> bool {
-    wparam == usize::from(VK_F4)
-}
-
-fn mouse_modifiers(wparam: WPARAM) -> u32 {
-    let flags = wparam as u32;
-    let mut modifiers = 0;
-    if flags & 0x0001 != 0 {
-        modifiers |= sys::cef_event_flags_t::EVENTFLAG_LEFT_MOUSE_BUTTON.0 as u32;
-    }
-    if flags & 0x0010 != 0 {
-        modifiers |= sys::cef_event_flags_t::EVENTFLAG_MIDDLE_MOUSE_BUTTON.0 as u32;
-    }
-    if flags & 0x0002 != 0 {
-        modifiers |= sys::cef_event_flags_t::EVENTFLAG_RIGHT_MOUSE_BUTTON.0 as u32;
-    }
-    if flags & 0x0004 != 0 {
-        modifiers |= sys::cef_event_flags_t::EVENTFLAG_SHIFT_DOWN.0 as u32;
-    }
-    if flags & 0x0008 != 0 {
-        modifiers |= sys::cef_event_flags_t::EVENTFLAG_CONTROL_DOWN.0 as u32;
-    }
-    if key_down(VK_MENU) {
-        modifiers |= sys::cef_event_flags_t::EVENTFLAG_ALT_DOWN.0 as u32;
-    }
-    modifiers
-}
-
-fn keyboard_modifiers(lparam: LPARAM) -> u32 {
-    let mut modifiers = 0;
-    if key_down(VK_SHIFT) {
-        modifiers |= sys::cef_event_flags_t::EVENTFLAG_SHIFT_DOWN.0 as u32;
-    }
-    if key_down(VK_CONTROL) {
-        modifiers |= sys::cef_event_flags_t::EVENTFLAG_CONTROL_DOWN.0 as u32;
-    }
-    if key_down(VK_MENU) {
-        modifiers |= sys::cef_event_flags_t::EVENTFLAG_ALT_DOWN.0 as u32;
-    }
-    if key_down(VK_LWIN) || key_down(VK_RWIN) {
-        modifiers |= sys::cef_event_flags_t::EVENTFLAG_COMMAND_DOWN.0 as u32;
-    }
-    // SAFETY: GetKeyState only reads this thread's keyboard state.
-    if unsafe { GetKeyState(VK_NUMLOCK as i32) } & 1 != 0 {
-        modifiers |= sys::cef_event_flags_t::EVENTFLAG_NUM_LOCK_ON.0 as u32;
-    }
-    // SAFETY: GetKeyState only reads this thread's keyboard state.
-    if unsafe { GetKeyState(VK_CAPITAL as i32) } & 1 != 0 {
-        modifiers |= sys::cef_event_flags_t::EVENTFLAG_CAPS_LOCK_ON.0 as u32;
-    }
-    if (lparam as usize) & (1 << 30) != 0 {
-        modifiers |= sys::cef_event_flags_t::EVENTFLAG_IS_REPEAT.0 as u32;
-    }
-    modifiers
-}
-
-fn key_event(message: u32, wparam: WPARAM, lparam: LPARAM) -> KeyEvent {
-    let type_ = match message {
-        WM_KEYUP | WM_SYSKEYUP => KeyEventType::KEYUP,
-        WM_CHAR | WM_SYSCHAR => KeyEventType::CHAR,
-        _ => KeyEventType::RAWKEYDOWN,
-    };
-    let character = if matches!(message, WM_CHAR | WM_SYSCHAR) {
-        wparam as u16
-    } else {
-        0
-    };
-    KeyEvent {
-        type_,
-        modifiers: keyboard_modifiers(lparam),
-        windows_key_code: wparam as i32,
-        native_key_code: lparam as i32,
-        is_system_key: i32::from(matches!(message, WM_SYSKEYDOWN | WM_SYSKEYUP | WM_SYSCHAR)),
-        character,
-        unmodified_character: character,
-        ..KeyEvent::default()
-    }
-}
-
-fn right_button_pause(message: u32, paused: bool) -> Option<bool> {
-    (message == WM_RBUTTONDOWN).then_some(!paused)
-}
-
-fn mouse_button(message: u32) -> (MouseButtonType, i32) {
-    let button = match message {
-        WM_RBUTTONDOWN | WM_RBUTTONUP | WM_RBUTTONDBLCLK => MouseButtonType::RIGHT,
-        WM_MBUTTONDOWN | WM_MBUTTONUP | WM_MBUTTONDBLCLK => MouseButtonType::MIDDLE,
-        _ => MouseButtonType::LEFT,
-    };
-    let clicks = i32::from(matches!(
-        message,
-        WM_LBUTTONDBLCLK | WM_RBUTTONDBLCLK | WM_MBUTTONDBLCLK
-    )) + 1;
-    (button, clicks)
-}
-
-fn key_down(key: u16) -> bool {
-    // SAFETY: GetKeyState only reads this thread's keyboard state.
-    (unsafe { GetKeyState(key as i32) }) < 0
-}
-
-fn physical_to_logical(value: i32, dpi: u32) -> i32 {
-    let dpi = i64::from(dpi.max(1));
-    ((i64::from(value) * i64::from(DEFAULT_DPI) + dpi / 2) / dpi) as i32
-}
-
-fn logical_to_physical(value: i32, dpi: u32) -> i32 {
-    ((i64::from(value) * i64::from(dpi) + i64::from(DEFAULT_DPI) / 2) / i64::from(DEFAULT_DPI))
-        as i32
-}
-
-fn signed_low_word(value: isize) -> i32 {
-    (value as u16 as i16) as i32
-}
-
-fn low_word(value: isize) -> u32 {
-    u32::from(value as u16)
-}
-
-fn signed_high_word(value: isize) -> i32 {
-    ((value >> 16) as u16 as i16) as i32
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn navigation_mouse_buttons_act_only_on_release() {
-        let back = (XBUTTON1 as WPARAM) << 16;
-        let forward = (XBUTTON2 as WPARAM) << 16;
-        assert_eq!(navigation_mouse_button(WM_XBUTTONUP, back), Some(true));
-        assert_eq!(navigation_mouse_button(WM_XBUTTONUP, forward), Some(false));
-        assert_eq!(navigation_mouse_button(WM_XBUTTONDOWN, back), None);
-        assert_eq!(navigation_mouse_button(WM_XBUTTONDBLCLK, back), None);
-        assert_eq!(navigation_mouse_button(WM_LBUTTONUP, back), None);
-        assert_eq!(navigation_mouse_button(WM_XBUTTONUP, 0), None);
-    }
-
-    #[test]
-    fn an_unspecified_display_refresh_falls_back_to_60_hz() {
-        for reported in [0, 1] {
-            assert_eq!(super::usable_frame_rate(reported), 60);
-        }
-    }
-
-    #[test]
-    fn right_button_toggles_playback_pause() {
-        assert_eq!(right_button_pause(WM_RBUTTONDOWN, false), Some(true));
-        assert_eq!(right_button_pause(WM_RBUTTONDOWN, true), Some(false));
-        assert_eq!(right_button_pause(WM_RBUTTONUP, false), None);
-    }
 }
