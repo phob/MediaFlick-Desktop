@@ -302,9 +302,13 @@ mod tests {
         });
         // A mapped type, `{ [key in string]: T }`, is one member and takes no
         // comma.
-        let mapped = rhs[1..].trim_start().starts_with('[');
-        if rhs.starts_with('{') && object_end == Some(rhs.len() - 1) && !mapped {
-            let fields = split_top_level(&rhs[1..rhs.len() - 1], b',')
+        let object = rhs
+            .strip_prefix('{')
+            .filter(|body| !body.trim_start().starts_with('['));
+        if let Some(body) = object
+            && object_end == Some(rhs.len() - 1)
+        {
+            let fields = split_top_level(&body[..body.len() - 1], b',')
                 .into_iter()
                 .map(str::trim)
                 .filter(|field| !field.is_empty())
