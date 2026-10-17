@@ -6,22 +6,7 @@ import {
   invalidateLibraryMemberships,
   queryKeys,
 } from "./query-client"
-import { readShellEvent, shellEventIds, type ShellEvent } from "./shell-events"
-
-interface LiveChange {
-  all: boolean
-  itemIds: string[]
-  contextIds: string[]
-}
-
-function readLiveChange(event: ShellEvent): LiveChange | null {
-  if (event.type !== "live-changed") return null
-  return {
-    all: event.payload.all === true,
-    itemIds: shellEventIds(event.payload.itemIds),
-    contextIds: shellEventIds(event.payload.contextIds),
-  }
-}
+import { readShellEvent } from "./shell-events"
 
 function createThrottle(flush: () => void) {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -92,8 +77,8 @@ export function useLibraryMetadataBridge() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.homeSettings, exact: true })
         return
       }
-      const change = detail && readLiveChange(detail)
-      if (change) {
+      if (detail?.type === "live-changed") {
+        const change = detail.payload
         if (change.all) livePending.all = true
         for (const id of change.itemIds) livePending.itemIds.add(id)
         for (const id of change.contextIds) livePending.contextIds.add(id)
@@ -101,10 +86,9 @@ export function useLibraryMetadataBridge() {
         return
       }
       if (detail?.type !== "library-changed" && detail?.type !== "catalog-changed") return
-      const itemIds = shellEventIds(detail.payload.itemIds)
-      const contextIds = shellEventIds(detail.payload.contextIds)
+      const { itemIds, contextIds } = detail.payload
       if (detail.type === "catalog-changed") {
-        for (const id of shellEventIds(detail.payload.libraryIds)) catalogLibraryIds.add(id)
+        for (const id of detail.payload.libraryIds) catalogLibraryIds.add(id)
         invalidateLibraryChanged(queryClient, itemIds, contextIds, "items")
         catalog.request()
       } else {

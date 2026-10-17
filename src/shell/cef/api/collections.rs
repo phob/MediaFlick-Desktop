@@ -9,7 +9,7 @@ pub(super) use browse::{
 };
 pub(super) use profiles::{
     CollectionProfilesIndex, CollectionSettings, CollectionTemplates, CommittedProfile,
-    ProfileDeleted,
+    ProfileDeleted, ProfileDraft, ReorderBody, SettingsPatch,
 };
 
 pub(super) fn route(
@@ -264,26 +264,27 @@ fn custom_artwork(services: &Arc<Services>, id: &str) -> Handled {
     }
 }
 
-#[derive(Deserialize)]
-struct PublicListSearchBody {
+#[derive(Deserialize, ts_rs::TS)]
+pub(super) struct PublicListSearchBody {
     #[serde(default)]
     query: String,
 }
 
-#[derive(Deserialize)]
-struct PublicListValidateBody {
+#[derive(Deserialize, ts_rs::TS)]
+pub(super) struct PublicListValidateBody {
     #[serde(default)]
     selector: String,
 }
 
-#[derive(Deserialize)]
-struct ConfirmationBody {
+#[derive(Deserialize, ts_rs::TS)]
+#[ts(rename = "LocalAccountDeletionBody")]
+pub(super) struct ConfirmationBody {
     #[serde(default)]
     confirmed: bool,
 }
 
 fn search_public_lists(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.untyped_body::<PublicListSearchBody>()?;
+    let body = request.body::<PublicListSearchBody>()?;
     active_account(services)?;
     let query = body.query.trim();
     if query.is_empty() {
@@ -296,7 +297,7 @@ fn search_public_lists(services: &Arc<Services>, request: &ApiRequest) -> Handle
 }
 
 fn validate_public_list(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.untyped_body::<PublicListValidateBody>()?;
+    let body = request.body::<PublicListValidateBody>()?;
     active_account(services)?;
     let selector = body.selector.trim();
     if selector.is_empty() {
@@ -329,7 +330,7 @@ fn provider_artwork(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 }
 
 fn delete_local_account(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let confirmed = request.untyped_body::<ConfirmationBody>()?.confirmed;
+    let confirmed = request.body::<ConfirmationBody>()?.confirmed;
     if !confirmed {
         return Err(ApiResponse::error(
             400,

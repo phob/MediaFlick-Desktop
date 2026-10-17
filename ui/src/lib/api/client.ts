@@ -13,13 +13,13 @@ import type {
   PersonResolveQuery,
 } from "./types/catalog.ts"
 import type {
-  CollectionMode,
   CollectionPreview,
   CollectionProfile,
   CollectionProfileDetail,
   CollectionProfileDraft,
   CollectionProfilesIndex,
   CollectionSettings,
+  CollectionSettingsPatch,
   CollectionTemplates,
   FranchiseCollection,
   FranchiseCollectionsIndex,
@@ -66,8 +66,10 @@ import type {
   SeerrStatusInfo,
 } from "./types/seerr.ts"
 import type {
-  AppearanceSettings,
+  AppearanceSettingsWrite,
+  ApplicationSettingsWrite,
   ClientSettings,
+  PlaybackSettingsWrite,
   PlayerSettingsWrite,
   StreamingQualityId,
   ViewingSettings,
@@ -144,7 +146,7 @@ export const api = {
   viewing: () => request<ViewingSettings>("/api/settings/viewing"),
   saveViewing: (value: ViewingSettingsWrite) => request<ViewingSettings>("/api/settings/viewing", { method: "PATCH", body: value }),
   browsing: () => request<Record<string, string>>("/api/settings/browsing"),
-  saveBrowsing: (page: BrowsingPage, route: string) => request<{ saved: boolean }>("/api/settings/browsing", { method: "PATCH", body: { page, route } }),
+  saveBrowsing: (page: BrowsingPage, route: string) => request<{ saved: boolean }>("/api/settings/browsing", { method: "PATCH", body: { page, route } satisfies Wire.BrowsingBody }),
   status: () => request<Status>("/api/status"),
   startup: (home: boolean) => request<StartupResponse>(`/api/startup${home ? "?home=1" : ""}`),
   companion: {
@@ -158,11 +160,11 @@ export const api = {
   settingsPatch: {
     player: (body: PlayerSettingsWrite) =>
       request<ClientSettings>("/api/settings/client/player", { method: "PATCH", body }),
-    playback: (body: ClientSettings["client"]["playback"]) =>
+    playback: (body: PlaybackSettingsWrite) =>
       request<ClientSettings>("/api/settings/client/playback", { method: "PATCH", body }),
-    application: (body: ClientSettings["client"]["application"]) =>
+    application: (body: ApplicationSettingsWrite) =>
       request<ClientSettings>("/api/settings/client/application", { method: "PATCH", body }),
-    appearance: (body: AppearanceSettings) =>
+    appearance: (body: AppearanceSettingsWrite) =>
       request<ClientSettings>("/api/settings/appearance", { method: "PATCH", body }),
   },
   shell: {
@@ -171,12 +173,12 @@ export const api = {
     filePicker: (requestId: string) =>
       request<{ requestId: string; queued: boolean }>("/api/shell/file-picker", {
         method: "POST",
-        body: { requestId },
+        body: { requestId } satisfies Wire.ShellRequestBody,
       }),
     installMpv: (requestId: string) =>
       request<{ requestId: string; queued: boolean }>("/api/shell/mpv/install", {
         method: "POST",
-        body: { requestId },
+        body: { requestId } satisfies Wire.ShellRequestBody,
       }),
     mpvHelp: () => request<{ opened: boolean }>("/api/shell/mpv/help", { method: "POST" }),
   },
@@ -185,7 +187,7 @@ export const api = {
     batch: (ids: string[], signal?: AbortSignal) =>
       request<RatingsBatchResponse>("/api/ratings/batch", {
         method: "POST",
-        body: { ids },
+        body: { ids } satisfies Wire.RatingsBatchBody,
         signal,
       }),
   },
@@ -193,7 +195,7 @@ export const api = {
     batch: (ids: string[], signal?: AbortSignal) =>
       request<{ items: ItemTechnical[] }>("/api/technical/batch", {
         method: "POST",
-        body: { ids },
+        body: { ids } satisfies Wire.TechnicalBatchBody,
         signal,
       }),
   },
@@ -202,12 +204,12 @@ export const api = {
     add: (profile: string) =>
       request<{ profile: LetterboxdProfile }>("/api/integrations/letterboxd", {
         method: "POST",
-        body: { profile },
+        body: { profile } satisfies Wire.LetterboxdProfileBody,
       }),
     setEnabled: (id: string, enabled: boolean) =>
       request<{ profile: LetterboxdProfile }>(`/api/integrations/letterboxd/${encodeURIComponent(id)}`, {
         method: "PATCH",
-        body: { enabled },
+        body: { enabled } satisfies Wire.LetterboxdEnabledBody,
       }),
     refresh: (id: string) =>
       request<{ profile: LetterboxdProfile }>(
@@ -226,18 +228,18 @@ export const api = {
   },
 
   connect: (server: string, signal?: AbortSignal) =>
-    request<ServerInfo>("/api/auth/connect", { method: "POST", body: { server }, signal }),
+    request<ServerInfo>("/api/auth/connect", { method: "POST", body: { server } satisfies Wire.ServerBody, signal }),
   login: (server: string, username: string, password: string) =>
-    request<Status>("/api/auth/login", { method: "POST", body: { server, username, password } }),
+    request<Status>("/api/auth/login", { method: "POST", body: { server, username, password } satisfies Wire.LoginBody }),
   quickConnectStart: (server: string) =>
     request<QuickConnectStart>("/api/auth/quickconnect/start", {
       method: "POST",
-      body: { server },
+      body: { server } satisfies Wire.ServerBody,
     }),
   quickConnectPoll: (server: string, secret: string, signal?: AbortSignal) =>
     request<{ authenticated: boolean }>("/api/auth/quickconnect/poll", {
       method: "POST",
-      body: { server, secret },
+      body: { server, secret } satisfies Wire.QuickConnectPollBody,
       signal,
     }),
   logout: () => request<Status>("/api/auth/logout", { method: "POST" }),
@@ -300,34 +302,34 @@ export const api = {
   openExternal: (id: string, provider: ExternalProvider) =>
     request<{ opened: boolean; url: string }>(`/api/item/${encodeURIComponent(id)}/external`, {
       method: "POST",
-      body: { provider },
+      body: { provider } satisfies Wire.ExternalLinkBody,
     }),
   setPlayed: (id: string, played: boolean) =>
-    request<unknown>(`/api/item/${encodeURIComponent(id)}/played`, { method: "POST", body: { played } }),
+    request<unknown>(`/api/item/${encodeURIComponent(id)}/played`, { method: "POST", body: { played } satisfies Wire.PlayedBody }),
   setFavorite: (id: string, favorite: boolean) =>
     request<unknown>(`/api/item/${encodeURIComponent(id)}/favorite`, {
       method: "POST",
-      body: { favorite },
+      body: { favorite } satisfies Wire.FavoriteBody,
     }),
 
   /** `quality` overrides the saved Settings default for this play only. */
   play: (itemId: string, resume: boolean, quality?: StreamingQualityId) => {
     window.dispatchEvent(new Event("mediaflick-manual-play"))
-    return request<PlayStarted>("/api/play", { method: "POST", body: { itemId, resume, quality } })
+    return request<PlayStarted>("/api/play", { method: "POST", body: { itemId, resume, quality } satisfies Wire.PlayBody })
   },
   changePlaybackQuality: (itemId: string, startTicks: number, quality: StreamingQualityId) =>
     request<PlayStarted>("/api/play", {
       method: "POST",
-      body: { itemId, startTicks, quality },
+      body: { itemId, startTicks, quality } satisfies Wire.PlayBody,
     }),
   playNext: (itemId: string) =>
-    request<PlayStarted>("/api/play/next", { method: "POST", body: { itemId } }),
+    request<PlayStarted>("/api/play/next", { method: "POST", body: { itemId } satisfies Wire.PlaybackItemBody }),
   playPrevious: (itemId: string) =>
-    request<PlayStarted>("/api/play/previous", { method: "POST", body: { itemId } }),
+    request<PlayStarted>("/api/play/previous", { method: "POST", body: { itemId } satisfies Wire.PlaybackItemBody }),
   playbackNeighbors: (itemId: string) =>
     request<{ previous: ItemSummary | null; next: ItemSummary | null }>("/api/play/neighbors", {
       method: "POST",
-      body: { itemId },
+      body: { itemId } satisfies Wire.PlaybackItemBody,
     }),
 
   playerState: () => request<PlayerState>("/api/player/state"),
@@ -371,14 +373,7 @@ export const api = {
         signal,
       }),
     /** Omitting `seasons` on a series asks for everything Seerr lacks. */
-    request: (body: {
-      mediaType: SeerrMediaType
-      tmdbId: number
-      seasons?: number[]
-      is4k?: boolean
-      serverId?: number
-      profileId?: number
-    }) => request<SeerrRequest>("/api/seerr/request", { method: "POST", body }),
+    request: (body: Wire.SeerrRequestBody) => request<SeerrRequest>("/api/seerr/request", { method: "POST", body }),
     cancelRequest: (id: number) =>
       request<{ cancelled: boolean }>(`/api/seerr/request/${id}`, { method: "DELETE" }),
   },
@@ -389,20 +384,20 @@ export const api = {
         reprobe ? "/api/collections/settings/reprobe" : "/api/collections/settings",
         reprobe ? { method: "POST" } : undefined,
       ),
-    patchSettings: (body: { modeSelection?: CollectionMode; includeUnreleased?: boolean }) =>
+    patchSettings: (body: CollectionSettingsPatch) =>
       request<CollectionSettings>("/api/collections/settings", { method: "PATCH", body }),
     templates: (signal?: AbortSignal) =>
       request<CollectionTemplates>("/api/collections/templates", { signal }),
     searchPublicLists: (query: string, signal?: AbortSignal) =>
       request<{ lists: PublicCollectionList[] }>("/api/collections/mdblist/search", {
         method: "POST",
-        body: { query },
+        body: { query } satisfies Wire.PublicListSearchBody,
         signal,
       }),
     validatePublicList: (selector: string, signal?: AbortSignal) =>
       request<PublicCollectionList>("/api/collections/mdblist/validate", {
         method: "POST",
-        body: { selector },
+        body: { selector } satisfies Wire.PublicListValidateBody,
         signal,
       }),
     preview: (body: CollectionProfileDraft, signal?: AbortSignal) =>
@@ -426,7 +421,7 @@ export const api = {
     reorderProfiles: (profileIds: string[]) =>
       request<CollectionProfilesIndex>("/api/collections/profiles/order", {
         method: "PUT",
-        body: { profileIds },
+        body: { profileIds } satisfies Wire.ProfileOrderBody,
       }),
     refreshProfile: (id: string) =>
       request<{ profile: CollectionProfile; total: number }>(
@@ -472,7 +467,7 @@ export const api = {
     deleteLocalAccount: () =>
       request<Status>("/api/collections/local-account", {
         method: "DELETE",
-        body: { confirmed: true },
+        body: { confirmed: true } satisfies Wire.LocalAccountDeletionBody,
       }),
   },
 }

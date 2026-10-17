@@ -10,7 +10,9 @@ export type CollectionSettings = Wire.CollectionSettings
 
 export type CollectionProfile = Wire.CollectionProfile
 
-export type CollectionProfileDraft = Omit<CollectionProfile, "id" | "revision">
+export type CollectionProfileDraft = Wire.CollectionProfileDraft
+
+export type CollectionSettingsPatch = Wire.CollectionSettingsPatch
 
 export type CollectionTemplate = Wire.CollectionTemplate
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { api, type MediaStream } from "./api"
 import { useSettings } from "./queries"
-import { readShellEvent, shellEventIds } from "./shell-events"
+import { readShellEvent } from "./shell-events"
 import { TechnicalContext } from "./technical-context"
 
 const UI_BATCH_SIZE = 100
@@ -133,8 +133,8 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
       const detail = readShellEvent(event)
       if (detail?.type !== "library-changed" && detail?.type !== "catalog-changed") return
       const changed = [...new Set([
-        ...shellEventIds(detail.payload.itemIds),
-        ...shellEventIds(detail.payload.contextIds),
+        ...detail.payload.itemIds,
+        ...detail.payload.contextIds,
       ])]
       if (changed.length === 0) return
 

@@ -303,7 +303,7 @@ pub(super) fn home_settings(services: &Arc<Services>) -> Handled {
 }
 
 pub(super) fn patch_home_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let requested = request.untyped_body::<HomeSettings>()?;
+    let requested = request.body::<HomeSettings>()?;
     if let Err(error) = requested.validate() {
         return Err(ApiResponse::error(400, error.to_string()));
     }

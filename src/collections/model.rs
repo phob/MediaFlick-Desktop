@@ -59,8 +59,12 @@ pub struct TemplateReference {
     pub id: String,
 }
 
-/// Names any JSON value for the generated TypeScript, which has no type for
-/// `serde_json::Value`. Nothing constructs it.
+/// Names any JSON value for the generated TypeScript. ts-rs's
+/// `serde-json-impl` feature would type `serde_json::Value` itself, but the
+/// generator names each file after the Rust module that defines the type, so
+/// that type would land in a file named after `serde_json`'s internal
+/// `value` module. `ui/src/lib/json.ts` aliases this one, so the UI has a
+/// single `JsonValue`. Nothing constructs it.
 #[derive(ts_rs::TS)]
 #[ts(type = "string | number | boolean | null | Array<JsonValue> | { [key in string]: JsonValue }")]
 pub enum JsonValue {}

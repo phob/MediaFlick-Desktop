@@ -6,15 +6,23 @@ export type HomeConfiguration = Wire.HomeConfiguration
 
 export type HomeSettingsResponse = Wire.HomeSettingsResponse
 
-export type HomeSettingsWrite = Omit<HomeConfiguration, "elements"> & {
-  elements: Array<Pick<HomeElement, "kind" | "id" | "enabled">>
-}
+export type HomeSettingsWrite = Wire.HomeSettings
 
 export function homeSettingsWrite(settings: HomeConfiguration): HomeSettingsWrite {
   return {
     billboard: settings.billboard,
     watching: settings.watching,
-    elements: settings.elements.map(({ kind, id, enabled }) => ({ kind, id, enabled })),
+    elements: settings.elements.map(homeElementWrite),
+  }
+}
+
+function homeElementWrite(element: HomeElement): Wire.HomeElement {
+  const { enabled } = element
+  switch (element.kind) {
+    case "builtIn": return { kind: element.kind, id: element.id, enabled }
+    case "genre": return { kind: element.kind, id: element.id, enabled }
+    case "collection": return { kind: element.kind, id: element.id, enabled }
+    case "library": return { kind: element.kind, id: element.id, enabled }
   }
 }
 

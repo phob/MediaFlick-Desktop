@@ -24,6 +24,11 @@ export type ApplicationView = {
   logLevel: string,
 };
 
+export type BrowsingBody = {
+  page: string,
+  route: string,
+};
+
 export type BrowsingRoutes = { [key in string]: string };
 
 export type BrowsingSaved = {
@@ -72,6 +77,8 @@ export type SettingsView = {
   recoveries: Array<Recovery>,
   serverUrl: string | null,
 };
+
+export type ViewingSettingsWrite = Omit<ViewingView, "startupDestination"> & { startupDestination?: StartupView };
 
 export type ViewingView = {
   spoilerProtection: boolean,

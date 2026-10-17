@@ -1,9 +1,16 @@
 import type * as Wire from "../wire.gen.ts"
 import { sameJson } from "../../json.ts"
 
+/**
+ * A settings patch as a shelf sends it: every key, each typed as the shelf's
+ * view types it. Rust also takes `null` for "keep the stored value", which no
+ * shelf sends.
+ */
+type SettingsWrite<Patch, View extends Record<keyof Patch, unknown>> = Patch & Pick<View, keyof Patch>
+
 export type PlayerSettings = Wire.PlayerView
 
-export type PlayerSettingsWrite = Omit<PlayerSettings, "playerConfigured">
+export type PlayerSettingsWrite = SettingsWrite<Wire.PlayerSettingsPatch, PlayerSettings>
 
 export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWrite {
   return {
@@ -19,9 +26,7 @@ export type StartupDestination = Wire.StartupView
 
 export type ViewingSettings = Wire.ViewingView
 
-export type ViewingSettingsWrite = Omit<ViewingSettings, "startupDestination"> & {
-  startupDestination?: StartupDestination
-}
+export type ViewingSettingsWrite = Wire.ViewingSettingsWrite
 
 export function viewingSettingsWrite(settings: ViewingSettings, source: ViewingSettings | undefined): ViewingSettingsWrite {
   const { startupDestination, ...others } = settings
@@ -33,6 +38,12 @@ export type PlayerComfort = Wire.PlayerComfort
 export type ClientSettings = Wire.SettingsView
 
 export type AppearanceSettings = Wire.AppearanceView
+
+export type PlaybackSettingsWrite = SettingsWrite<Wire.PlaybackSettingsPatch, Wire.PlaybackView>
+
+export type ApplicationSettingsWrite = SettingsWrite<Wire.ApplicationSettingsPatch, Wire.ApplicationView>
+
+export type AppearanceSettingsWrite = SettingsWrite<Wire.AppearanceSettingsPatch, AppearanceSettings>
 
 export type StreamingQualityId = Wire.StreamingQuality
 

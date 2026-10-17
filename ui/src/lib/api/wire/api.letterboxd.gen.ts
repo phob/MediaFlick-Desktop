@@ -2,6 +2,14 @@
 
 import type { ExternalProfile } from "./integrations.letterboxd.gen.ts"
 
+export type LetterboxdEnabledBody = {
+  enabled: boolean,
+};
+
+export type LetterboxdProfileBody = {
+  profile: string,
+};
+
 export type LetterboxdProfileRemoved = {
   removed: boolean,
 };

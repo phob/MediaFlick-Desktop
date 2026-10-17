@@ -1,6 +1,4 @@
-use serde_json::json;
-
-pub fn error_toast_script(title: &str, body: &str) -> String {
-    let payload = json!({ "title": title, "body": body });
-    include_str!("error_toast.js").replace("{{error_payload}}", &payload.to_string())
+/// The error toast, showing `toast`, a `{ title, body }` object as JSON.
+pub fn error_toast_script(toast: &str) -> String {
+    include_str!("error_toast.js").replace("{{error_payload}}", toast)
 }

@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useSourceDraft } from "@/hooks/use-source-draft"
 import { api, playerSettingsWrite, type ClientSettings, type PlayerComfort } from "@/lib/api"
-import { jsonNumber, jsonString } from "@/lib/json"
 import { PLAYER_SHORTCUTS, shortcutError } from "@/lib/player-shortcuts"
 import { useSettings } from "@/lib/queries"
 import { queryKeys } from "@/lib/query-client"
@@ -84,37 +83,33 @@ export default function PlayerSettings() {
   })
   const onShellEvent = useCallback((event: ShellEvent) => {
     if (event.type === "file-picker-completed") {
-      const completedRequestId = jsonString(event.payload.requestId)
-      if (completedRequestId === null || pendingPicker.current !== completedRequestId) return
+      const { requestId, error: pickerError, path } = event.payload
+      if (pendingPicker.current !== requestId) return
       pendingPicker.current = null
       setPicking(false)
 
-      const pickerError = jsonString(event.payload.error)
       if (pickerError) {
         toast.error(pickerError)
         return
       }
       // A null path is the native dialog's cancellation result. It settles the
       // request but deliberately leaves the user's existing draft untouched.
-      const path = jsonString(event.payload.path)
       if (path === null) return
       updateDraft((current) => current ? { ...current, mpvPath: path } : current)
     }
     if (event.type === "mpv-install-progress") {
-      const completedRequestId = jsonString(event.payload.requestId)
-      if (completedRequestId === null || pendingInstall.current !== completedRequestId) return
-      const state = jsonString(event.payload.state) ?? "idle"
-      const message = jsonString(event.payload.message) ?? undefined
-      const downloaded = jsonNumber(event.payload.downloaded) ?? 0
-      const total = jsonNumber(event.payload.total)
-      setInstall({ state, message, downloaded, total })
-      const installedPath = jsonString(event.payload.path)
-      if (state === "completed" && installedPath !== null) {
+      const progress = event.payload
+      if (pendingInstall.current !== progress.requestId) return
+      const message = progress.state === "failed" ? progress.message : undefined
+      const { downloaded, total } = progress.state === "downloading" ? progress : { downloaded: 0, total: null }
+      setInstall({ state: progress.state, message, downloaded, total })
+      if (progress.state === "completed") {
+        const installedPath = progress.path
         pendingInstall.current = null
         updateDraft((current) => current ? { ...current, mpvPath: installedPath } : current)
         void cache.invalidateQueries({ queryKey: queryKeys.settings })
       }
-      if (state === "failed") {
+      if (progress.state === "failed") {
         pendingInstall.current = null
         if (message) toast.error(message)
       }

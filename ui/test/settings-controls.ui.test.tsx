@@ -119,7 +119,7 @@ function sortedKeys<T>(value: T): T {
 
 test("Save clears the draft when the response orders keys differently from the cached settings", async () => {
   const settings = page("/settings/client/player", "windows", sortedKeys)
-  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({...settings, client:{...settings.client, player:{...player, comfort:{...settings.client.player.comfort}, playerConfigured: true}}}))
+  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({...settings, client:{...settings.client, player:{...settings.client.player, ...player, comfort:{...settings.client.player.comfort}, playerConfigured: true}}}))
   fireEvent.click(screen.getByRole("combobox", {name:"Player backend"}))
   fireEvent.click(await screen.findByRole("option", {name:"External mpv"}))
   fireEvent.change(screen.getByRole("textbox", {name:"mpv executable"}), {target:{value:"C:\\mpv\\mpv.exe"}})
@@ -162,7 +162,7 @@ test("Playback Reset restores original streaming quality and saves it", async ()
     ...cached,
     client: { ...cached.client, playback: { ...cached.client.playback, streamingQuality: "20_mbps" } },
   }))
-  const save = vi.spyOn(api.settingsPatch, "playback").mockImplementation(async (playback) => ({ ...settings, client: { ...settings.client, playback } }))
+  const save = vi.spyOn(api.settingsPatch, "playback").mockImplementation(async (playback) => ({ ...settings, client: { ...settings.client, playback: { ...settings.client.playback, ...playback } } }))
   fireEvent.click(screen.getByRole("button", { name: "Restore defaults" }))
   expect(save).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole("button", { name: "Save" }))

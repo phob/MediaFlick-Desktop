@@ -4,16 +4,14 @@ import { toast } from "sonner"
 import { useViewing } from "./viewing"
 import { accountKey, useStatus } from "./queries"
 import { api, type PlayerState } from "./api"
+import type * as Wire from "./api/wire.gen.ts"
 import { invalidateMediaSurfaces, queryKeys } from "./query-client"
 
 declare global {
   interface Window {
     __mediaFlickDesktopPlaybackStateChanged?: (payload: PlayerState) => void
     __mediaFlickDesktopPlaybackStopped?: (payload: PlayerState) => void
-    __mediaFlickDesktopPlaybackCacheRefreshed?: (payload: {
-      itemId: string
-      status: "refreshed" | "deferred"
-    }) => void
+    __mediaFlickDesktopPlaybackCacheRefreshed?: (payload: Wire.PlaybackCacheRefreshed) => void
   }
 }
 

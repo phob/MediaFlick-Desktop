@@ -1,8 +1,20 @@
 // Generated from src/shell/cef/api/wire.rs by `just wire-types`. Do not edit.
 
-import type { CollectionMode, CollectionProfile, ProviderReadiness } from "./collections.model.gen.ts"
+import type { CollectionMode, CollectionProfile, CollectionSource, MediaType, ProviderReadiness, RefreshCadence, ResultLimit, TemplateReference } from "./collections.model.gen.ts"
 import type { CollectionTemplate, TemplateCategory } from "./collections.templates.gen.ts"
 import type { FranchiseSettings } from "./preferences.collections.gen.ts"
+
+export type CollectionProfileDraft = {
+  template: TemplateReference,
+  title: string,
+  description: string,
+  customPosterId: string | null,
+  source: CollectionSource,
+  mediaType: MediaType,
+  limit: ResultLimit,
+  cadence: RefreshCadence,
+  availableOnHome: boolean,
+};
 
 export type CollectionProfilesIndex = {
   profiles: Array<CollectionProfile>,
@@ -21,6 +33,11 @@ export type CollectionSettings = {
   franchises: FranchiseSettings,
   recovery: CollectionRecovery | null,
   readiness: ProviderReadiness,
+};
+
+export type CollectionSettingsPatch = {
+  modeSelection?: CollectionMode,
+  includeUnreleased?: boolean,
 };
 
 export type CollectionTemplateOption = {
@@ -44,4 +61,8 @@ export type CommittedProfile = {
 
 export type ProfileDeleted = {
   deleted: boolean,
+};
+
+export type ProfileOrderBody = {
+  profileIds: Array<string>,
 };

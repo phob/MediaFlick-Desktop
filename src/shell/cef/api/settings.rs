@@ -204,7 +204,7 @@ fn settings_view(settings: &AppSettings, recoveries: Vec<Recovery>) -> SettingsV
 }
 
 fn patch_player_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.untyped_body::<PlayerSettingsPatch>()?;
+    let patch = request.body::<PlayerSettingsPatch>()?;
     match services.preferences.patch_player(patch) {
         Ok(change) => Ok(settings_response(&change.settings, Vec::new())),
         Err(error) => Err(ApiResponse::error(400, error.to_string())),
@@ -212,7 +212,7 @@ fn patch_player_settings(services: &Arc<Services>, request: &ApiRequest) -> Hand
 }
 
 fn patch_playback_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.untyped_body::<PlaybackSettingsPatch>()?;
+    let patch = request.body::<PlaybackSettingsPatch>()?;
     match services.preferences.patch_playback(patch) {
         Ok(change) => Ok(settings_response(&change.settings, Vec::new())),
         Err(error) => Err(ApiResponse::error(400, error.to_string())),
@@ -220,7 +220,7 @@ fn patch_playback_settings(services: &Arc<Services>, request: &ApiRequest) -> Ha
 }
 
 fn patch_application_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.untyped_body::<ApplicationSettingsPatch>()?;
+    let patch = request.body::<ApplicationSettingsPatch>()?;
     match services.preferences.patch_application(patch) {
         Ok(change) => Ok(settings_response(&change.settings, Vec::new())),
         Err(error) => Err(ApiResponse::error(400, error.to_string())),
@@ -228,7 +228,7 @@ fn patch_application_settings(services: &Arc<Services>, request: &ApiRequest) ->
 }
 
 fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let patch = request.untyped_body::<AppearanceSettingsPatch>()?;
+    let patch = request.body::<AppearanceSettingsPatch>()?;
     let scope = session_scope(services)?;
     services
         .session
@@ -315,6 +315,15 @@ pub(super) fn viewing(services: &Services) -> Result<ViewingView, ApiResponse> {
     Ok(viewing)
 }
 
+/// The body of a viewing settings write: every [`ViewingView`] key. A
+/// missing startup destination keeps the stored one, but any other missing
+/// key resets that setting to its default, so the TypeScript requires them.
+/// Movies and Series are rejected as destinations.
+#[derive(Deserialize, ts_rs::TS)]
+#[serde(transparent)]
+#[ts(type = "Omit<ViewingView, \"startupDestination\"> & { startupDestination?: StartupView }")]
+pub(super) struct ViewingSettingsWrite(ViewingWrite);
+
 fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     if request.is("GET") {
         return viewing(services).map(ApiResponse::ok);
@@ -322,7 +331,7 @@ fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let scope = session_scope(services)?;
     let key = scope.account();
     let registry = library_registry(services);
-    let write = request.untyped_body::<ViewingWrite>()?;
+    let ViewingSettingsWrite(write) = request.body::<ViewingSettingsWrite>()?;
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
@@ -345,8 +354,8 @@ pub(super) struct BrowsingSaved {
     saved: bool,
 }
 
-#[derive(Deserialize)]
-struct BrowsingBody {
+#[derive(Deserialize, ts_rs::TS)]
+pub(super) struct BrowsingBody {
     page: String,
     route: String,
 }
@@ -362,7 +371,7 @@ fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled 
     }
     let scope = session_scope(services)?;
     let key = scope.account();
-    let body = request.untyped_body::<BrowsingBody>()?;
+    let body = request.body::<BrowsingBody>()?;
     let (page, route) = (body.page.as_str(), body.route.as_str());
     services
         .session

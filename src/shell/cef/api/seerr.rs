@@ -367,22 +367,24 @@ fn seerr_request_options(
     })
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-struct SeerrRequestBody {
+#[ts(optional_fields)]
+pub(super) struct SeerrRequestBody {
     media_type: String,
     tmdb_id: i64,
     /// An explicit list means "these seasons"; its absence means "the whole
     /// show", which Seerr expands to whatever it does not already have.
     seasons: Option<Vec<i64>>,
     #[serde(default)]
+    #[ts(optional = nullable)]
     is4k: bool,
     server_id: Option<i64>,
     profile_id: Option<i64>,
 }
 
 fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.untyped_body::<SeerrRequestBody>()?;
+    let body = request.body::<SeerrRequestBody>()?;
     let profile = match (body.server_id, body.profile_id) {
         (None, None) => None,
         (Some(server_id), Some(profile_id)) if server_id >= 0 && profile_id > 0 => {

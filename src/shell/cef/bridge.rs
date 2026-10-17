@@ -1,5 +1,8 @@
-use super::document::*;
 use super::events::*;
+use super::ui_events::{
+    ABOUT_DIALOG, AboutInfo, DownloadProgress, FilePickerCompleted, MpvInstallProgress,
+    MpvInstallState, SHELL_EVENTS, ShellEvent, UPDATE_PROGRESS, UpdateProgress,
+};
 use super::*;
 use crate::app::threads::spawn_named;
 
@@ -189,16 +192,11 @@ pub(super) fn toggle_browser_fullscreen(
 }
 
 pub(super) fn show_about_dialog(browser: Option<&mut Browser>, frame: Option<&mut Frame>) {
-    let script = about::dialog_script();
     let target_frame = browser
         .and_then(|browser| browser.main_frame())
         .or_else(|| frame.map(|frame| frame.clone()));
     if let Some(frame) = target_frame {
-        frame.execute_java_script(
-            Some(&CefString::from(script.as_str())),
-            Some(&CefString::from("mediaflick-desktop://app-about")),
-            1,
-        );
+        ABOUT_DIALOG.send(&frame, &AboutInfo::CURRENT);
     }
 }
 
@@ -271,12 +269,11 @@ fn start_update_download(state: &BrowserState) {
         asset = release.asset.as_ref().map(|asset| asset.name.as_str()).unwrap_or("none"),
         "starting update download"
     );
-    dispatch_update_progress(
+    UPDATE_PROGRESS.broadcast(
         state,
-        "downloading",
-        &json!({
-            "downloaded": 0,
-            "total": release.asset.as_ref().and_then(|asset| asset.size),
+        &UpdateProgress::Downloading(DownloadProgress {
+            downloaded: 0,
+            total: release.asset.as_ref().and_then(|asset| asset.size),
         }),
     );
 
@@ -300,10 +297,14 @@ fn start_update_download(state: &BrowserState) {
 
 pub(super) fn start_mpv_download(state: &BrowserState, request_id: String) {
     let failed = |message: &str| {
-        dispatch_shell_event(
+        SHELL_EVENTS.broadcast(
             state,
-            "mpv-install-progress",
-            json!({ "requestId": request_id, "state": "failed", "message": message }),
+            &ShellEvent::MpvInstallProgress(MpvInstallProgress {
+                request_id: request_id.clone(),
+                state: MpvInstallState::Failed {
+                    message: message.to_string(),
+                },
+            }),
         );
     };
     if !mpv_setup::supported() {
@@ -371,24 +372,23 @@ wrap_run_file_dialog_callback! {
             let Some(frame) = &self.frame else { return; };
             let path = file_paths
                 .and_then(|paths| std::mem::take(paths).into_iter().next());
-            dispatch_shell_event_to_frame(
+            SHELL_EVENTS.send(
                 frame,
-                "file-picker-completed",
-                file_picker_completion_payload(&self.request_id, path.as_deref(), None),
+                &file_picker_completed(&self.request_id, path, None),
             );
         }
     }
 }
 
-fn file_picker_completion_payload(
+fn file_picker_completed(
     request_id: &str,
-    path: Option<&str>,
+    path: Option<String>,
     error: Option<&str>,
-) -> serde_json::Value {
-    json!({
-        "requestId": request_id,
-        "path": path,
-        "error": error,
+) -> ShellEvent {
+    ShellEvent::FilePickerCompleted(FilePickerCompleted {
+        request_id: request_id.to_string(),
+        path,
+        error: error.map(str::to_string),
     })
 }
 
@@ -398,18 +398,16 @@ pub(super) fn open_settings_file_dialog(state: &BrowserState, request_id: String
         .ok()
         .and_then(|state| state.browsers.first().cloned());
     let Some(browser) = browser else {
-        dispatch_shell_event(
+        SHELL_EVENTS.broadcast(
             state,
-            "file-picker-completed",
-            file_picker_completion_payload(&request_id, None, Some("The browser is not ready.")),
+            &file_picker_completed(&request_id, None, Some("The browser is not ready.")),
         );
         return;
     };
     let Some(host) = browser.host() else {
-        dispatch_shell_event(
+        SHELL_EVENTS.broadcast(
             state,
-            "file-picker-completed",
-            file_picker_completion_payload(&request_id, None, Some("The browser is unavailable.")),
+            &file_picker_completed(&request_id, None, Some("The browser is unavailable.")),
         );
         return;
     };
@@ -420,14 +418,9 @@ pub(super) fn open_settings_file_dialog(state: &BrowserState, request_id: String
     #[cfg(target_os = "windows")]
     filters.append(".exe");
     let Some(frame) = browser.main_frame() else {
-        dispatch_shell_event(
+        SHELL_EVENTS.broadcast(
             state,
-            "file-picker-completed",
-            file_picker_completion_payload(
-                &request_id,
-                None,
-                Some("The settings page is not ready."),
-            ),
+            &file_picker_completed(&request_id, None, Some("The settings page is not ready.")),
         );
         return;
     };
@@ -441,22 +434,6 @@ pub(super) fn open_settings_file_dialog(state: &BrowserState, request_id: String
         // Passing None here dereferences a null list on Linux/macOS.
         Some(&mut filters),
         Some(&mut callback),
-    );
-}
-
-fn dispatch_shell_event_to_frame(frame: &Frame, kind: &str, payload: serde_json::Value) {
-    let mut event = serde_json::Map::new();
-    event.insert("type".to_string(), json!(kind));
-    event.insert("payload".to_string(), payload);
-    let event = serde_json::Value::Object(event);
-    let script = format!(
-        "window.dispatchEvent(new CustomEvent('mediaflick-desktop-shell', {{ detail: {} }}));",
-        js_json(&event)
-    );
-    frame.execute_java_script(
-        Some(&CefString::from(script.as_str())),
-        Some(&CefString::from("mediaflick-desktop://shell-event")),
-        1,
     );
 }
 

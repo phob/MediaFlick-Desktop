@@ -28,32 +28,35 @@ pub(super) fn route(
 
 const TECHNICAL_BATCH_SIZE: usize = 40;
 
-#[derive(Deserialize)]
-struct IdsBody {
+#[derive(Deserialize, ts_rs::TS)]
+#[ts(rename = "TechnicalBatchBody")]
+pub(super) struct IdsBody {
     ids: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-struct PlaybackPreferenceBody {
+#[ts(rename = "PlaybackTrackPreferenceWrite")]
+pub(super) struct PlaybackPreferenceBody {
     media_source_index: usize,
     media_source_id: Option<String>,
     audio_stream_index: Option<i64>,
     subtitle_stream_index: Option<i64>,
 }
 
-#[derive(Deserialize)]
-struct ExternalBody {
+#[derive(Deserialize, ts_rs::TS)]
+#[ts(rename = "ExternalLinkBody")]
+pub(super) struct ExternalBody {
     provider: String,
 }
 
-#[derive(Deserialize)]
-struct PlayedBody {
+#[derive(Deserialize, ts_rs::TS)]
+pub(super) struct PlayedBody {
     played: bool,
 }
 
-#[derive(Deserialize)]
-struct FavoriteBody {
+#[derive(Deserialize, ts_rs::TS)]
+pub(super) struct FavoriteBody {
     favorite: bool,
 }
 
@@ -161,7 +164,7 @@ pub(super) struct FavoriteState {
 /// a representative episode. Nothing is persisted; a failure is silent on
 /// cards.
 fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let body = request.untyped_body::<IdsBody>()?;
+    let body = request.body::<IdsBody>()?;
     let mut seen = HashSet::new();
     let ids = body
         .ids
@@ -300,7 +303,7 @@ fn set_item_playback_preference(
             "this item has no selectable media tracks",
         ));
     }
-    let body = request.untyped_body::<PlaybackPreferenceBody>()?;
+    let body = request.body::<PlaybackPreferenceBody>()?;
     let source_index = body.media_source_index;
     let requested_source_id = body
         .media_source_id
@@ -668,7 +671,7 @@ impl ExternalProvider {
 /// from the cached row here, so nothing the page can say turns into a launched
 /// address.
 fn open_external(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
-    let body = request.untyped_body::<ExternalBody>()?;
+    let body = request.body::<ExternalBody>()?;
     let Some(provider) = ExternalProvider::parse(&body.provider) else {
         return Err(ApiResponse::error(
             404,
@@ -708,7 +711,7 @@ fn valid_external_id(source: &str, id: &str) -> bool {
 }
 
 fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
-    let played = request.untyped_body::<PlayedBody>()?.played;
+    let played = request.body::<PlayedBody>()?.played;
     let scope = user_data_write(services, item_id, |client, user_id| {
         items::set_played(client, user_id, item_id, played)
     })?;
@@ -721,7 +724,7 @@ fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> 
 }
 
 fn set_favorite(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
-    let favorite = request.untyped_body::<FavoriteBody>()?.favorite;
+    let favorite = request.body::<FavoriteBody>()?.favorite;
     let scope = user_data_write(services, item_id, |client, user_id| {
         items::set_favorite(client, user_id, item_id, favorite)
     })?;
