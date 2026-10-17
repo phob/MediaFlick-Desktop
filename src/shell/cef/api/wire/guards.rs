@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use syn::visit::Visit;
@@ -434,5 +435,180 @@ fn generated_typescript_follows_serde() {
         found.is_empty(),
         "the generated TypeScript would not match what serde sends or accepts:\n  {}",
         found.join("\n  ")
+    );
+}
+
+/// Why a settings patch field may name an enum while taking a string.
+const FROM_ID: &str = "`from_id` decodes the enum by its serde name, which the TypeScript names";
+
+/// What `generated_typescript_follows_serde` cannot check, each with why
+/// the TypeScript still matches serde: a `TS` type whose `Serialize` or
+/// `Deserialize` is written by hand, and a `#[ts(type = ...)]` or
+/// `#[ts(as = ...)]` on a type the app decodes, on its variants or on its
+/// fields. `unchecked_claims_are_listed` fails on one missing here and on
+/// an entry nothing claims any more.
+const UNCHECKED_CLAIMS: &[(&str, &str)] = &[
+    ("AppearanceSettingsPatch.accent", FROM_ID),
+    ("AppearanceSettingsPatch.density", FROM_ID),
+    ("ApplicationSettingsPatch.close_behavior", FROM_ID),
+    (
+        "CollectionSource::TmdbDiscover.parameters",
+        "a `serde_json::Value` is any JSON value, which `JsonValue` types",
+    ),
+    (
+        "FilterKey",
+        "`Serialize` writes `FilterKey::id`, each variant's name in camel case, as `rename_all` says",
+    ),
+    (
+        "HomeElement",
+        "`Deserialize` reads the `kind`-tagged `id` with `enabled` that the derived `Serialize` writes",
+    ),
+    (
+        "LibraryId",
+        "a newtype over `String` decoded with `try_from = \"String\"`, so a string both ways",
+    ),
+    ("PlaybackSettingsPatch.skip_commercial", FROM_ID),
+    ("PlaybackSettingsPatch.skip_credits", FROM_ID),
+    ("PlaybackSettingsPatch.skip_intro", FROM_ID),
+    ("PlaybackSettingsPatch.skip_recap", FROM_ID),
+    ("PlaybackSettingsPatch.streaming_quality", FROM_ID),
+    ("PlayerSettingsPatch.default_fullscreen", FROM_ID),
+    (
+        "PlayerSettingsPatch.mark_watched_next",
+        "`NullablePatch` decodes like `Option`: `null` clears and a missing key keeps",
+    ),
+    (
+        "PlayerSettingsPatch.mpv_path",
+        "`NullablePatch` decodes like `Option`: `null` clears and a missing key keeps",
+    ),
+    ("PlayerSettingsPatch.player_backend", FROM_ID),
+    (
+        "SortKey",
+        "`Serialize` writes `SortKey::id`, which each variant's `#[ts(rename)]` repeats",
+    ),
+    (
+        "ViewingSettingsWrite",
+        "`ViewingWrite` reads the `ViewingView` keys, every one defaulted, and an optional `StartupView`",
+    ),
+];
+
+/// Hand-written serde impls by type name, then every claim as a name in
+/// [`UNCHECKED_CLAIMS`].
+#[derive(Default)]
+struct Claims {
+    hand_serialize: BTreeSet<String>,
+    hand_deserialize: BTreeSet<String>,
+    found: BTreeSet<String>,
+}
+
+fn impl_target(item: &syn::ItemImpl) -> Option<(String, String)> {
+    let (_, trait_path, _) = item.trait_.as_ref()?;
+    let trait_name = trait_path.segments.last()?.ident.to_string();
+    let syn::Type::Path(self_ty) = item.self_ty.as_ref() else {
+        return None;
+    };
+    let type_name = self_ty.path.segments.last()?.ident.to_string();
+    Some((trait_name, type_name))
+}
+
+fn overrides_ts(attrs: &[syn::Attribute]) -> bool {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("ts"))
+        .filter_map(|attr| attr_keys(attr).ok())
+        .any(|keys| has_key(&keys, "type") || has_key(&keys, "as"))
+}
+
+impl Claims {
+    fn fields(&mut self, owner: &str, fields: &syn::Fields) {
+        for (index, field) in fields.iter().enumerate() {
+            if overrides_ts(&field.attrs) {
+                let name = field
+                    .ident
+                    .as_ref()
+                    .map_or_else(|| index.to_string(), ToString::to_string);
+                self.found.insert(format!("{owner}.{name}"));
+            }
+        }
+    }
+
+    /// Records the claims of one `TS` type and reports whether it is
+    /// decoded, so the caller can look at its fields.
+    fn item(&mut self, name: &str, attrs: &[syn::Attribute]) -> bool {
+        if self.hand_serialize.contains(name) || self.hand_deserialize.contains(name) {
+            self.found.insert(name.to_string());
+        }
+        let decoded = derives(attrs, "Deserialize") || self.hand_deserialize.contains(name);
+        if decoded && overrides_ts(attrs) {
+            self.found.insert(name.to_string());
+        }
+        decoded
+    }
+}
+
+struct HandImpls<'a>(&'a mut Claims);
+
+impl Visit<'_> for HandImpls<'_> {
+    fn visit_item_impl(&mut self, item: &syn::ItemImpl) {
+        match impl_target(item) {
+            Some((trait_name, type_name)) if trait_name == "Serialize" => {
+                self.0.hand_serialize.insert(type_name);
+            }
+            Some((trait_name, type_name)) if trait_name == "Deserialize" => {
+                self.0.hand_deserialize.insert(type_name);
+            }
+            _ => {}
+        }
+        syn::visit::visit_item_impl(self, item);
+    }
+}
+
+impl Visit<'_> for Claims {
+    fn visit_item_struct(&mut self, item: &syn::ItemStruct) {
+        let name = item.ident.to_string();
+        if derives(&item.attrs, "TS") && self.item(&name, &item.attrs) {
+            self.fields(&name, &item.fields);
+        }
+    }
+
+    fn visit_item_enum(&mut self, item: &syn::ItemEnum) {
+        let name = item.ident.to_string();
+        if derives(&item.attrs, "TS") && self.item(&name, &item.attrs) {
+            for variant in &item.variants {
+                let owner = format!("{name}::{}", variant.ident);
+                if overrides_ts(&variant.attrs) {
+                    self.found.insert(owner.clone());
+                }
+                self.fields(&owner, &variant.fields);
+            }
+        }
+    }
+}
+
+#[test]
+fn unchecked_claims_are_listed() {
+    let sources = parsed_sources();
+    let mut claims = Claims::default();
+    for (_, file) in &sources {
+        HandImpls(&mut claims).visit_file(file);
+    }
+    for (_, file) in &sources {
+        claims.visit_file(file);
+    }
+    let listed = UNCHECKED_CLAIMS
+        .iter()
+        .map(|(name, _)| (*name).to_string())
+        .collect::<BTreeSet<_>>();
+    let unlisted = claims.found.difference(&listed).collect::<Vec<_>>();
+    let stale = listed.difference(&claims.found).collect::<Vec<_>>();
+    assert!(
+        unlisted.is_empty(),
+        "the guards cannot check these claims about the JSON; check each by hand and \
+         add it to UNCHECKED_CLAIMS in src/shell/cef/api/wire/guards.rs with why it holds: \
+         {unlisted:?}"
+    );
+    assert!(
+        stale.is_empty(),
+        "UNCHECKED_CLAIMS lists claims nothing makes any more; remove them: {stale:?}"
     );
 }
