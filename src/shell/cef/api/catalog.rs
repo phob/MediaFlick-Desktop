@@ -113,9 +113,9 @@ fn resolved_home(services: &Services) -> Result<ResolvedHome, ApiResponse> {
     })
 }
 
-/// What Reset restores. Saved elements the fresh defaults lack are appended,
-/// because a save must hold every current element; a library shelf among them
-/// starts on, any other starts off.
+/// What Reset restores. Saved elements the fresh defaults lack are kept,
+/// because a save must hold every current element: a library shelf joins the
+/// library block, on, and any other is appended, off.
 fn home_defaults(
     settings: &HomeSettings,
     genres: &[String],
@@ -129,15 +129,42 @@ fn home_defaults(
         .iter()
         .map(|element| element.element.clone())
         .collect::<HashSet<_>>();
+    let mut position = library_block_end(&defaults.elements);
     for element in &settings.elements {
-        if default_ids.insert(element.element.clone()) {
+        if !default_ids.insert(element.element.clone()) {
+            continue;
+        }
+        if matches!(element.element, HomeElementId::Library { .. }) {
+            defaults.elements.insert(
+                position,
+                HomeElement {
+                    element: element.element.clone(),
+                    enabled: true,
+                },
+            );
+            position += 1;
+        } else {
             defaults.elements.push(HomeElement {
                 element: element.element.clone(),
-                enabled: matches!(element.element, HomeElementId::Library { .. }),
+                enabled: false,
             });
         }
     }
     defaults
+}
+
+/// Where a new library shelf goes: after the last library shelf, else after
+/// the last built-in shelf.
+fn library_block_end(elements: &[HomeElement]) -> usize {
+    let is_library =
+        |element: &HomeElement| matches!(element.element, HomeElementId::Library { .. });
+    let is_built_in =
+        |element: &HomeElement| matches!(element.element, HomeElementId::BuiltIn { .. });
+    elements
+        .iter()
+        .rposition(is_library)
+        .or_else(|| elements.iter().rposition(is_built_in))
+        .map_or(0, |index| index + 1)
 }
 
 /// A read never writes: library shelves reach accounts.json with the user's
@@ -170,16 +197,7 @@ fn reconcile_home_elements(
         .iter()
         .map(|element| element.element.clone())
         .collect::<HashSet<_>>();
-    let is_library =
-        |element: &HomeElement| matches!(element.element, HomeElementId::Library { .. });
-    let is_built_in =
-        |element: &HomeElement| matches!(element.element, HomeElementId::BuiltIn { .. });
-    let mut position = settings
-        .elements
-        .iter()
-        .rposition(is_library)
-        .or_else(|| settings.elements.iter().rposition(is_built_in))
-        .map_or(0, |index| index + 1);
+    let mut position = library_block_end(&settings.elements);
     for library in known.unwrap_or_default() {
         let element = HomeElementId::Library {
             id: library.id.clone(),
