@@ -7,7 +7,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -59,31 +58,6 @@ pub struct ApiRequest {
 }
 
 impl ApiRequest {
-    /// Decodes the JSON body into the endpoint's request type. A request sent
-    /// without a body decodes like `{}`, so it is accepted exactly when every
-    /// field of `T` is optional. A body that is not JSON, or does not match
-    /// `T`, is rejected rather than read as defaults: a garbled "mark as
-    /// unwatched" must not mark the item watched.
-    fn body<T: DeserializeOwned + wire::Wire>(&self) -> Result<T, ApiResponse> {
-        self.decode()
-    }
-
-    /// [`Self::body`] for a request type the generated TypeScript does not
-    /// know. `untyped_responses_only_shrink` keeps it from spreading.
-    fn untyped_body<T: DeserializeOwned>(&self) -> Result<T, ApiResponse> {
-        self.decode()
-    }
-
-    fn decode<T: DeserializeOwned>(&self) -> Result<T, ApiResponse> {
-        let body: &[u8] = if self.body.iter().all(u8::is_ascii_whitespace) {
-            b"{}"
-        } else {
-            &self.body
-        };
-        serde_json::from_slice(body)
-            .map_err(|error| ApiResponse::error(400, format!("invalid request body: {error}")))
-    }
-
     fn param(&self, key: &str) -> Option<String> {
         query_param(&self.query, key).filter(|value| !value.trim().is_empty())
     }
@@ -107,49 +81,6 @@ pub struct ApiResponse {
 }
 
 impl ApiResponse {
-    fn json(status: u16, value: impl Serialize) -> Self {
-        let body = serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec());
-        drop(value);
-        Self {
-            status,
-            content_type: "application/json; charset=utf-8".to_string(),
-            body,
-            cache_control: NO_STORE,
-            headers: Vec::new(),
-        }
-    }
-
-    fn ok<T: Serialize + wire::Wire>(value: T) -> Self {
-        Self::json(200, value)
-    }
-
-    /// A response the UI reads without a generated type. Answer with a
-    /// [`wire::Wire`] type through [`Self::ok`] instead;
-    /// `untyped_responses_only_shrink` keeps this from spreading.
-    fn untyped(value: impl Serialize) -> Self {
-        Self::json(200, value)
-    }
-
-    fn error(status: u16, message: impl Into<String>) -> Self {
-        Self::json(
-            status,
-            wire::ErrorBody {
-                error: message.into(),
-                expired: None,
-            },
-        )
-    }
-
-    fn from_api_error(error: &ApiError) -> Self {
-        Self::json(
-            error.client_status(),
-            wire::ErrorBody {
-                error: error.to_string(),
-                expired: Some(*error == ApiError::Unauthorized),
-            },
-        )
-    }
-
     fn asset(content_type: &str, body: &'static [u8], cache_control: &'static str) -> Self {
         Self {
             status: 200,

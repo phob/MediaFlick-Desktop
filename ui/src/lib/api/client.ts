@@ -1,4 +1,5 @@
 import { isJsonObject, jsonBoolean, jsonString, type JsonValue } from "../json.ts"
+import type * as Wire from "./wire.gen.ts"
 import type { QuickConnectStart, ServerInfo } from "./types/auth.ts"
 import type { ReleaseCalendar } from "./types/calendar.ts"
 import type {
@@ -94,10 +95,7 @@ interface RequestOptions {
   signal?: AbortSignal
 }
 
-interface ApiErrorEnvelope {
-  error?: string
-  expired?: boolean
-}
+type ApiErrorEnvelope = Partial<Wire.ErrorBody>
 
 function readApiErrorEnvelope(value: JsonValue): ApiErrorEnvelope | null {
   if (!isJsonObject(value)) return null

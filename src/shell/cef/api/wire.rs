@@ -1,19 +1,23 @@
-//! The JSON contract with the UI. Every body the API answers through
-//! `ApiResponse::ok` or decodes through `ApiRequest::body` is a Rust type
-//! listed in [`wire_types!`]. `ui/src/lib/api/wire.gen.ts` is rendered from
-//! that list by `generated_typescript_is_current` and is never edited by hand.
+//! The JSON contract with the UI. Every JSON body the API answers or decodes
+//! passes through this module: `ApiResponse::ok` and `ApiRequest::body` take
+//! only types listed in [`wire_types!`], and `ui/src/lib/api/wire.gen.ts` is
+//! rendered from that list by `generated_typescript_is_current`. The raw
+//! encoder and decoder are private here, so a handler cannot skip the bound.
 
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use ts_rs::TS;
+
+use crate::jellyfin::api::ApiError;
 
 use crate::companion::CompanionStatus;
 use crate::library::browse::FilterOptions;
 use crate::library::model::{DetailView, ItemSummary};
 use crate::playback::PlayerSnapshot;
 
-use super::AppStatus;
 use super::playback::PlayerCommandBody;
 use super::settings::SettingsView;
+use super::{ApiRequest, ApiResponse, AppStatus, NO_STORE};
 
 /// A type the UI reads or sends by name. Only [`wire_types!`] implements it,
 /// so a handler cannot answer with `json!` or with a type the generated
@@ -40,7 +44,6 @@ wire_types! {
     AppStatus,
     CompanionStatus,
     DetailView,
-    ErrorBody,
     FilterOptions,
     ItemSummary,
     PlayerCommandBody,
@@ -48,17 +51,91 @@ wire_types! {
     SettingsView,
 }
 
-/// The body of every non-2xx JSON response.
+/// The body of every non-2xx JSON response. It is generated for the UI but
+/// is not a [`Wire`] type, so `ApiResponse::ok` cannot send it with a 200.
 #[derive(Serialize, TS)]
-pub(super) struct ErrorBody {
-    pub error: String,
+struct ErrorBody {
+    error: String,
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub expired: Option<bool>,
+    expired: Option<bool>,
+}
+
+impl ApiRequest {
+    /// Decodes the JSON body into the endpoint's request type. A request sent
+    /// without a body decodes like `{}`, so it is accepted exactly when every
+    /// field of `T` is optional. A body that is not JSON, or does not match
+    /// `T`, is rejected rather than read as defaults: a garbled "mark as
+    /// unwatched" must not mark the item watched.
+    pub(super) fn body<T: DeserializeOwned + Wire>(&self) -> Result<T, ApiResponse> {
+        self.decode()
+    }
+
+    /// [`Self::body`] for a request type the generated TypeScript does not
+    /// know. `untyped_responses_only_shrink` keeps it from spreading.
+    pub(super) fn untyped_body<T: DeserializeOwned>(&self) -> Result<T, ApiResponse> {
+        self.decode()
+    }
+
+    fn decode<T: DeserializeOwned>(&self) -> Result<T, ApiResponse> {
+        let body: &[u8] = if self.body.iter().all(u8::is_ascii_whitespace) {
+            b"{}"
+        } else {
+            &self.body
+        };
+        serde_json::from_slice(body)
+            .map_err(|error| ApiResponse::error(400, format!("invalid request body: {error}")))
+    }
+}
+
+impl ApiResponse {
+    fn json(status: u16, value: impl Serialize) -> Self {
+        let body = serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec());
+        drop(value);
+        Self {
+            status,
+            content_type: "application/json; charset=utf-8".to_string(),
+            body,
+            cache_control: NO_STORE,
+            headers: Vec::new(),
+        }
+    }
+
+    pub(super) fn ok<T: Serialize + Wire>(value: T) -> Self {
+        Self::json(200, value)
+    }
+
+    /// A response the UI reads without a generated type. Answer with a
+    /// [`Wire`] type through [`Self::ok`] instead;
+    /// `untyped_responses_only_shrink` keeps this from spreading.
+    pub(super) fn untyped(value: impl Serialize) -> Self {
+        Self::json(200, value)
+    }
+
+    pub(super) fn error(status: u16, message: impl Into<String>) -> Self {
+        Self::json(
+            status,
+            ErrorBody {
+                error: message.into(),
+                expired: None,
+            },
+        )
+    }
+
+    pub(super) fn from_api_error(error: &ApiError) -> Self {
+        Self::json(
+            error.client_status(),
+            ErrorBody {
+                error: error.to_string(),
+                expired: Some(*error == ApiError::Unauthorized),
+            },
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::any::TypeId;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
@@ -75,16 +152,24 @@ mod tests {
 
     struct Collect<'a> {
         cfg: &'a Config,
-        decls: BTreeMap<String, String>,
+        decls: BTreeMap<String, (TypeId, String)>,
     }
 
     impl TypeVisitor for Collect<'_> {
         fn visit<T: TS + 'static + ?Sized>(&mut self) {
-            if T::output_path().is_none() || self.decls.contains_key(&T::ident(self.cfg)) {
+            if T::output_path().is_none() {
                 return;
             }
-            self.decls
-                .insert(T::ident(self.cfg), format_decl(&T::decl(self.cfg)));
+            let name = T::ident(self.cfg);
+            if let Some((seen, _)) = self.decls.get(&name) {
+                assert!(
+                    *seen == TypeId::of::<T>(),
+                    "two wire types are both named `{name}`; rename one with `#[ts(rename = \"...\")]`"
+                );
+                return;
+            }
+            let decl = format_decl(&T::decl(self.cfg));
+            self.decls.insert(name, (TypeId::of::<T>(), decl));
             T::visit_dependencies(self);
         }
     }
@@ -177,15 +262,18 @@ mod tests {
             .strip_prefix("/**")
             .and_then(|rest| rest.split_once("*/"))
         else {
-            return format!("  {field},\n");
+            return format!("  {},\n", tidy_inline(field));
         };
         let lines = doc
+            .trim()
             .lines()
-            .map(|line| line.trim().trim_start_matches('*').trim())
-            .filter(|line| !line.is_empty())
-            .map(|line| format!("   * {line}\n"))
+            .map(|line| {
+                let line = line.trim();
+                let text = line.strip_prefix('*').unwrap_or(line);
+                format!("   *{}\n", text.trim_end())
+            })
             .collect::<String>();
-        format!("  /**\n{lines}   */\n  {},\n", field.trim())
+        format!("  /**\n{lines}   */\n  {},\n", tidy_inline(field.trim()))
     }
 
     /// Drops the comma ts-rs leaves before an inline object's closing brace:
@@ -211,10 +299,11 @@ mod tests {
             decls: BTreeMap::new(),
         };
         super::visit_roots(&mut collect);
+        collect.visit::<super::ErrorBody>();
         let mut out = String::from(
             "// Generated from src/shell/cef/api/wire.rs by `just wire-types`. Do not edit.\n",
         );
-        for decl in collect.decls.values() {
+        for (_, decl) in collect.decls.values() {
             out.push_str("\nexport ");
             out.push_str(decl);
             out.push('\n');
@@ -226,12 +315,16 @@ mod tests {
     fn generated_typescript_is_current() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(GENERATED);
         let rendered = render();
-        let committed = std::fs::read_to_string(&path).unwrap_or_default();
+        // A Windows checkout may hold the file with CRLF line endings.
+        let committed = std::fs::read_to_string(&path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
         if rendered == committed {
             return;
         }
-        if std::env::var_os("MEDIAFLICK_WRITE_WIRE_TYPES").is_some() {
+        if std::env::var("MEDIAFLICK_WRITE_WIRE_TYPES").as_deref() == Ok("1") {
             std::fs::write(&path, rendered).expect("write wire.gen.ts");
+            println!("rewrote {GENERATED}");
             return;
         }
         let first = rendered
@@ -286,12 +379,10 @@ mod tests {
 
     impl Visit<'_> for UntypedCalls {
         fn visit_path(&mut self, path: &syn::Path) {
-            if path
-                .segments
-                .last()
-                .is_some_and(|last| last.ident == "untyped")
-            {
-                self.responses += 1;
+            match path.segments.last() {
+                Some(last) if last.ident == "untyped" => self.responses += 1,
+                Some(last) if last.ident == "untyped_body" => self.bodies += 1,
+                _ => {}
             }
             syn::visit::visit_path(self, path);
         }
@@ -344,71 +435,162 @@ mod tests {
             })
     }
 
-    /// serde leaves out a `skip_serializing_if` field, but ts-rs types it as a
-    /// present key unless the field also says `#[ts(optional)]` or carries
-    /// `#[serde(default)]`. The UI would then read `undefined` as `T | null`.
-    fn omitted_but_required(field: &syn::Field) -> bool {
-        let serde = field
-            .attrs
-            .iter()
-            .filter_map(|attr| list_tokens(attr, "serde"))
-            .collect::<Vec<_>>();
-        let omitted = serde
-            .iter()
-            .any(|tokens| tokens.contains("skip_serializing"));
-        let defaulted = serde.iter().any(|tokens| {
-            tokens
-                .split(',')
-                .any(|part| part.trim().starts_with("default"))
-        });
-        let optional = field
-            .attrs
-            .iter()
-            .filter_map(|attr| list_tokens(attr, "ts"))
-            .any(|tokens| tokens.contains("optional"));
-        omitted && !defaulted && !optional
+    /// The keys of every `#[name(...)]` attribute, each with its value when
+    /// that is a `true` or `false` literal.
+    fn attr_keys(attrs: &[syn::Attribute], name: &str) -> Vec<(String, Option<bool>)> {
+        let mut keys = Vec::new();
+        for attr in attrs.iter().filter(|attr| attr.path().is_ident(name)) {
+            attr.parse_nested_meta(|meta| {
+                let key = meta
+                    .path
+                    .get_ident()
+                    .map_or_else(String::new, ToString::to_string);
+                let mut flag = None;
+                if meta.input.peek(syn::Token![=]) {
+                    let value: syn::Expr = meta.value()?.parse()?;
+                    if let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Bool(value),
+                        ..
+                    }) = value
+                    {
+                        flag = Some(value.value);
+                    }
+                } else if meta.input.peek(syn::token::Paren) {
+                    meta.parse_nested_meta(|inner| {
+                        if inner.input.peek(syn::Token![=]) {
+                            inner.value()?.parse::<syn::Expr>()?;
+                        }
+                        Ok(())
+                    })?;
+                }
+                keys.push((key, flag));
+                Ok(())
+            })
+            .expect("parse attribute");
+        }
+        keys
     }
 
-    struct OmittedFields<'a> {
+    fn has_key(keys: &[(String, Option<bool>)], key: &str) -> bool {
+        keys.iter().any(|(name, _)| name == key)
+    }
+
+    /// The serde attributes ts-rs 12 reads (`ts-rs-macros/src/attr`), plus
+    /// those that only change how a field is matched while decoding. Any
+    /// other serde attribute changes the JSON in a way ts-rs ignores, so the
+    /// type needs an explicit `#[ts(type = ...)]` or `#[ts(as = ...)]`.
+    const CONTAINER_SERDE: &[&str] = &[
+        "rename",
+        "rename_all",
+        "rename_all_fields",
+        "tag",
+        "content",
+        "untagged",
+        "bound",
+        "default",
+        "crate",
+        "deny_unknown_fields",
+    ];
+    const VARIANT_SERDE: &[&str] = &[
+        "rename",
+        "rename_all",
+        "skip",
+        "untagged",
+        "borrow",
+        "alias",
+    ];
+    const FIELD_SERDE: &[&str] = &[
+        "rename",
+        "skip",
+        "skip_serializing_if",
+        "skip_serializing",
+        "flatten",
+        "default",
+        "borrow",
+        "alias",
+    ];
+
+    struct SerdeFidelity<'a> {
         file: &'a Path,
         found: Vec<String>,
     }
 
-    impl OmittedFields<'_> {
-        fn check(&mut self, owner: &syn::Ident, fields: &syn::Fields) {
-            for field in fields.iter().filter(|field| omitted_but_required(field)) {
+    impl SerdeFidelity<'_> {
+        fn unsupported(&mut self, at: &str, attrs: &[syn::Attribute], allowed: &[&str]) {
+            let ts = attr_keys(attrs, "ts");
+            if has_key(&ts, "type") || has_key(&ts, "as") {
+                return;
+            }
+            if has_key(&ts, "optional_fields") {
+                self.found.push(format!(
+                    "{}: {at} uses `#[ts(optional_fields)]`; mark each field instead",
+                    self.file.display()
+                ));
+            }
+            for (key, _) in attr_keys(attrs, "serde") {
+                if !allowed.contains(&key.as_str()) {
+                    self.found.push(format!(
+                        "{}: {at} has `#[serde({key})]`, which ts-rs ignores; describe the JSON with `#[ts(type = ...)]` or `#[ts(as = ...)]`",
+                        self.file.display()
+                    ));
+                }
+            }
+        }
+
+        /// serde leaves out a `skip_serializing_if` field, but ts-rs types it
+        /// as a present key unless the field says `#[ts(optional)]` or carries
+        /// `#[serde(default)]`. The UI would then read `undefined` as `T | null`.
+        fn fields(&mut self, owner: &str, fields: &syn::Fields) {
+            for (index, field) in fields.iter().enumerate() {
                 let name = field
                     .ident
                     .as_ref()
-                    .map_or_else(|| "<tuple field>".to_string(), ToString::to_string);
-                self.found
-                    .push(format!("{}: {owner}.{name}", self.file.display()));
+                    .map_or_else(|| index.to_string(), ToString::to_string);
+                let at = format!("{owner}.{name}");
+                self.unsupported(&at, &field.attrs, FIELD_SERDE);
+                let serde = attr_keys(&field.attrs, "serde");
+                let optional = attr_keys(&field.attrs, "ts")
+                    .iter()
+                    .any(|(key, flag)| key == "optional" && *flag != Some(false));
+                let omitted =
+                    has_key(&serde, "skip_serializing_if") || has_key(&serde, "skip_serializing");
+                if omitted && !optional && !has_key(&serde, "default") {
+                    self.found.push(format!(
+                        "{}: {at} can be left out of the JSON but is typed as always present; add `#[ts(optional)]` (`#[ts(optional = nullable)]` for a non-`Option` field)",
+                        self.file.display()
+                    ));
+                }
             }
         }
     }
 
-    impl Visit<'_> for OmittedFields<'_> {
+    impl Visit<'_> for SerdeFidelity<'_> {
         fn visit_item_struct(&mut self, item: &syn::ItemStruct) {
             if derives_ts(&item.attrs) {
-                self.check(&item.ident, &item.fields);
+                let owner = item.ident.to_string();
+                self.unsupported(&owner, &item.attrs, CONTAINER_SERDE);
+                self.fields(&owner, &item.fields);
             }
         }
 
         fn visit_item_enum(&mut self, item: &syn::ItemEnum) {
             if derives_ts(&item.attrs) {
+                self.unsupported(&item.ident.to_string(), &item.attrs, CONTAINER_SERDE);
                 for variant in &item.variants {
-                    self.check(&variant.ident, &variant.fields);
+                    let owner = format!("{}::{}", item.ident, variant.ident);
+                    self.unsupported(&owner, &variant.attrs, VARIANT_SERDE);
+                    self.fields(&owner, &variant.fields);
                 }
             }
         }
     }
 
     #[test]
-    fn omitted_fields_are_optional_in_typescript() {
+    fn generated_typescript_follows_serde() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut found = Vec::new();
         for (path, file) in parsed_sources() {
-            let mut visitor = OmittedFields {
+            let mut visitor = SerdeFidelity {
                 file: path.strip_prefix(root).unwrap_or(&path),
                 found: Vec::new(),
             };
@@ -417,8 +599,7 @@ mod tests {
         }
         assert!(
             found.is_empty(),
-            "these wire fields can be left out of the JSON but are typed as always present. \
-             Add `#[ts(optional)]` (or `#[ts(optional = nullable)]` for a non-`Option` field):\n  {}",
+            "the generated TypeScript would not match what serde sends:\n  {}",
             found.join("\n  ")
         );
     }

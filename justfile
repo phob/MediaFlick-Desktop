@@ -96,13 +96,13 @@ test:
 [group('build')]
 [unix]
 wire-types:
-    MEDIAFLICK_WRITE_WIRE_TYPES=1 cargo test --bin mediaflick-desktop wire::tests::generated_typescript_is_current
+    MEDIAFLICK_WRITE_WIRE_TYPES=1 cargo test --bin mediaflick-desktop wire::tests::generated_typescript_is_current -- --nocapture
 
 # Regenerate ui/src/lib/api/wire.gen.ts from the Rust wire types
 [group('build')]
 [windows]
 wire-types:
-    $env:MEDIAFLICK_WRITE_WIRE_TYPES = '1'; cargo test --bin mediaflick-desktop wire::tests::generated_typescript_is_current
+    $env:MEDIAFLICK_WRITE_WIRE_TYPES = '1'; cargo test --bin mediaflick-desktop wire::tests::generated_typescript_is_current -- --nocapture
 
 # Run clippy
 [group('lint')]

@@ -7,6 +7,7 @@ use super::model::TitleKind;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
 #[serde(try_from = "String")]
+#[ts(type = "string")]
 pub struct LibraryId(String);
 
 impl LibraryId {
