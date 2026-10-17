@@ -75,4 +75,5 @@ export function readDetailNavigationState(value: JsonValue | undefined): DetailN
 }
 import { isJsonObject, jsonString, type JsonValue } from "./json.ts"
 import { libraryIdFromPath, libraryPath } from "./libraries.ts"
-import type { AnyItemDetail, Library } from "./api/types.ts"
+import type { AnyItemDetail } from "./api/types/catalog.ts"
+import type { Library } from "./api/types/libraries.ts"

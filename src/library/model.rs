@@ -520,7 +520,8 @@ fn release_year_from_date(value: &str) -> Option<i64> {
 }
 
 /// One item as list, row and grid surfaces show it. Built from a cached row
-/// or a live Jellyfin item; mirrors `ItemSummary` in `ui/src/lib/api/types.ts`.
+/// or a live Jellyfin item; mirrors `ItemSummary` in
+/// `ui/src/lib/api/types/catalog.ts`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemSummary {
@@ -593,7 +594,7 @@ impl ItemSummary {
 }
 
 /// A cached item with what its detail page adds to the card; mirrors
-/// `ItemDetail` in `ui/src/lib/api/types.ts`.
+/// `ItemDetail` in `ui/src/lib/api/types/catalog.ts`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemDetail {

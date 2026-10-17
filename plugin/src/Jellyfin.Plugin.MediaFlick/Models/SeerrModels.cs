@@ -2,8 +2,8 @@ namespace Jellyfin.Plugin.MediaFlick.Models;
 
 // The Desktop-facing Seerr contract. Every value is rebuilt from upstream
 // data into these fixed shapes; no upstream JSON passes through unchanged.
-// Desktop mirrors them in ui/src/lib/api/types.ts (SeerrStatusInfo, SeerrResult,
-// SeerrMediaDetail, SeerrPage, SeerrRequest, SeerrRequestOptions).
+// Desktop mirrors them in ui/src/lib/api/types/seerr.ts (SeerrStatusInfo,
+// SeerrResult, SeerrMediaDetail, SeerrPage, SeerrRequest, SeerrRequestOptions).
 
 public sealed record SeerrStatusResponse(
     bool Linked,
