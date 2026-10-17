@@ -37,7 +37,8 @@ NUMBER = re.compile(r"\d[\d_]*")
 RUST_ATTRIBUTE = re.compile(r"#!?\[")
 RUST_LINT_LEVEL = re.compile(r"\b(allow|expect)\s*\(\s*(\w[\w:]*(?:\s*,\s*\w[\w:]*)*)")
 RUST_STRING = re.compile(r'"(?:\\[\s\S]|[^"\\])*"')
-RUST_GAP = re.compile(r"(?:\s+|//[^\n]*)*")
+RUST_COMMENT = re.compile(r"//[^\n]*|/\*[\s\S]*?\*/")
+RUST_GAP = re.compile(r"(?:\s+|//[^\n]*|/\*[\s\S]*?\*/|\bpub\s*\([^)]*\))*")
 RUST_WORD = re.compile(r"[A-Za-z_]\w*")
 RUST_ITEMS = frozenset({"fn", "impl", "mod", "struct", "enum", "union", "trait", "const", "static", "type", "use", "macro_rules"})
 RUST_QUALIFIERS = frozenset({"pub", "crate", "super", "self", "in", "async", "unsafe", "default", "extern"})
@@ -191,9 +192,12 @@ SURFACES = (
     Surface("Oxlint configuration", "ui/.oxlintrc.json", oxlint_config),
     Surface("UI check scripts", "ui/package.json", ui_scripts),
     Surface("TypeScript configuration", "ui/tsconfig*.json", changed_lines),
+    Surface("MSBuild warning settings", "*Directory.Build.*", matching_lines(MSBUILD_WARNINGS)),
     Surface("Companion warning settings", "plugin/*.props", matching_lines(MSBUILD_WARNINGS)),
+    Surface("Companion warning settings", "plugin/*.targets", matching_lines(MSBUILD_WARNINGS)),
     Surface("Companion warning settings", "plugin/*.csproj", matching_lines(MSBUILD_WARNINGS)),
     Surface("Analyzer severities", "*.editorconfig", matching_lines(re.compile(r"severity"))),
+    Surface("Analyzer severities", "*.globalconfig", matching_lines(re.compile(r"severity"))),
     Surface("CI scripts", "scripts/ci/*", changed_lines),
     Surface("Cargo configuration", ".cargo/config*", changed_lines),
     Surface("Workflow", ".github/workflows/*", workflow_lines),
@@ -243,6 +247,9 @@ def attribute_end(text: str, start: int) -> int:
             index += 1
             while index < len(text) and text[index] != '"':
                 index += 2 if text[index] == "\\" else 1
+        elif text.startswith(("//", "/*"), index):
+            comment = RUST_COMMENT.match(text, index)
+            index = comment.end() - 1 if comment else len(text)
         elif char in "[(":
             depth += 1
         elif char in "])":
@@ -273,8 +280,10 @@ def rust_suppressions(text: str) -> Counter[str]:
     """`expect(clippy::panic) on fn`: what is silenced and how far, so widening the scope counts as new."""
     found: Counter[str] = Counter()
     for match in RUST_ATTRIBUTE.finditer(text):
+        if "//" in text[text.rfind("\n", 0, match.start()) + 1 : match.start()]:
+            continue
         end = attribute_end(text, match.end() - 1)
-        body = RUST_STRING.sub('""', text[match.end() - 1 : end])
+        body = RUST_COMMENT.sub(" ", RUST_STRING.sub('""', text[match.end() - 1 : end]))
         for kind, names in RUST_LINT_LEVEL.findall(body):
             lints = ",".join(name for name in re.split(r"\s*,\s*", names) if name != "reason")
             scope = "module" if match.group() == "#![" else attribute_target(text, end)
@@ -315,6 +324,7 @@ def main(argv: list[str]) -> int:
         findings += [(f"Ratchet ({path})", finding) for finding in raised_ratchets(before, after)]
     findings += added_suppressions(contents)
 
+    findings = list(dict.fromkeys(findings))
     if not findings:
         return 0
     for where, finding in findings:

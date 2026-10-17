@@ -90,7 +90,7 @@ Use focused checks during iteration. Run the full component checks for changes w
 
 Use the recipes above for local validation. CI is defined by `.github/workflows/ci.yml` and `.github/workflows/pr-checks.yml` and additionally uses `--locked` for Cargo commands; reproducing a CI failure requires its exact command and environment. A passing local recipe does not require a second run solely to add `--locked`. `just check-pr` runs every PR check locally on Linux or macOS before you open or update a PR; `just clippy-target <triple>` runs one cross-target Clippy.
 
-The `Guard integrity` check fails a change that relaxes a lint level or a Clippy or Oxlint setting, adds a lint suppression, or raises a `guard-ratchet` count, and any change to guard code: `scripts/ci/`, the workflows, the check recipes, `.cargo/config*`, TypeScript and Companion warning settings. Change the code instead. The `guards-changed` label accepts a relaxation; add it only when the operator asked for that relaxation, and say why in the PR body.
+The `Guard integrity` check fails a change that relaxes a lint level or a Clippy or Oxlint setting, adds a lint suppression, or raises a `guard-ratchet` count, and any change to guard code: `scripts/ci/`, the workflows, the check recipes, `.cargo/config*`, TypeScript, MSBuild and analyzer warning settings. Change the code instead. The `guards-changed` label accepts a relaxation; add it only when the operator asked for that relaxation, and say why in the PR body.
 
 After changes to deployable Companion code or assets, run `just plugin-deploy` as the final step after validation and other work. Its publish dependency satisfies `just plugin` above. Documentation-only, test-only, and review tasks do not require deployment.
 
