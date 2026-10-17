@@ -60,7 +60,7 @@ pub(super) fn item_detail(
         LiveDetail::Title(title) => services.session.commit_if_current(
             &scope,
             || DetailError::AccountChanged,
-            || browse::write_live_title(&services.library, title),
+            |_live| browse::write_live_title(&services.library, title),
         ),
     };
     match title {

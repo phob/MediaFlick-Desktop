@@ -119,7 +119,7 @@ fn letterboxd_add_profile(
     };
     services
         .session
-        .commit_if_current(&scope, stale_account_response, || {
+        .commit_if_current(&scope, stale_account_response, |_live| {
             match services.accounts.save_letterboxd_profile(&account, &record) {
                 Ok(profile) => Ok(LetterboxdProfileSaved { profile }),
                 Err(error) => Err(account_config_failure(&error)),
@@ -140,7 +140,7 @@ fn letterboxd_set_enabled(
     let account = scope.account().clone();
     services
         .session
-        .commit_if_current(&scope, stale_account_response, || {
+        .commit_if_current(&scope, stale_account_response, |_live| {
             match services
                 .accounts
                 .set_letterboxd_profile_enabled(&account, id, enabled)
@@ -163,7 +163,7 @@ fn letterboxd_remove_profile(
     let account = scope.account().clone();
     services
         .session
-        .commit_if_current(&scope, stale_account_response, || {
+        .commit_if_current(&scope, stale_account_response, |_live| {
             match services.accounts.remove_letterboxd_profile(&account, id) {
                 Ok(true) => Ok(LetterboxdProfileRemoved { removed: true }),
                 Ok(false) => Err(ApiResponse::error(404, "profile not found")),
@@ -208,7 +208,7 @@ fn letterboxd_refresh_profile(
     };
     services
         .session
-        .commit_if_current(&scope, stale_account_response, || {
+        .commit_if_current(&scope, stale_account_response, |_live| {
             match services.accounts.save_letterboxd_profile(&account, &record) {
                 Ok(profile) => Ok(LetterboxdProfileSaved { profile }),
                 Err(error) => Err(account_config_failure(&error)),

@@ -287,10 +287,11 @@ fn page_param(request: &ApiRequest) -> i64 {
 /// replacement (Jellyfin re-creates the item with a new id) is picked up. The
 /// 404 is only proof for the account that received it.
 fn forget_item(services: &Arc<Services>, scope: &SessionScope, item_id: &str) {
-    let forgotten =
-        services
-            .session
-            .commit_if_current(scope, || (), || Ok(services.library.forget(item_id)));
+    let forgotten = services.session.commit_if_current(
+        scope,
+        || (),
+        |_live| Ok(services.library.forget(item_id)),
+    );
     let Ok(forgotten) = forgotten else {
         tracing::debug!(
             target: "app.api",

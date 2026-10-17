@@ -378,7 +378,7 @@ fn set_item_playback_preference(
     let preference = ItemPlaybackPreference::capture(source, source_index, audio, subtitle);
     services
         .session
-        .commit_if_current(&scope, stale_account_response, || {
+        .commit_if_current(&scope, stale_account_response, |_live| {
             if let Err(error) =
                 services
                     .playback_preferences
@@ -732,7 +732,7 @@ fn set_played(
     let _ = services.session.commit_if_current(
         &scope,
         || (),
-        || Ok(services.library.set_local_played(item_id, played)),
+        |_live| Ok(services.library.set_local_played(item_id, played)),
     );
     Ok(PlayedState { played })
 }
@@ -749,7 +749,7 @@ fn set_favorite(
     let _ = services.session.commit_if_current(
         &scope,
         || (),
-        || Ok(services.library.set_local_favorite(item_id, favorite)),
+        |_live| Ok(services.library.set_local_favorite(item_id, favorite)),
     );
     Ok(FavoriteState { favorite })
 }

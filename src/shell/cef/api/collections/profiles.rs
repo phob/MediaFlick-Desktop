@@ -201,7 +201,7 @@ pub(super) fn patch_settings(
     let include_unreleased = patch.include_unreleased;
     let mutation = services
         .session
-        .commit_if_current(&scope, stale_account_response, || {
+        .commit_if_current(&scope, stale_account_response, |_live| {
             if updates_mode {
                 if let Err(error) = services.collections.set_mode(&account, mode) {
                     return Ok(Some(configuration_failure(&error)));
@@ -386,7 +386,7 @@ pub(super) fn edit(
     } else {
         services
             .session
-            .commit_if_current(&scope, stale_account_response, || {
+            .commit_if_current(&scope, stale_account_response, |_live| {
                 match services.collections.save_profile(&account, next) {
                     Ok(profile) => {
                         update_next_due(services, &account, &profile);
@@ -445,7 +445,7 @@ pub(super) fn delete(
     let account = scope.account().clone();
     services
         .session
-        .commit_if_current(&scope, stale_account_response, || {
+        .commit_if_current(&scope, stale_account_response, |_live| {
             match services.collections.remove_profile(&account, profile_id) {
                 Ok(Some(_)) => {
                     let repository = SnapshotRepository::new(&services.library);
@@ -472,7 +472,7 @@ pub(super) fn reorder(
     let account = scope.account().clone();
     services
         .session
-        .commit_if_current(&scope, stale_account_response, || {
+        .commit_if_current(&scope, stale_account_response, |_live| {
             match services.collections.reorder_profiles(&account, &ids) {
                 Ok(()) => Ok(CollectionProfilesIndex::of(services, &account)),
                 Err(error) => Err(configuration_failure(&error)),
@@ -500,7 +500,7 @@ fn commit_result_profile(
         Err(error) => {
             services
                 .session
-                .commit_if_current(&scope, stale_account_response, || {
+                .commit_if_current(&scope, stale_account_response, |_live| {
                     save_failed_refresh(&repository, account, &profile.id, attempt);
                     Ok(())
                 })?;
@@ -535,7 +535,7 @@ fn commit_result_profile(
     };
     services
         .session
-        .commit_if_current(&scope, stale_account_response, || {
+        .commit_if_current(&scope, stale_account_response, |_live| {
             if let Err(error) = repository.commit_profile(account, &snapshot) {
                 return Err(storage_failure(&error));
             }

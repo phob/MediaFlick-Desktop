@@ -445,7 +445,7 @@ impl CompanionSession {
         self.session.commit_if_current(
             scope,
             || ApiError::Cancelled,
-            || {
+            |_live| {
                 let previous = self.cached_collection_readiness();
                 self.replace(state);
                 if previous != self.cached_collection_readiness() {

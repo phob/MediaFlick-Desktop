@@ -97,6 +97,14 @@ impl SessionScope {
     }
 }
 
+/// Proof that the signed-in account still matched a [`SessionScope`] while
+/// [`Session::commit_if_current`] held the operation gate. Only that method
+/// mints one, and only for the closure it runs, so a writer of account-owned
+/// cache state that requires `&Live` can't run for an account that was
+/// switched, signed out or deleted after its answer was fetched. The private
+/// field keeps every other module from making one.
+pub struct Live(());
+
 impl Session {
     pub fn restore(library: Arc<Library>, shell: Arc<ShellBridge>) -> Self {
         let stored = library.credentials();
@@ -183,7 +191,7 @@ impl Session {
         let _ = self.commit_if_current(
             &scope,
             || (),
-            || {
+            |_live| {
                 if let Ok(mut state) = self.state.write() {
                     state.restricted = restricted;
                 }
@@ -229,7 +237,7 @@ impl Session {
         &self,
         scope: &SessionScope,
         stale: impl FnOnce() -> E,
-        commit: impl FnOnce() -> Result<T, E>,
+        commit: impl FnOnce(&Live) -> Result<T, E>,
     ) -> Result<T, E> {
         let _gate = self
             .operation_gate
@@ -238,7 +246,7 @@ impl Session {
         if !self.read().matches(scope) {
             return Err(stale());
         }
-        commit()
+        commit(&Live(()))
     }
 
     pub fn client(&self) -> Result<JellyfinClient, ApiError> {
@@ -627,7 +635,7 @@ mod tests {
         let result = session.commit_if_current(
             &alice,
             || "stale",
-            || -> Result<(), &str> { panic!("an obsolete success committed") },
+            |_live| -> Result<(), &str> { panic!("an obsolete success committed") },
         );
         assert_eq!(result, Err("stale"));
         session.note_scoped_error(&alice, &ApiError::Unauthorized);
@@ -675,7 +683,7 @@ mod tests {
         assert!(session.scope().is_err());
         assert!(session.client().is_err());
         assert_eq!(
-            session.commit_if_current(&scope, || "stale", || Ok::<_, &str>(())),
+            session.commit_if_current(&scope, || "stale", |_live| Ok::<_, &str>(())),
             Err("stale")
         );
     }

@@ -70,7 +70,9 @@ pub(super) fn run_cycle_inner(
             control,
         )?;
         let swept = if initial_catalog {
-            commit(session, &scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
+            commit(session, &scope, |_live| {
+                touch(library, META_LAST_IDENTITY_SWEEP)
+            })?;
             false
         } else if trigger.forces_identity_sweep()
             || meta(library, META_SWEEP_OWED)?.as_deref() == Some("1")
@@ -139,7 +141,7 @@ fn restart_bootstrap(
     session: &Session,
     scope: &SessionScope,
 ) -> Result<(), ApiError> {
-    commit(session, scope, || {
+    commit(session, scope, |_live| {
         library
             .set_meta(META_BOOTSTRAP_DONE, "0")
             .map_err(|error| storage_error(&error))?;
@@ -154,7 +156,7 @@ fn restart_bootstrap(
 }
 
 fn record_failure(library: &Library, session: &Session, scope: &SessionScope) {
-    let _ = commit(session, scope, || {
+    let _ = commit(session, scope, |_live| {
         library
             .set_meta(META_LATEST_FAILURE, "1")
             .map_err(|storage| storage_error(&storage))
@@ -168,7 +170,7 @@ fn record_success(
     report: &SyncReport,
 ) -> Result<(), ApiError> {
     let serialized_report = serde_json::to_string(report).unwrap_or_default();
-    commit(session, scope, || {
+    commit(session, scope, |_live| {
         library
             .set_meta(META_LATEST_FAILURE, "0")
             .map_err(|error| storage_error(&error))?;
@@ -202,7 +204,7 @@ fn sweep_identity(
     };
     let observed_at = meta(library, META_EMPTY_SWEEP_AT)?.and_then(|at| at.parse::<u64>().ok());
     let verdict = sweep_verdict(walk.answer, no_catalog_library, observed_at, now_unix());
-    let deletion_changes = commit(session, scope, || {
+    let deletion_changes = commit(session, scope, |_live| {
         apply_sweep_verdict(library, verdict, &walk.seen)
     })?;
     report.user_data_refreshed = walk.refreshed;
@@ -214,7 +216,9 @@ fn sweep_identity(
     if let Some(error) = failure {
         return Err(error);
     }
-    commit(session, scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
+    commit(session, scope, |_live| {
+        touch(library, META_LAST_IDENTITY_SWEEP)
+    })?;
     Ok(deletion_ran)
 }
 
@@ -282,7 +286,7 @@ fn walk_membership(
     walked_so_far: &mut MembershipReplaced,
 ) -> Result<(), ApiError> {
     let owed = if owe_all {
-        commit(session, scope, || {
+        commit(session, scope, |_live| {
             library
                 .owe_every_membership()
                 .map_err(|error| storage_error(&error))
@@ -402,7 +406,7 @@ fn commit_catalog_page(
     page: &crate::jellyfin::api::model::ItemsResponse,
     offset: i64,
 ) -> Result<LibraryChangeBatch, ApiError> {
-    commit(session, scope, || {
+    commit(session, scope, |_live| {
         let changes = library
             .ingest_page(&page.items)
             .map_err(|error| storage_error(&error))?;
@@ -433,7 +437,7 @@ fn finish_bootstrap(
     scope: &SessionScope,
     written: usize,
 ) -> Result<usize, ApiError> {
-    commit(session, scope, || {
+    commit(session, scope, |_live| {
         library
             .set_meta(META_BOOTSTRAP_DONE, "1")
             .map_err(|error| storage_error(&error))?;
@@ -453,7 +457,7 @@ fn commit_bootstrap_watermark(
     let Some(watermark) = watermark else {
         return Ok(());
     };
-    commit(session, scope, || {
+    commit(session, scope, |_live| {
         library
             .set_meta(META_WATERMARK, watermark)
             .map_err(|error| storage_error(&error))?;
@@ -469,7 +473,7 @@ fn commit_empty_bootstrap_page(
     offset: i64,
     elapsed: Duration,
 ) -> Result<(), ApiError> {
-    commit(session, scope, || {
+    commit(session, scope, |_live| {
         if total_record_count > 0 || offset == 0 {
             library
                 .set_meta(META_BOOTSTRAP_TOTAL, &total_record_count.max(0).to_string())
@@ -533,7 +537,7 @@ fn incremental(
                 .is_some_and(|(candidate, watermark)| candidate < watermark)
                 || item.date_created.is_none()
         });
-        let page_changes = commit(session, scope, || {
+        let page_changes = commit(session, scope, |_live| {
             library
                 .ingest_page(&fresh)
                 .map_err(|error| storage_error(&error))
@@ -548,7 +552,7 @@ fn incremental(
     }
 
     if let Some(newest) = newest {
-        commit(session, scope, || {
+        commit(session, scope, |_live| {
             library
                 .set_meta(META_WATERMARK, &newest)
                 .map_err(|error| storage_error(&error))?;
@@ -663,7 +667,7 @@ fn walk_identity(
                     .map(|user_data| UserDataRecord::from_dto(&item.id, user_data))
             })
             .collect::<Vec<_>>();
-        let changed = commit(session, scope, || {
+        let changed = commit(session, scope, |_live| {
             library
                 .apply_user_data(&records)
                 .map_err(|error| storage_error(&error))

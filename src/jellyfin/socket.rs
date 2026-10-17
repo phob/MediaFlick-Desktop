@@ -39,7 +39,7 @@ use super::api::items;
 use super::api::model::UserItemDataDto;
 use super::api::sessions;
 use super::remote::RemoteCommand;
-use super::session::{Session, SessionScope};
+use super::session::{Live, Session, SessionScope};
 
 const IDLE_INTERVAL: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -471,12 +471,12 @@ enum ScopedWriteError {
 fn commit_scoped<T>(
     session: &Session,
     scope: &SessionScope,
-    write: impl FnOnce() -> rusqlite::Result<T>,
+    write: impl FnOnce(&Live) -> rusqlite::Result<T>,
 ) -> Result<T, ScopedWriteError> {
     session.commit_if_current(
         scope,
         || ScopedWriteError::Stale,
-        || write().map_err(ScopedWriteError::Storage),
+        |live| write(live).map_err(ScopedWriteError::Storage),
     )
 }
 
@@ -497,7 +497,7 @@ fn apply_user_data(
     if records.is_empty() {
         return;
     }
-    match commit_scoped(session, scope, || library.apply_user_data(records)) {
+    match commit_scoped(session, scope, |_live| library.apply_user_data(records)) {
         Ok(changes) if !changes.is_empty() => {
             tracing::debug!(
                 target: "jellyfin.socket",
@@ -528,7 +528,7 @@ fn apply_library_change(
 ) {
     let mut batch = LibraryChangeBatch::default();
     for item_id in &change.removed {
-        match commit_scoped(session, scope, || library.forget(item_id)) {
+        match commit_scoped(session, scope, |_live| library.forget(item_id)) {
             Ok(changes) => batch.merge(changes),
             Err(ScopedWriteError::Stale) => {
                 log_stale_push();
@@ -546,7 +546,7 @@ fn apply_library_change(
     for chunk in change.changed.chunks(FETCH_CHUNK) {
         match items::fetch_items(scope.client(), scope.user_id(), chunk) {
             Ok(response) => {
-                match commit_scoped(session, scope, || library.ingest_page(&response.items)) {
+                match commit_scoped(session, scope, |_live| library.ingest_page(&response.items)) {
                     Ok(changes) => batch.merge(changes),
                     Err(ScopedWriteError::Stale) => {
                         log_stale_push();

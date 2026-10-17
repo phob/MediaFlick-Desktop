@@ -222,7 +222,7 @@ fn commit_franchise_refresh(
 ) -> bool {
     services
         .session
-        .commit_if_current(scope, || false, || {
+        .commit_if_current(scope, || false, |_live| {
             Ok(match repository.commit_franchise_resolution(
                 account,
                 snapshots,
@@ -249,7 +249,7 @@ fn save_failed_franchise_refresh(
     let _ = services.session.commit_if_current(
         scope,
         || (),
-        || {
+        |_live| {
             if let Err(error) = repository.save_franchise_refresh_failure(account, attempted_at) {
                 tracing::warn!(
                     target: "collections",
