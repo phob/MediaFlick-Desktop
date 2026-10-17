@@ -1,6 +1,7 @@
 import { QueryClientProvider } from "@tanstack/react-query"
 import { act, render } from "@testing-library/react"
 import { afterEach, describe, expect, test, vi } from "vitest"
+import type * as Wire from "../src/lib/api/wire.gen"
 import { useLibraryMetadataBridge } from "../src/lib/library-events"
 import {
   createQueryClient,
@@ -38,15 +39,15 @@ describe("native library change bridge", () => {
     return queryClient.getQueryState(queryKey)?.isInvalidated ?? false
   }
 
-  function shellEvent(type: string, payload: { itemIds: string[]; contextIds?: string[]; libraryIds?: string[] }) {
-    window.dispatchEvent(new CustomEvent("mediaflick-desktop-shell", { detail: { type, payload } }))
+  function shellEvent(detail: Wire.ShellEvent) {
+    window.dispatchEvent(new CustomEvent("mediaflick-desktop-shell", { detail }))
   }
 
   test("a committed batch refreshes watch state and changed items but keeps the billboard", () => {
     seed(queryKeys.homeResume, queryKeys.item("series"), queryKeys.item("other"), queryKeys.billboard)
     render(<Bridge />)
 
-    shellEvent("library-changed", { itemIds: ["episode"], contextIds: ["season", "series"] })
+    shellEvent({ type: "library-changed", payload: { itemIds: ["episode"], contextIds: ["season", "series"] } })
 
     expect(invalidated(queryKeys.homeResume)).toBe(true)
     expect(invalidated(queryKeys.item("series"))).toBe(true)
@@ -59,12 +60,12 @@ describe("native library change bridge", () => {
     seed(queryKeys.home, queryKeys.homeResume, queryKeys.item("second"))
     render(<Bridge />)
 
-    shellEvent("catalog-changed", { itemIds: ["first"], contextIds: ["series"], libraryIds: ["movies"] })
+    shellEvent({ type: "catalog-changed", payload: { itemIds: ["first"], contextIds: ["series"], libraryIds: ["movies"] } })
     expect(invalidated(queryKeys.home)).toBe(true)
     expect(invalidated(queryKeys.homeResume)).toBe(false)
 
     seed(queryKeys.home)
-    shellEvent("catalog-changed", { itemIds: ["second"], contextIds: ["series"], libraryIds: ["movies"] })
+    shellEvent({ type: "catalog-changed", payload: { itemIds: ["second"], contextIds: ["series"], libraryIds: ["movies"] } })
     expect(invalidated(queryKeys.item("second"))).toBe(true)
     expect(invalidated(queryKeys.home)).toBe(false)
 
