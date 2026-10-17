@@ -638,10 +638,13 @@ fn a_requested_cycle_reconciles_server_deletions() {
     let library = Arc::new(Library::open_in_memory().expect("library"));
     let session = authenticated_session(&library, &server.url);
     library
-        .ingest_page(&[
-            serde_json::from_str(r#"{"Id":"kept","Name":"Kept","Type":"Movie"}"#).expect("dto"),
-            serde_json::from_str(r#"{"Id":"gone","Name":"Gone","Type":"Movie"}"#).expect("dto"),
-        ])
+        .ingest_page(
+            &crate::jellyfin::session::Live::for_test(),
+            &[
+                serde_json::from_str(r#"{"Id":"kept","Name":"Kept","Type":"Movie"}"#).expect("dto"),
+                serde_json::from_str(r#"{"Id":"gone","Name":"Gone","Type":"Movie"}"#).expect("dto"),
+            ],
+        )
         .expect("seed");
     settled_catalog(&library);
 

@@ -290,7 +290,7 @@ fn forget_item(services: &Arc<Services>, scope: &SessionScope, item_id: &str) {
     let forgotten = services.session.commit_if_current(
         scope,
         || (),
-        |_live| Ok(services.library.forget(item_id)),
+        |live| Ok(services.library.forget(live, item_id)),
     );
     let Ok(forgotten) = forgotten else {
         tracing::debug!(
@@ -550,7 +550,7 @@ mod tests {
         fixture
             .services
             .library
-            .ingest_page(&[dto])
+            .ingest_page(&crate::jellyfin::session::Live::for_test(), &[dto])
             .expect("ingest");
     }
 

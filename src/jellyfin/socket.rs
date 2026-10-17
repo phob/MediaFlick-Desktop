@@ -497,7 +497,9 @@ fn apply_user_data(
     if records.is_empty() {
         return;
     }
-    match commit_scoped(session, scope, |_live| library.apply_user_data(records)) {
+    match commit_scoped(session, scope, |live| {
+        library.apply_user_data(live, records)
+    }) {
         Ok(changes) if !changes.is_empty() => {
             tracing::debug!(
                 target: "jellyfin.socket",
@@ -528,7 +530,7 @@ fn apply_library_change(
 ) {
     let mut batch = LibraryChangeBatch::default();
     for item_id in &change.removed {
-        match commit_scoped(session, scope, |_live| library.forget(item_id)) {
+        match commit_scoped(session, scope, |live| library.forget(live, item_id)) {
             Ok(changes) => batch.merge(changes),
             Err(ScopedWriteError::Stale) => {
                 log_stale_push();
@@ -546,7 +548,9 @@ fn apply_library_change(
     for chunk in change.changed.chunks(FETCH_CHUNK) {
         match items::fetch_items(scope.client(), scope.user_id(), chunk) {
             Ok(response) => {
-                match commit_scoped(session, scope, |_live| library.ingest_page(&response.items)) {
+                match commit_scoped(session, scope, |live| {
+                    library.ingest_page(live, &response.items)
+                }) {
                     Ok(changes) => batch.merge(changes),
                     Err(ScopedWriteError::Stale) => {
                         log_stale_push();

@@ -76,7 +76,11 @@ fn authenticated_session(library: &Arc<Library>, server_url: &str) -> Session {
 fn first_catalog_page_is_ready_while_background_paging_continues() {
     let library = Arc::new(Library::open_in_memory().expect("library"));
     library
-        .set_meta(META_LAST_IDENTITY_SWEEP, &now_unix().to_string())
+        .set_meta(
+            &crate::jellyfin::session::Live::for_test(),
+            META_LAST_IDENTITY_SWEEP,
+            &now_unix().to_string(),
+        )
         .expect("skip unrelated identity sweep");
 
     let first_items = (0..PAGE_SIZE)
@@ -280,7 +284,9 @@ fn settled_library(titles: &[(&str, &str)]) -> Arc<Library> {
             serde_json::from_value(json!({ "Id": id, "Name": id, "Type": kind })).expect("dto")
         })
         .collect::<Vec<_>>();
-    library.ingest_page(&dtos).expect("seed");
+    library
+        .ingest_page(&crate::jellyfin::session::Live::for_test(), &dtos)
+        .expect("seed");
     settled_catalog(&library);
     library
 }
@@ -338,7 +344,9 @@ fn grid(library: &Library, id: &str) -> Vec<String> {
 }
 
 fn set_meta(library: &Library, key: &str, value: &str) {
-    library.set_meta(key, value).expect("meta");
+    library
+        .set_meta(&crate::jellyfin::session::Live::for_test(), key, value)
+        .expect("meta");
 }
 
 fn settled_catalog(library: &Library) {
@@ -353,7 +361,9 @@ fn seed(library: &Library, dtos: &[serde_json::Value]) {
         .iter()
         .map(|dto| serde_json::from_value(dto.clone()).expect("dto"))
         .collect::<Vec<_>>();
-    library.ingest_page(&dtos).expect("seed");
+    library
+        .ingest_page(&crate::jellyfin::session::Live::for_test(), &dtos)
+        .expect("seed");
 }
 
 #[test]
@@ -530,7 +540,9 @@ fn a_sweep_names_each_title_whose_watched_state_changed_on_the_server() {
     .into_iter()
     .map(|dto| serde_json::from_value(dto).expect("dto"))
     .collect::<Vec<_>>();
-    library.ingest_page(&dtos).expect("seed");
+    library
+        .ingest_page(&crate::jellyfin::session::Live::for_test(), &dtos)
+        .expect("seed");
     settled_catalog(&library);
     let sweep = || {
         ok(&json!({

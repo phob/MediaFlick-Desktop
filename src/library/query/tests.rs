@@ -26,7 +26,7 @@ fn search_matches_genres_by_prefix() {
 fn release_decade_is_bounded_and_composes_with_every_library_filter() {
     let library = Library::open_in_memory().expect("library");
     library
-        .upsert_page(&[
+        .upsert_page(&crate::jellyfin::session::Live::for_test(), &[
             dto(
                 r#"{"Id":"previous","Name":"Previous Decade","Type":"Movie","ProductionYear":1989,
                 "Genres":["Action"],"UserData":{"Played":false,"IsFavorite":true}}"#,
@@ -98,11 +98,14 @@ fn release_decade_is_bounded_and_composes_with_every_library_filter() {
 fn movie_and_series_decades_use_release_and_first_air_years() {
     let library = Library::open_in_memory().expect("library");
     library
-        .upsert_page(&[
-            dto(r#"{"Id":"movie","Name":"Film","Type":"Movie","ProductionYear":1999}"#),
-            dto(r#"{"Id":"series","Name":"Show","Type":"Series",
+        .upsert_page(
+            &crate::jellyfin::session::Live::for_test(),
+            &[
+                dto(r#"{"Id":"movie","Name":"Film","Type":"Movie","ProductionYear":1999}"#),
+                dto(r#"{"Id":"series","Name":"Show","Type":"Series",
                 "PremiereDate":"2017-02-15T00:00:00.0000000Z"}"#),
-        ])
+            ],
+        )
         .expect("seed");
 
     let movies = library
@@ -141,11 +144,14 @@ fn release_decade_ids_are_standard_and_not_in_the_future() {
 fn titles_without_a_server_sort_name_sort_by_their_name() {
     let library = Library::open_in_memory().expect("library");
     library
-        .upsert_page(&[
-            dto(r#"{"Id":"gamma","Name":"gamma","Type":"Movie"}"#),
-            dto(r#"{"Id":"beta","Name":"Beta","Type":"Movie"}"#),
-            dto(r#"{"Id":"alpha","Name":"Alpha","Type":"Movie","SortName":"alpha"}"#),
-        ])
+        .upsert_page(
+            &crate::jellyfin::session::Live::for_test(),
+            &[
+                dto(r#"{"Id":"gamma","Name":"gamma","Type":"Movie"}"#),
+                dto(r#"{"Id":"beta","Name":"Beta","Type":"Movie"}"#),
+                dto(r#"{"Id":"alpha","Name":"Alpha","Type":"Movie","SortName":"alpha"}"#),
+            ],
+        )
         .expect("seed");
 
     let ids = library
@@ -175,25 +181,28 @@ fn continue_watching_lists_partially_played_items() {
 fn recently_added_episodes_keep_the_newest_episode_of_each_series() {
     let library = Library::open_in_memory().expect("library");
     library
-        .upsert_page(&[
-            dto(
-                r#"{"Id":"sev-1","Name":"One","Type":"Episode","SeriesId":"sev",
+        .upsert_page(
+            &crate::jellyfin::session::Live::for_test(),
+            &[
+                dto(
+                    r#"{"Id":"sev-1","Name":"One","Type":"Episode","SeriesId":"sev",
                 "IndexNumber":1,"ParentIndexNumber":1,"DateCreated":"2024-01-01"}"#,
-            ),
-            dto(
-                r#"{"Id":"silo-1","Name":"One","Type":"Episode","SeriesId":"silo",
+                ),
+                dto(
+                    r#"{"Id":"silo-1","Name":"One","Type":"Episode","SeriesId":"silo",
                 "IndexNumber":1,"ParentIndexNumber":1,"DateCreated":"2024-02-01"}"#,
-            ),
-            dto(
-                r#"{"Id":"sev-2","Name":"Two","Type":"Episode","SeriesId":"sev",
+                ),
+                dto(
+                    r#"{"Id":"sev-2","Name":"Two","Type":"Episode","SeriesId":"sev",
                 "IndexNumber":2,"ParentIndexNumber":1,"DateCreated":"2024-03-01"}"#,
-            ),
-            dto(
-                r#"{"Id":"andor-1","Name":"One","Type":"Episode","SeriesId":"andor",
+                ),
+                dto(
+                    r#"{"Id":"andor-1","Name":"One","Type":"Episode","SeriesId":"andor",
                 "IndexNumber":1,"ParentIndexNumber":1,"DateCreated":"2023-12-01"}"#,
-            ),
-            dto(r#"{"Id":"movie","Name":"Film","Type":"Movie","DateCreated":"2024-04-01"}"#),
-        ])
+                ),
+                dto(r#"{"Id":"movie","Name":"Film","Type":"Movie","DateCreated":"2024-04-01"}"#),
+            ],
+        )
         .expect("seed");
 
     let ids = |limit| {
@@ -212,18 +221,21 @@ fn recently_added_episodes_keep_the_newest_episode_of_each_series() {
 fn children_returns_episodes_of_a_season_in_order() {
     let library = Library::open_in_memory().expect("library");
     library
-        .upsert_page(&[
-            dto(
-                r#"{"Id":"e2","Name":"A Second","Type":"Episode","SeriesId":"s1",
+        .upsert_page(
+            &crate::jellyfin::session::Live::for_test(),
+            &[
+                dto(
+                    r#"{"Id":"e2","Name":"A Second","Type":"Episode","SeriesId":"s1",
                     "ParentId":"season1","SeasonId":"season1",
                     "IndexNumber":2,"ParentIndexNumber":1}"#,
-            ),
-            dto(
-                r#"{"Id":"e1","Name":"Z First","Type":"Episode","SeriesId":"s1",
+                ),
+                dto(
+                    r#"{"Id":"e1","Name":"Z First","Type":"Episode","SeriesId":"s1",
                     "ParentId":"season1","SeasonId":"season1",
                     "IndexNumber":1,"ParentIndexNumber":1}"#,
-            ),
-        ])
+                ),
+            ],
+        )
         .expect("seed");
 
     let ids = library
@@ -247,9 +259,12 @@ fn next_episode_follows_broadcast_order() {
 fn item_detail_includes_genres_and_provider_ids() {
     let library = Library::open_in_memory().expect("library");
     library
-        .upsert_page(&[dto(r#"{"Id":"m1","Name":"The Matrix","Type":"Movie",
+        .upsert_page(
+            &crate::jellyfin::session::Live::for_test(),
+            &[dto(r#"{"Id":"m1","Name":"The Matrix","Type":"Movie",
                 "OriginalTitle":"Matrix","Genres":["Action"],
-                "ProviderIds":{"Tmdb":"603"}}"#)])
+                "ProviderIds":{"Tmdb":"603"}}"#)],
+        )
         .expect("seed");
     let detail = library.item("m1").expect("query").expect("item");
     assert_eq!(detail.genres[0], "Action");
@@ -273,10 +288,13 @@ fn item_detail_includes_genres_and_provider_ids() {
 fn genre_lookups_follow_items_through_updates() {
     let library = Library::open_in_memory().expect("library");
     library
-        .upsert_page(&[
-            dto(r#"{"Id":"a","Name":"A","Type":"Movie","Genres":["drama","Action",""]}"#),
-            dto(r#"{"Id":"b","Name":"B","Type":"Series","Genres":["Action"]}"#),
-        ])
+        .upsert_page(
+            &crate::jellyfin::session::Live::for_test(),
+            &[
+                dto(r#"{"Id":"a","Name":"A","Type":"Movie","Genres":["drama","Action",""]}"#),
+                dto(r#"{"Id":"b","Name":"B","Type":"Series","Genres":["Action"]}"#),
+            ],
+        )
         .expect("seed");
     assert_eq!(
         library.genres(None).expect("genres"),
@@ -285,9 +303,12 @@ fn genre_lookups_follow_items_through_updates() {
     );
 
     library
-        .upsert_page(&[dto(
-            r#"{"Id":"a","Name":"A","Type":"Movie","Genres":["Comedy"]}"#,
-        )])
+        .upsert_page(
+            &crate::jellyfin::session::Live::for_test(),
+            &[dto(
+                r#"{"Id":"a","Name":"A","Type":"Movie","Genres":["Comedy"]}"#,
+            )],
+        )
         .expect("retag");
     assert_eq!(
         library.genres(None).expect("genres"),
@@ -303,7 +324,9 @@ fn genre_lookups_follow_items_through_updates() {
     assert_eq!(action.total, 1);
     assert_eq!(action.items[0].id, "b");
 
-    library.forget("b").expect("forget");
+    library
+        .forget(&crate::jellyfin::session::Live::for_test(), "b")
+        .expect("forget");
     assert_eq!(library.genres(None).expect("genres"), vec!["Comedy"]);
 }
 
@@ -329,10 +352,16 @@ fn typed_search_is_an_all_words_prefix_match_that_ignores_fts_syntax() {
 fn search_follows_renamed_and_removed_items() {
     let library = Library::open_in_memory().expect("library");
     library
-        .upsert_page(&[dto(r#"{"Id":"a","Name":"The Matrix","Type":"Movie"}"#)])
+        .upsert_page(
+            &crate::jellyfin::session::Live::for_test(),
+            &[dto(r#"{"Id":"a","Name":"The Matrix","Type":"Movie"}"#)],
+        )
         .expect("seed");
     library
-        .upsert_page(&[dto(r#"{"Id":"a","Name":"Reloaded","Type":"Movie"}"#)])
+        .upsert_page(
+            &crate::jellyfin::session::Live::for_test(),
+            &[dto(r#"{"Id":"a","Name":"Reloaded","Type":"Movie"}"#)],
+        )
         .expect("rename");
     let total = |text: &str| {
         library
@@ -347,9 +376,14 @@ fn search_follows_renamed_and_removed_items() {
     assert_eq!(total("matr"), 0, "the old name still matches");
     assert_eq!(total("reloa"), 1);
 
-    library.forget("a").expect("forget");
     library
-        .upsert_page(&[dto(r#"{"Id":"b","Name":"Arrival","Type":"Movie"}"#)])
+        .forget(&crate::jellyfin::session::Live::for_test(), "a")
+        .expect("forget");
+    library
+        .upsert_page(
+            &crate::jellyfin::session::Live::for_test(),
+            &[dto(r#"{"Id":"b","Name":"Arrival","Type":"Movie"}"#)],
+        )
         .expect("reuse");
     assert_eq!(total("reloa"), 0, "a removed name still matches");
     assert_eq!(total("arriv"), 1);

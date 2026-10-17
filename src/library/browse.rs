@@ -4,6 +4,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use serde::Serialize;
 
 use crate::jellyfin::api::model::{BaseItemDto, ItemsResponse};
+use crate::jellyfin::session::Live;
 
 use super::libraries::{
     BrowseCapabilities, FilterKey, GridSource, LibraryId, LibraryRegistry, LiveLatest, LiveShape,
@@ -224,10 +225,11 @@ pub fn live_detail(dto: &BaseItemDto) -> LiveDetail<'_> {
 
 pub fn write_live_title(
     library: &Library,
+    live: &Live,
     title: LiveTitle<'_>,
 ) -> Result<TitleDetail, DetailError> {
     let LiveTitle(dto) = title;
-    library.ingest_page(std::slice::from_ref(dto))?;
+    library.ingest_page(live, std::slice::from_ref(dto))?;
     Ok(
         cached_title(library, &dto.id)?.unwrap_or_else(|| TitleDetail {
             item: ItemDetail::from_dto(dto),

@@ -732,7 +732,7 @@ fn set_played(
     let _ = services.session.commit_if_current(
         &scope,
         || (),
-        |_live| Ok(services.library.set_local_played(item_id, played)),
+        |live| Ok(services.library.set_local_played(live, item_id, played)),
     );
     Ok(PlayedState { played })
 }
@@ -749,7 +749,7 @@ fn set_favorite(
     let _ = services.session.commit_if_current(
         &scope,
         || (),
-        |_live| Ok(services.library.set_local_favorite(item_id, favorite)),
+        |live| Ok(services.library.set_local_favorite(live, item_id, favorite)),
     );
     Ok(FavoriteState { favorite })
 }

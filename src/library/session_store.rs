@@ -149,9 +149,12 @@ mod tests {
         assert_eq!(loaded.device_id, device_id);
 
         library
-            .ingest_page(&[dto(
-                r#"{"Id":"sparse","Name":"Sparse","Type":"Movie","ProviderIds":{"Tmdb":"1"}}"#,
-            )])
+            .ingest_page(
+                &crate::jellyfin::session::Live::for_test(),
+                &[dto(
+                    r#"{"Id":"sparse","Name":"Sparse","Type":"Movie","ProviderIds":{"Tmdb":"1"}}"#,
+                )],
+            )
             .expect("cache a row");
         assert_eq!(library.stats().total, 1);
 

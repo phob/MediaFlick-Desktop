@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 
 use crate::jellyfin::api::model::BaseItemDto;
+use crate::jellyfin::session::Live;
 
 use super::model::{CatalogKind, is_synced_kind};
 use super::session_store::save_meta;
@@ -34,7 +35,11 @@ fn record_change_identity(
 }
 
 impl Library {
-    pub fn ingest_page(&self, dtos: &[BaseItemDto]) -> rusqlite::Result<LibraryChangeBatch> {
+    pub fn ingest_page(
+        &self,
+        _live: &Live,
+        dtos: &[BaseItemDto],
+    ) -> rusqlite::Result<LibraryChangeBatch> {
         self.db.with_transaction(|transaction| {
             let mut changes = LibraryChangeBatch::default();
             for dto in dtos {
@@ -59,13 +64,14 @@ impl Library {
         })
     }
 
-    pub fn upsert_page(&self, items: &[BaseItemDto]) -> rusqlite::Result<usize> {
-        self.ingest_page(items)
+    pub fn upsert_page(&self, live: &Live, items: &[BaseItemDto]) -> rusqlite::Result<usize> {
+        self.ingest_page(live, items)
             .map(|changes| changes.item_ids.len())
     }
 
     pub fn apply_user_data(
         &self,
+        _live: &Live,
         records: &[UserDataRecord],
     ) -> rusqlite::Result<LibraryChangeBatch> {
         self.db.with_transaction(|transaction| {
@@ -107,6 +113,7 @@ impl Library {
 
     pub fn retain_ids_setting_meta(
         &self,
+        _live: &Live,
         keep: &HashSet<String>,
         meta: &[(&str, &str)],
     ) -> rusqlite::Result<LibraryChangeBatch> {
@@ -125,6 +132,7 @@ impl Library {
 
     pub fn reconcile_children(
         &self,
+        _live: &Live,
         parent_id: &str,
         dtos: &[BaseItemDto],
     ) -> rusqlite::Result<LibraryChangeBatch> {
@@ -287,7 +295,7 @@ impl Library {
         })
     }
 
-    pub fn forget(&self, item_id: &str) -> rusqlite::Result<LibraryChangeBatch> {
+    pub fn forget(&self, _live: &Live, item_id: &str) -> rusqlite::Result<LibraryChangeBatch> {
         self.db.with_transaction(|transaction| {
             let mut changes = LibraryChangeBatch::default();
             delete_items_from_transaction(transaction, &[item_id.to_string()], &mut changes)?;
@@ -307,7 +315,12 @@ impl Library {
         })
     }
 
-    pub fn set_local_played(&self, item_id: &str, played: bool) -> rusqlite::Result<()> {
+    pub fn set_local_played(
+        &self,
+        _live: &Live,
+        item_id: &str,
+        played: bool,
+    ) -> rusqlite::Result<()> {
         self.db.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO user_data (jellyfin_id, played, play_count, playback_position_ticks, updated_at)
@@ -324,7 +337,12 @@ impl Library {
         })
     }
 
-    pub fn set_local_favorite(&self, item_id: &str, favorite: bool) -> rusqlite::Result<()> {
+    pub fn set_local_favorite(
+        &self,
+        _live: &Live,
+        item_id: &str,
+        favorite: bool,
+    ) -> rusqlite::Result<()> {
         self.db.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO user_data (jellyfin_id, is_favorite, updated_at) VALUES (?1, ?2, ?3)
@@ -551,14 +569,17 @@ mod tests {
     fn tmdb_ids_resolve_only_within_the_kind_they_were_asked_for() {
         let library = Library::open_in_memory().expect("library");
         library
-            .upsert_page(&[
-                dto(r#"{"Id":"m1","Name":"The Matrix","Type":"Movie",
+            .upsert_page(
+                &crate::jellyfin::session::Live::for_test(),
+                &[
+                    dto(r#"{"Id":"m1","Name":"The Matrix","Type":"Movie",
                         "ProviderIds":{"Tmdb":"603"}}"#),
-                dto(r#"{"Id":"s1","Name":"Not The Matrix","Type":"Series",
+                    dto(r#"{"Id":"s1","Name":"Not The Matrix","Type":"Series",
                         "ProviderIds":{"Tmdb":"603"}}"#),
-                dto(r#"{"Id":"m2","Name":"Arrival","Type":"Movie",
+                    dto(r#"{"Id":"m2","Name":"Arrival","Type":"Movie",
                         "ProviderIds":{"Tmdb":"329865"}}"#),
-            ])
+                ],
+            )
             .expect("seed");
 
         let ids = ["603".to_string(), "329865".to_string(), "1".to_string()];
@@ -576,8 +597,11 @@ mod tests {
     fn tvdb_episode_ids_resolve_for_calendar_entries() {
         let library = Library::open_in_memory().expect("library");
         library
-            .upsert_page(&[dto(r#"{"Id":"e1","Name":"Half Loop","Type":"Episode",
-                    "ProviderIds":{"Tvdb":"5161348"}}"#)])
+            .upsert_page(
+                &crate::jellyfin::session::Live::for_test(),
+                &[dto(r#"{"Id":"e1","Name":"Half Loop","Type":"Episode",
+                    "ProviderIds":{"Tvdb":"5161348"}}"#)],
+            )
             .expect("seed");
 
         let ids = ["5161348".to_string()];
@@ -595,13 +619,16 @@ mod tests {
     fn only_movies_series_seasons_and_episodes_enter_the_catalog() {
         let library = Library::open_in_memory().expect("library");
         let changes = library
-            .ingest_page(&[
-                dto(r#"{"Id":"person","Name":"Keanu Reeves","Type":"Person"}"#),
-                dto(r#"{"Id":"folder","Name":"Movies","Type":"CollectionFolder"}"#),
-                dto(r#"{"Id":"song","Name":"Song","Type":"Audio"}"#),
-                dto(r#"{"Id":"untyped","Name":"Untyped"}"#),
-                dto(r#"{"Id":"m1","Name":"The Matrix","Type":"Movie"}"#),
-            ])
+            .ingest_page(
+                &crate::jellyfin::session::Live::for_test(),
+                &[
+                    dto(r#"{"Id":"person","Name":"Keanu Reeves","Type":"Person"}"#),
+                    dto(r#"{"Id":"folder","Name":"Movies","Type":"CollectionFolder"}"#),
+                    dto(r#"{"Id":"song","Name":"Song","Type":"Audio"}"#),
+                    dto(r#"{"Id":"untyped","Name":"Untyped"}"#),
+                    dto(r#"{"Id":"m1","Name":"The Matrix","Type":"Movie"}"#),
+                ],
+            )
             .expect("ingest");
 
         assert_eq!(changes.item_ids, ["m1"]);
@@ -624,7 +651,11 @@ mod tests {
         )];
 
         let changes = library
-            .reconcile_children("season1", &live)
+            .reconcile_children(
+                &crate::jellyfin::session::Live::for_test(),
+                "season1",
+                &live,
+            )
             .expect("reconcile");
         assert_eq!(changes.item_ids, ["e1"]);
         let remaining = library.children("season1").expect("children");
@@ -636,7 +667,9 @@ mod tests {
     #[test]
     fn a_local_played_toggle_is_mirrored_and_clears_the_resume_position() {
         let library = seeded();
-        library.set_local_played("m1", true).expect("played");
+        library
+            .set_local_played(&crate::jellyfin::session::Live::for_test(), "m1", true)
+            .expect("played");
         let item = library.item("m1").expect("query").expect("item");
         assert!(item.summary.played);
         assert_eq!(item.summary.position_ticks, 0);

@@ -400,10 +400,10 @@ fn mirror_playback_progress(state: &BrowserState, snapshot: &crate::playback::Pl
                         let cached = services.session.commit_if_current(
                             &scope,
                             || PlaybackCacheWriteError::StaleSession,
-                            |_live| {
+                            |live| {
                                 services
                                     .library
-                                    .upsert_page(&[item])
+                                    .upsert_page(live, &[item])
                                     .map_err(PlaybackCacheWriteError::Storage)
                             },
                         );

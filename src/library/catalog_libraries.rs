@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::jellyfin::session::Live;
+
 use super::libraries::{LibraryId, LibraryRegistry, MediaLibrary, Membership};
 use super::session_store::save_meta;
 use super::{Library, now_unix};
@@ -22,6 +24,7 @@ impl Library {
 
     pub(crate) fn replace_libraries(
         &self,
+        _live: &Live,
         libraries: &[MediaLibrary],
     ) -> rusqlite::Result<LibrariesReplaced> {
         self.db.with_transaction(|transaction| {
@@ -110,7 +113,7 @@ impl Library {
         Ok(library.as_deref().and_then(LibraryId::parse))
     }
 
-    pub(crate) fn owe_every_membership(&self) -> rusqlite::Result<()> {
+    pub(crate) fn owe_every_membership(&self, _live: &Live) -> rusqlite::Result<()> {
         self.db.with_transaction(|transaction| {
             stored_libraries(transaction)?
                 .iter()
@@ -121,6 +124,7 @@ impl Library {
 
     pub(crate) fn replace_membership(
         &self,
+        _live: &Live,
         library: &LibraryId,
         item_ids: &HashSet<String>,
     ) -> rusqlite::Result<MembershipReplaced> {

@@ -105,6 +105,13 @@ impl SessionScope {
 /// field keeps every other module from making one.
 pub struct Live(());
 
+impl Live {
+    #[cfg(test)]
+    pub fn for_test() -> Self {
+        Self(())
+    }
+}
+
 impl Session {
     pub fn restore(library: Arc<Library>, shell: Arc<ShellBridge>) -> Self {
         let stored = library.credentials();
@@ -531,7 +538,7 @@ fn storage_error(error: &rusqlite::Error) -> ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::Session;
+    use super::{Live, Session};
     use crate::jellyfin::api::ApiError;
     use crate::jellyfin::api::auth::Credentials;
     use crate::library::Library;
@@ -652,9 +659,12 @@ mod tests {
             .accept("http://server:8096", credentials("alice"))
             .expect("sign in Alice");
         library
-            .upsert_page(&[dto(
-                r#"{"Id":"alice-movie","Name":"Alice Only","Type":"Movie"}"#,
-            )])
+            .upsert_page(
+                &Live::for_test(),
+                &[dto(
+                    r#"{"Id":"alice-movie","Name":"Alice Only","Type":"Movie"}"#,
+                )],
+            )
             .expect("cache Alice's library");
 
         session.clear_local(false).expect("normal logout");

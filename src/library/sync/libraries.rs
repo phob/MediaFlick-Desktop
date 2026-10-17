@@ -42,9 +42,9 @@ pub(super) fn refresh_libraries(
         })
         .filter(|parsed| seen.insert(parsed.id.clone()))
         .collect::<Vec<_>>();
-    let replaced = commit(session, scope, |_live| {
+    let replaced = commit(session, scope, |live| {
         library
-            .replace_libraries(&libraries)
+            .replace_libraries(live, &libraries)
             .map_err(|error| storage_error(&error))
     })?;
     Ok(LibraryList {
@@ -106,9 +106,9 @@ fn refresh_membership(
     if ids.is_empty() {
         tracing::debug!(target: "library.sync", library = library_id.as_str(), "the server listed no titles in a library; keeping its membership");
     }
-    commit(session, scope, |_live| {
+    commit(session, scope, |live| {
         library
-            .replace_membership(library_id, &ids)
+            .replace_membership(live, library_id, &ids)
             .map_err(|error| storage_error(&error))
     })
 }
