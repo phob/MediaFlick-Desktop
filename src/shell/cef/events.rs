@@ -2,7 +2,12 @@ use crate::app::threads::spawn_named;
 use std::time::Instant;
 
 use super::bridge::*;
-use super::document::*;
+use super::ui_events::{
+    CatalogChanges, DownloadProgress, ERROR_TOAST, ErrorToast, ItemChanges, LiveChanges,
+    MpvInstallProgress, MpvInstallState, PLAYBACK_CACHE_REFRESHED, PLAYBACK_STATE_CHANGED,
+    PLAYBACK_STOPPED, PlaybackCacheRefreshOutcome, PlaybackCacheRefreshed, SHELL_EVENTS,
+    ShellEvent, UPDATE_AVAILABLE, UPDATE_PROGRESS, UpdateProgress,
+};
 use super::*;
 use crate::playback::PlayerSnapshot;
 use crate::preferences::FullscreenBehavior;
@@ -211,24 +216,9 @@ pub(super) enum MpvSetupEvent {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PlaybackCacheRefreshOutcome {
-    Refreshed,
-    Deferred,
-}
-
 enum PlaybackCacheWriteError {
     StaleSession,
     Storage(rusqlite::Error),
-}
-
-impl PlaybackCacheRefreshOutcome {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Refreshed => "refreshed",
-            Self::Deferred => "deferred",
-        }
-    }
 }
 
 wrap_task! {
@@ -362,11 +352,11 @@ fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent, log_even
         mirror_playback_progress(state, snapshot);
     }
 
-    let frame_count = broadcast_script(
-        state,
-        &playback_event_script(event),
-        "mediaflick-desktop://playback-event",
-    );
+    let frame_count = match event {
+        PlaybackEvent::StateChanged(snapshot) => PLAYBACK_STATE_CHANGED.broadcast(state, snapshot),
+        PlaybackEvent::Stopped(snapshot) => PLAYBACK_STOPPED.broadcast(state, snapshot),
+        PlaybackEvent::Failed { .. } => 0,
+    };
     if log_event {
         tracing::debug!(
             target: "bridge",
@@ -375,23 +365,6 @@ fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent, log_even
             "dispatched playback event to WebUI"
         );
     }
-}
-
-pub(super) fn broadcast_script(state: &BrowserState, script: &str, source_url: &str) -> usize {
-    let browsers = state
-        .lock()
-        .map(|state| state.browsers.clone())
-        .unwrap_or_default();
-    let mut frame_count = 0;
-    for frame in browsers.iter().filter_map(Browser::main_frame) {
-        frame.execute_java_script(
-            Some(&CefString::from(script)),
-            Some(&CefString::from(source_url)),
-            1,
-        );
-        frame_count += 1;
-    }
-    frame_count
 }
 
 /// Refreshes the stopped item from Jellyfin after its final playstate report.
@@ -503,33 +476,13 @@ fn dispatch_playback_cache_refreshed(
     item_id: &str,
     outcome: PlaybackCacheRefreshOutcome,
 ) {
-    broadcast_script(
+    PLAYBACK_CACHE_REFRESHED.broadcast(
         state,
-        &playback_cache_refresh_script(item_id, outcome),
-        "mediaflick-desktop://playback-cache-refreshed",
+        &PlaybackCacheRefreshed {
+            item_id: item_id.to_string(),
+            status: outcome,
+        },
     );
-}
-
-fn playback_cache_refresh_script(item_id: &str, outcome: PlaybackCacheRefreshOutcome) -> String {
-    let payload = json!({ "itemId": item_id, "status": outcome.as_str() });
-    format!(
-        "window.__mediaFlickDesktopPlaybackCacheRefreshed&&window.__mediaFlickDesktopPlaybackCacheRefreshed({});",
-        js_json(&payload)
-    )
-}
-
-fn playback_event_script(event: &PlaybackEvent) -> String {
-    match event {
-        PlaybackEvent::StateChanged(snapshot) => format!(
-            "window.__mediaFlickDesktopPlaybackStateChanged&&window.__mediaFlickDesktopPlaybackStateChanged({});",
-            js_json(snapshot)
-        ),
-        PlaybackEvent::Stopped(snapshot) => format!(
-            "window.__mediaFlickDesktopPlaybackStopped&&window.__mediaFlickDesktopPlaybackStopped({});",
-            js_json(snapshot)
-        ),
-        PlaybackEvent::Failed { .. } => String::new(),
-    }
 }
 
 fn handle_update_event(state: &BrowserState, event: UpdateEvent) {
@@ -545,27 +498,33 @@ fn handle_update_event(state: &BrowserState, event: UpdateEvent) {
                 state.update_available = Some(release.clone());
                 state.update_download_started = false;
             }
-            dispatch_update_available(state, &release);
+            UPDATE_AVAILABLE.broadcast(state, &release);
         }
         UpdateEvent::DownloadProgress { downloaded, total } => {
-            dispatch_update_progress(
+            UPDATE_PROGRESS.broadcast(
                 state,
-                "downloading",
-                &json!({ "downloaded": downloaded, "total": total }),
+                &UpdateProgress::Downloading(DownloadProgress { downloaded, total }),
             );
         }
         UpdateEvent::DownloadReady(path) => {
-            dispatch_update_progress(state, "installing", &json!({ "downloaded": 1, "total": 1 }));
+            UPDATE_PROGRESS.broadcast(
+                state,
+                &UpdateProgress::Installing(DownloadProgress {
+                    downloaded: 1,
+                    total: Some(1),
+                }),
+            );
             match updater::start_installer(&path) {
                 Ok(()) => initiate_app_exit(state),
                 Err(error) => {
                     if let Ok(mut state) = state.lock() {
                         state.update_download_started = false;
                     }
-                    dispatch_update_progress(
+                    UPDATE_PROGRESS.broadcast(
                         state,
-                        "error",
-                        &json!({ "message": error.to_string() }),
+                        &UpdateProgress::Error {
+                            message: error.to_string(),
+                        },
                     );
                 }
             }
@@ -575,35 +534,20 @@ fn handle_update_event(state: &BrowserState, event: UpdateEvent) {
             if let Ok(mut state) = state.lock() {
                 state.update_download_started = false;
             }
-            dispatch_update_progress(state, "error", &json!({ "message": message }));
+            UPDATE_PROGRESS.broadcast(state, &UpdateProgress::Error { message });
         }
     }
 }
 
-pub(super) fn dispatch_update_available(state: &BrowserState, release: &UpdateRelease) {
-    broadcast_script(
-        state,
-        &updater::update_available_script(release),
-        UPDATE_TOAST_SOURCE,
-    );
-}
-
-pub(super) fn dispatch_update_progress(
-    state: &BrowserState,
-    status: &str,
-    payload: &serde_json::Value,
-) {
-    broadcast_script(
-        state,
-        &updater::update_progress_script(status, payload),
-        UPDATE_TOAST_SOURCE,
-    );
-}
-
 fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
-    let progress = |request_id: String, mut payload: serde_json::Value| {
-        payload["requestId"] = json!(request_id);
-        dispatch_shell_event(state, "mpv-install-progress", payload);
+    let progress = |request_id: String, state_now: MpvInstallState| {
+        SHELL_EVENTS.broadcast(
+            state,
+            &ShellEvent::MpvInstallProgress(MpvInstallProgress {
+                request_id,
+                state: state_now,
+            }),
+        );
     };
     let finished = || {
         if let Ok(mut state) = state.lock() {
@@ -617,10 +561,10 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
             total,
         } => progress(
             request_id,
-            json!({ "state": "downloading", "downloaded": downloaded, "total": total }),
+            MpvInstallState::Downloading { downloaded, total },
         ),
         MpvSetupEvent::Extracting { request_id } => {
-            progress(request_id, json!({ "state": "extracting" }));
+            progress(request_id, MpvInstallState::Extracting);
         }
         MpvSetupEvent::Ready { request_id, path } => {
             let mpv_path = path.to_string_lossy().into_owned();
@@ -635,13 +579,10 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
                 None => Err("preferences service is unavailable".to_string()),
             };
             match save_result {
-                Ok(()) => progress(
-                    request_id,
-                    json!({ "state": "completed", "path": mpv_path }),
-                ),
+                Ok(()) => progress(request_id, MpvInstallState::Completed { path: mpv_path }),
                 Err(message) => {
                     tracing::warn!(target: "mpv.setup", "failed to save installed mpv path: {message}");
-                    progress(request_id, json!({ "state": "failed", "message": message }));
+                    progress(request_id, MpvInstallState::Failed { message });
                 }
             }
         }
@@ -651,7 +592,7 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
         } => {
             tracing::warn!(target: "mpv.setup", "mpv setup failed: {message}");
             finished();
-            progress(request_id, json!({ "state": "failed", "message": message }));
+            progress(request_id, MpvInstallState::Failed { message });
         }
     }
 }
@@ -712,27 +653,35 @@ fn handle_shell_request(state: &BrowserState, request: ShellRequest) {
             item_ids,
             context_ids,
         } => {
-            dispatch_shell_event(
+            SHELL_EVENTS.broadcast(
                 state,
-                "library-changed",
-                json!({ "itemIds": item_ids, "contextIds": context_ids }),
+                &ShellEvent::LibraryChanged(ItemChanges {
+                    item_ids,
+                    context_ids,
+                }),
             );
         }
         ShellRequest::LiveChanged {
             item_ids,
             context_ids,
         } => {
-            dispatch_shell_event(
+            SHELL_EVENTS.broadcast(
                 state,
-                "live-changed",
-                json!({ "itemIds": item_ids, "contextIds": context_ids }),
+                &ShellEvent::LiveChanged(LiveChanges {
+                    item_ids,
+                    context_ids,
+                    all: false,
+                }),
             );
         }
         ShellRequest::LiveResynced => {
-            dispatch_shell_event(
+            SHELL_EVENTS.broadcast(
                 state,
-                "live-changed",
-                json!({ "itemIds": [], "contextIds": [], "all": true }),
+                &ShellEvent::LiveChanged(LiveChanges {
+                    item_ids: Vec::new(),
+                    context_ids: Vec::new(),
+                    all: true,
+                }),
             );
         }
         ShellRequest::CatalogChanged {
@@ -740,37 +689,28 @@ fn handle_shell_request(state: &BrowserState, request: ShellRequest) {
             context_ids,
             library_ids,
         } => {
-            dispatch_shell_event(
+            SHELL_EVENTS.broadcast(
                 state,
-                "catalog-changed",
-                json!({ "itemIds": item_ids, "contextIds": context_ids, "libraryIds": library_ids }),
+                &ShellEvent::CatalogChanged(CatalogChanges {
+                    item_ids,
+                    context_ids,
+                    library_ids,
+                }),
             );
         }
         ShellRequest::CollectionsChanged => {
-            dispatch_shell_event(state, "collections-changed", json!({}));
+            SHELL_EVENTS.broadcast(state, &ShellEvent::CollectionsChanged {});
         }
         ShellRequest::LibrariesChanged => {
-            dispatch_shell_event(state, "libraries-changed", json!({}));
+            SHELL_EVENTS.broadcast(state, &ShellEvent::LibrariesChanged {});
         }
         ShellRequest::LibraryMembershipsSettled => {
-            dispatch_shell_event(state, "library-memberships-settled", json!({}));
+            SHELL_EVENTS.broadcast(state, &ShellEvent::LibraryMembershipsSettled {});
         }
         ShellRequest::SessionExpired => {
-            dispatch_shell_event(state, "jellyfin-session-expired", json!({}));
+            SHELL_EVENTS.broadcast(state, &ShellEvent::JellyfinSessionExpired {});
         }
     }
-}
-
-pub(super) fn dispatch_shell_event(state: &BrowserState, kind: &str, payload: serde_json::Value) {
-    let mut event = serde_json::Map::new();
-    event.insert("type".to_string(), json!(kind));
-    event.insert("payload".to_string(), payload);
-    let event = serde_json::Value::Object(event);
-    let script = format!(
-        "window.dispatchEvent(new CustomEvent('mediaflick-desktop-shell', {{ detail: {} }}));",
-        js_json(&event)
-    );
-    broadcast_script(state, &script, "mediaflick-desktop://shell-event");
 }
 
 pub(super) fn show_pending_update_to_frame(frame: &Frame, state: &BrowserState) {
@@ -780,8 +720,7 @@ pub(super) fn show_pending_update_to_frame(frame: &Frame, state: &BrowserState) 
             .flatten()
     });
     if let Some(release) = pending_update {
-        let script = updater::update_available_script(&release);
-        execute_update_script(frame, &script);
+        UPDATE_AVAILABLE.send(frame, &release);
     }
 }
 
@@ -813,16 +752,6 @@ pub(super) fn apply_scrollbar_settings_to_frame(frame: &Frame, state: &BrowserSt
     );
 }
 
-const UPDATE_TOAST_SOURCE: &str = "mediaflick-desktop://update-toast";
-
-fn execute_update_script(frame: &Frame, script: &str) {
-    frame.execute_java_script(
-        Some(&CefString::from(script)),
-        Some(&CefString::from(UPDATE_TOAST_SOURCE)),
-        1,
-    );
-}
-
 pub(super) fn notify_error(state: &BrowserState, title: &str, body: &str) {
     let mut task = ErrorToastTask::new(state.clone(), title.to_string(), body.to_string());
     if post_task(ThreadId::UI, Some(&mut task)) == 0 {
@@ -831,8 +760,11 @@ pub(super) fn notify_error(state: &BrowserState, title: &str, body: &str) {
 }
 
 fn dispatch_error_toast(state: &BrowserState, title: &str, body: &str) {
-    let script = error_toast::error_toast_script(title, body);
-    if broadcast_script(state, &script, "mediaflick-desktop://error-toast") == 0 {
+    let toast = ErrorToast {
+        title: title.to_string(),
+        body: body.to_string(),
+    };
+    if ERROR_TOAST.broadcast(state, &toast) == 0 {
         tracing::warn!(
             target: "bridge",
             title,

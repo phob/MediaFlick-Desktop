@@ -14,7 +14,7 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(150);
 
 pub type UpdaterResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateRelease {
     pub version: String,
@@ -22,7 +22,7 @@ pub struct UpdateRelease {
     pub asset: Option<UpdateAsset>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateAsset {
     pub name: String,
@@ -182,21 +182,11 @@ pub fn start_installer(_installer_path: &Path) -> UpdaterResult<()> {
     Err(std::io::Error::other("automatic installation is only supported on Windows").into())
 }
 
-pub fn update_available_script(release: &UpdateRelease) -> String {
-    let payload = serde_json::to_string(release).unwrap_or_else(|_| "{}".to_string());
+/// The update toast, showing `release`, an [`UpdateRelease`] as JSON.
+pub fn update_available_script(release: &str) -> String {
     include_str!("update_toast.js")
-        .replace("{{update_payload}}", &payload)
+        .replace("{{update_payload}}", release)
         .replace("{{bridge_token}}", crate::jellyfin::bridge::bridge_token())
-}
-
-pub fn update_progress_script(state: &str, payload: &serde_json::Value) -> String {
-    let payload = serde_json::json!({
-        "state": state,
-        "payload": payload,
-    });
-    format!(
-        "window.__mediaFlickDesktopUpdateProgress&&window.__mediaFlickDesktopUpdateProgress({payload});"
-    )
 }
 
 pub(crate) fn update_agent() -> ureq::Agent {

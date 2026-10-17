@@ -1,22 +1,14 @@
-import { isJsonObject, jsonString, jsonStringArray, type JsonObject, type JsonValue } from "./json.ts"
+import type * as Wire from "./api/wire.gen.ts"
+import { isJsonObject, jsonString, type JsonValue } from "./json.ts"
 
-export interface ShellEvent {
-  type: string
-  payload: JsonObject
-}
+export type ShellEvent = Wire.ShellEvent
 
 export function readShellEvent(event: Event): ShellEvent | null {
   if (!(event instanceof CustomEvent)) return null
   const detail: JsonValue = event.detail
-  if (!isJsonObject(detail)) return null
-  const type = jsonString(detail.type)
-  if (!type) return null
-  return {
-    type,
-    payload: isJsonObject(detail.payload) ? detail.payload : {},
-  }
-}
-
-export function shellEventIds(value: JsonValue | undefined): string[] {
-  return jsonStringArray(value) ?? []
+  if (!isJsonObject(detail) || jsonString(detail.type) === null) return null
+  // Only the native shell dispatches this event, and it sends a Rust
+  // `ShellEvent` (src/shell/cef/ui_events.rs), whose generated type this is.
+  const shellEvent: ShellEvent = event.detail
+  return shellEvent
 }

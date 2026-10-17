@@ -1,6 +1,7 @@
 use super::bridge::*;
 use super::document::*;
 use super::events::*;
+use super::ui_events::{SHELL_EVENTS, ShellEvent, UPDATE_AVAILABLE};
 use super::*;
 
 #[cfg(target_os = "macos")]
@@ -82,7 +83,7 @@ wrap_jsdialog_handler! {
                 callback.cont(i32::from(forced), None);
             }
             if !forced {
-                dispatch_shell_event(&self.state, "window-close-blocked", json!({}));
+                SHELL_EVENTS.broadcast(&self.state, &ShellEvent::WindowCloseBlocked {});
             }
             1
         }
@@ -318,7 +319,7 @@ wrap_life_span_handler! {
                 None
             };
             if let Some(release) = pending_update {
-                dispatch_update_available(&self.state, &release);
+                UPDATE_AVAILABLE.broadcast(&self.state, &release);
             }
         }
 

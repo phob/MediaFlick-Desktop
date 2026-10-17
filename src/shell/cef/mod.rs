@@ -6,7 +6,6 @@ use std::thread;
 use std::time::Duration;
 
 use cef::*;
-use serde_json::json;
 
 use crate::app::paths::app_data_dir;
 use crate::app::services::{self, ShellRequest};
@@ -228,6 +227,7 @@ mod events;
 mod handlers;
 mod libmpv_overlay;
 mod runtime;
+mod ui_events;
 
 use events::{
     start_playback_event_bridge, start_preferences_event_bridge, start_shell_request_bridge,

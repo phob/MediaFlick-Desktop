@@ -185,6 +185,8 @@ mod settings;
 mod shell;
 mod wire;
 
+pub(super) use wire::Wire;
+
 /// Every endpoint the modules below serve, by method and path shape (`*` is
 /// one segment). The modules own the handlers; this table answers what they
 /// cannot: which methods a known path accepts, for a 405 and its `Allow`

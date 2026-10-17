@@ -4,7 +4,7 @@ import { api, type ItemRatings } from "./api"
 import { RatingsContext } from "./rating-context"
 import { queryKeys } from "./query-client"
 import { useRatingsStatus, useSettings } from "./queries"
-import { readShellEvent, shellEventIds } from "./shell-events"
+import { readShellEvent } from "./shell-events"
 
 const UI_BATCH_SIZE = 100
 const COALESCE_MS = 75
@@ -147,7 +147,7 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
     const receive = (event: Event) => {
       const detail = readShellEvent(event)
       if (detail?.type !== "library-changed" && detail?.type !== "catalog-changed") return
-      for (const id of shellEventIds(detail.payload.itemIds)) {
+      for (const id of detail.payload.itemIds) {
         if (active.current.has(id)) {
           omitted.current.delete(id)
           pending.current.add(id)

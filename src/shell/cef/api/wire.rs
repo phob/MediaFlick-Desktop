@@ -20,12 +20,16 @@ use crate::jellyfin::session::{QuickConnectPoll, QuickConnectStart, ServerInfo};
 use crate::library::ItemPage;
 use crate::library::browse::FilterOptions;
 use crate::library::model::{DetailView, ItemSummary};
+use crate::maintenance::updater::UpdateRelease;
 use crate::playback::PlayerSnapshot;
 use crate::preferences::{
     AppearanceSettingsPatch, ApplicationSettingsPatch, HomeSettings, PlaybackSettingsPatch,
     PlayerSettingsPatch,
 };
 
+use super::super::ui_events::{
+    AboutInfo, ErrorToast, PlaybackCacheRefreshed, ShellEvent, UpdateProgress,
+};
 use super::auth::{LoginBody, LogoutBody, QuickConnectPollBody, ServerBody};
 use super::catalog::{
     Billboard, Genres, HomeResponse, HomeResumeResponse, HomeSettingsResponse, ItemAbout,
@@ -68,7 +72,7 @@ use super::{ApiRequest, ApiResponse, AppStatus, NO_STORE, StartupResponse};
     label = "API bodies must be named types, not `json!` values",
     note = "derive `Serialize` (or `Deserialize`) and `ts_rs::TS` on a named type, add it to `wire_types!` in src/shell/cef/api/wire.rs, then run `just wire-types`"
 )]
-pub(super) trait Wire: TS + sealed::Sealed + 'static {}
+pub(in crate::shell::cef) trait Wire: TS + sealed::Sealed + 'static {}
 
 mod sealed {
     /// Only [`super::wire_types!`] implements this, so no other module can
@@ -89,6 +93,7 @@ macro_rules! wire_types {
 }
 
 wire_types! {
+    AboutInfo,
     AppStatus,
     AppearanceSettingsPatch,
     ApplicationSettingsPatch,
@@ -107,6 +112,7 @@ wire_types! {
     CommittedProfile,
     CompanionStatus,
     DetailView,
+    ErrorToast,
     ExternalLinkBody,
     ExternalLinkOpened,
     FavoriteBody,
@@ -144,6 +150,7 @@ wire_types! {
     PersonResolution,
     PlayBody,
     PlayStarted,
+    PlaybackCacheRefreshed,
     PlaybackItemBody,
     PlaybackNeighbors,
     PlaybackPreferenceSaved,
@@ -172,6 +179,7 @@ wire_types! {
     ServerBody,
     ServerInfo,
     SettingsView,
+    ShellEvent,
     ShellQueued,
     ShellRequestBody,
     ShellRequestQueued,
@@ -180,6 +188,8 @@ wire_types! {
     TechnicalBatch,
     TechnicalBatchBody,
     TrailerResponse,
+    UpdateProgress,
+    UpdateRelease,
     UploadedArtwork,
     ViewingSettingsWrite,
     ViewingView,
