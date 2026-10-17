@@ -1,15 +1,10 @@
 import type * as Wire from "../wire.gen.ts"
-import type { CollectionMode } from "./collections.ts"
 
 export type HomeElement = Wire.HomeElementView
 
 export type HomeConfiguration = Wire.HomeConfiguration
 
-export interface HomeSettingsResponse {
-  settings: HomeConfiguration
-  defaults: HomeConfiguration
-  collectionMode: CollectionMode
-}
+export type HomeSettingsResponse = Wire.HomeSettingsResponse
 
 export type HomeSettingsWrite = Omit<HomeConfiguration, "elements"> & {
   elements: Array<Pick<HomeElement, "kind" | "id" | "enabled">>

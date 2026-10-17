@@ -1,3 +1,4 @@
+use crate::collections::CollectionMode;
 use crate::library::libraries::LibraryRegistry;
 use crate::preferences::HomeWatchingSettings;
 
@@ -35,7 +36,7 @@ pub(super) fn resolved_home(services: &Services) -> Result<ResolvedHome, ApiResp
         services
             .collections
             .effective_mode(&account, &readiness, has_results)
-            == crate::collections::CollectionMode::MediaFlick;
+            == CollectionMode::MediaFlick;
     let mut settings = services
         .accounts
         .home(&account)
@@ -277,12 +278,24 @@ pub(super) fn settings_view(home: &ResolvedHome, settings: &HomeSettings) -> Hom
     }
 }
 
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(in super::super) struct HomeSettingsResponse {
+    settings: HomeConfiguration,
+    defaults: HomeConfiguration,
+    collection_mode: CollectionMode,
+}
+
 fn home_settings_response(home: &ResolvedHome) -> ApiResponse {
-    ApiResponse::untyped(json!({
-        "settings": settings_view(home, &home.settings),
-        "defaults": settings_view(home, &home.defaults),
-        "collectionMode": if home.mediaflick_collections { "mediaFlick" } else { "jellyfin" },
-    }))
+    ApiResponse::ok(HomeSettingsResponse {
+        settings: settings_view(home, &home.settings),
+        defaults: settings_view(home, &home.defaults),
+        collection_mode: if home.mediaflick_collections {
+            CollectionMode::MediaFlick
+        } else {
+            CollectionMode::Jellyfin
+        },
+    })
 }
 
 pub(super) fn home_settings(services: &Arc<Services>) -> Handled {

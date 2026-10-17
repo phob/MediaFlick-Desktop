@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { api, type StartupResponse } from "../src/lib/api"
-import { primeStartupQueries } from "../src/lib/queries"
+import { accountKey, primeStartupQueries } from "../src/lib/queries"
 import { createQueryClient, queryKeys } from "../src/lib/query-client"
 import { appStatus } from "./support/fixtures"
+import { clientSettingsFixture } from "./support/settings"
 
 const queryClient = createQueryClient()
 
@@ -15,7 +16,7 @@ const status = appStatus({
 function startup(overrides: Partial<StartupResponse> = {}): StartupResponse {
   return {
     status,
-    settings: null,
+    settings: clientSettingsFixture(),
     viewing: null,
     browsing: { last: "/library" },
     home: { configuration: { elements: [] } as never, continueWatching: [], rows: [] },
@@ -40,6 +41,7 @@ describe("startup request", () => {
     expect(queryClient.getQueryData(queryKeys.status)).toEqual(status)
     expect(queryClient.getQueryData(queryKeys.home)).toEqual(startup().home)
     expect(queryClient.getQueryData(queryKeys.billboard)).toEqual({ items: [] })
-    expect(queryClient.getQueryState(queryKeys.settings)).toBeUndefined()
+    expect(queryClient.getQueryData(queryKeys.settings)).toEqual(startup().settings)
+    expect(queryClient.getQueryState(queryKeys.viewing(accountKey(status)))).toBeUndefined()
   })
 })

@@ -67,6 +67,12 @@ export type BrowseCapabilities = {
   letterIndex: boolean,
 };
 
+export type BrowsingRoutes = { [key in string]: string };
+
+export type BrowsingSaved = {
+  saved: boolean,
+};
+
 export type Capabilities = {
   platform: Platform,
   libmpv: boolean,
@@ -83,6 +89,10 @@ export type ClientView = {
 export type CloseBehavior =
   | "exit_app"
   | "minimize_window";
+
+export type CollectionMode =
+  | "mediaFlick"
+  | "jellyfin";
 
 export type CompanionInfo = {
   pluginVersion: string,
@@ -104,6 +114,10 @@ export type DetailView =
   | { "layout": "title" } & TitleDetail
   | { "layout": "generic" } & GenericItemDetail;
 
+export type EffectiveOrigin =
+  | "plugin"
+  | "none";
+
 export type ErrorBody = {
   error: string,
   expired?: boolean,
@@ -112,6 +126,18 @@ export type ErrorBody = {
 export type ExternalLinkOpened = {
   opened: boolean,
   url: string,
+};
+
+export type ExternalProfile = {
+  id: string,
+  provider: string,
+  profileKey: string,
+  displayName: string,
+  canonicalUrl: string,
+  enabled: boolean,
+  verificationStatus: string,
+  createdAt: number,
+  lastCheckedAt: number | null,
 };
 
 export type FavoriteState = {
@@ -222,6 +248,12 @@ export type HomeResumeResponse = {
 
 export type HomeRow = { title: string, items: Array<ItemSummary> } & ({ "kind": "builtIn", id: HomeBuiltIn } | { "kind": "genre", id: string } | { "kind": "collection", id: string });
 
+export type HomeSettingsResponse = {
+  settings: HomeConfiguration,
+  defaults: HomeConfiguration,
+  collectionMode: CollectionMode,
+};
+
 export type HomeWatchingSettings = {
   continueWatching: boolean,
   nextUp: boolean,
@@ -243,6 +275,16 @@ export type ItemLetters = {
 export type ItemPage = {
   items: Array<ItemSummary>,
   total: number,
+};
+
+export type ItemRatings = {
+  id: string,
+  ratings: Array<NormalizedRating>,
+  origin: RatingOrigin,
+  fetchedAt: number,
+  sourceUpdatedAt: string | null,
+  stale: boolean,
+  schemaVersion: number,
 };
 
 export type ItemSummary = {
@@ -295,6 +337,18 @@ export type ItemSynopsis = {
 export type ItemTechnical = {
   id: string,
   mediaStreams: Array<MediaStreamView>,
+};
+
+export type LetterboxdProfileRemoved = {
+  removed: boolean,
+};
+
+export type LetterboxdProfileSaved = {
+  profile: ExternalProfile,
+};
+
+export type LetterboxdProfiles = {
+  profiles: Array<ExternalProfile>,
 };
 
 export type LibrariesResponse = {
@@ -393,8 +447,46 @@ export type MediaStreamView = {
   isExternal: boolean,
 };
 
+export type MemberReview = {
+  profileId: string,
+  username: string,
+  displayName: string,
+  profileUrl: string,
+  /**
+   * Canonical Letterboxd film entry; absent if the feed supplied an unsafe URL.
+   */
+  entryUrl: string | null,
+  rating: number | null,
+  /**
+   * Native code strips provider HTML before this reaches React.
+   */
+  review: string | null,
+  reviewTruncated: boolean,
+  watchedDate: string | null,
+  /**
+   * True when a failed refresh fell back to an older in-memory feed.
+   */
+  stale: boolean,
+};
+
+export type NextEpisode =
+  | "off"
+  | "ask"
+  | "auto";
+
 export type NextUpResponse = {
   item: ItemSummary | null,
+};
+
+export type NormalizedRating = {
+  sourceId: string,
+  value: number,
+  /**
+   * The source's 0 to 100 score, when it reports one.
+   */
+  score: number | null,
+  votes: number | null,
+  scaleMax: number,
 };
 
 export type OfficialRatings = {
@@ -546,6 +638,48 @@ export type ProviderIds = {
   tvdb: string | null,
 };
 
+export type RatingFormat =
+  | "percent"
+  | "decimal"
+  | "integer"
+  | "stars";
+
+export type RatingOrigin = "plugin";
+
+export type RatingSourceDefinition = {
+  id: string,
+  label: string,
+  shortLabel: string,
+  scaleMax: number,
+  format: RatingFormat,
+  known: boolean,
+};
+
+export type RatingsBatchResponse = {
+  available: boolean,
+  effectiveOrigin: EffectiveOrigin,
+  items: Array<ItemRatings>,
+  retryAt: number | null,
+  diagnostic: string | null,
+};
+
+export type RatingsIntegrationStatus = {
+  boundaryVersion: number,
+  effectiveOrigin: EffectiveOrigin,
+  available: boolean,
+  selectionEnabled: boolean,
+  plugin: RatingsPluginStatus,
+  sources: Array<RatingSourceDefinition>,
+  selectedSources: Array<string>,
+};
+
+export type RatingsPluginStatus = {
+  available: boolean,
+  capability: string,
+  boundaryVersion: number,
+  detail: string,
+};
+
 export type Recovery = {
   area: string,
   restoredBackup: boolean,
@@ -565,6 +699,12 @@ export type ResolvedPlaybackPreference = {
 export type Retry = {
   reason: SyncFailure,
   retryAt: number,
+};
+
+export type ReviewLookup = {
+  reviews: Array<MemberReview>,
+  configuredProfiles: number,
+  unavailableProfiles: number,
 };
 
 export type SegmentSkipMode =
@@ -605,6 +745,21 @@ export type SortKey =
   | "runtime"
   | "random";
 
+export type StartupResponse = {
+  status: AppStatus,
+  settings: SettingsView,
+  viewing: ViewingView | null,
+  browsing: BrowsingRoutes | null,
+  home: HomeResponse | null,
+  billboard: Billboard | null,
+};
+
+export type StartupView =
+  | "home"
+  | "calendar"
+  | "last"
+  | { "library": LibraryId };
+
 export type StopReason =
   | "eof"
   | "watched-next"
@@ -627,6 +782,13 @@ export type StreamingQuality =
   | "5_mbps"
   | "3_mbps"
   | "1_5_mbps";
+
+export type SubtitleMode =
+  | "server"
+  | "off"
+  | "forced"
+  | "always"
+  | "foreignAudio";
 
 export type SupportedApi = {
   min: number,
@@ -734,3 +896,24 @@ export type VideoAspectBody =
 export type VideoFitBody =
   | "fit"
   | "fill";
+
+export type ViewingView = {
+  spoilerProtection: boolean,
+  nextEpisode: NextEpisode,
+  countdownSeconds: number,
+  /**
+   * Zero leaves continuous playback unlimited.
+   */
+  episodeLimit: number,
+  audioLanguages: Array<string>,
+  subtitleLanguages: Array<string>,
+  preferOriginalAudio: boolean,
+  subtitleMode: SubtitleMode,
+  resumeRewindSeconds: number,
+  textScale: number,
+  posterSize: number,
+  previewDelayMs: number,
+  startupDestination: StartupView,
+  rememberFilters: boolean,
+  hideWatched: boolean,
+};

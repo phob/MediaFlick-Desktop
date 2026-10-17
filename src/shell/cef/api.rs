@@ -401,52 +401,41 @@ fn status(services: &Arc<Services>) -> Handled {
     Ok(ApiResponse::ok(app_status(services)))
 }
 
-/// Everything the first frame reads, in one request. Without it the UI asks
-/// for status, then waits for the answer before it can ask for the account's
-/// preferences and Home. Each part is answered by its own route; a part that
-/// does not succeed is `null`, so the UI requests it separately and surfaces
-/// its error there. `home` adds the local Home and billboard once the catalog
-/// is ready, for a launch that opens on Home.
+/// `/api/startup`: everything the first frame reads, in one request. Without
+/// it the UI asks for status, then waits for the answer before it can ask for
+/// the account's preferences and Home. Each part is what its own route
+/// answers; a part its route would answer with an error is `null`, so the UI
+/// requests it separately and surfaces its error there. `home` adds the local
+/// Home and billboard once the catalog is ready, for a launch that opens on
+/// Home.
+#[derive(Serialize, ts_rs::TS)]
+struct StartupResponse {
+    status: AppStatus,
+    settings: settings::SettingsView,
+    viewing: Option<settings::ViewingView>,
+    browsing: Option<settings::BrowsingRoutes>,
+    home: Option<catalog::HomeResponse>,
+    billboard: Option<catalog::Billboard>,
+}
+
 fn startup(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    let part = |path: &str| {
-        let response = route(
-            services,
-            path,
-            &ApiRequest {
-                method: "GET".to_string(),
-                path: format!("/api/{path}"),
-                query: String::new(),
-                body: Vec::new(),
-                range: None,
-                cancelled: request.cancelled.clone(),
-            },
-        );
-        if response.status != 200 {
-            return Value::Null;
-        }
-        serde_json::from_slice(&response.body).unwrap_or(Value::Null)
-    };
     let status = app_status(services);
     let authenticated = status.session.authenticated;
     let home = authenticated
         && status.bootstrap == Bootstrap::Ready
         && request.param("home").as_deref() == Some("1");
-    let account_part = |path: &str| {
-        if authenticated {
-            part(path)
-        } else {
-            Value::Null
-        }
-    };
-    let home_part = |path: &str| if home { part(path) } else { Value::Null };
-    Ok(ApiResponse::untyped(json!({
-        "settings": part("settings"),
-        "viewing": account_part("settings/viewing"),
-        "browsing": account_part("settings/browsing"),
-        "home": home_part("home"),
-        "billboard": home_part("billboard"),
-        "status": status,
-    })))
+    Ok(ApiResponse::ok(StartupResponse {
+        settings: settings::settings_snapshot(services),
+        viewing: startup_part(authenticated, || settings::viewing(services)),
+        browsing: startup_part(authenticated, || settings::browsing(services)),
+        home: startup_part(home, || catalog::home_view(services)),
+        billboard: startup_part(home, || catalog::billboard_view(services)),
+        status,
+    }))
+}
+
+fn startup_part<T>(wanted: bool, answer: impl FnOnce() -> Result<T, ApiResponse>) -> Option<T> {
+    if wanted { answer().ok() } else { None }
 }
 
 fn companion_info(services: &Arc<Services>, force: bool) -> Handled {

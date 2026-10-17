@@ -6,7 +6,10 @@ pub mod model;
 mod playback;
 mod shortcuts;
 mod viewing;
-pub use viewing::{PlayerComfort, SubtitleMode, ViewingSettings, ViewingWrite, startup_view};
+pub use viewing::{
+    NextEpisode, PlayerComfort, StartupView, SubtitleMode, ViewingSettings, ViewingWrite,
+    startup_view,
+};
 pub mod service;
 pub mod store;
 

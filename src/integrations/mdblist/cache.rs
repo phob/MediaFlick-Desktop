@@ -1,20 +1,47 @@
 use std::collections::HashMap;
 
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::jellyfin::api::ApiError;
 use crate::library::{CachedRatings, RatingTarget, now_unix};
 
-use super::schema::{normalize_rating_array, normalized_source_updated_at};
-use super::{CACHE_ORIGIN, RatingsError, RatingsService};
+use super::schema::{
+    NormalizedRating, normalize_rating_array, normalized_source_updated_at, rating_cache_value,
+};
+use super::{EffectiveOrigin, RatingOrigin, RatingsError, RatingsService};
 
 const CACHE_SCHEMA_VERSION: i64 = 1;
 const MAX_REQUEST_IDS: usize = 500;
 const PLUGIN_FRESH_SECONDS: i64 = 24 * 60 * 60;
 const EXPIRE_SECONDS: i64 = 30 * 24 * 60 * 60;
 
+/// `/api/ratings/batch`: the cached ratings of the requested cards that have
+/// not expired.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RatingsBatchResponse {
+    available: bool,
+    effective_origin: EffectiveOrigin,
+    items: Vec<ItemRatings>,
+    retry_at: Option<i64>,
+    diagnostic: Option<String>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct ItemRatings {
+    id: String,
+    ratings: Vec<NormalizedRating>,
+    origin: RatingOrigin,
+    fetched_at: i64,
+    source_updated_at: Option<String>,
+    stale: bool,
+    schema_version: i64,
+}
+
 impl RatingsService {
-    pub fn batch(&self, item_ids: &[String]) -> Result<Value, RatingsError> {
+    pub fn batch(&self, item_ids: &[String]) -> Result<RatingsBatchResponse, RatingsError> {
         let item_ids = bounded_item_ids(item_ids);
         let _ = self.companion.probe(false);
         if !self.companion.supports("ratings-v1") {
@@ -58,26 +85,24 @@ impl RatingsService {
             .iter()
             .filter_map(|target| {
                 let cached = cache.get(&target.item_id)?;
-                (cached.expires_at > now).then(|| {
-                    json!({
-                        "id": target.item_id,
-                        "ratings": cached.ratings,
-                        "origin": CACHE_ORIGIN,
-                        "fetchedAt": cached.fetched_at.max(0),
-                        "sourceUpdatedAt": cached.source_updated_at,
-                        "stale": cached.stale_at <= now,
-                        "schemaVersion": cached.schema_version,
-                    })
+                (cached.expires_at > now).then(|| ItemRatings {
+                    id: target.item_id.clone(),
+                    ratings: normalize_rating_array(&cached.ratings),
+                    origin: RatingOrigin::Plugin,
+                    fetched_at: cached.fetched_at.max(0),
+                    source_updated_at: cached.source_updated_at.clone(),
+                    stale: cached.stale_at <= now,
+                    schema_version: cached.schema_version,
                 })
             })
-            .collect::<Vec<_>>();
-        Ok(json!({
-            "available": true,
-            "effectiveOrigin": CACHE_ORIGIN,
-            "items": items,
-            "retryAt": null,
-            "diagnostic": diagnostic,
-        }))
+            .collect();
+        Ok(RatingsBatchResponse {
+            available: true,
+            effective_origin: EffectiveOrigin::Plugin,
+            items,
+            retry_at: None,
+            diagnostic,
+        })
     }
 
     fn sanitize_cached(
@@ -91,7 +116,7 @@ impl RatingsService {
                 continue;
             };
             let sanitized = CachedRatings {
-                ratings: normalize_rating_array(&cached.ratings),
+                ratings: rating_cache_value(&normalize_rating_array(&cached.ratings)),
                 source_updated_at: normalized_source_updated_at(
                     cached.source_updated_at.as_deref(),
                 ),
@@ -192,14 +217,14 @@ fn bounded_item_ids(item_ids: &[String]) -> Vec<String> {
     item_ids
 }
 
-fn unavailable_ratings() -> Value {
-    json!({
-        "available": false,
-        "effectiveOrigin": "none",
-        "items": [],
-        "retryAt": null,
-        "diagnostic": "Server ratings are unavailable.",
-    })
+fn unavailable_ratings() -> RatingsBatchResponse {
+    RatingsBatchResponse {
+        available: false,
+        effective_origin: EffectiveOrigin::None,
+        items: Vec::new(),
+        retry_at: None,
+        diagnostic: Some("Server ratings are unavailable.".to_string()),
+    }
 }
 
 fn plugin_rating_error(error: &ApiError) -> String {
@@ -250,7 +275,9 @@ fn normalize_plugin_batch(
         else {
             continue;
         };
-        let ratings = normalize_rating_array(item.get("ratings").unwrap_or(&Value::Null));
+        let ratings = rating_cache_value(&normalize_rating_array(
+            item.get("ratings").unwrap_or(&Value::Null),
+        ));
         let source_updated_at =
             normalized_source_updated_at(item.get("sourceUpdatedAt").and_then(Value::as_str));
         by_item.insert(item_id.to_string(), (ratings, source_updated_at));

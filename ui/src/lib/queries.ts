@@ -115,9 +115,8 @@ export async function primeStartupQueries(client: QueryClient, pathname: string)
     return
   }
   const { status } = startup
-  if (!status) return
   client.setQueryData(queryKeys.status, status)
-  if (startup.settings) client.setQueryData(queryKeys.settings, startup.settings)
+  client.setQueryData(queryKeys.settings, startup.settings)
   const account = accountKey(status)
   if (startup.viewing) client.setQueryData(viewingQueryOptions(account).queryKey, startup.viewing)
   if (startup.browsing) client.setQueryData(browsingQueryOptions(account).queryKey, startup.browsing)

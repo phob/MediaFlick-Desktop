@@ -12,8 +12,9 @@ mod person;
 
 pub(super) use detail::{ItemAbout, ItemSynopsis};
 use detail::{children, item_about, item_detail, item_synopsis};
-pub(super) use home::{Billboard, HomeResponse, HomeResumeResponse};
+pub(super) use home::{Billboard, HomeResponse, HomeResumeResponse, billboard_view, home_view};
 use home::{billboard, home, home_resume};
+pub(super) use home_settings::HomeSettingsResponse;
 use home_settings::{home_settings, patch_home_settings};
 pub(super) use person::PersonResolution;
 use person::{query_person_items, resolve_person};
