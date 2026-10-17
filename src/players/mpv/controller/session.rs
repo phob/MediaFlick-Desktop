@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::app::logger;
 use crate::jellyfin::playback_reporter::flush_playstate_reports;
-use crate::playback::{PlaybackRequest, PlayerCommand};
+use crate::playback::{PlaybackRequest, PlayerCommand, StopReason, non_empty};
 use crate::players::mpv::input::{INPUT_SECTION_NAME, section_contents};
 use crate::players::mpv::ipc::{
     IpcCommandFailure, IpcWorker, cleanup_ipc_path, make_ipc_path as make_mpv_ipc_path,
@@ -23,7 +23,6 @@ use super::{
     PENDING_FILE_LOADED_TIMEOUT, PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT, PROGRESS_INTERVAL,
     SHUTDOWN_WAIT, control_command,
 };
-use crate::playback::{StopReason, non_empty};
 
 mod events;
 

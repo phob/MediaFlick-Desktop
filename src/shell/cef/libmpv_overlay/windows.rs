@@ -33,7 +33,7 @@ use crate::playback::{NativeWindowHandle, PlaybackCoordinator, PlayerCommand};
 use crate::preferences::{AppSettings, PlayerBackend, WebUiWindowSettings};
 use crate::shell::cef::{BrowserState, app_scheme, request_main_window_close};
 
-use self::close_hooks::{CLOSE_TARGET, HOOKED_HOST, HostCloseHooks, install_host_close_hooks};
+use self::close_hooks::{HostCloseHooks, install_host_close_hooks, remove_host_close_hooks};
 use self::compositor::Compositor;
 use self::display::{
     apply_saved_window_settings, display_frame_rate, logical_to_physical, physical_to_logical,
@@ -266,11 +266,7 @@ impl LibmpvOverlaySurface {
     pub(crate) fn destroy(&self) {
         self.closing.set(true);
         self.save_window_settings();
-        CLOSE_TARGET.store(0, Ordering::Release);
-        HOOKED_HOST.store(0, Ordering::Release);
-        self.host_close_hooks
-            .replace(HostCloseHooks::default())
-            .uninstall();
+        remove_host_close_hooks(self.host_close_hooks.replace(HostCloseHooks::default()));
         let input = self.input.replace(null_mut());
         // SAFETY: IsWindow only inspects the handle value, and a live `input`
         // is our own child window, destroyed on the thread that created it.

@@ -627,3 +627,28 @@ fn a_storage_error_while_forgetting_an_observation_fails_the_cycle() {
 
     assert!(matches!(failed, Err(ApiError::Storage(_))), "{failed:?}");
 }
+
+#[test]
+fn a_requested_cycle_reconciles_server_deletions() {
+    let server = serve(vec![
+        ok(EMPTY_PAGE),
+        ok(EMPTY_PAGE),
+        ok(r#"{"Items":[{"Id":"kept"}],"TotalRecordCount":1}"#),
+    ]);
+    let library = Arc::new(Library::open_in_memory().expect("library"));
+    let session = authenticated_session(&library, &server.url);
+    library
+        .ingest_page(&[
+            serde_json::from_str(r#"{"Id":"kept","Name":"Kept","Type":"Movie"}"#).expect("dto"),
+            serde_json::from_str(r#"{"Id":"gone","Name":"Gone","Type":"Movie"}"#).expect("dto"),
+        ])
+        .expect("seed");
+    settled_catalog(&library);
+
+    let requested = super::super::run_cycle(&library, &session, Trigger::Requested).expect("cycle");
+    assert_eq!(requested.deleted, 1);
+    assert!(library.item("gone").expect("query").is_none());
+    assert!(library.item("kept").expect("query").is_some());
+
+    server.requests();
+}

@@ -89,7 +89,7 @@ impl ControllerState {
             }
             #[cfg(target_os = "linux")]
             "client-message"
-                if self.runtime_kind == super::super::MpvRuntimeKind::Library
+                if self.runtime_kind == crate::players::mpv::runtime::MpvRuntimeKind::Library
                     && event
                         .args
                         .first()

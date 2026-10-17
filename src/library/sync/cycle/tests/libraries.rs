@@ -297,3 +297,38 @@ fn a_membership_walk_that_ends_short_of_its_total_keeps_the_previous_membership(
     assert_eq!(steps(&requests), ["views", "incremental", "walk movies"]);
     assert_eq!(grid(&library, MOVIES), ["m1"]);
 }
+
+#[test]
+fn the_first_sync_walks_each_library_once() {
+    let library = Arc::new(Library::open_in_memory().expect("library"));
+    let listing = || views(&[(MOVIES, "movies"), (SHOWS, "tvshows")]);
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Requested,
+        vec![
+            listing(),
+            members(&["m1"], 1),
+            members(&[], 0),
+            ok(ONE_MOVIE),
+            ok(ONE_MOVIE),
+        ],
+    );
+    result.expect("the first sync");
+    assert_eq!(
+        steps(&requests),
+        [
+            "views",
+            "walk movies",
+            "walk shows",
+            "bootstrap",
+            "incremental"
+        ]
+    );
+    assert_eq!(grid(&library, MOVIES), ["m1"]);
+    assert!(walks_due(&library).is_empty());
+
+    let (result, requests) = cycle(&library, Trigger::Scheduled, vec![listing(), ok(ONE_MOVIE)]);
+    result.expect("the second sync");
+    assert_eq!(steps(&requests), ["views", "incremental"]);
+}

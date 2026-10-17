@@ -10,8 +10,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 use super::WM_HOST_CLOSE_REQUESTED;
 
-pub(super) static HOOKED_HOST: AtomicUsize = AtomicUsize::new(0);
-pub(super) static CLOSE_TARGET: AtomicUsize = AtomicUsize::new(0);
+static HOOKED_HOST: AtomicUsize = AtomicUsize::new(0);
+static CLOSE_TARGET: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Copy)]
 pub(super) struct HostCloseHooks {
@@ -20,7 +20,7 @@ pub(super) struct HostCloseHooks {
 }
 
 impl HostCloseHooks {
-    pub(super) fn uninstall(self) {
+    fn uninstall(self) {
         for hook in [self.dispatched, self.queued] {
             if !hook.is_null() {
                 // SAFETY: `hook` came from SetWindowsHookExW and is unhooked once,
@@ -79,6 +79,12 @@ pub(super) fn install_host_close_hooks(host: HWND, input: HWND) -> io::Result<Ho
         return Err(io::Error::last_os_error());
     }
     Ok(HostCloseHooks { dispatched, queued })
+}
+
+pub(super) fn remove_host_close_hooks(hooks: HostCloseHooks) {
+    CLOSE_TARGET.store(0, Ordering::Release);
+    HOOKED_HOST.store(0, Ordering::Release);
+    hooks.uninstall();
 }
 
 unsafe extern "system" fn dispatched_host_message_hook(

@@ -373,66 +373,6 @@ fn an_unreadable_sync_state_stops_the_cycle_instead_of_restarting_the_catalog() 
     assert!(!bootstrap_progress(&library).complete);
 }
 
-#[test]
-fn a_requested_cycle_reconciles_server_deletions() {
-    let server = serve(vec![
-        ok(EMPTY_PAGE),
-        ok(EMPTY_PAGE),
-        ok(r#"{"Items":[{"Id":"kept"}],"TotalRecordCount":1}"#),
-    ]);
-    let library = Arc::new(Library::open_in_memory().expect("library"));
-    let session = authenticated_session(&library, &server.url);
-    library
-        .ingest_page(&[
-            serde_json::from_str(r#"{"Id":"kept","Name":"Kept","Type":"Movie"}"#).expect("dto"),
-            serde_json::from_str(r#"{"Id":"gone","Name":"Gone","Type":"Movie"}"#).expect("dto"),
-        ])
-        .expect("seed");
-    settled_catalog(&library);
-
-    let requested = super::run_cycle(&library, &session, Trigger::Requested).expect("cycle");
-    assert_eq!(requested.deleted, 1);
-    assert!(library.item("gone").expect("query").is_none());
-    assert!(library.item("kept").expect("query").is_some());
-
-    server.requests();
-}
-
-#[test]
-fn the_first_sync_walks_each_library_once() {
-    let library = Arc::new(Library::open_in_memory().expect("library"));
-    let listing = || views(&[(MOVIES, "movies"), (SHOWS, "tvshows")]);
-
-    let (result, requests) = cycle(
-        &library,
-        Trigger::Requested,
-        vec![
-            listing(),
-            members(&["m1"], 1),
-            members(&[], 0),
-            ok(ONE_MOVIE),
-            ok(ONE_MOVIE),
-        ],
-    );
-    result.expect("the first sync");
-    assert_eq!(
-        steps(&requests),
-        [
-            "views",
-            "walk movies",
-            "walk shows",
-            "bootstrap",
-            "incremental"
-        ]
-    );
-    assert_eq!(grid(&library, MOVIES), ["m1"]);
-    assert!(walks_due(&library).is_empty());
-
-    let (result, requests) = cycle(&library, Trigger::Scheduled, vec![listing(), ok(ONE_MOVIE)]);
-    result.expect("the second sync");
-    assert_eq!(steps(&requests), ["views", "incremental"]);
-}
-
 struct Announced {
     result: Result<SyncReport, ApiError>,
     events: Vec<&'static str>,
