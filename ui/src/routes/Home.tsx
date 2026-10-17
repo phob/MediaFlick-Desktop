@@ -238,7 +238,7 @@ type ShelfRow = HomeRow | LibraryRow | WatchingRow
 
 function rowViewAll(row: ShelfRow) {
   if (row.kind === "watching") return undefined
-  if ("sort" in row) return libraryPath(row.id, new URLSearchParams({ sort: row.sort }))
+  if (row.kind === "library") return libraryPath(row.id, new URLSearchParams({ sort: row.sort }))
   if (row.kind === "genre") return `/library?kind=Movie,Series&genre=${encodeURIComponent(row.id)}&sort=rating`
   if (row.kind === "collection") return `/collections/mine/${encodeURIComponent(row.id)}`
   switch (row.id) {

@@ -201,7 +201,13 @@ export type HomeConfiguration = {
   elements: Array<HomeElementView>,
 };
 
-export type HomeElementView = { label: string, available: boolean, category: string, enabled: boolean } & ({ "kind": "builtIn", id: HomeBuiltIn } | { "kind": "genre", id: string } | { "kind": "collection", id: string } | { "kind": "library", id: LibraryId });
+export type HomeElementCategory =
+  | "Built-in"
+  | "Genre"
+  | "My Collection"
+  | "Library";
+
+export type HomeElementView = { label: string, available: boolean, category: HomeElementCategory, enabled: boolean } & ({ "kind": "builtIn", id: HomeBuiltIn } | { "kind": "genre", id: string } | { "kind": "collection", id: string } | { "kind": "library", id: LibraryId });
 
 export type HomeResponse = {
   configuration: HomeConfiguration,
@@ -214,7 +220,7 @@ export type HomeResumeResponse = {
   nextUp: Array<ItemSummary>,
 };
 
-export type HomeRow = { title: string, items: Array<ItemSummary> } & ({ "kind": "builtIn", id: HomeBuiltIn } | { "kind": "genre", id: string } | { "kind": "collection", id: string } | { "kind": "library", id: LibraryId });
+export type HomeRow = { title: string, items: Array<ItemSummary> } & ({ "kind": "builtIn", id: HomeBuiltIn } | { "kind": "genre", id: string } | { "kind": "collection", id: string });
 
 export type HomeWatchingSettings = {
   continueWatching: boolean,

@@ -13,9 +13,19 @@ pub(in super::super) struct HomeResponse {
 #[derive(Serialize, ts_rs::TS)]
 struct HomeRow {
     #[serde(flatten)]
-    element: HomeElementId,
+    source: HomeRowSource,
     title: String,
     items: Vec<ItemSummary>,
+}
+
+/// The elements `/api/home` answers with a shelf. Library shelves come from
+/// `/api/libraries/{id}/latest`.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum HomeRowSource {
+    BuiltIn { id: HomeBuiltIn },
+    Genre { id: String },
+    Collection { id: String },
 }
 
 #[derive(Serialize, ts_rs::TS)]
@@ -51,7 +61,7 @@ pub(super) fn home(services: &Arc<Services>) -> Handled {
         let row = match &element.element {
             HomeElementId::BuiltIn { id } => built_in_home_row(services, &home.account, *id),
             HomeElementId::Genre { id } if home.genres.contains(id) => Some(home_row(
-                HomeElementId::Genre { id: id.clone() },
+                HomeRowSource::Genre { id: id.clone() },
                 id,
                 home_query(
                     &services.library,
@@ -126,7 +136,7 @@ fn built_in_home_row(
             ),
         ),
     };
-    Some(home_row(HomeElementId::BuiltIn { id }, title, items))
+    Some(home_row(HomeRowSource::BuiltIn { id }, title, items))
 }
 
 fn element_enabled(settings: &HomeSettings, id: HomeBuiltIn) -> bool {
@@ -141,9 +151,9 @@ fn home_query(library: &Library, mut query: ItemQuery) -> Vec<ItemSummary> {
     library.query_page(&query).unwrap_or_default()
 }
 
-fn home_row(element: HomeElementId, title: &str, items: Vec<ItemSummary>) -> HomeRow {
+fn home_row(source: HomeRowSource, title: &str, items: Vec<ItemSummary>) -> HomeRow {
     HomeRow {
-        element,
+        source,
         title: title.to_string(),
         items,
     }
@@ -177,7 +187,7 @@ fn because_you_watched(services: &Services, account: &AccountKey) -> Option<Home
     );
     (!items.is_empty()).then(|| {
         home_row(
-            HomeElementId::BuiltIn {
+            HomeRowSource::BuiltIn {
                 id: HomeBuiltIn::BecauseYouWatched,
             },
             &format!("Because you watched {}", seed.summary.name),
@@ -223,7 +233,7 @@ fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -
         .filter_map(|id| by_id.get(id).cloned())
         .collect::<Vec<_>>();
     Some(home_row(
-        HomeElementId::Collection {
+        HomeRowSource::Collection {
             id: profile.id.clone(),
         },
         &profile.title,

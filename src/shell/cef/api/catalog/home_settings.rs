@@ -198,7 +198,18 @@ struct HomeElementView {
     element: HomeElement,
     label: String,
     available: bool,
-    category: &'static str,
+    category: HomeElementCategory,
+}
+
+/// The group Home settings lists an element under.
+#[derive(Serialize, ts_rs::TS)]
+enum HomeElementCategory {
+    #[serde(rename = "Built-in")]
+    BuiltIn,
+    Genre,
+    #[serde(rename = "My Collection")]
+    MyCollection,
+    Library,
 }
 
 pub(super) fn settings_view(home: &ResolvedHome, settings: &HomeSettings) -> HomeConfiguration {
@@ -219,10 +230,16 @@ pub(super) fn settings_view(home: &ResolvedHome, settings: &HomeSettings) -> Hom
         .iter()
         .map(|element| {
             let (label, available, category) = match &element.element {
-                HomeElementId::BuiltIn { id } => {
-                    (built_in_label(*id).to_string(), true, "Built-in")
-                }
-                HomeElementId::Genre { id } => (id.clone(), home.genres.contains(id), "Genre"),
+                HomeElementId::BuiltIn { id } => (
+                    built_in_label(*id).to_string(),
+                    true,
+                    HomeElementCategory::BuiltIn,
+                ),
+                HomeElementId::Genre { id } => (
+                    id.clone(),
+                    home.genres.contains(id),
+                    HomeElementCategory::Genre,
+                ),
                 HomeElementId::Collection { id } => (
                     profiles
                         .get(id.as_str())
@@ -230,11 +247,19 @@ pub(super) fn settings_view(home: &ResolvedHome, settings: &HomeSettings) -> Hom
                         .unwrap_or("Collection")
                         .to_string(),
                     home.mediaflick_collections && profiles.contains_key(id.as_str()),
-                    "My Collection",
+                    HomeElementCategory::MyCollection,
                 ),
                 HomeElementId::Library { id } => match libraries.get(id) {
-                    Some(name) => (format!("Latest in {name}"), true, "Library"),
-                    None => ("Latest in library".to_string(), false, "Library"),
+                    Some(name) => (
+                        format!("Latest in {name}"),
+                        true,
+                        HomeElementCategory::Library,
+                    ),
+                    None => (
+                        "Latest in library".to_string(),
+                        false,
+                        HomeElementCategory::Library,
+                    ),
                 },
             };
             HomeElementView {
