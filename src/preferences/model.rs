@@ -1,3 +1,5 @@
+use serde::de::IntoDeserializer;
+use serde::de::value::StrDeserializer;
 use serde::{Deserialize, Deserializer, Serialize};
 
 const DEFAULT_WEBUI_WINDOW_WIDTH: i32 = 1280;
@@ -6,6 +8,15 @@ const MIN_WEBUI_WINDOW_WIDTH: i32 = 640;
 const MIN_WEBUI_WINDOW_HEIGHT: i32 = 360;
 const DEFAULT_LOG_LEVEL: &str = "debug";
 pub const DEFAULT_MARK_WATCHED_NEXT: &str = "w";
+
+/// Parses a settings value by the enum's serde name, ignoring ASCII case and
+/// surrounding whitespace, so it accepts what the generated TypeScript names.
+fn from_serde_name<T: serde::de::DeserializeOwned>(value: &str) -> Option<T> {
+    let name = value.trim().to_ascii_lowercase();
+    let deserializer: StrDeserializer<'_, serde::de::value::Error> =
+        name.as_str().into_deserializer();
+    T::deserialize(deserializer).ok()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -138,13 +149,7 @@ impl AppearanceAccent {
         self == &Self::default()
     }
     pub fn from_id(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "signal" => Some(Self::Signal),
-            "cobalt" => Some(Self::Cobalt),
-            "amber" => Some(Self::Amber),
-            "violet" => Some(Self::Violet),
-            _ => None,
-        }
+        from_serde_name(value)
     }
 }
 
@@ -161,11 +166,7 @@ impl AppearanceDensity {
         self == &Self::default()
     }
     pub fn from_id(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "compact" => Some(Self::Compact),
-            "comfortable" => Some(Self::Comfortable),
-            _ => None,
-        }
+        from_serde_name(value)
     }
 }
 
@@ -218,20 +219,7 @@ impl StreamingQuality {
     }
 
     pub fn from_id(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "original" => Some(Self::Original),
-            "auto" => Some(Self::Auto),
-            "120_mbps" => Some(Self::Mbps120),
-            "80_mbps" => Some(Self::Mbps80),
-            "60_mbps" => Some(Self::Mbps60),
-            "40_mbps" => Some(Self::Mbps40),
-            "20_mbps" => Some(Self::Mbps20),
-            "10_mbps" => Some(Self::Mbps10),
-            "5_mbps" => Some(Self::Mbps5),
-            "3_mbps" => Some(Self::Mbps3),
-            "1_5_mbps" => Some(Self::Mbps1_5),
-            _ => None,
-        }
+        from_serde_name(value)
     }
 
     pub fn allows_transcoding(self) -> bool {
@@ -270,13 +258,7 @@ impl SegmentSkipMode {
     }
 
     pub fn from_id(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "hidden" => Some(Self::Hidden),
-            "disabled" => Some(Self::Disabled),
-            "prompt" => Some(Self::Prompt),
-            "always" => Some(Self::Always),
-            _ => None,
-        }
+        from_serde_name(value)
     }
 }
 
@@ -353,9 +335,8 @@ impl PlayerBackend {
 
     pub fn from_id(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "libmpv" | "built_in" | "builtin" => Some(Self::Libmpv),
-            "mpv" => Some(Self::Mpv),
-            _ => None,
+            "built_in" | "builtin" => Some(Self::Libmpv),
+            name => from_serde_name(name),
         }
     }
 }
@@ -381,11 +362,7 @@ impl FullscreenBehavior {
     }
 
     pub fn from_id(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "fullscreen" => Some(Self::Fullscreen),
-            "windowed" => Some(Self::Windowed),
-            _ => None,
-        }
+        from_serde_name(value)
     }
 }
 
@@ -403,11 +380,7 @@ impl CloseBehavior {
     }
 
     pub fn from_id(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "exit_app" => Some(Self::ExitApp),
-            "minimize_window" => Some(Self::MinimizeWindow),
-            _ => None,
-        }
+        from_serde_name(value)
     }
 }
 
