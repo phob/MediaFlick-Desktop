@@ -9,7 +9,13 @@ const MPV_LATEST_RELEASE_API_URL: &str =
     "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest";
 
 #[derive(Debug, Clone, Copy)]
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[cfg_attr(
+    not(target_os = "windows"),
+    allow(
+        dead_code,
+        reason = "only the Windows mpv installer downloads and extracts"
+    )
+)]
 pub enum MpvSetupPhase {
     Downloading { downloaded: u64, total: Option<u64> },
     Extracting,

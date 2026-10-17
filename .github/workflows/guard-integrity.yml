@@ -1,0 +1,48 @@
+name: Guard integrity
+
+# pull_request_target runs this file and check_guards.py from the default
+# branch, so a PR cannot edit or skip the check that judges it. A change to
+# either takes effect once merged. The job only reads the PR's commits as git
+# objects and never executes them.
+on:
+  pull_request_target:
+    # `edited` covers a retarget to another base. The job always runs: a skipped
+    # job would replace a failed result with one that satisfies a required check.
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: guard-integrity-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guard-integrity:
+    name: Guard integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # By the event's SHA, so the result belongs to the commit it is reported on.
+      - name: Fetch the PR head
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git fetch --no-tags origin "$HEAD_SHA"
+
+      # Labels are read live: a rerun of an older run must not reuse a stale event payload.
+      - name: Check that no guard was deleted or relaxed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE: origin/${{ github.base_ref }}
+        run: |
+          if gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx guards-changed; then
+            export MEDIAFLICK_GUARDS_CHANGED=1
+          fi
+          python3 scripts/ci/check_guards.py "$BASE" FETCH_HEAD

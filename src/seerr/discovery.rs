@@ -208,35 +208,44 @@ impl DiscoverOptions {
                     ));
                 }
             }
-            DiscoverKind::Movies | DiscoverKind::Tv => {
-                if let Some(genre) = self.genre {
-                    query.push(("genre", genre.to_string()));
-                }
-                if let Some(decade) = self.release_decade {
-                    query.push(("releaseDecade", decade.to_string()));
-                }
-                if let Some(sort) = self.sort {
-                    let value = match (sort, kind) {
-                        (DiscoverSort::Popular, _) => "popularity.desc",
-                        (DiscoverSort::Rating, _) => "vote_average.desc",
-                        (DiscoverSort::Newest, DiscoverKind::Movies) => "primary_release_date.desc",
-                        (DiscoverSort::Newest, DiscoverKind::Tv) => "first_air_date.desc",
-                        (DiscoverSort::Newest, _) => unreachable!(),
-                    };
-                    query.push(("sortBy", value.to_string()));
-                    // TMDB's vote-average sort otherwise promotes titles with
-                    // a single perfect vote above established favourites.
-                    if sort == DiscoverSort::Rating {
-                        query.push(("voteCountGte", "50".to_string()));
-                    }
-                }
-                if let Some(min_rating) = self.min_rating {
-                    query.push(("voteAverageGte", min_rating.to_string()));
-                }
+            DiscoverKind::Movies => {
+                self.push_catalog_filters(&mut query, "primary_release_date.desc");
             }
+            DiscoverKind::Tv => self.push_catalog_filters(&mut query, "first_air_date.desc"),
             DiscoverKind::UpcomingMovies | DiscoverKind::UpcomingTv => {}
         }
 
         query
+    }
+
+    /// The movie and TV catalogs take the same filters and differ only in the
+    /// field TMDB sorts by for "newest".
+    fn push_catalog_filters(
+        &self,
+        query: &mut Vec<(&'static str, String)>,
+        newest_sort: &'static str,
+    ) {
+        if let Some(genre) = self.genre {
+            query.push(("genre", genre.to_string()));
+        }
+        if let Some(decade) = self.release_decade {
+            query.push(("releaseDecade", decade.to_string()));
+        }
+        if let Some(sort) = self.sort {
+            let value = match sort {
+                DiscoverSort::Popular => "popularity.desc",
+                DiscoverSort::Rating => "vote_average.desc",
+                DiscoverSort::Newest => newest_sort,
+            };
+            query.push(("sortBy", value.to_string()));
+            // TMDB's vote-average sort otherwise promotes titles with
+            // a single perfect vote above established favourites.
+            if sort == DiscoverSort::Rating {
+                query.push(("voteCountGte", "50".to_string()));
+            }
+        }
+        if let Some(min_rating) = self.min_rating {
+            query.push(("voteAverageGte", min_rating.to_string()));
+        }
     }
 }

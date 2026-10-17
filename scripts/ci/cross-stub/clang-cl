@@ -1,0 +1,13 @@
+#!/bin/sh
+# Stub C compiler for `cargo clippy --target <foreign>`: clippy type-checks Rust
+# and never links, so -sys build scripts only need their object files to exist.
+# Exiting non-zero on -E makes cc-rs fall back to the file name (clang-cl => MSVC).
+for arg in "$@"; do
+  case "$arg" in
+    -E) exit 1 ;;
+    -Fo*|/Fo*) out="${arg#?Fo}"; : > "$out" ;;
+    -o) next_is_out=1; continue ;;
+  esac
+  if [ -n "$next_is_out" ]; then : > "$arg"; next_is_out=; fi
+done
+exit 0

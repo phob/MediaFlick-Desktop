@@ -6,6 +6,11 @@ use std::fmt::Write;
 /// These values are not only identifiers: the bridge session token is one, so
 /// a hash of the wall clock and a counter — both of which an attacker can
 /// guess — is not good enough.
+#[expect(
+    clippy::panic,
+    reason = "without the OS CSPRNG no secure token exists, and the bridge token is a \
+              process-lifetime static; stopping is the only fail-closed answer"
+)]
 pub fn random_hex(bytes: usize) -> String {
     let mut buffer = vec![0u8; bytes];
     getrandom::fill(&mut buffer).unwrap_or_else(|error| {

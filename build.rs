@@ -1,7 +1,18 @@
+use std::fmt;
 use std::path::Path;
 use std::process::Command;
 
-fn main() {
+/// Cargo prints a failed build script's `main` error with `Debug`, so this
+/// prints the message as written instead of a quoted, escaped string.
+struct BuildError(String);
+
+impl fmt::Debug for BuildError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+fn main() -> Result<(), BuildError> {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=MEDIAFLICK_DESKTOP_GIT_VERSION");
     println!("cargo:rerun-if-env-changed=MEDIAFLICK_DESKTOP_CREATED_BY");
@@ -10,7 +21,7 @@ fn main() {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     track_git_refs(&repo_root);
-    build_ui(&repo_root);
+    build_ui(&repo_root)?;
 
     let git_version = std::env::var("MEDIAFLICK_DESKTOP_GIT_VERSION")
         .ok()
@@ -33,10 +44,11 @@ fn main() {
         resource.set("InternalName", "mediaflick-desktop");
         resource.set("OriginalFilename", "mediaflick-desktop.exe");
         resource.set("ProductName", "MediaFlick Desktop");
-        resource.compile().unwrap_or_else(|error| {
-            panic!("failed to compile Windows resources: {error}");
-        });
+        resource
+            .compile()
+            .map_err(|error| BuildError(format!("failed to compile Windows resources: {error}")))?;
     }
+    Ok(())
 }
 
 /// Builds the UI bundle that `src/shell/cef/api.rs` embeds with `include_bytes!`.
@@ -47,10 +59,12 @@ fn main() {
 ///
 /// Set `MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1` when the bundle was already built
 /// out of band (CI splits the steps to cache `node_modules`).
-fn build_ui(repo_root: &Path) {
+fn build_ui(repo_root: &Path) -> Result<(), BuildError> {
     let ui_dir = repo_root.join("ui");
     if !ui_dir.join("package.json").is_file() {
-        panic!("ui/package.json is missing — the UI bundle cannot be built");
+        return Err(BuildError(
+            "ui/package.json is missing — the UI bundle cannot be built".to_string(),
+        ));
     }
 
     for path in [
@@ -69,16 +83,17 @@ fn build_ui(repo_root: &Path) {
     println!("cargo:rerun-if-env-changed=MEDIAFLICK_DESKTOP_SKIP_UI_BUILD");
 
     if std::env::var("MEDIAFLICK_DESKTOP_SKIP_UI_BUILD").as_deref() == Ok("1") {
-        assert!(
-            ui_dir.join("dist/app.js").is_file(),
-            "MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 but ui/dist/app.js does not exist"
-        );
+        if !ui_dir.join("dist/app.js").is_file() {
+            return Err(BuildError(
+                "MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 but ui/dist/app.js does not exist".to_string(),
+            ));
+        }
     } else {
-        run_pnpm(&ui_dir, &["install", "--frozen-lockfile"]);
-        run_pnpm(&ui_dir, &["build"]);
+        run_pnpm(&ui_dir, &["install", "--frozen-lockfile"])?;
+        run_pnpm(&ui_dir, &["build"])?;
     }
 
-    stage_bundle(&ui_dir.join("dist"));
+    stage_bundle(&ui_dir.join("dist"))
 }
 
 /// Copies the built bundle into `OUT_DIR` for `include_bytes!`.
@@ -87,24 +102,25 @@ fn build_ui(repo_root: &Path) {
 /// `build.rs` whenever its tracked inputs are unchanged, so a wiped `ui/dist`
 /// leaves `include_bytes!` pointing at nothing. `OUT_DIR` is cargo-managed and
 /// survives exactly as long as the fingerprint that produced it.
-fn stage_bundle(dist: &Path) {
-    let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap_or_else(|| {
-        panic!("Cargo did not set OUT_DIR for the MediaFlick build script");
-    }));
+fn stage_bundle(dist: &Path) -> Result<(), BuildError> {
+    let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").ok_or_else(|| {
+        BuildError("Cargo did not set OUT_DIR for the MediaFlick build script".to_string())
+    })?);
 
     for asset in ["app.js", "app.css", "index.html"] {
         let source = dist.join(asset);
         let target = out_dir.join(asset);
-        std::fs::copy(&source, &target).unwrap_or_else(|error| {
-            panic!(
+        std::fs::copy(&source, &target).map_err(|error| {
+            BuildError(format!(
                 "failed to stage {} into OUT_DIR: {error}. Run `just ui` to rebuild the bundle.",
                 source.display()
-            )
-        });
+            ))
+        })?;
     }
+    Ok(())
 }
 
-fn run_pnpm(ui_dir: &Path, args: &[&str]) {
+fn run_pnpm(ui_dir: &Path, args: &[&str]) -> Result<(), BuildError> {
     // On Windows pnpm is a `.cmd` shim, which `Command::new` will not resolve
     // from the bare name.
     let candidates: &[&str] = if cfg!(windows) {
@@ -120,8 +136,13 @@ fn run_pnpm(ui_dir: &Path, args: &[&str]) {
             .current_dir(ui_dir)
             .status()
         {
-            Ok(status) if status.success() => return,
-            Ok(status) => panic!("`pnpm {}` failed with {status}", args.join(" ")),
+            Ok(status) if status.success() => return Ok(()),
+            Ok(status) => {
+                return Err(BuildError(format!(
+                    "`pnpm {}` failed with {status}",
+                    args.join(" ")
+                )));
+            }
             Err(error) => last_error = Some(error),
         }
     }
@@ -130,13 +151,13 @@ fn run_pnpm(ui_dir: &Path, args: &[&str]) {
         || "no pnpm executable candidates were configured".to_string(),
         |error| error.to_string(),
     );
-    panic!(
+    Err(BuildError(format!(
         "could not run `pnpm {}` in {}: {}. Install Node and pnpm, or set \
          MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 with a prebuilt ui/dist.",
         args.join(" "),
         ui_dir.display(),
         last_error,
-    );
+    )))
 }
 
 fn git_version(repo_root: &Path) -> Option<String> {

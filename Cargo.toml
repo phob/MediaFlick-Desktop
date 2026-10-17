@@ -35,6 +35,9 @@ tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
 warnings = "deny"
 
 [lints.clippy]
+allow_attributes_without_reason = "deny"
+panic = "deny"
+unreachable = "deny"
 all = "deny"
 assigning_clones = "deny"
 cognitive_complexity = "deny"

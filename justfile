@@ -101,6 +101,44 @@ clippy:
 [group('lint')]
 rust-quality: fmt-check clippy
 
+# Clippy for another OS from this one. `cef/dox` skips the CEF download and
+# wrapper build; the stub compiler satisfies ring and bundled SQLite, since
+# clippy type-checks Rust and never links.
+[group('lint')]
+[unix]
+clippy-target target:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    stub="$PWD/scripts/ci/cross-stub"
+    triple="{{replace(target, "-", "_")}}"
+    case "{{target}}" in
+      *-windows-msvc) export "CC_$triple=$stub/clang-cl" "AR_$triple=$stub/llvm-lib" ;;
+      *) export "CC_$triple=$stub/clang" "AR_$triple=$stub/ar" ;;
+    esac
+    MEDIAFLICK_DESKTOP_SKIP_UI_BUILD="${MEDIAFLICK_DESKTOP_SKIP_UI_BUILD:-1}" \
+      cargo clippy --locked --all-targets --target {{target}} --features cef/dox -- -D warnings
+
+# Every check CI runs on a PR, cheapest first. A PR label maps to an env var:
+# `no-changelog` to MEDIAFLICK_NO_CHANGELOG=1, `guards-changed` to MEDIAFLICK_GUARDS_CHANGED=1.
+[group('lint')]
+[unix]
+check-pr base="origin/main": fmt-check ui
+    actionlint
+    python3 scripts/ci/check_changelog_fragment.py {{base}}
+    python3 scripts/ci/check_file_size.py {{base}}
+    python3 scripts/ci/check_guards.py {{base}}
+    shellcheck distribution/libmpv/linux/build.sh distribution/linux/build-appimage.sh
+    python3 -m unittest discover -s distribution/libmpv/linux -p 'test_*.py'
+    pnpm --dir ui lint
+    pnpm --dir ui test
+    git diff --exit-code ui/pnpm-lock.yaml
+    just plugin-test plugin
+    just clippy-target x86_64-pc-windows-msvc
+    just clippy-target aarch64-apple-darwin
+    MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 cargo clippy --locked --all-targets -- -D warnings
+    MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 cargo test --locked --all-targets
+    MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 cargo build --locked --bin mediaflick-desktop
+
 # Continuously run the configured Rust quality job
 [group('lint')]
 rust-watch:
