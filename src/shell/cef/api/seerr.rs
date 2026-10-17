@@ -425,13 +425,25 @@ fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     })
 }
 
+/// `DELETE /api/seerr/request/{id}`: Seerr cancelled the request.
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct SeerrRequestCancelled {
+    cancelled: bool,
+    id: i64,
+}
+
 fn seerr_cancel_request(services: &Arc<Services>, request_id: &str) -> Handled {
     let Ok(request_id) = request_id.parse::<i64>() else {
         return Err(ApiResponse::error(400, "that is not a request id"));
     };
-    companion_call(services, || {
-        services.companion.seerr_cancel_request(request_id)
-    })
+    let scope = session_scope(services)?;
+    match services.companion.seerr_cancel_request(request_id) {
+        Ok(()) => Ok(ApiResponse::ok(SeerrRequestCancelled {
+            cancelled: true,
+            id: request_id,
+        })),
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
+    }
 }
 
 /// The poster proxy accepts only a named rendition and a plain image file.

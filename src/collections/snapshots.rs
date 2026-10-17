@@ -16,7 +16,7 @@ use super::{CanonicalIdentity, CollectionSnapshot, MediaType, NormalizedTitle};
 // configured profile while sharing the same account-scoped refresh table.
 const FRANCHISE_REFRESH_KEY: &str = "movie-franchises";
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RefreshState {
     pub last_attempt: Option<i64>,

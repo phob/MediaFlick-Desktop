@@ -14,11 +14,60 @@ pub(super) fn route(
         ["player", "command"] if request.is("POST") => player_command(services, request),
         ["sync"] if request.is("POST") => {
             services.sync.request();
-            Ok(ApiResponse::untyped(json!({ "requested": true })))
+            Ok(ApiResponse::ok(SyncRequested { requested: true }))
         }
         _ => return None,
     };
     Some(response)
+}
+
+/// `/api/sync`: a library sync was queued.
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct SyncRequested {
+    requested: bool,
+}
+
+/// The answer to every `/api/play` route. `started: false`, with no other
+/// field, comes back when there is no next or previous episode.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PlayStarted {
+    started: bool,
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    item_id: Option<String>,
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    play_method: Option<String>,
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    media_source: Option<String>,
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_ticks: Option<i64>,
+}
+
+impl PlayStarted {
+    const NOT_STARTED: Self = Self {
+        started: false,
+        item_id: None,
+        play_method: None,
+        media_source: None,
+        start_ticks: None,
+    };
+}
+
+/// `/api/play/neighbors`: the episodes either side of an item.
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct PlaybackNeighbors {
+    previous: Option<ItemSummary>,
+    next: Option<ItemSummary>,
+}
+
+/// `/api/player/command`: the player took the command.
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct PlayerCommandAccepted {
+    accepted: bool,
 }
 
 #[derive(Deserialize)]
@@ -72,7 +121,7 @@ fn play_next(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let item_id = item_id_of(request)?;
     let next = match services.library.next_episode(&item_id) {
         Ok(Some(next)) => next,
-        Ok(None) => return Ok(ApiResponse::untyped(json!({ "started": false }))),
+        Ok(None) => return Ok(ApiResponse::ok(PlayStarted::NOT_STARTED)),
         Err(error) => return Err(storage_failure(&error)),
     };
     start_playback(
@@ -89,7 +138,7 @@ fn play_previous(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let item_id = item_id_of(request)?;
     let previous = match services.library.previous_episode(&item_id) {
         Ok(Some(previous)) => previous,
-        Ok(None) => return Ok(ApiResponse::untyped(json!({ "started": false }))),
+        Ok(None) => return Ok(ApiResponse::ok(PlayStarted::NOT_STARTED)),
         Err(error) => return Err(storage_failure(&error)),
     };
     start_playback(
@@ -112,21 +161,19 @@ fn playback_neighbors(services: &Arc<Services>, request: &ApiRequest) -> Handled
         Ok(next) => next,
         Err(error) => return Err(storage_failure(&error)),
     };
-    Ok(ApiResponse::untyped(
-        json!({ "previous": previous, "next": next }),
-    ))
+    Ok(ApiResponse::ok(PlaybackNeighbors { previous, next }))
 }
 
 fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> Handled {
     let scope = session_scope(services)?;
     match play::start(services, &scope, options, "own UI") {
-        Ok(prepared) => Ok(ApiResponse::untyped(json!({
-            "started": true,
-            "itemId": options.item_id,
-            "playMethod": prepared.play_method,
-            "mediaSource": prepared.media_source_name,
-            "startTicks": prepared.request.start_time_ticks.unwrap_or(0),
-        }))),
+        Ok(prepared) => Ok(ApiResponse::ok(PlayStarted {
+            started: true,
+            item_id: Some(options.item_id.clone()),
+            play_method: Some(prepared.play_method),
+            media_source: Some(prepared.media_source_name),
+            start_ticks: Some(prepared.request.start_time_ticks.unwrap_or(0)),
+        })),
         Err(play::StartError::NoPlayer) => Err(ApiResponse::error(
             409,
             "No media player is configured. Open Settings to set up the built-in player or mpv.",
@@ -302,5 +349,5 @@ fn player_command(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         ));
     };
     playback.control(command);
-    Ok(ApiResponse::untyped(json!({ "accepted": true })))
+    Ok(ApiResponse::ok(PlayerCommandAccepted { accepted: true }))
 }

@@ -13,7 +13,7 @@ use super::store::config_dir;
 
 const COLLECTION_CONFIG_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FranchiseSettings {
     #[serde(default)]

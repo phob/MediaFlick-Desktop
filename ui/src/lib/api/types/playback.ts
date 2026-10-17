@@ -12,13 +12,6 @@ export type StopReason = Wire.StopReason
 
 export type PlayerState = Wire.PlayerSnapshot
 
-/** The `started: false` shape comes back when there is no next episode. */
-export interface PlayStarted {
-  started: boolean
-  itemId?: string
-  playMethod?: string
-  mediaSource?: string
-  startTicks?: number
-}
+export type PlayStarted = Wire.PlayStarted
 
 export type PlayerCommand = Wire.PlayerCommandBody

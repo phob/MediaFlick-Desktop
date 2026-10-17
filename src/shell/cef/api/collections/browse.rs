@@ -1,8 +1,95 @@
 use super::*;
 use crate::collections::franchises::{sort_titles_by_release_date, visible_franchises};
 use crate::collections::matching::{OwnershipPolicy, classify, local_item_map};
-use crate::collections::snapshots::SnapshotRepository;
-use crate::collections::{ClassifiedTitle, compare_titles};
+use crate::collections::snapshots::{RefreshState, SnapshotRepository};
+use crate::collections::{ClassifiedTitle, CollectionProfile, NormalizedTitle, compare_titles};
+
+use super::profiles::CollectionProfilesIndex;
+
+/// Whether a collection's results can be shown yet.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+enum ResultsStatus {
+    Updating,
+    ResultsUnavailable,
+    Ready,
+}
+
+/// `/api/collections/mine/{id}`: one profile and its classified results.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(in super::super) struct CollectionProfileDetail {
+    profile: CollectionProfile,
+    status: ResultsStatus,
+    owned: Vec<ClassifiedTitle>,
+    missing: Vec<NormalizedTitle>,
+    items: Vec<NormalizedTitle>,
+    library_items: Vec<ItemSummary>,
+    /// Sent only once results are ready.
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ownership_available: Option<bool>,
+    refresh: RefreshState,
+    /// Sent only once results are ready.
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    overdue: Option<bool>,
+}
+
+/// `/api/collections/franchises`: the movie franchises the account sees.
+#[derive(Serialize, ts_rs::TS)]
+pub(in super::super) struct FranchiseCollectionsIndex {
+    status: ResultsStatus,
+    franchises: Vec<FranchiseCollectionSummary>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct FranchiseCollectionSummary {
+    collection_id: u64,
+    name: String,
+    poster_path: Option<String>,
+    backdrop_path: Option<String>,
+    owned_count: usize,
+    missing_count: usize,
+    ownership_available: bool,
+}
+
+/// `/api/collections/franchises/{id}`: one movie franchise. Without library
+/// ownership its titles are in `items`; with it, in `owned` and `missing`.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(in super::super) struct FranchiseCollection {
+    collection_id: u64,
+    name: String,
+    poster_path: Option<String>,
+    backdrop_path: Option<String>,
+    owned: Vec<ClassifiedTitle>,
+    missing: Vec<NormalizedTitle>,
+    items: Vec<NormalizedTitle>,
+    library_items: Vec<ItemSummary>,
+    ownership_available: bool,
+}
+
+/// `/api/collections/movie/{tmdbId}`: the franchise a movie belongs to.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(in super::super) struct MovieCollection {
+    tmdb_id: u64,
+    collection: Option<MovieFranchise>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+struct MovieFranchise {
+    id: u64,
+    name: String,
+}
+
+/// `/api/collections/title/{mediaType}/{tmdbId}`.
+#[derive(Serialize, ts_rs::TS)]
+pub(in super::super) struct CollectionTitle {
+    item: NormalizedTitle,
+}
 
 pub(super) fn redirect_state(services: &Arc<Services>) -> Handled {
     super::profiles::settings(services, false)
@@ -10,12 +97,11 @@ pub(super) fn redirect_state(services: &Arc<Services>) -> Handled {
 
 pub(super) fn mine(services: &Arc<Services>) -> Handled {
     let account = active_account(services)?;
-    let mut profiles = services.collections.account(&account).profiles;
-    profiles.sort_by(|left, right| compare_titles(&left.title, &right.title));
-    Ok(ApiResponse::untyped(json!({
-        "profiles": profiles,
-        "errors": services.collections.profile_errors(&account),
-    })))
+    let mut index = CollectionProfilesIndex::of(services, &account);
+    index
+        .profiles
+        .sort_by(|left, right| compare_titles(&left.title, &right.title));
+    Ok(ApiResponse::ok(index))
 }
 
 pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> Handled {
@@ -37,15 +123,21 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> Hand
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => {
             let unavailable = profile.validate().is_err() || refresh.latest_failure.is_some();
-            return Ok(ApiResponse::untyped(json!({
-                "profile": profile,
-                "status": if unavailable { "resultsUnavailable" } else { "updating" },
-                "owned": [],
-                "missing": [],
-                "items": [],
-                "libraryItems": [],
-                "refresh": refresh,
-            })));
+            return Ok(ApiResponse::ok(CollectionProfileDetail {
+                profile,
+                status: if unavailable {
+                    ResultsStatus::ResultsUnavailable
+                } else {
+                    ResultsStatus::Updating
+                },
+                owned: Vec::new(),
+                missing: Vec::new(),
+                items: Vec::new(),
+                library_items: Vec::new(),
+                ownership_available: None,
+                refresh,
+                overdue: None,
+            }));
         }
         Err(error) => return Err(storage_failure(&error)),
     };
@@ -79,17 +171,17 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> Hand
         profile.cadence,
         crate::library::now_unix(),
     );
-    Ok(ApiResponse::untyped(json!({
-        "profile": profile,
-        "status": "ready",
-        "owned": classified.owned,
-        "missing": classified.missing,
-        "items": classified.items,
-        "libraryItems": library_items,
-        "ownershipAvailable": classified.ownership_available,
-        "refresh": refresh,
-        "overdue": overdue,
-    })))
+    Ok(ApiResponse::ok(CollectionProfileDetail {
+        profile,
+        status: ResultsStatus::Ready,
+        owned: classified.owned,
+        missing: classified.missing,
+        items: classified.items,
+        library_items,
+        ownership_available: Some(classified.ownership_available),
+        refresh,
+        overdue: Some(overdue),
+    }))
 }
 
 pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> Handled {
@@ -104,11 +196,11 @@ pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> Hand
         crate::collections::scheduler::request_run(services.clone());
     }
     let status = if refresh.initialized {
-        "ready"
+        ResultsStatus::Ready
     } else if refresh.latest_failure.is_some() {
-        "resultsUnavailable"
+        ResultsStatus::ResultsUnavailable
     } else {
-        "updating"
+        ResultsStatus::Updating
     };
     let snapshots = match repository.franchises(&account) {
         Ok(snapshots) => snapshots,
@@ -122,22 +214,20 @@ pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> Hand
         });
         let franchises = snapshots
             .into_iter()
-            .map(|snapshot| {
-                json!({
-                    "collectionId": snapshot.collection_id,
-                    "name": snapshot.name,
-                    "posterPath": snapshot.poster_path,
-                    "backdropPath": snapshot.backdrop_path,
-                    "ownedCount": 0,
-                    "missingCount": 0,
-                    "ownershipAvailable": false,
-                })
+            .map(|snapshot| FranchiseCollectionSummary {
+                collection_id: snapshot.collection_id,
+                name: snapshot.name,
+                poster_path: snapshot.poster_path,
+                backdrop_path: snapshot.backdrop_path,
+                owned_count: 0,
+                missing_count: 0,
+                ownership_available: false,
             })
-            .collect::<Vec<_>>();
-        return Ok(ApiResponse::untyped(json!({
-            "franchises": franchises,
-            "status": status,
-        })));
+            .collect();
+        return Ok(ApiResponse::ok(FranchiseCollectionsIndex {
+            status,
+            franchises,
+        }));
     }
     let provider_items = snapshots
         .iter()
@@ -162,18 +252,21 @@ pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> Hand
         }
         franchises.retain(|franchise| franchise.owned.len() >= 2);
     }
-    Ok(ApiResponse::untyped(json!({
-        "status": status,
-        "franchises": franchises.into_iter().map(|franchise| json!({
-            "collectionId": franchise.collection_id,
-            "name": franchise.name,
-            "posterPath": franchise.poster_path,
-            "backdropPath": franchise.backdrop_path,
-            "ownedCount": franchise.owned.len(),
-            "missingCount": franchise.missing.len(),
-            "ownershipAvailable": true,
-        })).collect::<Vec<_>>()
-    })))
+    Ok(ApiResponse::ok(FranchiseCollectionsIndex {
+        status,
+        franchises: franchises
+            .into_iter()
+            .map(|franchise| FranchiseCollectionSummary {
+                collection_id: franchise.collection_id,
+                name: franchise.name,
+                poster_path: franchise.poster_path,
+                backdrop_path: franchise.backdrop_path,
+                owned_count: franchise.owned.len(),
+                missing_count: franchise.missing.len(),
+                ownership_available: true,
+            })
+            .collect(),
+    }))
 }
 
 pub(super) fn franchise_detail(
@@ -205,17 +298,17 @@ pub(super) fn franchise_detail(
         if services.session.user_restricted() {
             items.clear();
         }
-        return Ok(ApiResponse::untyped(json!({
-            "collectionId": snapshot.collection_id,
-            "name": snapshot.name,
-            "posterPath": snapshot.poster_path,
-            "backdropPath": snapshot.backdrop_path,
-            "owned": [],
-            "missing": [],
-            "items": items,
-            "libraryItems": [],
-            "ownershipAvailable": false,
-        })));
+        return Ok(ApiResponse::ok(FranchiseCollection {
+            collection_id: snapshot.collection_id,
+            name: snapshot.name,
+            poster_path: snapshot.poster_path,
+            backdrop_path: snapshot.backdrop_path,
+            owned: Vec::new(),
+            missing: Vec::new(),
+            items,
+            library_items: Vec::new(),
+            ownership_available: false,
+        }));
     }
     let local = match local_item_map(&services.library, &snapshot.items) {
         Ok(local) => local,
@@ -254,17 +347,17 @@ pub(super) fn franchise_detail(
         Ok(items) => items,
         Err(error) => return Err(storage_failure(&error)),
     };
-    Ok(ApiResponse::untyped(json!({
-        "collectionId": franchise.collection_id,
-        "name": franchise.name,
-        "posterPath": franchise.poster_path,
-        "backdropPath": franchise.backdrop_path,
-        "owned": franchise.owned,
-        "missing": franchise.missing,
-        "items": [],
-        "libraryItems": library_items,
-        "ownershipAvailable": true,
-    })))
+    Ok(ApiResponse::ok(FranchiseCollection {
+        collection_id: franchise.collection_id,
+        name: franchise.name,
+        poster_path: franchise.poster_path,
+        backdrop_path: franchise.backdrop_path,
+        owned: franchise.owned,
+        missing: franchise.missing,
+        items: Vec::new(),
+        library_items,
+        ownership_available: true,
+    }))
 }
 
 fn primary_library_items(
@@ -296,13 +389,13 @@ pub(super) fn movie_franchise(services: &Arc<Services>, tmdb_id: &str) -> Handle
                 .iter()
                 .any(|item| item.identity.tmdb_id == tmdb_id)
         });
-    Ok(ApiResponse::untyped(json!({
-        "tmdbId": tmdb_id,
-        "collection": collection.map(|item| json!({
-            "id": item.collection_id,
-            "name": item.name,
-        })),
-    })))
+    Ok(ApiResponse::ok(MovieCollection {
+        tmdb_id,
+        collection: collection.map(|item| MovieFranchise {
+            id: item.collection_id,
+            name: item.name,
+        }),
+    }))
 }
 
 pub(super) fn title(services: &Arc<Services>, media_type: &str, tmdb_id: &str) -> Handled {
@@ -328,7 +421,7 @@ pub(super) fn title(services: &Arc<Services>, media_type: &str, tmdb_id: &str) -
         None => return Err(ApiResponse::error(400, "that is not a TMDB title id")),
     };
     match SnapshotRepository::new(&services.library).title(&account, media_type, tmdb_id) {
-        Ok(Some(item)) => Ok(ApiResponse::untyped(json!({ "item": item }))),
+        Ok(Some(item)) => Ok(ApiResponse::ok(CollectionTitle { item })),
         Ok(None) => Err(ApiResponse::error(
             404,
             "that collection title is not available",
