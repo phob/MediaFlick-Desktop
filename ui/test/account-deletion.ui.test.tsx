@@ -94,7 +94,7 @@ describe("local account deletion", () => {
     fireEvent.click(trigger)
     const dialog = await screen.findByRole("alertdialog", { name: "Delete local account data?" })
     expect(remove).not.toHaveBeenCalled()
-    fireEvent.click(within(dialog).getByRole("button", { name: "Dismiss proof" }))
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }))
     expect(remove).not.toHaveBeenCalled()
 
     fireEvent.click(trigger)
