@@ -12,16 +12,18 @@ routes! {
     GET ["player", "state"] -> PlayerSnapshot = Ok(player_state(services)),
     POST ["player", "command"] (body: PlayerCommandBody) -> PlayerCommandAccepted =
         player_command(services, body),
-    POST ["sync"] -> SyncRequested = {
-        services.sync.request();
-        Ok(SyncRequested { requested: true })
-    },
+    POST ["sync"] -> SyncRequested = Ok(request_sync(services)),
 }
 
 /// `/api/sync`: a library sync was queued.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct SyncRequested {
     requested: bool,
+}
+
+fn request_sync(services: &Arc<Services>) -> SyncRequested {
+    services.sync.request();
+    SyncRequested { requested: true }
 }
 
 /// The answer to every `/api/play` route. `started: false`, with no other

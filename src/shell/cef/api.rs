@@ -47,7 +47,7 @@ pub struct ApiRequest {
     pub method: String,
     pub path: String,
     pub query: String,
-    pub body: Vec<u8>,
+    pub body: RawBody,
     pub range: Option<String>,
     /// Raised by CEF's `cancel` callback when the browser abandons the request
     /// (an aborted fetch, a closed page). Handlers block synchronously, so
@@ -89,42 +89,7 @@ impl ApiResponse {
             headers: Vec::new(),
         }
     }
-
-    fn bytes(content_type: String, body: Vec<u8>, cache_control: &'static str) -> Self {
-        Self {
-            status: 200,
-            content_type,
-            body,
-            cache_control,
-            headers: Vec::new(),
-        }
-    }
-
-    fn ranged_bytes(
-        status: u16,
-        content_type: String,
-        body: Vec<u8>,
-        content_range: Option<String>,
-        accept_ranges: Option<String>,
-    ) -> Self {
-        let mut headers = vec![(
-            "Accept-Ranges".to_string(),
-            accept_ranges.unwrap_or_else(|| "bytes".to_string()),
-        )];
-        if let Some(content_range) = content_range {
-            headers.push(("Content-Range".to_string(), content_range));
-        }
-        Self {
-            status,
-            content_type,
-            body,
-            cache_control: NO_STORE,
-            headers,
-        }
-    }
 }
-
-type Handled = Result<ApiResponse, ApiResponse>;
 
 /// The signed-in account this request runs against. Its failures go through
 /// [`scoped_failure`] and its cache writes through `commit_if_current`, so a
@@ -186,7 +151,8 @@ mod settings;
 mod shell;
 mod wire;
 
-use routes::{Binary, Body, Bytes, Relay, routes};
+pub use routes::RawBody;
+use routes::{Binary, BinaryAnswer, Body, Bytes, Relay, routes};
 pub(super) use wire::Wire;
 
 /// Every module's routes, in the order a request tries them. Each module
@@ -377,7 +343,7 @@ mod tests {
             method: "GET".to_string(),
             path: path.to_string(),
             query: String::new(),
-            body: Vec::new(),
+            body: RawBody::new(Vec::new()),
             range: None,
             cancelled: Default::default(),
         })
@@ -404,7 +370,7 @@ mod tests {
             method: "POST".to_string(),
             path: path.to_string(),
             query: String::new(),
-            body: body.to_vec(),
+            body: RawBody::new(body.to_vec()),
             range: None,
             cancelled: Default::default(),
         }
@@ -423,7 +389,7 @@ mod tests {
                 method: "GET".to_string(),
                 path: "/api/status".to_string(),
                 query: String::new(),
-                body: Vec::new(),
+                body: RawBody::new(Vec::new()),
                 range: None,
                 cancelled: Default::default(),
             },

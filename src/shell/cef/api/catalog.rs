@@ -56,10 +56,7 @@ routes! {
     GET ["billboard"] -> Billboard = billboard_view(services),
     GET ["items"] -> ItemPage = query_items(services, request),
     GET ["items", "letters"] -> ItemLetters = item_letters(services, request),
-    GET ["genres"] -> Genres = match services.library.genres(None) {
-        Ok(genres) => Ok(Genres { genres }),
-        Err(error) => Err(storage_failure(&error)),
-    },
+    GET ["genres"] -> Genres = genres(services),
     GET ["official-ratings"] -> OfficialRatings = official_ratings(services, request),
     GET ["person", "resolve"] -> PersonResolution = resolve_person(services, request),
     GET ["item", id] -> DetailView = item_detail(services, id),
@@ -68,7 +65,14 @@ routes! {
     GET ["item", id, "children"] -> ItemPage = children(services, id, request),
 }
 
-fn calendar(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+fn genres(services: &Arc<Services>) -> Result<Genres, ApiResponse> {
+    match services.library.genres(None) {
+        Ok(genres) => Ok(Genres { genres }),
+        Err(error) => Err(storage_failure(&error)),
+    }
+}
+
+fn calendar(services: &Arc<Services>, request: &ApiRequest) -> Result<Value, ApiResponse> {
     let Some(start) = request.param("start") else {
         return Err(ApiResponse::error(400, "calendar start is required"));
     };
@@ -82,10 +86,10 @@ fn calendar(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         ));
     }
     let scope = session_scope(services)?;
-    match services.companion.calendar(&start, &end) {
-        Ok(value) => Ok(ApiResponse::untyped(value)),
-        Err(error) => Err(scoped_failure(services, &scope, &error)),
-    }
+    services
+        .companion
+        .calendar(&start, &end)
+        .map_err(|error| scoped_failure(services, &scope, &error))
 }
 
 fn is_iso_date(value: &str) -> bool {

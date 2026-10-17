@@ -3,8 +3,8 @@
 //! renders that list, with the route declarations of `super::routes`, into
 //! one file per Rust module in `ui/src/lib/api/wire/`, re-exported by
 //! `ui/src/lib/api/wire.gen.ts`. The JSON encoder is private to this module;
-//! the routes that relay Companion JSON answer through
-//! `ApiResponse::untyped`, which `untyped_responses_only_shrink` counts.
+//! the router, alone, calls `ok` for wire answers and `untyped` for the
+//! Companion JSON that `Relay` routes pass through.
 
 use serde::Serialize;
 use ts_rs::TS;
@@ -224,7 +224,8 @@ impl ApiResponse {
 
     /// A response the UI reads without a generated type, for a route
     /// declared `-> Relay`. Declare a [`Wire`] answer instead;
-    /// `untyped_responses_only_shrink` keeps this from spreading.
+    /// `untyped_responses_only_shrink` keeps this from spreading, and
+    /// `only_the_router_answers_with_success` keeps it in the router.
     pub(super) fn untyped(value: impl Serialize) -> Self {
         Self::json(200, value)
     }
@@ -250,11 +251,11 @@ impl ApiResponse {
     }
 }
 
-/// Handlers that predate this module answer through `ApiResponse::untyped`.
-/// Moving one to a wire type lowers these; nothing raises them, and request
-/// bodies, all typed now, stay at zero.
+/// Calls to `ApiResponse::untyped`: the one that answers every `Relay`
+/// route. Nothing raises these, and request bodies, all typed now, stay at
+/// zero.
 #[cfg(test)]
-const UNTYPED_RESPONSES: usize = 6; // guard-ratchet
+const UNTYPED_RESPONSES: usize = 1; // guard-ratchet
 #[cfg(test)]
 const UNTYPED_BODIES: usize = 0; // guard-ratchet
 

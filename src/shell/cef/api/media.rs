@@ -467,7 +467,11 @@ fn youtube_embed_url(value: &str) -> Option<String> {
 ///
 /// The UI receives only an opaque item id. The Jellyfin token stays in the
 /// native client, just as it does for artwork and full playback.
-fn trailer_stream(services: &Arc<Services>, trailer_id: &str, request: &ApiRequest) -> Handled {
+fn trailer_stream(
+    services: &Arc<Services>,
+    trailer_id: &str,
+    request: &ApiRequest,
+) -> Result<BinaryAnswer, ApiResponse> {
     let scope = session_scope(services)?;
     let path = format!("/Videos/{}/stream", encode_path_segment(trailer_id));
     let range = bounded_byte_range(request.range.as_deref());
@@ -475,7 +479,7 @@ fn trailer_stream(services: &Arc<Services>, trailer_id: &str, request: &ApiReque
         .client()
         .get_bytes_range(&path, &[("static", "true".to_string())], Some(&range))
     {
-        Ok(response) => Ok(ApiResponse::ranged_bytes(
+        Ok(response) => Ok(BinaryAnswer::ranged_bytes(
             response.status,
             response.content_type,
             response.body,

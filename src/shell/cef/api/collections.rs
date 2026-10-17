@@ -199,7 +199,7 @@ fn upload_artwork(
     }
 }
 
-fn custom_artwork(services: &Arc<Services>, id: &str) -> Handled {
+fn custom_artwork(services: &Arc<Services>, id: &str) -> Result<BinaryAnswer, ApiResponse> {
     let account = active_account(services)?;
     if !services
         .collections
@@ -219,7 +219,7 @@ fn custom_artwork(services: &Arc<Services>, id: &str) -> Handled {
         _ => return Err(ApiResponse::error(404, "that custom poster does not exist")),
     };
     match std::fs::read(path) {
-        Ok(bytes) => Ok(ApiResponse::bytes(
+        Ok(bytes) => Ok(BinaryAnswer::bytes(
             content_type.to_string(),
             bytes,
             IMMUTABLE_CACHE,
@@ -247,23 +247,26 @@ pub(super) struct ConfirmationBody {
     confirmed: bool,
 }
 
-fn search_public_lists(services: &Arc<Services>, body: Body<'_, PublicListSearchBody>) -> Handled {
+fn search_public_lists(
+    services: &Arc<Services>,
+    body: Body<'_, PublicListSearchBody>,
+) -> Result<Value, ApiResponse> {
     let body = body.decode()?;
     active_account(services)?;
     let query = body.query.trim();
     if query.is_empty() {
         return Err(ApiResponse::error(400, "enter a public-list search"));
     }
-    match services.companion.search_public_lists(query) {
-        Ok(result) => Ok(ApiResponse::untyped(result)),
-        Err(error) => Err(ApiResponse::from_api_error(&error)),
-    }
+    services
+        .companion
+        .search_public_lists(query)
+        .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
 fn validate_public_list(
     services: &Arc<Services>,
     body: Body<'_, PublicListValidateBody>,
-) -> Handled {
+) -> Result<Value, ApiResponse> {
     let body = body.decode()?;
     active_account(services)?;
     let selector = body.selector.trim();
@@ -273,13 +276,16 @@ fn validate_public_list(
             "enter a public-list ID or canonical URL",
         ));
     }
-    match services.companion.validate_public_list(selector) {
-        Ok(result) => Ok(ApiResponse::untyped(result)),
-        Err(error) => Err(ApiResponse::from_api_error(&error)),
-    }
+    services
+        .companion
+        .validate_public_list(selector)
+        .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
-fn provider_artwork(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+fn provider_artwork(
+    services: &Arc<Services>,
+    request: &ApiRequest,
+) -> Result<BinaryAnswer, ApiResponse> {
     active_account(services)?;
     let Some(size) = request.param("size") else {
         return Err(ApiResponse::error(400, "artwork size is required"));
@@ -289,7 +295,7 @@ fn provider_artwork(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     };
     match services.companion.collection_artwork(&size, &path) {
         Ok((bytes, content_type)) if content_type.starts_with("image/") => {
-            Ok(ApiResponse::bytes(content_type, bytes, IMMUTABLE_CACHE))
+            Ok(BinaryAnswer::bytes(content_type, bytes, IMMUTABLE_CACHE))
         }
         Ok(_) => Err(ApiResponse::error(502, "provider returned invalid artwork")),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
