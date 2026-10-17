@@ -12,6 +12,4 @@ export type StopReason = Wire.StopReason
 
 export type PlayerState = Wire.PlayerSnapshot
 
-export type PlayStarted = Wire.PlayStarted
-
 export type PlayerCommand = Wire.PlayerCommandBody

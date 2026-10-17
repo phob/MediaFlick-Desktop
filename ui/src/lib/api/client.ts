@@ -28,7 +28,8 @@ import type {
   StreamingQualityId,
   ViewingSettingsWrite,
 } from "./types/settings.ts"
-import { queryString, type ExternalProvider } from "./urls.ts"
+import { link, target, type CallArgs, type RouteOf } from "./routes.ts"
+import type { ExternalProvider } from "./urls.ts"
 
 export const PAGE_SIZE = 60
 
@@ -44,8 +45,6 @@ export class ApiError extends Error {
 }
 
 type Routes = Wire.Routes
-type Route = keyof Routes
-type RouteOf<Kind> = { [K in Route]: Routes[K]["kind"] extends Kind ? K : never }[Route]
 
 /**
  * Companion JSON that the native app relays without a Rust type, so the
@@ -72,28 +71,6 @@ type RelayAnswers = { [K in RouteOf<"relay">]: RelayAnswerTypes[K] }
 /** The routes the UI reads as JSON, and what each answers with. */
 type Answers = { [K in RouteOf<"json">]: Extract<Routes[K], { kind: "json" }>["response"] } & RelayAnswers
 type JsonRoute = keyof Answers
-
-type Query = Record<string, string | number | boolean | null | undefined>
-
-/**
- * What a call to a route supplies: its path parameters when the path has
- * any, and its body when it takes one, optional when every field of the
- * body is.
- */
-type Call<K extends Route> = { query?: Query; signal?: AbortSignal }
-  & (Routes[K]["params"] extends null ? { params?: never } : { params: Routes[K]["params"] })
-  & (Routes[K]["body"] extends null ? { body?: never }
-    : Partial<Routes[K]["body"]> extends Routes[K]["body"] ? { body?: Routes[K]["body"] }
-      : { body: Routes[K]["body"] })
-type CallArgs<K extends Route> = Partial<Call<K>> extends Call<K> ? [call?: Call<K>] : [call: Call<K>]
-
-function target(route: Route, call: { params?: Readonly<Record<string, string | number>> | null; query?: Query }) {
-  const space = route.indexOf(" ")
-  const path = route
-    .slice(space + 1)
-    .replace(/\{(\w+)\}/g, (_, name: string) => encodeURIComponent(String(call.params?.[name])))
-  return { method: route.slice(0, space), url: `${path}${queryString(call.query ?? {})}` }
-}
 
 type ApiErrorEnvelope = Partial<Wire.ErrorBody>
 
@@ -138,11 +115,6 @@ async function request<K extends JsonRoute>(route: K, ...[call]: CallArgs<K>): P
   // declarations the compiler holds each handler to. A relay route's answer
   // is the Companion JSON that `RelayAnswerTypes` describes.
   return payload as Answers[K]
-}
-
-/** The URL of a route the UI only links to, such as an image or a stream. */
-function link<K extends RouteOf<"binary">>(route: K, ...[call]: CallArgs<K>) {
-  return target(route, call ?? {}).url
 }
 
 export const api = {

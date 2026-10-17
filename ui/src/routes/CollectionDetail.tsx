@@ -326,7 +326,7 @@ export function MyCollectionDetail() {
       countLine={data?.status === "updating" ? "Updating results" : data?.status === "resultsUnavailable" ? "Results unavailable" : data ? `${data.owned.length} owned${data.missing.length ? ` · ${data.missing.length} missing` : ""}` : null}
       overview={profile?.description ?? null}
       backdrop={null}
-      poster={profile?.customPosterId ? `/api/collections/artwork/${profile.customPosterId}` : null}
+      poster={profile?.customPosterId ? api.collections.artworkUrl(profile.customPosterId) : null}
       status={stale}
       onRetry={refreshing ? undefined : retry}
     >

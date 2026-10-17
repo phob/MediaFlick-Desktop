@@ -28,5 +28,3 @@ export interface LibraryQuery {
 }
 
 export type LibraryLatest = Wire.LibraryLatest
-
-export type LibraryFilterOptions = Wire.FilterOptions

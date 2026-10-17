@@ -22,8 +22,6 @@ export type NormalizedCollectionTitle = Wire.NormalizedTitle
 
 export type ClassifiedCollectionTitle = Wire.ClassifiedTitle
 
-export type CollectionPreview = Wire.ProviderResult
-
 export interface PublicCollectionList {
   id: string
   name: string
