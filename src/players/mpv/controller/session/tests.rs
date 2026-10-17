@@ -12,6 +12,7 @@ use super::super::test_support::{controller_with_pending_load, snapshot_active};
 use super::super::{
     ControllerState, PendingPlayback, PlaybackIdentity, PlaybackPhase, RuntimeSelection,
 };
+use crate::players::mpv::ipc::MpvEvent;
 use crate::players::mpv::ipc::test_server::{COMMAND_CONNECTION, FakeMpv};
 
 fn next_terminal_event(event_rx: &mpsc::Receiver<PlaybackEvent>) -> PlaybackEvent {
@@ -50,7 +51,7 @@ fn external_watched_next_message_uses_the_completion_handoff() {
         .runtime_ticks = Some(300_000_000);
     state.mpv_playback_active = true;
     state.ipc.active_id = Some(1);
-    let event = super::MpvEvent {
+    let event = MpvEvent {
         name: "client-message".to_string(),
         reason: None,
         property: None,
@@ -191,7 +192,7 @@ fn an_end_file_error_ends_a_pending_replacement_load() {
     state.event_tx = Some(event_tx);
     state.ipc.active_id = Some(1);
     state.replacement_end_file_pending = true;
-    let end_file = super::MpvEvent {
+    let end_file = MpvEvent {
         name: "end-file".to_string(),
         reason: Some("error".to_string()),
         property: None,

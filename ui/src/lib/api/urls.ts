@@ -1,9 +1,5 @@
-import type {
-  ItemDetail,
-  ItemSummary,
-  Person,
-  SeerrMediaDetail,
-} from "./types.ts"
+import type { ItemDetail, ItemSummary, Person } from "./types/catalog.ts"
+import type { SeerrMediaDetail } from "./types/seerr.ts"
 
 const POSTER_WIDTH = 400
 export const LANDSCAPE_WIDTH = 560

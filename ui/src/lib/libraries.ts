@@ -14,15 +14,12 @@ import {
 } from "lucide-react"
 import {
   CATALOG_KINDS,
-  type BrowsingPage,
   type CatalogKind,
   type ItemDetail,
   type ItemQuery,
-  type Library,
-  type LibraryKind,
-  type LibraryQuery,
-  type StartupDestination,
-} from "./api/types.ts"
+} from "./api/types/catalog.ts"
+import type { BrowsingPage, Library, LibraryKind, LibraryQuery } from "./api/types/libraries.ts"
+import type { StartupDestination } from "./api/types/settings.ts"
 
 export type BrowseSource =
   | { scope: "titles"; query: ItemQuery }

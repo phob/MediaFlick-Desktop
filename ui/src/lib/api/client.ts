@@ -1,8 +1,17 @@
 import { isJsonObject, jsonBoolean, jsonString, type JsonValue } from "../json.ts"
+import type { QuickConnectStart, ServerInfo } from "./types/auth.ts"
+import type { ReleaseCalendar } from "./types/calendar.ts"
 import type {
   AnyItemDetail,
-  AppearanceSettings,
-  ClientSettings,
+  ItemAbout,
+  ItemQuery,
+  ItemSummary,
+  ItemSynopsis,
+  LetterIndex,
+  PersonResolution,
+  PersonResolveQuery,
+} from "./types/catalog.ts"
+import type {
   CollectionMode,
   CollectionPreview,
   CollectionProfile,
@@ -11,44 +20,38 @@ import type {
   CollectionProfilesIndex,
   CollectionSettings,
   CollectionTemplates,
-  CompanionStatus,
   FranchiseCollection,
   FranchiseCollectionsIndex,
+  JellyfinCollectionDetail,
+  JellyfinCollectionSummary,
+  MovieCollection,
+  NormalizedCollectionTitle,
+  PublicCollectionList,
+} from "./types/collections.ts"
+import type {
   HomeResponse,
   HomeResumeResponse,
   HomeSettingsResponse,
   HomeSettingsWrite,
-  ItemAbout,
-  ItemQuery,
-  ItemSummary,
-  ItemSynopsis,
-  ItemTechnical,
-  JellyfinCollectionDetail,
-  JellyfinCollectionSummary,
-  LetterIndex,
+} from "./types/home.ts"
+import type { LetterboxdProfile, LetterboxdReviewsResponse } from "./types/letterboxd.ts"
+import type {
   BrowsingPage,
   LibrariesResponse,
   LibraryFilterOptions,
   LibraryLatest,
   LibraryQuery,
-  LetterboxdProfile,
-  LetterboxdReviewsResponse,
+} from "./types/libraries.ts"
+import type {
+  ItemTechnical,
   MediaInfoResponse,
-  MovieCollection,
-  NormalizedCollectionTitle,
-  PersonResolution,
-  PersonResolveQuery,
-  PlayStarted,
   PlaybackTrackPreference,
   PlaybackTrackPreferenceWrite,
-  PlayerCommand,
-  PlayerSettingsWrite,
-  PlayerState,
-  PublicCollectionList,
-  QuickConnectStart,
-  RatingsBatchResponse,
-  RatingsIntegrationStatus,
-  ReleaseCalendar,
+  TrailerSummary,
+} from "./types/media.ts"
+import type { PlayerCommand, PlayerState, PlayStarted } from "./types/playback.ts"
+import type { RatingsBatchResponse, RatingsIntegrationStatus } from "./types/ratings.ts"
+import type {
   SeerrDiscoverFilters,
   SeerrDiscoverRow,
   SeerrGenre,
@@ -60,14 +63,16 @@ import type {
   SeerrRequestOptions,
   SeerrResult,
   SeerrStatusInfo,
-  ServerInfo,
-  StartupResponse,
-  Status,
+} from "./types/seerr.ts"
+import type {
+  AppearanceSettings,
+  ClientSettings,
+  PlayerSettingsWrite,
   StreamingQualityId,
-  TrailerSummary,
   ViewingSettings,
   ViewingSettingsWrite,
-} from "./types.ts"
+} from "./types/settings.ts"
+import type { CompanionStatus, StartupResponse, Status } from "./types/status.ts"
 import { queryString, type ExternalProvider } from "./urls.ts"
 
 export const PAGE_SIZE = 60
