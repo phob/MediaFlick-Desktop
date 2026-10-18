@@ -128,6 +128,10 @@ fn wait_pixel(
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a throwaway test clip in the temp directory"
+)]
 fn assert_paused_composition(
     runtime: &mut MpvRuntime,
     worker: &crate::players::mpv::ipc::IpcWorker,

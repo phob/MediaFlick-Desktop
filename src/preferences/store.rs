@@ -183,7 +183,7 @@ fn replace_file(temporary: &Path, destination: &Path) -> io::Result<()> {
     }
 }
 
-pub fn config_file_path() -> PathBuf {
+fn config_file_path() -> PathBuf {
     config_dir().join("settings.json")
 }
 
@@ -218,5 +218,29 @@ mod tests {
 
         assert_eq!(device.appearance, AppearanceSettings::default());
         assert_eq!(device.log_level, "debug");
+    }
+
+    /// Each banned call carries its own expectation, so an entry in
+    /// `clippy.toml` that stops resolving fails clippy with
+    /// `unfulfilled_lint_expectations`. The closure is never run.
+    #[test]
+    fn every_disallowed_method_entry_still_fires() {
+        let _never_called = || {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "positive control: the `std::fs::write` entry"
+            )]
+            let _ = std::fs::write("", b"");
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "positive control: the `AppSettings::load_at_startup` entry"
+            )]
+            let mut settings = AppSettings::load_at_startup();
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "positive control: the `AppSettings::apply_launch_overrides` entry"
+            )]
+            settings.apply_launch_overrides(None, None, || None);
+        };
     }
 }

@@ -254,7 +254,7 @@ mod tests {
         let path = test_path();
         save_with_backup(&path, &Document { value: 1 }).expect("first save");
         save_with_backup(&path, &Document { value: 2 }).expect("second save");
-        std::fs::write(&path, b"not json").expect("damage primary");
+        atomic_write(&path, b"not json").expect("damage primary");
 
         let loaded = load_with_recovery::<Document>(&path)
             .expect("recover")
@@ -276,7 +276,7 @@ mod tests {
         let path = test_path();
         save_with_backup(&path, &Document { value: 1 }).expect("first save");
         save_with_backup(&path, &Document { value: 2 }).expect("second save");
-        std::fs::write(&path, b"not json").expect("external damage");
+        atomic_write(&path, b"not json").expect("external damage");
 
         save_with_backup(&path, &Document { value: 3 }).expect("repair with next state");
 
@@ -325,7 +325,7 @@ mod tests {
             )
             .expect("second");
             let backup = std::fs::read(backup_path(&path)).expect("backup");
-            std::fs::write(&path, foreign).expect("foreign primary");
+            atomic_write(&path, foreign).expect("foreign primary");
 
             let error = load_versioned(&path).expect_err("foreign document");
 
@@ -361,7 +361,7 @@ mod tests {
                 },
             )
             .expect("second");
-            std::fs::write(&path, damaged).expect("damage primary");
+            atomic_write(&path, damaged).expect("damage primary");
 
             let loaded = load_versioned(&path).expect("recover").expect("document");
 

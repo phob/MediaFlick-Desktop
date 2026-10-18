@@ -99,6 +99,10 @@ pub(super) fn cache_key(item_id: &str, image_type: &str, tag: &str, max_width: u
     )
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the image cache is rebuildable; a torn file is refetched from Jellyfin"
+)]
 pub(super) fn store_image(path: &std::path::Path, bytes: &[u8]) {
     let Some(parent) = path.parent() else {
         return;

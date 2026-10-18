@@ -4,3 +4,9 @@ allow-unwrap-in-tests = true
 cognitive-complexity-threshold = 25
 max-fn-params-bools = 3
 too-many-lines-threshold = 100
+
+disallowed-methods = [
+    { path = "std::fs::write", reason = "durable user files go through `preferences::store::atomic_write` or their owning store, so a crash never leaves a half-written file" },
+    { path = "mediaflick_desktop::preferences::store::AppSettings::load_at_startup", reason = "settings.json is read once at startup; runtime code receives settings from `PreferencesService`" },
+    { path = "mediaflick_desktop::preferences::store::AppSettings::apply_launch_overrides", reason = "settings.json is written at startup only for command-line overrides; runtime changes go through `PreferencesService`" },
+]

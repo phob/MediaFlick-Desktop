@@ -26,6 +26,10 @@ pub(in crate::shell) fn init_error() -> Option<&'static str> {
     INIT_ERROR.get().map(String::as_str)
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the services are not open yet, so settings.json is read here to open them"
+)]
 pub(in crate::shell) fn init() -> Option<Arc<Services>> {
     services().or_else(|| init_with_settings(AppSettings::load_at_startup()))
 }

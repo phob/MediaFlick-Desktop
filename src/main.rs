@@ -31,6 +31,10 @@ fn main() {
     // Do not parse the user CLI in CEF subprocesses. Chromium starts this same
     // executable with its own internal switches (for example `--type=renderer`).
     if is_cef_subprocess() {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a CEF subprocess reads settings.json once; it never opens the services"
+        )]
         std::process::exit(crate::shell::cef::run(&AppConfig {
             settings: AppSettings::load_at_startup(),
             title: "MediaFlick Desktop".to_string(),
@@ -40,6 +44,10 @@ fn main() {
     }
 
     let cli = Cli::parse();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "startup reads settings.json once, before the services exist"
+    )]
     let mut settings = AppSettings::load_at_startup();
     let log_file = cli
         .log_file
@@ -73,6 +81,10 @@ fn main() {
         tracing::warn!(target: "main", "failed to register Linux desktop identity: {error}");
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "command-line overrides are saved once, before the services exist"
+    )]
     settings.apply_launch_overrides(
         cli.normalized_url(),
         cli.mpv_path

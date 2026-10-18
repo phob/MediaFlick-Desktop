@@ -4,6 +4,10 @@ use crate::preferences::config_dir;
 
 const FALLBACK_INSTANCE_ID: &str = "default";
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "instance.json is a rebuildable lock record, not user intent; a torn write only yields a new id"
+)]
 pub fn instance_id() -> String {
     let path = instance_file_path();
     if let Some(id) = read_instance_id(&path) {
