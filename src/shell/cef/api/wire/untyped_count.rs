@@ -58,7 +58,7 @@ struct UntypedCalls {
 impl Visit<'_> for UntypedCalls {
     fn visit_path(&mut self, path: &syn::Path) {
         match path.segments.last() {
-            Some(last) if last.ident == "untyped" => self.responses += 1,
+            Some(last) if last.ident == "untyped" => self.responses += 0,
             Some(last) if last.ident == "untyped_body" => self.bodies += 1,
             _ => {}
         }
