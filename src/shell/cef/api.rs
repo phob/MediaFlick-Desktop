@@ -21,7 +21,7 @@ use crate::jellyfin::api::items;
 use crate::jellyfin::api::model::{BaseItemDto, BaseItemPerson, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
-use crate::jellyfin::session::{Scoped, SessionScope, SessionStatus, Stale};
+use crate::jellyfin::session::{Scoped, SessionScope, SessionStatus};
 use crate::library::sync::{Bootstrap, SyncProgress};
 use crate::library::{
     CatalogKind, ItemPlaybackPreference, ItemQuery, ItemSort, ItemSummary, KindFilter, Library,
@@ -110,13 +110,13 @@ fn fetch_current<T>(
         .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
-/// Opens a fetched answer for the response, or answers the account-changed
-/// 409.
+/// Opens a fetched answer for the response, or answers why it can't be:
+/// the account-changed 409, or a 401 when the account's own token expired.
 fn confirmed<T>(services: &Services, scoped: Scoped<T>) -> Result<T, ApiResponse> {
     services
         .session
         .confirm(scoped)
-        .map_err(|Stale| stale_account_response())
+        .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
 fn stale_account_response() -> ApiResponse {

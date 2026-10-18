@@ -73,7 +73,7 @@ fn forget_if_server_disowns(services: &Arc<Services>, scope: &SessionScope, item
         .map(|fetched| services.session.confirm(fetched));
     match item {
         Ok(Ok(None)) => forget_item(services, scope, item_id),
-        Ok(Ok(Some(_)) | Err(Stale)) => {}
+        Ok(Ok(Some(_)) | Err(_)) => {}
         Err(error) => {
             tracing::debug!(
                 target: "app.api",

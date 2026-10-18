@@ -1,3 +1,4 @@
+use crate::jellyfin::session::Stale;
 use crate::library::model::ResolvedPlaybackPreference;
 
 use super::*;

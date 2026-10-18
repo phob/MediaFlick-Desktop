@@ -437,7 +437,7 @@ pub(super) fn fetch_page<T>(
 ) -> Result<T, ApiError> {
     session
         .confirm(scope.fetch(call)?)
-        .map_err(|Stale| ApiError::Cancelled)
+        .map_err(|_stale| ApiError::Cancelled)
 }
 
 pub(super) fn storage_error(error: &rusqlite::Error) -> ApiError {

@@ -309,15 +309,22 @@ impl Session {
     }
 
     /// Opens a fetched answer if its account is still the signed-in one.
-    pub fn confirm<T>(&self, scoped: Scoped<T>) -> Result<T, Stale> {
+    /// Otherwise the error says why, as [`Self::scoped_error`] would for a
+    /// failure: [`ApiError::Unauthorized`] while the account's own rejected
+    /// token expired it and nothing replaced it, so the UI shows sign-in, and
+    /// [`ApiError::AccountChanged`] after a switch, sign-out or deletion.
+    pub fn confirm<T>(&self, scoped: Scoped<T>) -> Result<T, ApiError> {
         let _gate = self
             .operation_gate
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if self.read().is_current(scoped.generation, &scoped.account) {
+        let state = self.read();
+        if state.is_current(scoped.generation, &scoped.account) {
             Ok(scoped.value)
+        } else if state.expired_itself(scoped.generation, &scoped.account) {
+            Err(ApiError::Unauthorized)
         } else {
-            Err(Stale)
+            Err(ApiError::AccountChanged)
         }
     }
 
@@ -333,7 +340,6 @@ impl Session {
             .fetch(call)
             .map_err(|error| self.scoped_error(scope, error))?;
         self.confirm(fetched)
-            .map_err(|Stale| ApiError::AccountChanged)
     }
 
     pub fn anonymous_client(&self, server_url: &str) -> JellyfinClient {
@@ -606,11 +612,16 @@ impl SessionState {
     /// the scope is current, or its own rejected token expired it and nothing
     /// has replaced it since.
     fn owns_failure(&self, scope: &SessionScope) -> bool {
-        self.matches(scope)
-            || self.expired
-                && !self.deleting
-                && self.generation == next_generation(scope.generation)
-                && self.account_key().as_ref() == Some(scope.account())
+        self.matches(scope) || self.expired_itself(scope.generation, scope.account())
+    }
+
+    /// Whether the account fetched at `generation` is still signed in, but
+    /// expired by its own rejected token, with nothing replacing it since.
+    fn expired_itself(&self, generation: u64, account: &AccountKey) -> bool {
+        self.expired
+            && !self.deleting
+            && self.generation == next_generation(generation)
+            && self.account_key().as_ref() == Some(account)
     }
 }
 
