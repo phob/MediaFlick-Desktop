@@ -5,11 +5,16 @@
 // with the same TMDB id as the series. Desktop drops the person and the
 // unknown row; the series and movie rows keep their library ids in
 // `/api/seerr/search`, and Discover search shows them without an application
-// error. Read-only.
+// error. The proxy also answers the Companion's Seerr requests list with a
+// request whose media type Seerr left out (the Companion sends `""`) and the
+// series' TMDB id, and a `tv` request for the series: Requests keeps both,
+// and only the `tv` one is the library series. Read-only.
 //   just verify seerr-kinds --account https://jellyfin.example.com --signed-out
 const SIDEBAR = { css: '[data-sidebar="sidebar"]' }
 const QUERY = "mediaflick seerr kinds probe"
 const SEARCH_PATH = "/MediaFlick/seerr/search"
+const REQUESTS_PATH = "/MediaFlick/seerr/requests"
+const REQUEST_IDS = { untyped: 990001, tv: 990002 }
 const TITLES = {
   person: "Seerr kinds person",
   tv: "Seerr kinds series",
@@ -53,6 +58,23 @@ async function cached(ctx, kind) {
   return null
 }
 
+// What the Companion's ShapeRequest answers for one Seerr request.
+const request = (id, mediaType, tmdbId) => ({
+  id,
+  status: "approved",
+  mediaType,
+  tmdbId,
+  is4k: false,
+  createdAt: "2026-10-01T12:00:00.000Z",
+  updatedAt: "2026-10-01T12:00:00.000Z",
+  mediaStatus: "processing",
+  seasons: mediaType === "tv" ? [1] : [],
+  libraryItemId: null,
+  mediaActivity: null,
+})
+
+const requestCardsIn = (ctx) => ctx.app.evaluate(`[...document.querySelectorAll("main ul > li")].map((li) => ({ text: li.innerText.replace(/\\s+/g, " ").trim(), links: [...li.querySelectorAll("a[href]")].map((a) => a.getAttribute("href")) }))`)
+
 const cardsIn = (ctx) => ctx.app.evaluate(`[...document.querySelectorAll('main a[href^="/discover/"], main a[href^="/item/"]')].map((a) => ({ href: a.getAttribute("href"), text: a.innerText.replace(/\\s+/g, " ").trim() }))`)
 
 export default async function seerrKinds(ctx) {
@@ -63,8 +85,13 @@ export default async function seerrKinds(ctx) {
     ctx.step(`${condition ? "ok" : "FAIL"}: ${message}${observed === undefined ? "" : ` (observed ${JSON.stringify(observed)})`}`)
   }
   let page = null
-  const answer = (url, method) =>
-    method === "GET" && url.pathname === SEARCH_PATH && url.searchParams.get("query") === QUERY && page ? { status: 200, body: page } : null
+  let requestsPage = null
+  const answer = (url, method) => {
+    if (method !== "GET") return null
+    if (url.pathname === SEARCH_PATH && url.searchParams.get("query") === QUERY && page) return { status: 200, body: page }
+    if (url.pathname === REQUESTS_PATH && requestsPage) return { status: 200, body: requestsPage }
+    return null
+  }
   const proxy = await ctx.proxy({ upstream: ctx.account.server, answer })
   try {
     await ctx.fill({ role: "textbox", name: "Server" }, proxy.url)
@@ -81,7 +108,11 @@ export default async function seerrKinds(ctx) {
     const movie = await cached(ctx, "Movie")
     if (!series || !movie) throw new Error(`the account needs a cached series and movie with a TMDB id no other title of its kind shares (series: ${series?.name}, movie: ${movie?.name})`)
     report.picks = { series, movie }
+    report.playedCheck = movie.played
+      ? "the picked movie is played, so the played check tells true from the default false"
+      : "the account has no cached played movie with a TMDB id no other movie shares; the played check only shows false stays false"
     ctx.step(`series ${series.name} (TMDB ${series.tmdb}), movie ${movie.name} (TMDB ${movie.tmdb}, played ${movie.played})`)
+    ctx.step(report.playedCheck)
 
     const results = [
       row("person", Number(series.tmdb), TITLES.person),
@@ -107,6 +138,41 @@ export default async function seerrKinds(ctx) {
     expect(tv?.libraryItemId === series.id, `the tv row has the series id of ${series.name}`, tv?.libraryItemId)
     expect(film?.libraryItemId === movie.id, `the movie row has the movie id of ${movie.name}`, film?.libraryItemId)
     expect(film?.played === movie.played, `the movie row's played matches the cache (${movie.played})`, film?.played)
+
+    const requests = [request(REQUEST_IDS.untyped, "", Number(series.tmdb)), request(REQUEST_IDS.tv, "tv", Number(series.tmdb))]
+    requestsPage = { page: 1, totalPages: 1, totalResults: requests.length, results: requests }
+    report.answeredRequests = requestsPage
+    const listed = await ctx.api("/api/seerr/requests?filter=all&take=40")
+    report.requestsAnswer = listed
+    expect(listed.status === 200, "/api/seerr/requests answers 200", listed.status)
+    expect(proxy.stats.answered.some((entry) => entry.path === REQUESTS_PATH), `the proxy answered the Companion's ${REQUESTS_PATH}`)
+    const byId = Object.fromEntries((listed.body?.results ?? []).map((entry) => [entry.id, entry]))
+    const untyped = byId[REQUEST_IDS.untyped]
+    const tvRequest = byId[REQUEST_IDS.tv]
+    expect(untyped && tvRequest, "Requests keeps the untyped and the tv request", Object.keys(byId))
+    expect(untyped !== undefined && untyped.libraryItemId === null, "the untyped request has no library item", untyped?.libraryItemId)
+    expect(untyped?.played === false, "the untyped request is not played", untyped?.played)
+    expect(tvRequest?.libraryItemId === series.id, `the tv request has the series id of ${series.name}`, tvRequest?.libraryItemId)
+
+    await ctx.hover(SIDEBAR)
+    await ctx.press({ role: "link", name: "Requests" })
+    await ctx.until(async () => (await ctx.pathname()).startsWith("/requests"), "/requests")
+    const requestsOutcome = await ctx.until(async () => {
+      if (await ctx.exists({ role: "heading", name: "Unexpected Application Error!" })) return "error"
+      return (await requestCardsIn(ctx)).length === requests.length ? "cards" : null
+    }, "the two request cards or an application error", 30000)
+    await ctx.park()
+    await ctx.snapshot("00-seerr-requests")
+    await ctx.screenshot("00-seerr-requests")
+    report.requestsUiError = requestsOutcome === "error" ? await ctx.app.evaluate(`[...document.querySelectorAll("h1, h2, h3, pre")].map((node) => node.innerText.trim()).join("\\n")`) : null
+    expect(requestsOutcome === "cards", "Requests renders both request cards without an application error", report.requestsUiError)
+    if (requestsOutcome === "cards") {
+      const [untypedCard, tvCard] = await requestCardsIn(ctx)
+      report.requestCards = [untypedCard, tvCard]
+      const seriesHref = `/item/${encodeURIComponent(series.id)}`
+      expect(!untypedCard.links.includes(seriesHref) && !untypedCard.text.includes("In your library"), "the untyped request card is not the library series", untypedCard)
+      expect(tvCard.links.includes(seriesHref), `the tv request card opens ${series.name} in the library`, tvCard)
+    }
 
     await ctx.hover(SIDEBAR)
     await ctx.press({ role: "link", name: "Discover" })
