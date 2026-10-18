@@ -112,20 +112,26 @@ async function waitHeld(ctx, gate) {
   }
 }
 
-// Keeps the first answer the page's own fetches get for `paths`, so the
-// drive can read the body of a request the UI sent by itself.
+// Keeps the answer to the first request the page itself sends for each of
+// `paths`, so the drive can read its body. The first request is the held
+// one; a later request for the same path (the kept route under the next
+// account) can be answered sooner, so first-to-resolve would be wrong.
 async function recordPageAnswers(ctx, paths) {
   await ctx.app.evaluate(`(() => {
     const watched = ${JSON.stringify(paths)}
     const original = window.fetch
     window.__pageAnswers = {}
-    window.fetch = (input, init) => original(input, init).then((response) => {
+    window.fetch = (input, init) => {
       const { pathname } = new URL(typeof input === "string" ? input : input.url, location.href)
-      if (watched.includes(pathname)) {
-        response.clone().text().then((body) => { window.__pageAnswers[pathname] ??= { status: response.status, body } })
-      }
-      return response
-    })
+      const slot = {}
+      if (watched.includes(pathname)) window.__pageAnswers[pathname] ??= slot
+      return original(input, init).then((response) => {
+        if (watched.includes(pathname)) {
+          response.clone().text().then((body) => { slot.status = response.status; slot.body = body })
+        }
+        return response
+      })
+    }
     return true
   })()`)
 }
@@ -284,7 +290,7 @@ export default async function accountSwitch(ctx) {
     const uiHeld = uiHolds.filter((hold) => hold.arrivedAt)
     expect(uiHeld.length === uiHolds.length, `the detail page's own reads were held upstream (${uiHeld.map((hold) => hold.name).join(", ") || "none"})`)
     await ctx.until(() => uiHeld.every((hold) => failedLines().some((line) => line.path === uiRoutes[hold.name] && line.status === 409)), "app.log lines for the detail page's held reads", 10000).catch(() => null)
-    await ctx.until(async () => Object.keys(await ctx.app.evaluate("window.__pageAnswers ?? {}")).length >= uiHeld.length, "the page's answers to its held reads", 10000).catch(() => null)
+    await ctx.until(async () => Object.values(await ctx.app.evaluate("window.__pageAnswers ?? {}")).filter((answer) => answer.status !== undefined).length >= uiHeld.length, "the page's answers to its held reads", 10000).catch(() => null)
     const pageAnswers = await ctx.app.evaluate("window.__pageAnswers ?? {}")
     for (const hold of uiHolds) {
       const statuses = failedLines().filter((candidate) => candidate.path === uiRoutes[hold.name]).map((candidate) => candidate.status)
