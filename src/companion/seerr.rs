@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::jellyfin::api::ApiError;
 use crate::jellyfin::session::SessionScope;
-use crate::library::{CatalogKind, Library};
+use crate::library::{CatalogKind, Library, TitleKind};
 use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
 
 use super::CompanionSession;
@@ -193,13 +193,18 @@ fn join_seerr_results(library: &Library, value: &mut Value) {
 
 /// Joins one array of shaped Seerr rows against the local cache. `field` is
 /// the array's name: discovery pages answer under `results`, collection
-/// details under `parts`.
+/// details under `parts`. Rows of a kind other than `movie` or `tv` are
+/// dropped: the Companion never sends them and the UI cannot show them.
 pub(super) fn join_seerr_rows(library: &Library, value: &mut Value, field: &str) {
     let Some(results) = value.get_mut(field).and_then(Value::as_array_mut) else {
         return;
     };
-    let movies = provider_ids(results, "movie");
-    let series = provider_ids(results, "tv");
+    let rows = std::mem::take(results)
+        .into_iter()
+        .filter_map(|item| Some((seerr_kind(&item)?, item)))
+        .collect::<Vec<_>>();
+    let movies = tmdb_ids(&rows, TitleKind::Movie);
+    let series = tmdb_ids(&rows, TitleKind::Series);
     let movie_ids = library
         .ids_by_tmdb(CatalogKind::Movie, &movies)
         .unwrap_or_default();
@@ -209,45 +214,50 @@ pub(super) fn join_seerr_rows(library: &Library, value: &mut Value, field: &str)
     let movie_played = library
         .played_by_tmdb(CatalogKind::Movie, &movies)
         .unwrap_or_default();
-    for item in results {
-        let media_type = item["mediaType"].as_str().unwrap_or_default();
-        let Some(tmdb_id) = item["tmdbId"].as_i64() else {
-            continue;
-        };
-        let (owned, played) = if media_type == "movie" {
-            (&movie_ids, movie_played.get(&tmdb_id.to_string()).copied())
-        } else {
-            (&series_ids, None)
-        };
-        item["libraryItemId"] = owned
-            .get(&tmdb_id.to_string())
-            .map_or(Value::Null, |id| json!(id));
-        item["played"] = json!(played.unwrap_or(false));
+    *results = rows
+        .into_iter()
+        .map(|(kind, mut item)| {
+            let Some(tmdb_id) = item["tmdbId"].as_i64().map(|id| id.to_string()) else {
+                return item;
+            };
+            let (owned, played) = match kind {
+                TitleKind::Movie => (&movie_ids, movie_played.get(&tmdb_id).copied()),
+                TitleKind::Series => (&series_ids, None),
+            };
+            item["libraryItemId"] = owned.get(&tmdb_id).map_or(Value::Null, |id| json!(id));
+            item["played"] = json!(played.unwrap_or(false));
+            item
+        })
+        .collect();
+}
+
+/// Seerr names movies `movie` and series `tv`; persons and anything else
+/// have no library title.
+fn seerr_kind(item: &Value) -> Option<TitleKind> {
+    match item["mediaType"].as_str()? {
+        "movie" => Some(TitleKind::Movie),
+        "tv" => Some(TitleKind::Series),
+        _ => None,
     }
 }
 
-fn provider_ids(results: &[Value], media_type: &str) -> Vec<String> {
-    results
-        .iter()
-        .filter(|item| item["mediaType"].as_str() == Some(media_type))
-        .filter_map(|item| item["tmdbId"].as_i64())
+fn tmdb_ids(rows: &[(TitleKind, Value)], kind: TitleKind) -> Vec<String> {
+    rows.iter()
+        .filter(|(row_kind, _)| *row_kind == kind)
+        .filter_map(|(_, item)| item["tmdbId"].as_i64())
         .map(|id| id.to_string())
         .collect()
 }
 
 fn join_seerr_item(library: &Library, value: &mut Value) {
-    let media_type = value["mediaType"].as_str().unwrap_or_default();
     let Some(tmdb_id) = value["tmdbId"].as_i64() else {
         return;
     };
-    let kind = if media_type == "movie" {
-        CatalogKind::Movie
-    } else {
-        CatalogKind::Series
-    };
-    value["libraryItemId"] = library
-        .ids_by_tmdb(kind, &[tmdb_id.to_string()])
-        .unwrap_or_default()
-        .remove(&tmdb_id.to_string())
-        .map_or(Value::Null, Value::String);
+    let library_item_id = seerr_kind(value).and_then(|kind| {
+        library
+            .ids_by_tmdb(kind.into(), &[tmdb_id.to_string()])
+            .unwrap_or_default()
+            .remove(&tmdb_id.to_string())
+    });
+    value["libraryItemId"] = library_item_id.map_or(Value::Null, Value::String);
 }

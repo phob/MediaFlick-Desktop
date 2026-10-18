@@ -2,9 +2,10 @@
 // through a loopback proxy that answers the Companion's Seerr search for one
 // query with a crafted page: a person whose TMDB id is a library series' TMDB
 // id, a series row for that series, a movie row, and a row of an unknown kind
-// with the same TMDB id as the series. Only the series and movie rows may get
-// a libraryItemId, in `/api/seerr/search` and on the Discover search cards.
-// Read-only.
+// with the same TMDB id as the series. Desktop drops the person and the
+// unknown row; the series and movie rows keep their library ids in
+// `/api/seerr/search`, and Discover search shows them without an application
+// error. Read-only.
 //   just verify seerr-kinds --account https://jellyfin.example.com --signed-out
 const SIDEBAR = { css: '[data-sidebar="sidebar"]' }
 const QUERY = "mediaflick seerr kinds probe"
@@ -100,11 +101,9 @@ export default async function seerrKinds(ctx) {
     const tv = byTitle[TITLES.tv]
     const film = byTitle[TITLES.movie]
     const unknown = byTitle[TITLES.unknown]
-    expect(person && tv && film && unknown, "all four crafted rows come back", Object.keys(byTitle))
-    expect(person?.libraryItemId === null, "the person row has libraryItemId null", person?.libraryItemId)
-    expect(person?.played !== true, "the person row is not played", person?.played)
-    expect(unknown?.libraryItemId === null, "the unknown-kind row has libraryItemId null", unknown?.libraryItemId)
-    expect(unknown?.played !== true, "the unknown-kind row is not played", unknown?.played)
+    expect(person === undefined, "the person row is dropped", person)
+    expect(unknown === undefined, "the unknown-kind row is dropped", unknown)
+    expect(tv && film, "the tv and movie rows come back", Object.keys(byTitle))
     expect(tv?.libraryItemId === series.id, `the tv row has the series id of ${series.name}`, tv?.libraryItemId)
     expect(film?.libraryItemId === movie.id, `the movie row has the movie id of ${movie.name}`, film?.libraryItemId)
     expect(film?.played === movie.played, `the movie row's played matches the cache (${movie.played})`, film?.played)
@@ -116,8 +115,8 @@ export default async function seerrKinds(ctx) {
     const outcome = await ctx.until(async () => {
       if (await ctx.exists({ role: "heading", name: "Unexpected Application Error!" })) return "error"
       const found = await cardsIn(ctx)
-      return Object.values(TITLES).every((title) => found.some((card) => card.text.includes(title))) ? "cards" : null
-    }, "the four crafted cards or an application error", 30000)
+      return [TITLES.tv, TITLES.movie].every((title) => found.some((card) => card.text.includes(title))) ? "cards" : null
+    }, "the series and movie cards or an application error", 30000)
     await ctx.park()
     await ctx.snapshot("01-seerr-search")
     await ctx.screenshot("01-seerr-search")
@@ -127,11 +126,8 @@ export default async function seerrKinds(ctx) {
       const cards = await cardsIn(ctx)
       report.cards = cards
       const card = (title) => cards.find((entry) => entry.text.includes(title))
-      const personCard = card(TITLES.person)
-      const unknownCard = card(TITLES.unknown)
-      expect(![`/item/${series.id}`, `/discover/tv/${series.tmdb}`].includes(personCard.href.split("?")[0]), `the person card does not link to ${series.name}`, personCard.href)
-      expect(!personCard.text.includes("In your library"), "the person card shows no In your library badge", personCard.text)
-      expect(!unknownCard.text.includes("In your library"), "the unknown-kind card shows no In your library badge", unknownCard.text)
+      expect(card(TITLES.person) === undefined, "Discover shows no person card", card(TITLES.person))
+      expect(card(TITLES.unknown) === undefined, "Discover shows no unknown-kind card", card(TITLES.unknown))
       expect(card(TITLES.tv).text.includes("In your library"), "the series card shows In your library", card(TITLES.tv).text)
       expect(card(TITLES.movie).text.includes("In your library"), "the movie card shows In your library", card(TITLES.movie).text)
     }

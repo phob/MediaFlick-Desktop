@@ -4,6 +4,7 @@
 //! Jellyfin client and cached for the life of that login; every feature then
 //! selects the plugin backend only when the advertised v1 capability exists.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -536,15 +537,12 @@ fn join_calendar(library: &Library, value: &mut Value) {
     let Some(entries) = value["entries"].as_array_mut() else {
         return;
     };
-    let mut tmdb_by_kind: std::collections::HashMap<CatalogKind, Vec<String>> =
-        std::collections::HashMap::new();
-    let mut tvdb_by_kind: std::collections::HashMap<CatalogKind, Vec<String>> =
-        std::collections::HashMap::new();
-    for entry in entries.iter() {
-        let kind = match entry["kind"].as_str() {
-            Some("movie") => CatalogKind::Movie,
-            Some("episode") => CatalogKind::Episode,
-            _ => continue,
+    let kinds = entries.iter().map(calendar_kind).collect::<Vec<_>>();
+    let mut tmdb_by_kind: HashMap<CatalogKind, Vec<String>> = HashMap::new();
+    let mut tvdb_by_kind: HashMap<CatalogKind, Vec<String>> = HashMap::new();
+    for (entry, kind) in entries.iter().zip(&kinds) {
+        let Some(kind) = *kind else {
+            continue;
         };
         if let Some(id) = entry["tmdbId"].as_i64() {
             tmdb_by_kind.entry(kind).or_default().push(id.to_string());
@@ -567,8 +565,7 @@ fn join_calendar(library: &Library, value: &mut Value) {
             }
         }
     }
-    let mut resolved: std::collections::HashMap<(CatalogKind, String), String> =
-        std::collections::HashMap::new();
+    let mut resolved: HashMap<(CatalogKind, String), String> = HashMap::new();
     for kind in [
         CatalogKind::Movie,
         CatalogKind::Episode,
@@ -587,34 +584,37 @@ fn join_calendar(library: &Library, value: &mut Value) {
             resolved.insert((kind, format!("tvdb:{id}")), item);
         }
     }
-    for entry in entries {
-        let kind = if entry["kind"] == "movie" {
-            CatalogKind::Movie
-        } else {
-            CatalogKind::Episode
-        };
-        let item = entry["tmdbId"]
-            .as_i64()
+    let find = |kind: CatalogKind, tmdb: &Value, tvdb: &Value| {
+        tmdb.as_i64()
             .and_then(|id| resolved.get(&(kind, format!("tmdb:{id}"))))
             .or_else(|| {
-                entry["tvdbId"]
-                    .as_i64()
+                tvdb.as_i64()
                     .and_then(|id| resolved.get(&(kind, format!("tvdb:{id}"))))
-            });
-        entry["libraryItemId"] = item.map_or(Value::Null, |id| json!(id));
-        let series_item = (kind == CatalogKind::Episode)
+            })
+            .cloned()
+    };
+    for (entry, kind) in entries.iter_mut().zip(kinds) {
+        let item = kind.and_then(|kind| find(kind, &entry["tmdbId"], &entry["tvdbId"]));
+        let series_item = (kind == Some(CatalogKind::Episode))
             .then(|| {
-                entry["seriesTmdbId"]
-                    .as_i64()
-                    .and_then(|id| resolved.get(&(CatalogKind::Series, format!("tmdb:{id}"))))
-                    .or_else(|| {
-                        entry["seriesTvdbId"].as_i64().and_then(|id| {
-                            resolved.get(&(CatalogKind::Series, format!("tvdb:{id}")))
-                        })
-                    })
+                find(
+                    CatalogKind::Series,
+                    &entry["seriesTmdbId"],
+                    &entry["seriesTvdbId"],
+                )
             })
             .flatten();
-        entry["seriesLibraryItemId"] = series_item.map_or(Value::Null, |id| json!(id));
+        entry["libraryItemId"] = item.map_or(Value::Null, Value::String);
+        entry["seriesLibraryItemId"] = series_item.map_or(Value::Null, Value::String);
+    }
+}
+
+/// The Companion calendar lists movies and episodes.
+fn calendar_kind(entry: &Value) -> Option<CatalogKind> {
+    match entry["kind"].as_str()? {
+        "movie" => Some(CatalogKind::Movie),
+        "episode" => Some(CatalogKind::Episode),
+        _ => None,
     }
 }
 
