@@ -48,7 +48,7 @@ impl CompanionSession {
             "/MediaFlick/seerr/search",
             &[("query", query.to_string()), ("page", page.to_string())],
         )?;
-        join_seerr_results(&self.library, &mut value);
+        join_seerr_results(&self.library, &mut value, OtherKinds::Drop);
         Ok(value)
     }
 
@@ -66,7 +66,7 @@ impl CompanionSession {
             &format!("/MediaFlick/seerr/person/{tmdb_id}/credits"),
             &[],
         )?;
-        join_seerr_results(&self.library, &mut value);
+        join_seerr_results(&self.library, &mut value, OtherKinds::Drop);
         Ok(value)
     }
 
@@ -84,7 +84,7 @@ impl CompanionSession {
             &format!("/MediaFlick/seerr/discover/{}", kind.id()),
             query.as_slice(),
         )?;
-        join_seerr_results(&self.library, &mut value);
+        join_seerr_results(&self.library, &mut value, OtherKinds::Drop);
         Ok(value)
     }
 
@@ -170,7 +170,7 @@ impl CompanionSession {
                 ("filter", filter.to_string()),
             ],
         )?;
-        join_seerr_results(&self.library, &mut value);
+        join_seerr_results(&self.library, &mut value, OtherKinds::Keep);
         Ok(value)
     }
 
@@ -187,24 +187,40 @@ impl CompanionSession {
     }
 }
 
-fn join_seerr_results(library: &Library, value: &mut Value) {
-    join_seerr_rows(library, value, "results");
+fn join_seerr_results(library: &Library, value: &mut Value, other_kinds: OtherKinds) {
+    join_seerr_rows(library, value, "results", other_kinds);
+}
+
+/// What a joined array does with a row whose kind is neither `movie` nor
+/// `tv`, such as a person.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum OtherKinds {
+    /// Search, discover and person credits feed request cards, which need a
+    /// known kind.
+    Drop,
+    /// The user's requests and a collection's parts show every row, with no
+    /// library title.
+    Keep,
 }
 
 /// Joins one array of shaped Seerr rows against the local cache. `field` is
 /// the array's name: discovery pages answer under `results`, collection
-/// details under `parts`. Rows of a kind other than `movie` or `tv` are
-/// dropped: the Companion never sends them and the UI cannot show them.
-pub(super) fn join_seerr_rows(library: &Library, value: &mut Value, field: &str) {
+/// details under `parts`.
+pub(super) fn join_seerr_rows(
+    library: &Library,
+    value: &mut Value,
+    field: &str,
+    other_kinds: OtherKinds,
+) {
     let Some(results) = value.get_mut(field).and_then(Value::as_array_mut) else {
         return;
     };
-    let rows = std::mem::take(results)
-        .into_iter()
-        .filter_map(|item| Some((seerr_kind(&item)?, item)))
-        .collect::<Vec<_>>();
-    let movies = tmdb_ids(&rows, TitleKind::Movie);
-    let series = tmdb_ids(&rows, TitleKind::Series);
+    if other_kinds == OtherKinds::Drop {
+        results.retain(|item| seerr_kind(item).is_some());
+    }
+    let kinds = results.iter().map(seerr_kind).collect::<Vec<_>>();
+    let movies = tmdb_ids(results, &kinds, TitleKind::Movie);
+    let series = tmdb_ids(results, &kinds, TitleKind::Series);
     let movie_ids = library
         .ids_by_tmdb(CatalogKind::Movie, &movies)
         .unwrap_or_default();
@@ -214,21 +230,18 @@ pub(super) fn join_seerr_rows(library: &Library, value: &mut Value, field: &str)
     let movie_played = library
         .played_by_tmdb(CatalogKind::Movie, &movies)
         .unwrap_or_default();
-    *results = rows
-        .into_iter()
-        .map(|(kind, mut item)| {
-            let Some(tmdb_id) = item["tmdbId"].as_i64().map(|id| id.to_string()) else {
-                return item;
-            };
-            let (owned, played) = match kind {
-                TitleKind::Movie => (&movie_ids, movie_played.get(&tmdb_id).copied()),
-                TitleKind::Series => (&series_ids, None),
-            };
-            item["libraryItemId"] = owned.get(&tmdb_id).map_or(Value::Null, |id| json!(id));
-            item["played"] = json!(played.unwrap_or(false));
-            item
-        })
-        .collect();
+    for (item, kind) in results.iter_mut().zip(kinds) {
+        let Some(tmdb_id) = item["tmdbId"].as_i64().map(|id| id.to_string()) else {
+            continue;
+        };
+        let (owned, played) = match kind {
+            Some(TitleKind::Movie) => (movie_ids.get(&tmdb_id), movie_played.get(&tmdb_id)),
+            Some(TitleKind::Series) => (series_ids.get(&tmdb_id), None),
+            None => (None, None),
+        };
+        item["libraryItemId"] = owned.map_or(Value::Null, |id| json!(id));
+        item["played"] = json!(played.copied().unwrap_or(false));
+    }
 }
 
 /// Seerr names movies `movie` and series `tv`; persons and anything else
@@ -241,10 +254,12 @@ fn seerr_kind(item: &Value) -> Option<TitleKind> {
     }
 }
 
-fn tmdb_ids(rows: &[(TitleKind, Value)], kind: TitleKind) -> Vec<String> {
-    rows.iter()
-        .filter(|(row_kind, _)| *row_kind == kind)
-        .filter_map(|(_, item)| item["tmdbId"].as_i64())
+fn tmdb_ids(results: &[Value], kinds: &[Option<TitleKind>], kind: TitleKind) -> Vec<String> {
+    results
+        .iter()
+        .zip(kinds)
+        .filter(|(_, row_kind)| **row_kind == Some(kind))
+        .filter_map(|(item, _)| item["tmdbId"].as_i64())
         .map(|id| id.to_string())
         .collect()
 }

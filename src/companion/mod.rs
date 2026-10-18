@@ -805,7 +805,12 @@ mod tests {
             ]
         });
 
-        super::seerr::join_seerr_rows(&library, &mut detail, "parts");
+        super::seerr::join_seerr_rows(
+            &library,
+            &mut detail,
+            "parts",
+            super::seerr::OtherKinds::Keep,
+        );
 
         assert_eq!(detail["parts"][0]["libraryItemId"], "m1");
         assert_eq!(detail["parts"][0]["played"], true);
