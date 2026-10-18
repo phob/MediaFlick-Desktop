@@ -20,6 +20,7 @@ use crate::preferences::{
     accounts_file_path, collections_file_path, pending_deletions_file_path,
     playback_preferences_file_path,
 };
+use crate::shell::InitPermit;
 
 pub struct Services {
     pub library: Arc<Library>,
@@ -188,7 +189,7 @@ impl Services {
 
 /// Builds the services and resumes interrupted account deletions. The caller
 /// publishes them before `start` lets background work reach the shell.
-pub fn open(initial_settings: AppSettings) -> Result<Arc<Services>, String> {
+pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Services>, String> {
     let path = paths::library_db_path();
     let library = match Library::open(&path) {
         Ok(library) => Arc::new(library),
@@ -276,15 +277,18 @@ pub fn open(initial_settings: AppSettings) -> Result<Arc<Services>, String> {
     Ok(services)
 }
 
-pub fn start(services: &Arc<Services>) {
+pub fn start(_: &InitPermit, services: &Arc<Services>) {
     crate::collections::scheduler::start(services.clone());
-    let path = paths::library_db_path();
-    tracing::info!(target: "library.db", path = %path.display(), "library database ready");
+    tracing::info!(
+        target: "library.db",
+        path = %services.library.path().display(),
+        "library database ready"
+    );
 }
 
-/// `open` runs under the shell's init lock, which the CEF UI thread waits on, so the probe must
-/// not wait on the network there; it warms the cache from its own thread and
-/// the API paths re-check lazily.
+/// `open` runs under the shell's init lock, which the CEF UI thread waits on,
+/// so the probe must not wait on the network there; it warms the cache from
+/// its own thread and the API paths re-check lazily.
 fn warm_restored_session(session: Arc<Session>, companion: Arc<CompanionSession>) {
     crate::app::threads::spawn_named("session-restore", move || {
         session.refresh_user_policy();

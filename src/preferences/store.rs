@@ -14,8 +14,11 @@ static DEVICE_RECOVERY: std::sync::Mutex<Option<RecoveryNotice>> = std::sync::Mu
 static DEVICE_FILE_HELD: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 impl AppSettings {
-    /// Reads settings.json once for process startup. Runtime code receives
-    /// settings from `PreferencesService` instead of reading the file again.
+    /// Reads settings.json for startup. `main` reads it once per process, and
+    /// the shell's service locator reads it again for each API request that
+    /// arrives before the services are open, including after a failed open.
+    /// Once they are open, runtime code receives settings from
+    /// `PreferencesService` instead of reading the file.
     pub fn load_at_startup() -> Self {
         Self::load()
     }
