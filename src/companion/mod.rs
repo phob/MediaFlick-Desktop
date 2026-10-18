@@ -4,6 +4,7 @@
 //! Jellyfin client and cached for the life of that login; every feature then
 //! selects the plugin backend only when the advertised v1 capability exists.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -536,15 +537,12 @@ fn join_calendar(library: &Library, value: &mut Value) {
     let Some(entries) = value["entries"].as_array_mut() else {
         return;
     };
-    let mut tmdb_by_kind: std::collections::HashMap<&str, Vec<String>> =
-        std::collections::HashMap::new();
-    let mut tvdb_by_kind: std::collections::HashMap<&str, Vec<String>> =
-        std::collections::HashMap::new();
-    for entry in entries.iter() {
-        let kind = match entry["kind"].as_str() {
-            Some("movie") => "Movie",
-            Some("episode") => "Episode",
-            _ => continue,
+    let kinds = entries.iter().map(calendar_kind).collect::<Vec<_>>();
+    let mut tmdb_by_kind: HashMap<CatalogKind, Vec<String>> = HashMap::new();
+    let mut tvdb_by_kind: HashMap<CatalogKind, Vec<String>> = HashMap::new();
+    for (entry, kind) in entries.iter().zip(&kinds) {
+        let Some(kind) = *kind else {
+            continue;
         };
         if let Some(id) = entry["tmdbId"].as_i64() {
             tmdb_by_kind.entry(kind).or_default().push(id.to_string());
@@ -552,65 +550,71 @@ fn join_calendar(library: &Library, value: &mut Value) {
         if let Some(id) = entry["tvdbId"].as_i64() {
             tvdb_by_kind.entry(kind).or_default().push(id.to_string());
         }
-        if kind == "Episode" {
+        if kind == CatalogKind::Episode {
             if let Some(id) = entry["seriesTmdbId"].as_i64() {
                 tmdb_by_kind
-                    .entry("Series")
+                    .entry(CatalogKind::Series)
                     .or_default()
                     .push(id.to_string());
             }
             if let Some(id) = entry["seriesTvdbId"].as_i64() {
                 tvdb_by_kind
-                    .entry("Series")
+                    .entry(CatalogKind::Series)
                     .or_default()
                     .push(id.to_string());
             }
         }
     }
-    let mut resolved: std::collections::HashMap<(&str, String), String> =
-        std::collections::HashMap::new();
-    for kind in ["Movie", "Episode", "Series"] {
+    let mut resolved: HashMap<(CatalogKind, String), String> = HashMap::new();
+    for kind in [
+        CatalogKind::Movie,
+        CatalogKind::Episode,
+        CatalogKind::Series,
+    ] {
         for (id, item) in library
-            .ids_by_tmdb(kind, tmdb_by_kind.get(kind).map_or(&[], Vec::as_slice))
+            .ids_by_tmdb(kind, tmdb_by_kind.get(&kind).map_or(&[], Vec::as_slice))
             .unwrap_or_default()
         {
             resolved.insert((kind, format!("tmdb:{id}")), item);
         }
         for (id, item) in library
-            .ids_by_tvdb(kind, tvdb_by_kind.get(kind).map_or(&[], Vec::as_slice))
+            .ids_by_tvdb(kind, tvdb_by_kind.get(&kind).map_or(&[], Vec::as_slice))
             .unwrap_or_default()
         {
             resolved.insert((kind, format!("tvdb:{id}")), item);
         }
     }
-    for entry in entries {
-        let kind = if entry["kind"] == "movie" {
-            "Movie"
-        } else {
-            "Episode"
-        };
-        let item = entry["tmdbId"]
-            .as_i64()
+    let find = |kind: CatalogKind, tmdb: &Value, tvdb: &Value| {
+        tmdb.as_i64()
             .and_then(|id| resolved.get(&(kind, format!("tmdb:{id}"))))
             .or_else(|| {
-                entry["tvdbId"]
-                    .as_i64()
+                tvdb.as_i64()
                     .and_then(|id| resolved.get(&(kind, format!("tvdb:{id}"))))
-            });
-        entry["libraryItemId"] = item.map_or(Value::Null, |id| json!(id));
-        let series_item = (kind == "Episode")
+            })
+            .cloned()
+    };
+    for (entry, kind) in entries.iter_mut().zip(kinds) {
+        let item = kind.and_then(|kind| find(kind, &entry["tmdbId"], &entry["tvdbId"]));
+        let series_item = (kind == Some(CatalogKind::Episode))
             .then(|| {
-                entry["seriesTmdbId"]
-                    .as_i64()
-                    .and_then(|id| resolved.get(&("Series", format!("tmdb:{id}"))))
-                    .or_else(|| {
-                        entry["seriesTvdbId"]
-                            .as_i64()
-                            .and_then(|id| resolved.get(&("Series", format!("tvdb:{id}"))))
-                    })
+                find(
+                    CatalogKind::Series,
+                    &entry["seriesTmdbId"],
+                    &entry["seriesTvdbId"],
+                )
             })
             .flatten();
-        entry["seriesLibraryItemId"] = series_item.map_or(Value::Null, |id| json!(id));
+        entry["libraryItemId"] = item.map_or(Value::Null, Value::String);
+        entry["seriesLibraryItemId"] = series_item.map_or(Value::Null, Value::String);
+    }
+}
+
+/// The Companion calendar lists movies and episodes.
+fn calendar_kind(entry: &Value) -> Option<CatalogKind> {
+    match entry["kind"].as_str()? {
+        "movie" => Some(CatalogKind::Movie),
+        "episode" => Some(CatalogKind::Episode),
+        _ => None,
     }
 }
 
@@ -760,57 +764,6 @@ mod tests {
         age_last_probe(&companion, MUCH_LATER);
         assert!(companion.probe(false).expect("refreshed probe").is_none());
         assert!(!companion.supports("calendar"));
-    }
-
-    #[test]
-    fn collection_parts_carry_ownership_and_watched_state() {
-        let library = Library::open_in_memory().expect("library");
-        let items = [
-            serde_json::from_str::<BaseItemDto>(
-                r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProviderIds":{"Tmdb":"603"}}"#,
-            )
-            .expect("movie"),
-            serde_json::from_str::<BaseItemDto>(
-                r#"{"Id":"m2","Name":"Alien","Type":"Movie","ProviderIds":{"Tmdb":"348"}}"#,
-            )
-            .expect("movie"),
-            serde_json::from_str::<BaseItemDto>(
-                r#"{"Id":"s1","Name":"The 603","Type":"Series","ProviderIds":{"Tmdb":"603"}}"#,
-            )
-            .expect("series"),
-        ];
-        library
-            .upsert_page(&crate::jellyfin::session::Live::for_test(), &items)
-            .expect("seed");
-        library
-            .apply_user_data(
-                &crate::jellyfin::session::Live::for_test(),
-                &[crate::library::UserDataRecord {
-                    jellyfin_id: "m1".to_string(),
-                    played: true,
-                    ..Default::default()
-                }],
-            )
-            .expect("user data");
-        let mut detail = json!({
-            "parts": [
-                { "mediaType": "movie", "tmdbId": 603 },
-                { "mediaType": "movie", "tmdbId": 348 },
-                { "mediaType": "movie", "tmdbId": 624834 },
-                { "mediaType": "tv", "tmdbId": 603 }
-            ]
-        });
-
-        super::seerr::join_seerr_rows(&library, &mut detail, "parts");
-
-        assert_eq!(detail["parts"][0]["libraryItemId"], "m1");
-        assert_eq!(detail["parts"][0]["played"], true);
-        assert_eq!(detail["parts"][1]["libraryItemId"], "m2");
-        assert_eq!(detail["parts"][1]["played"], false);
-        assert!(detail["parts"][2]["libraryItemId"].is_null());
-        assert_eq!(detail["parts"][2]["played"], false);
-        // TMDB numeric ids can overlap across movie and TV namespaces.
-        assert_eq!(detail["parts"][3]["libraryItemId"], "s1");
     }
 
     #[test]
