@@ -437,7 +437,7 @@ mod tests {
         use super::super::json_file::test_support::{NEWER_DOCUMENT, assert_left_untouched};
 
         let path = test_path();
-        std::fs::write(&path, NEWER_DOCUMENT).expect("future file");
+        crate::preferences::store::atomic_write(&path, NEWER_DOCUMENT).expect("future file");
 
         let error = CollectionConfigurationService::open(path.clone())
             .err()

@@ -226,7 +226,7 @@ mod tests {
         service.save(&key, "second", &preference).expect("second");
         drop(service);
         let backup = std::fs::read(backup_path(&path)).expect("backup");
-        std::fs::write(&path, NEWER_DOCUMENT).expect("newer file");
+        crate::preferences::store::atomic_write(&path, NEWER_DOCUMENT).expect("newer file");
 
         let error = PlaybackPreferenceService::open(path.clone())
             .err()

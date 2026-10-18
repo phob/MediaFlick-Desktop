@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use super::*;
 
 routes! {
@@ -7,6 +9,7 @@ routes! {
 }
 
 static IMAGE_WRITES: AtomicUsize = AtomicUsize::new(0);
+static IMAGE_TEMPORARIES: AtomicUsize = AtomicUsize::new(0);
 const IMAGE_CACHE_MAX_FILES: usize = 4_000;
 const IMAGE_CACHE_PRUNE_EVERY: usize = 200;
 
@@ -103,7 +106,7 @@ pub(super) fn store_image(path: &std::path::Path, bytes: &[u8]) {
     let Some(parent) = path.parent() else {
         return;
     };
-    if std::fs::create_dir_all(parent).is_err() || std::fs::write(path, bytes).is_err() {
+    if std::fs::create_dir_all(parent).is_err() || replace_cached(parent, path, bytes).is_err() {
         return;
     }
     if IMAGE_WRITES
@@ -113,6 +116,27 @@ pub(super) fn store_image(path: &std::path::Path, bytes: &[u8]) {
     {
         prune_image_cache(parent);
     }
+}
+
+/// Writes a temporary file beside the cached one and renames it into place, so
+/// a reader sees the old file, no file, or the whole new one. Unlike
+/// `atomic_write` it does not fsync: a cached image is refetched when lost, and
+/// on a spinning disk the sync costs about 20 ms per poster.
+fn replace_cached(
+    parent: &std::path::Path,
+    path: &std::path::Path,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let counter = IMAGE_TEMPORARIES.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(".{name}.tmp-{}-{counter}", std::process::id()));
+    let result = std::fs::File::create_new(&temporary)
+        .and_then(|mut file| file.write_all(bytes))
+        .and_then(|()| std::fs::rename(&temporary, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn prune_image_cache(directory: &std::path::Path) {

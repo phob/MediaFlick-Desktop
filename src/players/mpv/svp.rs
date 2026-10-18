@@ -323,6 +323,10 @@ fn wide_null(value: &OsStr) -> Vec<u16> {
 mod tests {
     use super::*;
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "an empty stand-in DLL in a throwaway temp directory"
+    )]
     fn fake_installation(name: &str) -> (PathBuf, PathBuf) {
         let root = std::env::temp_dir().join(format!(
             "mediaflick-svp-detection-{}-{name}",

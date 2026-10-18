@@ -70,7 +70,8 @@ fn saved_home_gains_a_new_built_in_after_its_predecessor() {
         .as_array_mut()
         .expect("saved Home elements")
         .retain(|element| element["id"] != "recentlyAddedShows");
-    std::fs::write(&path, document.to_string()).expect("write older Home");
+    crate::preferences::store::atomic_write(&path, document.to_string().as_bytes())
+        .expect("write older Home");
 
     let reopened = AccountConfigurationService::open(path.clone()).expect("reopen");
     let elements = reopened.home(&alice).expect("home").elements;
@@ -155,7 +156,8 @@ fn write_browsing(path: &Path, account: usize, browsing: serde_json::Value) {
         serde_json::from_str(&std::fs::read_to_string(path).expect("read account settings"))
             .expect("parse account settings");
     document["accounts"][account]["browsing"] = browsing;
-    std::fs::write(path, document.to_string()).expect("write browsing");
+    crate::preferences::store::atomic_write(path, document.to_string().as_bytes())
+        .expect("write browsing");
 }
 
 #[test]
@@ -281,7 +283,7 @@ fn saving_a_route_a_page_already_holds_leaves_the_file_alone() {
     let append_rewrite_marker = || {
         let mut bytes = std::fs::read(&path).expect("read account settings");
         bytes.extend_from_slice(b"\n\n");
-        std::fs::write(&path, &bytes).expect("mark account settings");
+        crate::preferences::store::atomic_write(&path, &bytes).expect("mark account settings");
         bytes
     };
 

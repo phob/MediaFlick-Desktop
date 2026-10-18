@@ -378,6 +378,10 @@ fn first_difference(rendered: &str, committed: &str) -> String {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "regenerates committed source files on request; git holds the durable copy"
+)]
 fn generated_typescript_is_current() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let rendered = render();
