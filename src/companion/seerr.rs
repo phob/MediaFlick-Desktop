@@ -4,28 +4,47 @@
 use serde_json::{Value, json};
 
 use crate::jellyfin::api::ApiError;
+use crate::jellyfin::session::SessionScope;
 use crate::library::Library;
 use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
 
 use super::CompanionSession;
 
 impl CompanionSession {
-    fn get_seerr(&self, path: &str, query: &[(&str, String)]) -> Result<Value, ApiError> {
-        self.client()?.companion_get_json(path, query)
+    fn get_seerr(
+        &self,
+        scope: &SessionScope,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<Value, ApiError> {
+        self.fetch(scope, |client, _| client.companion_get_json(path, query))
     }
 
-    fn post_seerr(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
-        self.client()?.companion_post_json_once(path, body)
+    fn post_seerr(
+        &self,
+        scope: &SessionScope,
+        path: &str,
+        body: &Value,
+    ) -> Result<Value, ApiError> {
+        self.fetch(scope, |client, _| {
+            client.companion_post_json_once(path, body)
+        })
     }
 
-    pub fn seerr_status(&self) -> Result<Value, ApiError> {
+    pub fn seerr_status(&self, scope: &SessionScope) -> Result<Value, ApiError> {
         self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
-        self.get_seerr("/MediaFlick/seerr/status", &[])
+        self.get_seerr(scope, "/MediaFlick/seerr/status", &[])
     }
 
-    pub fn seerr_search(&self, query: &str, page: i64) -> Result<Value, ApiError> {
+    pub fn seerr_search(
+        &self,
+        scope: &SessionScope,
+        query: &str,
+        page: i64,
+    ) -> Result<Value, ApiError> {
         self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
         let mut value = self.get_seerr(
+            scope,
             "/MediaFlick/seerr/search",
             &[("query", query.to_string()), ("page", page.to_string())],
         )?;
@@ -33,19 +52,27 @@ impl CompanionSession {
         Ok(value)
     }
 
-    pub fn seerr_person_credits(&self, tmdb_id: i64) -> Result<Value, ApiError> {
+    pub fn seerr_person_credits(
+        &self,
+        scope: &SessionScope,
+        tmdb_id: i64,
+    ) -> Result<Value, ApiError> {
         self.require_capability(
             "seerr-person-discovery",
             "the MediaFlick Companion plugin must be updated for cast discovery",
         )?;
-        let mut value =
-            self.get_seerr(&format!("/MediaFlick/seerr/person/{tmdb_id}/credits"), &[])?;
+        let mut value = self.get_seerr(
+            scope,
+            &format!("/MediaFlick/seerr/person/{tmdb_id}/credits"),
+            &[],
+        )?;
         join_seerr_results(&self.library, &mut value);
         Ok(value)
     }
 
     pub fn seerr_discover(
         &self,
+        scope: &SessionScope,
         kind: DiscoverKind,
         page: i64,
         options: &DiscoverOptions,
@@ -53,6 +80,7 @@ impl CompanionSession {
         self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
         let query = options.query_pairs(kind, page);
         let mut value = self.get_seerr(
+            scope,
             &format!("/MediaFlick/seerr/discover/{}", kind.id()),
             query.as_slice(),
         )?;
@@ -60,14 +88,24 @@ impl CompanionSession {
         Ok(value)
     }
 
-    pub fn seerr_genres(&self, media_type: &str) -> Result<Value, ApiError> {
+    pub fn seerr_genres(&self, scope: &SessionScope, media_type: &str) -> Result<Value, ApiError> {
         self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
-        self.get_seerr(&format!("/MediaFlick/seerr/genres/{media_type}"), &[])
+        self.get_seerr(
+            scope,
+            &format!("/MediaFlick/seerr/genres/{media_type}"),
+            &[],
+        )
     }
 
-    pub fn seerr_media(&self, media_type: &str, tmdb_id: i64) -> Result<Value, ApiError> {
+    pub fn seerr_media(
+        &self,
+        scope: &SessionScope,
+        media_type: &str,
+        tmdb_id: i64,
+    ) -> Result<Value, ApiError> {
         self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
         let mut value = self.get_seerr(
+            scope,
             &format!("/MediaFlick/seerr/media/{media_type}/{tmdb_id}"),
             &[],
         )?;
@@ -75,9 +113,15 @@ impl CompanionSession {
         Ok(value)
     }
 
-    pub fn seerr_request_options(&self, media_type: &str, is_4k: bool) -> Result<Value, ApiError> {
+    pub fn seerr_request_options(
+        &self,
+        scope: &SessionScope,
+        media_type: &str,
+        is_4k: bool,
+    ) -> Result<Value, ApiError> {
         self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
         self.get_seerr(
+            scope,
             &format!("/MediaFlick/seerr/request-options/{media_type}"),
             &[("is4k", is_4k.to_string())],
         )
@@ -85,6 +129,7 @@ impl CompanionSession {
 
     pub fn seerr_create_request(
         &self,
+        scope: &SessionScope,
         media_type: &str,
         tmdb_id: i64,
         seasons: Option<&[i64]>,
@@ -93,6 +138,7 @@ impl CompanionSession {
     ) -> Result<Value, ApiError> {
         self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
         let mut value = self.post_seerr(
+            scope,
             "/MediaFlick/seerr/request",
             &json!({
                 "mediaType": media_type,
@@ -107,9 +153,16 @@ impl CompanionSession {
         Ok(value)
     }
 
-    pub fn seerr_requests(&self, take: i64, skip: i64, filter: &str) -> Result<Value, ApiError> {
+    pub fn seerr_requests(
+        &self,
+        scope: &SessionScope,
+        take: i64,
+        skip: i64,
+        filter: &str,
+    ) -> Result<Value, ApiError> {
         self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
         let mut value = self.get_seerr(
+            scope,
             "/MediaFlick/seerr/requests",
             &[
                 ("take", take.to_string()),
@@ -121,10 +174,15 @@ impl CompanionSession {
         Ok(value)
     }
 
-    pub fn seerr_cancel_request(&self, request_id: i64) -> Result<(), ApiError> {
+    pub fn seerr_cancel_request(
+        &self,
+        scope: &SessionScope,
+        request_id: i64,
+    ) -> Result<(), ApiError> {
         self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
-        self.client()?
-            .companion_delete_once(&format!("/MediaFlick/seerr/request/{request_id}"))?;
+        self.fetch(scope, |client, _| {
+            client.companion_delete_once(&format!("/MediaFlick/seerr/request/{request_id}"))
+        })?;
         Ok(())
     }
 }

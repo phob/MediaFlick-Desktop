@@ -239,7 +239,7 @@ pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Service
     if restored {
         warm_restored_session(session.clone(), companion.clone());
     }
-    let ratings = Arc::new(RatingsService::new(library.clone(), companion.clone()));
+    let ratings = Arc::new(RatingsService::new(&library, &session, &companion));
     let letterboxd = Arc::new(ReviewService::default());
     let sync = sync::spawn(library.clone(), session.clone(), shell.clone());
     let socket = socket::spawn(
@@ -498,7 +498,7 @@ pub(crate) mod test_support {
                 shell.clone(),
             ));
             let services = Services {
-                ratings: Arc::new(RatingsService::new(library.clone(), companion.clone())),
+                ratings: Arc::new(RatingsService::new(&library, &session, &companion)),
                 letterboxd: Arc::new(ReviewService::default()),
                 sync: SyncHandle::detached(),
                 socket: SocketHandle::detached(),

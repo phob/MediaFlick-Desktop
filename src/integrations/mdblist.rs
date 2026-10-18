@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 
 use crate::companion::CompanionSession;
+use crate::jellyfin::session::Session;
 use crate::library::Library;
 
 use self::schema::{RatingSourceDefinition, known_source_definitions};
@@ -63,17 +64,18 @@ struct RatingsPluginStatus {
 }
 
 #[derive(Debug)]
-pub struct RatingsError(String);
-
-impl RatingsError {
-    fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
-    }
+pub enum RatingsError {
+    Storage,
+    /// The account was switched before the batch was answered.
+    AccountChanged,
 }
 
 impl fmt::Display for RatingsError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        match self {
+            Self::Storage => formatter.write_str("ratings storage is unavailable"),
+            Self::AccountChanged => crate::jellyfin::api::ApiError::AccountChanged.fmt(formatter),
+        }
     }
 }
 
@@ -81,15 +83,21 @@ impl std::error::Error for RatingsError {}
 
 pub struct RatingsService {
     library: Arc<Library>,
+    session: Arc<Session>,
     companion: Arc<CompanionSession>,
     in_flight: Mutex<HashSet<String>>,
 }
 
 impl RatingsService {
-    pub fn new(library: Arc<Library>, companion: Arc<CompanionSession>) -> Self {
+    pub fn new(
+        library: &Arc<Library>,
+        session: &Arc<Session>,
+        companion: &Arc<CompanionSession>,
+    ) -> Self {
         Self {
-            library,
-            companion,
+            library: library.clone(),
+            session: session.clone(),
+            companion: companion.clone(),
             in_flight: Mutex::new(HashSet::new()),
         }
     }

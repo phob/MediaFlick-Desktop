@@ -40,14 +40,13 @@ pub(super) fn query_person_items(
         .and_then(|value| value.parse().ok())
         .unwrap_or(60);
     let scope = session_scope(services)?;
-    let (client, user_id) = (scope.client(), scope.user_id());
-    match items::fetch_person_items(client, user_id, person_id, offset, limit) {
-        Ok(response) => Ok(ItemPage {
-            items: response.items.iter().map(ItemSummary::from_dto).collect(),
-            total: response.total_record_count,
-        }),
-        Err(error) => Err(scoped_failure(services, &scope, &error)),
-    }
+    let response = fetch_current(services, &scope, |client, user_id| {
+        items::fetch_person_items(client, user_id, person_id, offset, limit)
+    })?;
+    Ok(ItemPage {
+        items: response.items.iter().map(ItemSummary::from_dto).collect(),
+        total: response.total_record_count,
+    })
 }
 
 fn person_identity(dto: &BaseItemDto, fallback_tmdb_id: Option<i64>) -> PersonIdentity {
@@ -77,11 +76,13 @@ pub(super) fn resolve_person(
         .filter(|value| *value > 0);
     let name = request.param("name").unwrap_or_default();
     let scope = session_scope(services)?;
-    let (client, user_id) = (scope.client(), scope.user_id());
 
     if let Some(jellyfin_id) = jellyfin_id {
-        return match items::fetch_item(client, user_id, &jellyfin_id) {
-            Ok(Some(person)) if person.item_type.as_deref() == Some("Person") => {
+        let person = fetch_current(services, &scope, |client, user_id| {
+            items::fetch_item(client, user_id, &jellyfin_id)
+        })?;
+        return match person {
+            Some(person) if person.item_type.as_deref() == Some("Person") => {
                 let provider_id = person
                     .provider_id("Tmdb")
                     .and_then(|id| id.parse::<i64>().ok())
@@ -94,12 +95,11 @@ pub(super) fn resolve_person(
                 }
                 Ok(PersonResolution::found(person_identity(&person, tmdb_id)))
             }
-            Ok(Some(_)) => Err(ApiResponse::error(409, "that Jellyfin id is not a person")),
-            Ok(None) => Err(ApiResponse::error(
+            Some(_) => Err(ApiResponse::error(409, "that Jellyfin id is not a person")),
+            None => Err(ApiResponse::error(
                 404,
                 "the server has no person with that id",
             )),
-            Err(error) => Err(scoped_failure(services, &scope, &error)),
         };
     }
 
@@ -109,41 +109,39 @@ pub(super) fn resolve_person(
             "a person name is required to resolve that deep link",
         ));
     }
-    match items::fetch_people(client, user_id, &name) {
-        Ok(response) => {
-            let mut seen = HashSet::new();
-            let exact = response
-                .items
-                .into_iter()
-                // `/Persons` is already type-scoped. Some older servers omit
-                // `Type` in this lightweight response, so require its stable id
-                // and exact name rather than rejecting a valid candidate.
-                .filter(|person| !person.id.trim().is_empty())
-                .filter(|person| person.display_name().eq_ignore_ascii_case(name.trim()))
-                .filter(|person| seen.insert(person.id.clone()))
-                .filter(|person| {
-                    tmdb_id.is_none_or(|id| {
-                        person
-                            .provider_id("Tmdb")
-                            .and_then(|value| value.parse::<i64>().ok())
-                            .filter(|value| *value > 0)
-                            .is_none_or(|provider_id| provider_id == id)
-                    })
-                })
-                .collect::<Vec<_>>();
-            if exact.len() == 1 {
-                return Ok(PersonResolution::found(person_identity(&exact[0], tmdb_id)));
-            }
-            let candidates = exact
-                .iter()
-                .map(|person| person_identity(person, tmdb_id))
-                .collect::<Vec<_>>();
-            Ok(PersonResolution {
-                person: None,
-                ambiguous: candidates.len() > 1,
-                candidates,
+    let response = fetch_current(services, &scope, |client, user_id| {
+        items::fetch_people(client, user_id, &name)
+    })?;
+    let mut seen = HashSet::new();
+    let exact = response
+        .items
+        .into_iter()
+        // `/Persons` is already type-scoped. Some older servers omit
+        // `Type` in this lightweight response, so require its stable id
+        // and exact name rather than rejecting a valid candidate.
+        .filter(|person| !person.id.trim().is_empty())
+        .filter(|person| person.display_name().eq_ignore_ascii_case(name.trim()))
+        .filter(|person| seen.insert(person.id.clone()))
+        .filter(|person| {
+            tmdb_id.is_none_or(|id| {
+                person
+                    .provider_id("Tmdb")
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .filter(|value| *value > 0)
+                    .is_none_or(|provider_id| provider_id == id)
             })
-        }
-        Err(error) => Err(scoped_failure(services, &scope, &error)),
+        })
+        .collect::<Vec<_>>();
+    if exact.len() == 1 {
+        return Ok(PersonResolution::found(person_identity(&exact[0], tmdb_id)));
     }
+    let candidates = exact
+        .iter()
+        .map(|person| person_identity(person, tmdb_id))
+        .collect::<Vec<_>>();
+    Ok(PersonResolution {
+        person: None,
+        ambiguous: candidates.len() > 1,
+        candidates,
+    })
 }

@@ -259,21 +259,22 @@ pub(super) fn home_resume(services: &Arc<Services>) -> Result<HomeResumeResponse
     };
     let next_up = if home.settings.watching.next_up {
         let fetched = services.session.scope().and_then(|scope| {
-            items::fetch_next_up(scope.client(), scope.user_id(), None, HOME_ROW_LIMIT)
-                .inspect_err(|error| services.session.note_scoped_error(&scope, error))
-        });
-        fetched
-            .map(|response| {
-                response
-                    .items
-                    .iter()
-                    .map(ItemSummary::from_dto)
-                    .collect::<Vec<_>>()
+            services.session.fetch_current(&scope, |client, user_id| {
+                items::fetch_next_up(client, user_id, None, HOME_ROW_LIMIT)
             })
-            .unwrap_or_else(|error| {
+        });
+        match fetched {
+            Ok(response) => response
+                .items
+                .iter()
+                .map(ItemSummary::from_dto)
+                .collect::<Vec<_>>(),
+            Err(ApiError::AccountChanged) => return Err(stale_account_response()),
+            Err(error) => {
                 tracing::debug!(target: "app.api", "Next Up unavailable: {error}");
                 Vec::new()
-            })
+            }
+        }
     } else {
         Vec::new()
     };

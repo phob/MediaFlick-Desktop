@@ -42,21 +42,21 @@ pub(super) fn item_detail(
         return Ok(DetailView::Title(title));
     }
     let scope = session_scope(services)?;
-    let dto = match items::fetch_detailed_item(scope.client(), scope.user_id(), item_id) {
-        Ok(Some(dto)) => dto,
-        Ok(None) => return Err(server_lacks_item(services, &scope, item_id)),
-        Err(error) => {
-            if matches!(error, ApiError::Status { status: 404 }) {
-                forget_item(services, &scope, item_id);
+    let fetched =
+        match scope.fetch(|client, user_id| items::fetch_detailed_item(client, user_id, item_id)) {
+            Ok(fetched) => fetched,
+            Err(error) => {
+                if matches!(error, ApiError::Status { status: 404 }) {
+                    forget_item(services, &scope, item_id);
+                }
+                return Err(scoped_failure(services, &scope, &error));
             }
-            return Err(scoped_failure(services, &scope, &error));
-        }
+        };
+    let Some(dto) = confirmed(services, fetched)? else {
+        return Err(server_lacks_item(services, &scope, item_id));
     };
     let title = match browse::live_detail(&dto) {
-        LiveDetail::Generic(generic) => {
-            still_signed_in(services, &scope)?;
-            return Ok(DetailView::Generic(*generic));
-        }
+        LiveDetail::Generic(generic) => return Ok(DetailView::Generic(*generic)),
         LiveDetail::Title(title) => services.session.commit_if_current(
             &scope,
             || DetailError::AccountChanged,
@@ -83,13 +83,14 @@ pub(super) fn item_synopsis(
     item_id: &str,
 ) -> Result<ItemSynopsis, ApiResponse> {
     let scope = session_scope(services)?;
-    let (client, user_id) = (scope.client(), scope.user_id());
-    match items::fetch_item_synopsis(client, user_id, item_id) {
-        Ok(Some(dto)) => Ok(ItemSynopsis {
+    let synopsis = fetch_current(services, &scope, |client, user_id| {
+        items::fetch_item_synopsis(client, user_id, item_id)
+    })?;
+    match synopsis {
+        Some(dto) => Ok(ItemSynopsis {
             overview: dto.overview,
         }),
-        Ok(None) => Err(server_lacks_item(services, &scope, item_id)),
-        Err(error) => Err(scoped_failure(services, &scope, &error)),
+        None => Err(server_lacks_item(services, &scope, item_id)),
     }
 }
 
@@ -156,9 +157,11 @@ pub(super) fn item_about(
     item_id: &str,
 ) -> Result<ItemAbout, ApiResponse> {
     let scope = session_scope(services)?;
-    let (client, user_id) = (scope.client(), scope.user_id());
-    match items::fetch_item_about(client, user_id, item_id) {
-        Ok(Some(dto)) => {
+    let about = fetch_current(services, &scope, |client, user_id| {
+        items::fetch_item_about(client, user_id, item_id)
+    })?;
+    match about {
+        Some(dto) => {
             let people = bounded_about_people(&dto.people);
             let studios = dto
                 .studios
@@ -173,8 +176,7 @@ pub(super) fn item_about(
                 studios,
             })
         }
-        Ok(None) => Err(server_lacks_item(services, &scope, item_id)),
-        Err(error) => Err(scoped_failure(services, &scope, &error)),
+        None => Err(server_lacks_item(services, &scope, item_id)),
     }
 }
 
@@ -211,28 +213,25 @@ fn live_children(
     page: Option<ChildPage>,
 ) -> Result<ItemPage, ApiResponse> {
     let scope = session_scope(services)?;
-    let (client, user_id) = (scope.client(), scope.user_id());
-    let fail = |error: ApiError| scoped_failure(services, &scope, &error);
     let paged = page.is_some();
     let page = page.unwrap_or_default();
     let remembered = services.children_sources.get(scope.generation(), item_id);
     let source = match remembered {
         Some(source) => source,
-        None => items::fetch_item_type(client, user_id, item_id)
-            .map_err(fail)?
-            .map(|item_type| ChildrenSource::of(&item_type))
-            .ok_or_else(|| ApiResponse::error(404, "the server has no item with that id"))?,
+        None => fetch_current(services, &scope, |client, user_id| {
+            items::fetch_item_type(client, user_id, item_id)
+        })?
+        .map(|item_type| ChildrenSource::of(&item_type))
+        .ok_or_else(|| ApiResponse::error(404, "the server has no item with that id"))?,
     };
-    let children = match source {
+    let children = fetch_current(services, &scope, |client, user_id| match source {
         ChildrenSource::Folder => {
             items::fetch_live_children(client, user_id, item_id, page.offset(), page.limit())
                 .map(|response| browse::live_page(&response))
         }
         ChildrenSource::Playlist => items::fetch_playlist_items(client, user_id, item_id, page)
             .map(|response| browse::playlist_page(&response, page)),
-    }
-    .map_err(fail)?;
-    still_signed_in(services, &scope)?;
+    })?;
     if remembered.is_none() {
         services
             .children_sources

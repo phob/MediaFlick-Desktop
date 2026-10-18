@@ -27,14 +27,24 @@ pub struct ByteResponse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiError {
     Unauthorized,
-    Status { status: u16 },
-    RateLimited { retry_after_secs: Option<u64> },
-    Remote { status: u16, message: String },
+    Status {
+        status: u16,
+    },
+    RateLimited {
+        retry_after_secs: Option<u64>,
+    },
+    Remote {
+        status: u16,
+        message: String,
+    },
     Transport(String),
     Decode(String),
     Storage(String),
     NotConfigured,
     Cancelled,
+    /// The account the request ran for was switched, signed out or deleted
+    /// before its answer arrived.
+    AccountChanged,
 }
 
 impl ApiError {
@@ -46,7 +56,8 @@ impl ApiError {
             | Self::Decode(_)
             | Self::Storage(_)
             | Self::NotConfigured
-            | Self::Cancelled => false,
+            | Self::Cancelled
+            | Self::AccountChanged => false,
         }
     }
 
@@ -64,7 +75,7 @@ impl ApiError {
             Self::Unauthorized => 401,
             Self::RateLimited { .. } => 429,
             Self::Status { status } | Self::Remote { status, .. } => *status,
-            Self::NotConfigured => 409,
+            Self::NotConfigured | Self::AccountChanged => 409,
             Self::Cancelled => 499,
             Self::Transport(_) | Self::Decode(_) => 502,
             Self::Storage(_) => 500,
@@ -92,6 +103,10 @@ impl fmt::Display for ApiError {
             Self::Storage(message) => write!(formatter, "the local library failed: {message}"),
             Self::NotConfigured => write!(formatter, "no Jellyfin server is configured"),
             Self::Cancelled => write!(formatter, "the request was cancelled during shutdown"),
+            Self::AccountChanged => write!(
+                formatter,
+                "the Jellyfin account changed while the request was running"
+            ),
         }
     }
 }

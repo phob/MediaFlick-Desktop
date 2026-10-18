@@ -36,7 +36,6 @@ fn image(
     }
 
     let scope = session_scope(services)?;
-    let client = scope.client();
     let mut query = Vec::new();
     if !tag.is_empty() {
         query.push(("tag", tag));
@@ -46,8 +45,10 @@ fn image(
     }
     query.push(("quality", "90".to_string()));
 
-    match client.get_bytes(&items::image_path(item_id, image_type), &query) {
-        Ok((bytes, content_type)) => {
+    match scope.fetch(|client, _| client.get_bytes(&items::image_path(item_id, image_type), &query))
+    {
+        Ok(fetched) => {
+            let (bytes, content_type) = confirmed(services, fetched)?;
             store_image(&cache_path, &bytes);
             Ok(BinaryAnswer::bytes(content_type, bytes, IMMUTABLE_CACHE))
         }
@@ -67,9 +68,12 @@ fn image(
 /// an empty result rather than an error, which cleanly separates "deleted" from
 /// "the server is unwell" — the latter lands in `Err` and is left alone.
 fn forget_if_server_disowns(services: &Arc<Services>, scope: &SessionScope, item_id: &str) {
-    match items::fetch_item(scope.client(), scope.user_id(), item_id) {
-        Ok(None) => forget_item(services, scope, item_id),
-        Ok(Some(_)) => {}
+    let item = scope
+        .fetch(|client, user_id| items::fetch_item(client, user_id, item_id))
+        .map(|fetched| services.session.confirm(fetched));
+    match item {
+        Ok(Ok(None)) => forget_item(services, scope, item_id),
+        Ok(Ok(Some(_)) | Err(Stale)) => {}
         Err(error) => {
             tracing::debug!(
                 target: "app.api",

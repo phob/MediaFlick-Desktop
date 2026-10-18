@@ -24,8 +24,8 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::app::services::ShellBridge;
-use crate::jellyfin::api::ApiError;
-use crate::jellyfin::session::{Live, Session, SessionScope};
+use crate::jellyfin::api::{ApiError, JellyfinClient};
+use crate::jellyfin::session::{Live, Scoped, Session, SessionScope, Stale};
 
 use super::{Library, LibraryChangeBatch};
 
@@ -201,7 +201,8 @@ impl SyncFailure {
             | ApiError::Remote { .. }
             | ApiError::Decode(_)
             | ApiError::NotConfigured
-            | ApiError::Cancelled => Self::Server,
+            | ApiError::Cancelled
+            | ApiError::AccountChanged => Self::Server,
         }
     }
 }
@@ -419,6 +420,24 @@ pub(super) fn commit<T>(
     work: impl FnOnce(&Live) -> Result<T, ApiError>,
 ) -> Result<T, ApiError> {
     session.commit_if_current(scope, || ApiError::Cancelled, work)
+}
+
+/// Opens an answer inside a [`commit`] closure. The closure only runs while
+/// the account is current, so a stale answer here is a cancelled sync.
+pub(super) fn opened<T>(live: &Live, scoped: Scoped<T>) -> Result<T, ApiError> {
+    live.open(scoped).map_err(|Stale| ApiError::Cancelled)
+}
+
+/// Fetches one page of a walk and opens it at once, because the walk reads
+/// each page before its commit; that commit checks the account again.
+pub(super) fn fetch_page<T>(
+    session: &Session,
+    scope: &SessionScope,
+    call: impl FnOnce(&JellyfinClient, &str) -> Result<T, ApiError>,
+) -> Result<T, ApiError> {
+    session
+        .confirm(scope.fetch(call)?)
+        .map_err(|Stale| ApiError::Cancelled)
 }
 
 pub(super) fn storage_error(error: &rusqlite::Error) -> ApiError {

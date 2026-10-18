@@ -198,11 +198,17 @@ wire_types! {
 /// The body of every non-2xx JSON response. It is generated for the UI but
 /// is not a [`Wire`] type, so `ApiResponse::ok` cannot send it with a 200.
 #[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
 struct ErrorBody {
     error: String,
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     expired: Option<bool>,
+    /// Set on the 409 that answers a request whose account was switched
+    /// before it finished. Other 409s on this API mean something else.
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account_changed: Option<bool>,
 }
 
 impl ApiResponse {
@@ -236,6 +242,7 @@ impl ApiResponse {
             ErrorBody {
                 error: message.into(),
                 expired: None,
+                account_changed: None,
             },
         )
     }
@@ -246,6 +253,7 @@ impl ApiResponse {
             ErrorBody {
                 error: error.to_string(),
                 expired: Some(*error == ApiError::Unauthorized),
+                account_changed: (*error == ApiError::AccountChanged).then_some(true),
             },
         )
     }

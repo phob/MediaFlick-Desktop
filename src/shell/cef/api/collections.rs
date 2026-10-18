@@ -112,23 +112,20 @@ pub(super) struct UploadedArtwork {
 
 fn jellyfin_index(services: &Arc<Services>) -> Result<JellyfinCollections, ApiResponse> {
     let scope = session_scope(services)?;
-    let (client, user_id) = (scope.client(), scope.user_id());
-    match items::fetch_box_sets(client, user_id) {
-        Ok(response) => Ok(JellyfinCollections {
-            collections: response
-                .items
-                .iter()
-                .map(|item| JellyfinCollectionSummary {
-                    id: item.id.clone(),
-                    name: item.display_name().to_string(),
-                    primary_image_tag: item.primary_image_tag().map(str::to_string),
-                    backdrop_image_tag: item.backdrop_image_tags.first().cloned(),
-                    item_count: item.child_count,
-                })
-                .collect(),
-        }),
-        Err(error) => Err(scoped_failure(services, &scope, &error)),
-    }
+    let response = fetch_current(services, &scope, items::fetch_box_sets)?;
+    Ok(JellyfinCollections {
+        collections: response
+            .items
+            .iter()
+            .map(|item| JellyfinCollectionSummary {
+                id: item.id.clone(),
+                name: item.display_name().to_string(),
+                primary_image_tag: item.primary_image_tag().map(str::to_string),
+                backdrop_image_tag: item.backdrop_image_tags.first().cloned(),
+                item_count: item.child_count,
+            })
+            .collect(),
+    })
 }
 
 fn jellyfin_detail(
@@ -142,28 +139,26 @@ fn jellyfin_detail(
         ));
     }
     let scope = session_scope(services)?;
-    let (client, user_id) = (scope.client(), scope.user_id());
-    let set = match items::fetch_item(client, user_id, id) {
-        Ok(Some(item)) => item,
-        Ok(None) => {
-            return Err(ApiResponse::error(
-                404,
-                "that Jellyfin collection does not exist",
-            ));
-        }
-        Err(error) => return Err(scoped_failure(services, &scope, &error)),
+    let Some(set) = fetch_current(services, &scope, |client, user_id| {
+        items::fetch_item(client, user_id, id)
+    })?
+    else {
+        return Err(ApiResponse::error(
+            404,
+            "that Jellyfin collection does not exist",
+        ));
     };
-    match items::fetch_box_set_children(client, user_id, id) {
-        Ok(children) => Ok(JellyfinCollectionDetail {
-            name: set.display_name().to_string(),
-            primary_image_tag: set.primary_image_tag().map(str::to_string),
-            backdrop_image_tag: set.backdrop_image_tags.first().cloned(),
-            items: children.items.iter().map(ItemSummary::from_dto).collect(),
-            total_record_count: children.total_record_count,
-            id: set.id,
-        }),
-        Err(error) => Err(scoped_failure(services, &scope, &error)),
-    }
+    let children = fetch_current(services, &scope, |client, user_id| {
+        items::fetch_box_set_children(client, user_id, id)
+    })?;
+    Ok(JellyfinCollectionDetail {
+        name: set.display_name().to_string(),
+        primary_image_tag: set.primary_image_tag().map(str::to_string),
+        backdrop_image_tag: set.backdrop_image_tags.first().cloned(),
+        items: children.items.iter().map(ItemSummary::from_dto).collect(),
+        total_record_count: children.total_record_count,
+        id: set.id,
+    })
 }
 
 fn configuration_failure(error: &std::io::Error) -> ApiResponse {
@@ -254,14 +249,14 @@ fn search_public_lists(
     body: Body<'_, PublicListSearchBody>,
 ) -> Result<Value, ApiResponse> {
     let body = body.decode()?;
-    active_account(services)?;
+    let scope = active_scope(services)?;
     let query = body.query.trim();
     if query.is_empty() {
         return Err(ApiResponse::error(400, "enter a public-list search"));
     }
     services
         .companion
-        .search_public_lists(query)
+        .search_public_lists(&scope, query)
         .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
@@ -270,7 +265,7 @@ fn validate_public_list(
     body: Body<'_, PublicListValidateBody>,
 ) -> Result<Value, ApiResponse> {
     let body = body.decode()?;
-    active_account(services)?;
+    let scope = active_scope(services)?;
     let selector = body.selector.trim();
     if selector.is_empty() {
         return Err(ApiResponse::error(
@@ -280,7 +275,7 @@ fn validate_public_list(
     }
     services
         .companion
-        .validate_public_list(selector)
+        .validate_public_list(&scope, selector)
         .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
@@ -288,14 +283,14 @@ fn provider_artwork(
     services: &Arc<Services>,
     request: &ApiRequest,
 ) -> Result<BinaryAnswer, ApiResponse> {
-    active_account(services)?;
+    let scope = active_scope(services)?;
     let Some(size) = request.param("size") else {
         return Err(ApiResponse::error(400, "artwork size is required"));
     };
     let Some(path) = request.param("path") else {
         return Err(ApiResponse::error(400, "artwork path is required"));
     };
-    match services.companion.collection_artwork(&size, &path) {
+    match services.companion.collection_artwork(&scope, &size, &path) {
         Ok((bytes, content_type)) if content_type.starts_with("image/") => {
             Ok(BinaryAnswer::bytes(content_type, bytes, IMMUTABLE_CACHE))
         }

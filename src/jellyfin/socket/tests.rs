@@ -188,7 +188,7 @@ fn a_pushed_change_fetched_before_an_account_switch_is_not_cached() {
     worker.join().expect("push worker");
 
     server.join().expect("server");
-    assert_eq!(session.user_id().as_deref(), Some("bob"));
+    assert_eq!(session.status().user_id.as_deref(), Some("bob"));
     assert!(library.item("alice-late").expect("item").is_none());
     assert_eq!(library.stats().total, 0);
 }

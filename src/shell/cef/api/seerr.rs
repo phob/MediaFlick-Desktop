@@ -4,7 +4,7 @@ use super::*;
 routes! {
     |services, request|
     GET ["seerr", "status"] -> Relay =
-        companion_call(services, || services.companion.seerr_status()),
+        companion_call(services, |scope| services.companion.seerr_status(scope)),
     GET ["seerr", "search"] -> Relay = seerr_search(services, request),
     GET ["seerr", "person", tmdb_id, "credits"] -> Relay =
         seerr_person_credits(services, &percent_decode(tmdb_id), request),
@@ -26,16 +26,18 @@ routes! {
 
 fn companion_call(
     services: &Arc<Services>,
-    call: impl FnOnce() -> Result<Value, ApiError>,
+    call: impl FnOnce(&SessionScope) -> Result<Value, ApiError>,
 ) -> Result<Value, ApiResponse> {
     let scope = session_scope(services)?;
-    call().map_err(|error| scoped_failure(services, &scope, &error))
+    call(&scope).map_err(|error| scoped_failure(services, &scope, &error))
 }
 
 fn seerr_search(services: &Arc<Services>, request: &ApiRequest) -> Result<Value, ApiResponse> {
     let query = request.param("q").unwrap_or_default();
-    companion_call(services, || {
-        services.companion.seerr_search(&query, page_param(request))
+    companion_call(services, |scope| {
+        services
+            .companion
+            .seerr_search(scope, &query, page_param(request))
     })
 }
 
@@ -52,7 +54,7 @@ fn seerr_person_credits(
     }
 
     let scope = session_scope(services)?;
-    let mut value = match services.companion.seerr_person_credits(tmdb_id) {
+    let mut value = match services.companion.seerr_person_credits(&scope, tmdb_id) {
         Ok(value) => value,
         Err(error) => return Err(scoped_failure(services, &scope, &error)),
     };
@@ -75,14 +77,13 @@ fn join_server_person_availability(
     person_id: &str,
     value: &mut Value,
 ) -> Result<(), ApiError> {
-    let (client, user_id) = (scope.client(), scope.user_id());
     // The provider first joined against SQLite, which can contain both unseen
     // progressive rows and stale rows awaiting deletion reconciliation. The
     // live exact-person pass is authoritative, so rebuild availability rather
     // than only adding to that provisional answer.
     clear_person_availability(value);
-    let filmography = fetch_person_filmography(client, user_id, person_id, value)?;
-    let extras = verify_off_filmography_titles(services, client, user_id, value, &filmography);
+    let filmography = fetch_person_filmography(services, scope, person_id, value)?;
+    let extras = verify_off_filmography_titles(services, scope, value, &filmography)?;
     mark_owned_credits(value, &extras);
     value["libraryExtras"] = json!(extras.iter().map(ItemSummary::from_dto).collect::<Vec<_>>());
     Ok(())
@@ -100,14 +101,13 @@ const EXTRA_OWNERSHIP_FETCH_CHUNK: usize = 100;
 /// cache rows therefore cannot become false proofs.
 fn verify_off_filmography_titles(
     services: &Arc<Services>,
-    client: &JellyfinClient,
-    user_id: &str,
+    scope: &SessionScope,
     value: &Value,
     filmography: &HashSet<(String, i64)>,
-) -> Vec<BaseItemDto> {
+) -> Result<Vec<BaseItemDto>, ApiError> {
     let unmatched = unmatched_credit_keys(value, filmography);
     if unmatched.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let positions = unmatched
@@ -124,7 +124,7 @@ fn verify_off_filmography_titles(
         Ok(candidates) => candidates,
         Err(error) => {
             tracing::warn!(target: "app.api", "could not read cast ownership candidates from the local catalog: {error}");
-            return Vec::new();
+            return Ok(Vec::new());
         }
     };
 
@@ -144,8 +144,11 @@ fn verify_off_filmography_titles(
     let mut verified = Vec::new();
     let mut verified_identities = HashSet::new();
     for chunk in candidate_ids.chunks(EXTRA_OWNERSHIP_FETCH_CHUNK) {
-        let page = match items::fetch_items(client, user_id, chunk) {
+        let page = match services.session.fetch_current(scope, |client, user_id| {
+            items::fetch_items(client, user_id, chunk)
+        }) {
             Ok(page) => page,
+            Err(ApiError::AccountChanged) => return Err(ApiError::AccountChanged),
             Err(error) => {
                 tracing::warn!(target: "app.api", "could not verify cast titles against the server: {error}");
                 break;
@@ -167,20 +170,21 @@ fn verify_off_filmography_titles(
             .and_then(|(identity, _)| positions.get(&identity).copied())
             .unwrap_or(usize::MAX)
     });
-    verified
+    Ok(verified)
 }
 
 fn fetch_person_filmography(
-    client: &JellyfinClient,
-    user_id: &str,
+    services: &Arc<Services>,
+    scope: &SessionScope,
     person_id: &str,
     value: &mut Value,
 ) -> Result<HashSet<(String, i64)>, ApiError> {
     let mut filmography = HashSet::new();
     let mut offset = 0;
     for _ in 0..MAX_PERSON_QUERY_PAGES {
-        let page =
-            items::fetch_person_items(client, user_id, person_id, offset, items::PERSON_PAGE_SIZE)?;
+        let page = services.session.fetch_current(scope, |client, user_id| {
+            items::fetch_person_items(client, user_id, person_id, offset, items::PERSON_PAGE_SIZE)
+        })?;
         let received = i64::try_from(page.items.len()).unwrap_or(i64::MAX);
         if received == 0 {
             if page.total_record_count > offset {
@@ -319,10 +323,10 @@ fn seerr_discover(
         Ok(options) => options,
         Err(error) => return Err(ApiResponse::error(400, &error)),
     };
-    companion_call(services, || {
+    companion_call(services, |scope| {
         services
             .companion
-            .seerr_discover(kind, page_param(request), &options)
+            .seerr_discover(scope, kind, page_param(request), &options)
     })
 }
 
@@ -330,7 +334,9 @@ fn seerr_genres(services: &Arc<Services>, media_type: &str) -> Result<Value, Api
     if !matches!(media_type, "movie" | "tv") {
         return Err(ApiResponse::error(404, "unknown genre kind"));
     }
-    companion_call(services, || services.companion.seerr_genres(media_type))
+    companion_call(services, |scope| {
+        services.companion.seerr_genres(scope, media_type)
+    })
 }
 
 fn seerr_media(
@@ -341,8 +347,8 @@ fn seerr_media(
     let Ok(tmdb_id) = tmdb_id.parse::<i64>() else {
         return Err(ApiResponse::error(400, "that is not a TMDB id"));
     };
-    companion_call(services, || {
-        services.companion.seerr_media(media_type, tmdb_id)
+    companion_call(services, |scope| {
+        services.companion.seerr_media(scope, media_type, tmdb_id)
     })
 }
 
@@ -354,8 +360,10 @@ fn seerr_request_options(
     let is_4k = request
         .param("is4k")
         .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-    companion_call(services, || {
-        services.companion.seerr_request_options(media_type, is_4k)
+    companion_call(services, |scope| {
+        services
+            .companion
+            .seerr_request_options(scope, media_type, is_4k)
     })
 }
 
@@ -395,8 +403,9 @@ fn seerr_request(
             ));
         }
     };
-    companion_call(services, || {
+    companion_call(services, |scope| {
         services.companion.seerr_create_request(
+            scope,
             &body.media_type,
             body.tmdb_id,
             body.seasons.as_deref(),
@@ -413,8 +422,9 @@ fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> Result<Valu
             .and_then(|value| value.parse().ok())
             .unwrap_or(fallback)
     };
-    companion_call(services, || {
+    companion_call(services, |scope| {
         services.companion.seerr_requests(
+            scope,
             number("take", 20),
             number("skip", 0),
             &request.param("filter").unwrap_or_else(|| "all".to_string()),
@@ -437,7 +447,7 @@ fn seerr_cancel_request(
         return Err(ApiResponse::error(400, "that is not a request id"));
     };
     let scope = session_scope(services)?;
-    match services.companion.seerr_cancel_request(request_id) {
+    match services.companion.seerr_cancel_request(&scope, request_id) {
         Ok(()) => Ok(SeerrRequestCancelled {
             cancelled: true,
             id: request_id,
@@ -472,7 +482,8 @@ fn seerr_image(
             IMMUTABLE_CACHE,
         ));
     }
-    match services.companion.collection_artwork(size, &path) {
+    let scope = session_scope(services)?;
+    match services.companion.collection_artwork(&scope, size, &path) {
         Ok((bytes, _)) => {
             let Some(content_type) = image_mime_type(&bytes) else {
                 return Err(ApiResponse::from_api_error(&ApiError::Decode(

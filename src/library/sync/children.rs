@@ -7,6 +7,8 @@ use crate::jellyfin::api::items;
 use crate::jellyfin::session::Session;
 use crate::library::{CatalogKind, ItemSummary, Library};
 
+use super::fetch_page;
+
 /// How long one parent's reconciled child list is trusted before a later
 /// navigation asks the server again. It also absorbs the refetch that the
 /// reconcile's own change notification triggers.
@@ -93,13 +95,14 @@ fn reconcile_children(
     parent_id: &str,
 ) -> Option<HashMap<String, Option<String>>> {
     let scope = session.scope().ok()?;
-    let (client, user_id) = (scope.client(), scope.user_id());
 
     let mut live_items = Vec::new();
     let mut overviews = HashMap::new();
     let mut offset = 0;
     loop {
-        let page = match items::fetch_children(client, user_id, parent_id, offset) {
+        let page = match fetch_page(session, &scope, |client, user_id| {
+            items::fetch_children(client, user_id, parent_id, offset)
+        }) {
             Ok(page) => page,
             Err(error) => {
                 tracing::debug!(
