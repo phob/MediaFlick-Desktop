@@ -1,7 +1,8 @@
 // A response that was in flight while the user switched accounts must not be
 // answered with the old account's data, expire the new account, or write to
 // either account's local state. The app answers it 409 (`the Jellyfin
-// account changed while the request was running`).
+// account changed while the request was running`) with `accountChanged: true`
+// in the body, which tells it apart from the route's own 409s.
 // The app signs in to account A through a loopback proxy that holds chosen
 // upstream requests on gates. While they are held the user signs out through
 // the user menu and signs in to the demo server as `demo` (account B); then
@@ -40,6 +41,13 @@ const RELEASE_SETTLE_MS = 30000
 const status = async (ctx) => (await ctx.api("/api/status")).body
 const userMenu = (userName, serverUrl) => ({ role: "button", name: `${userName[0].toUpperCase()} ${userName} ${new URL(serverUrl).host}` })
 const excerpt = (text) => (text ?? "").replace(/\s+/g, " ").slice(0, 240)
+const markedAccountChanged = (body) => {
+  try {
+    return JSON.parse(body).accountChanged === true
+  } catch {
+    return false
+  }
+}
 const sha256 = (file) => (existsSync(file) ? createHash("sha256").update(readFileSync(file)).digest("hex") : null)
 
 const itemsQuery = (url, id, fields) => url.pathname === "/Items" && url.searchParams.get("ids") === id && url.searchParams.get("Fields") === fields
@@ -102,6 +110,24 @@ async function waitHeld(ctx, gate) {
     ctx.step(`${gate.name}: ${gate.label} never reached the proxy`)
     return false
   }
+}
+
+// Keeps the first answer the page's own fetches get for `paths`, so the
+// drive can read the body of a request the UI sent by itself.
+async function recordPageAnswers(ctx, paths) {
+  await ctx.app.evaluate(`(() => {
+    const watched = ${JSON.stringify(paths)}
+    const original = window.fetch
+    window.__pageAnswers = {}
+    window.fetch = (input, init) => original(input, init).then((response) => {
+      const { pathname } = new URL(typeof input === "string" ? input : input.url, location.href)
+      if (watched.includes(pathname)) {
+        response.clone().text().then((body) => { window.__pageAnswers[pathname] ??= { status: response.status, body } })
+      }
+      return response
+    })
+    return true
+  })()`)
 }
 
 async function openByUrl(ctx, route) {
@@ -187,6 +213,8 @@ export default async function accountSwitch(ctx) {
     await ctx.unfavoriteAfterRun(movie.id)
 
     const uiHolds = [gate.arm("ui-media", upstream.media(pageMovie.id)), gate.arm("ui-about", upstream.about(pageMovie.id))]
+    const uiRoutes = { "ui-media": `/api/item/${pageMovie.id}/media`, "ui-about": `/api/item/${pageMovie.id}/about` }
+    await recordPageAnswers(ctx, Object.values(uiRoutes))
     await openByUrl(ctx, `/item/${pageMovie.id}`)
     for (const hold of uiHolds) await waitHeld(ctx, hold)
 
@@ -246,22 +274,26 @@ export default async function accountSwitch(ctx) {
     if (!answers) throw new Error(`the held page requests did not settle within ${RELEASE_SETTLE_MS} ms of the release`)
     for (const entry of plan) {
       const answer = answers[entry.key]
-      const pass = entry.held && answer.status === entry.expect && answer.body.includes(STALE)
-      report.cases.push({ case: entry.group, key: entry.key, route: `${entry.method} ${entry.path}`, upstream: entry.upstream.label, held: entry.held, heldAt: entry.gate.arrivedAt, releasedAt: entry.gate.releasedAt, status: answer.status, body: excerpt(answer.body), expected: `${entry.expect} ${STALE}`, pass })
-      expect(pass, `${entry.group}: ${entry.method} ${entry.path} answers ${entry.expect} after the switch (got ${answer.status})`)
+      const flagged = markedAccountChanged(answer.body)
+      const pass = entry.held && answer.status === entry.expect && answer.body.includes(STALE) && flagged
+      report.cases.push({ case: entry.group, key: entry.key, route: `${entry.method} ${entry.path}`, upstream: entry.upstream.label, held: entry.held, heldAt: entry.gate.arrivedAt, releasedAt: entry.gate.releasedAt, status: answer.status, body: excerpt(answer.body), expected: `${entry.expect} ${STALE} accountChanged`, pass })
+      expect(pass, `${entry.group}: ${entry.method} ${entry.path} answers ${entry.expect} with accountChanged after the switch (got ${answer.status}${flagged ? ", accountChanged" : ""})`)
     }
 
     const failedLines = () => [...ctx.appLog().slice(logAtRelease).matchAll(/app request failed method=(\S+) path=(\S+) status=(\d+)/g)].map((match) => ({ method: match[1], path: match[2], status: Number(match[3]) }))
-    const uiRoutes = { "ui-media": `/api/item/${pageMovie.id}/media`, "ui-about": `/api/item/${pageMovie.id}/about` }
     const uiHeld = uiHolds.filter((hold) => hold.arrivedAt)
     expect(uiHeld.length === uiHolds.length, `the detail page's own reads were held upstream (${uiHeld.map((hold) => hold.name).join(", ") || "none"})`)
     await ctx.until(() => uiHeld.every((hold) => failedLines().some((line) => line.path === uiRoutes[hold.name] && line.status === 409)), "app.log lines for the detail page's held reads", 10000).catch(() => null)
+    await ctx.until(async () => Object.keys(await ctx.app.evaluate("window.__pageAnswers ?? {}")).length >= uiHeld.length, "the page's answers to its held reads", 10000).catch(() => null)
+    const pageAnswers = await ctx.app.evaluate("window.__pageAnswers ?? {}")
     for (const hold of uiHolds) {
       const statuses = failedLines().filter((candidate) => candidate.path === uiRoutes[hold.name]).map((candidate) => candidate.status)
-      const pass = Boolean(hold.arrivedAt) && statuses.includes(409)
-      const got = statuses.length ? statuses.join(", ") : "no app request failed line (2xx)"
-      report.cases.push({ case: "late read (detail page)", key: hold.name, route: `GET ${uiRoutes[hold.name]}`, upstream: hold.label, held: Boolean(hold.arrivedAt), heldAt: hold.arrivedAt, releasedAt: hold.releasedAt, status: got, body: null, expected: "409 in app.log after the release", pass })
-      expect(pass, `late read (detail page): GET ${uiRoutes[hold.name]} answers 409 in app.log (got ${got})`)
+      const pageAnswer = pageAnswers[uiRoutes[hold.name]] ?? null
+      const flagged = pageAnswer?.status === 409 && markedAccountChanged(pageAnswer.body)
+      const pass = Boolean(hold.arrivedAt) && statuses.includes(409) && flagged
+      const got = `${statuses.length ? statuses.join(", ") : "no app request failed line (2xx)"}; page saw ${pageAnswer ? `${pageAnswer.status}${flagged ? " accountChanged" : ""}` : "no answer"}`
+      report.cases.push({ case: "late read (detail page)", key: hold.name, route: `GET ${uiRoutes[hold.name]}`, upstream: hold.label, held: Boolean(hold.arrivedAt), heldAt: hold.arrivedAt, releasedAt: hold.releasedAt, status: got, body: pageAnswer ? excerpt(pageAnswer.body) : null, expected: "409 in app.log after the release, and the page's answer 409 with accountChanged", pass })
+      expect(pass, `late read (detail page): GET ${uiRoutes[hold.name]} answers 409 with accountChanged (got ${got})`)
     }
 
     await ctx.sleep(3000)
