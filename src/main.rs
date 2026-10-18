@@ -18,7 +18,7 @@ use clap::Parser;
 
 use crate::app::cli::Cli;
 use crate::app::logger;
-use crate::preferences::{AppSettings, PlayerBackend};
+use crate::preferences::AppSettings;
 use crate::shell::cef::AppConfig;
 
 fn main() {
@@ -32,7 +32,7 @@ fn main() {
     // executable with its own internal switches (for example `--type=renderer`).
     if is_cef_subprocess() {
         std::process::exit(crate::shell::cef::run(&AppConfig {
-            settings: AppSettings::load(),
+            settings: AppSettings::load_at_startup(),
             title: "MediaFlick Desktop".to_string(),
             remote_debugging_port: 0,
             hidden: false,
@@ -40,7 +40,7 @@ fn main() {
     }
 
     let cli = Cli::parse();
-    let mut settings = AppSettings::load();
+    let mut settings = AppSettings::load_at_startup();
     let log_file = cli
         .log_file
         .clone()
@@ -73,27 +73,13 @@ fn main() {
         tracing::warn!(target: "main", "failed to register Linux desktop identity: {error}");
     }
 
-    let mut should_save_settings = false;
-
-    if let Some(url) = cli.normalized_url() {
-        settings.jellyfin_url = Some(url);
-        should_save_settings = true;
-    }
-    if let Some(mpv_path) = &cli.mpv_path {
-        settings.mpv_path = Some(mpv_path.to_string_lossy().into_owned());
-        settings.player_backend = Some(PlayerBackend::Mpv);
-        should_save_settings = true;
-    } else if settings.effective_backend() == PlayerBackend::Mpv
-        && settings.mpv_path.is_none()
-        && let Some(mpv_path) = default_mpv_path()
-    {
-        settings.mpv_path = Some(mpv_path.to_string_lossy().into_owned());
-    }
-    settings.sanitize();
-
-    if should_save_settings && let Err(error) = settings.save() {
-        tracing::warn!(target: "main", "failed to save mediaflick-desktop config: {error}");
-    }
+    settings.apply_launch_overrides(
+        cli.normalized_url(),
+        cli.mpv_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned()),
+        || default_mpv_path().map(|path| path.to_string_lossy().into_owned()),
+    );
 
     let player_path = crate::players::configured_player_path(&settings);
     tracing::info!(

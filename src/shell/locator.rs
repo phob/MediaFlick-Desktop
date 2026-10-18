@@ -21,7 +21,7 @@ pub(in crate::shell) fn init_error() -> Option<&'static str> {
 }
 
 pub(in crate::shell) fn init() -> Option<Arc<Services>> {
-    services().or_else(|| init_with_settings(AppSettings::load()))
+    services().or_else(|| init_with_settings(AppSettings::load_at_startup()))
 }
 
 pub(in crate::shell) fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>> {
