@@ -767,62 +767,6 @@ mod tests {
     }
 
     #[test]
-    fn collection_parts_carry_ownership_and_watched_state() {
-        let library = Library::open_in_memory().expect("library");
-        let items = [
-            serde_json::from_str::<BaseItemDto>(
-                r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProviderIds":{"Tmdb":"603"}}"#,
-            )
-            .expect("movie"),
-            serde_json::from_str::<BaseItemDto>(
-                r#"{"Id":"m2","Name":"Alien","Type":"Movie","ProviderIds":{"Tmdb":"348"}}"#,
-            )
-            .expect("movie"),
-            serde_json::from_str::<BaseItemDto>(
-                r#"{"Id":"s1","Name":"The 603","Type":"Series","ProviderIds":{"Tmdb":"603"}}"#,
-            )
-            .expect("series"),
-        ];
-        library
-            .upsert_page(&crate::jellyfin::session::Live::for_test(), &items)
-            .expect("seed");
-        library
-            .apply_user_data(
-                &crate::jellyfin::session::Live::for_test(),
-                &[crate::library::UserDataRecord {
-                    jellyfin_id: "m1".to_string(),
-                    played: true,
-                    ..Default::default()
-                }],
-            )
-            .expect("user data");
-        let mut detail = json!({
-            "parts": [
-                { "mediaType": "movie", "tmdbId": 603 },
-                { "mediaType": "movie", "tmdbId": 348 },
-                { "mediaType": "movie", "tmdbId": 624834 },
-                { "mediaType": "tv", "tmdbId": 603 }
-            ]
-        });
-
-        super::seerr::join_seerr_rows(
-            &library,
-            &mut detail,
-            "parts",
-            super::seerr::OtherKinds::Keep,
-        );
-
-        assert_eq!(detail["parts"][0]["libraryItemId"], "m1");
-        assert_eq!(detail["parts"][0]["played"], true);
-        assert_eq!(detail["parts"][1]["libraryItemId"], "m2");
-        assert_eq!(detail["parts"][1]["played"], false);
-        assert!(detail["parts"][2]["libraryItemId"].is_null());
-        assert_eq!(detail["parts"][2]["played"], false);
-        // TMDB numeric ids can overlap across movie and TV namespaces.
-        assert_eq!(detail["parts"][3]["libraryItemId"], "s1");
-    }
-
-    #[test]
     fn calendar_join_keeps_episode_and_series_library_identity() {
         let library = Library::open_in_memory().expect("library");
         let items = [

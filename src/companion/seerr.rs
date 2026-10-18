@@ -187,40 +187,41 @@ impl CompanionSession {
     }
 }
 
-fn join_seerr_results(library: &Library, value: &mut Value, other_kinds: OtherKinds) {
-    join_seerr_rows(library, value, "results", other_kinds);
-}
-
-/// What a joined array does with a row whose kind is neither `movie` nor
+/// What a joined page does with a row whose kind is neither `movie` nor
 /// `tv`, such as a person.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum OtherKinds {
+enum OtherKinds {
     /// Search, discover and person credits feed request cards, which need a
     /// known kind.
     Drop,
-    /// The user's requests and a collection's parts show every row, with no
-    /// library title.
+    /// The user's requests show every row, with no library title.
     Keep,
 }
 
-/// Joins one array of shaped Seerr rows against the local cache. `field` is
-/// the array's name: discovery pages answer under `results`, collection
-/// details under `parts`.
-pub(super) fn join_seerr_rows(
-    library: &Library,
-    value: &mut Value,
-    field: &str,
-    other_kinds: OtherKinds,
-) {
-    let Some(results) = value.get_mut(field).and_then(Value::as_array_mut) else {
+/// Joins a page of shaped Seerr rows, answered under `results`, against the
+/// local cache.
+fn join_seerr_results(library: &Library, value: &mut Value, other_kinds: OtherKinds) {
+    let Some(results) = value.get_mut("results").and_then(Value::as_array_mut) else {
         return;
     };
-    if other_kinds == OtherKinds::Drop {
-        results.retain(|item| seerr_kind(item).is_some());
-    }
-    let kinds = results.iter().map(seerr_kind).collect::<Vec<_>>();
-    let movies = tmdb_ids(results, &kinds, TitleKind::Movie);
-    let series = tmdb_ids(results, &kinds, TitleKind::Series);
+    let mut kinds = Vec::with_capacity(results.len());
+    let mut movies = Vec::new();
+    let mut series = Vec::new();
+    results.retain(|item| {
+        let kind = seerr_kind(item);
+        if kind.is_none() && other_kinds == OtherKinds::Drop {
+            return false;
+        }
+        if let Some(tmdb_id) = item["tmdbId"].as_i64() {
+            match kind {
+                Some(TitleKind::Movie) => movies.push(tmdb_id.to_string()),
+                Some(TitleKind::Series) => series.push(tmdb_id.to_string()),
+                None => {}
+            }
+        }
+        kinds.push(kind);
+        true
+    });
     let movie_ids = library
         .ids_by_tmdb(CatalogKind::Movie, &movies)
         .unwrap_or_default();
@@ -254,16 +255,6 @@ fn seerr_kind(item: &Value) -> Option<TitleKind> {
     }
 }
 
-fn tmdb_ids(results: &[Value], kinds: &[Option<TitleKind>], kind: TitleKind) -> Vec<String> {
-    results
-        .iter()
-        .zip(kinds)
-        .filter(|(_, row_kind)| **row_kind == Some(kind))
-        .filter_map(|(item, _)| item["tmdbId"].as_i64())
-        .map(|id| id.to_string())
-        .collect()
-}
-
 fn join_seerr_item(library: &Library, value: &mut Value) {
     let Some(tmdb_id) = value["tmdbId"].as_i64() else {
         return;
@@ -275,4 +266,65 @@ fn join_seerr_item(library: &Library, value: &mut Value) {
             .remove(&tmdb_id.to_string())
     });
     value["libraryItemId"] = library_item_id.map_or(Value::Null, Value::String);
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{OtherKinds, join_seerr_results};
+    use crate::jellyfin::api::model::BaseItemDto;
+    use crate::jellyfin::session::Live;
+    use crate::library::{Library, UserDataRecord};
+
+    #[test]
+    fn seerr_rows_carry_ownership_and_watched_state() {
+        let library = Library::open_in_memory().expect("library");
+        let items = [
+            serde_json::from_str::<BaseItemDto>(
+                r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProviderIds":{"Tmdb":"603"}}"#,
+            )
+            .expect("movie"),
+            serde_json::from_str::<BaseItemDto>(
+                r#"{"Id":"m2","Name":"Alien","Type":"Movie","ProviderIds":{"Tmdb":"348"}}"#,
+            )
+            .expect("movie"),
+            serde_json::from_str::<BaseItemDto>(
+                r#"{"Id":"s1","Name":"The 603","Type":"Series","ProviderIds":{"Tmdb":"603"}}"#,
+            )
+            .expect("series"),
+        ];
+        library
+            .upsert_page(&Live::for_test(), &items)
+            .expect("seed");
+        library
+            .apply_user_data(
+                &Live::for_test(),
+                &[UserDataRecord {
+                    jellyfin_id: "m1".to_string(),
+                    played: true,
+                    ..Default::default()
+                }],
+            )
+            .expect("user data");
+        let mut page = json!({
+            "results": [
+                { "mediaType": "movie", "tmdbId": 603 },
+                { "mediaType": "movie", "tmdbId": 348 },
+                { "mediaType": "movie", "tmdbId": 624834 },
+                { "mediaType": "tv", "tmdbId": 603 }
+            ]
+        });
+
+        join_seerr_results(&library, &mut page, OtherKinds::Keep);
+
+        assert_eq!(page["results"][0]["libraryItemId"], "m1");
+        assert_eq!(page["results"][0]["played"], true);
+        assert_eq!(page["results"][1]["libraryItemId"], "m2");
+        assert_eq!(page["results"][1]["played"], false);
+        assert!(page["results"][2]["libraryItemId"].is_null());
+        assert_eq!(page["results"][2]["played"], false);
+        // TMDB numeric ids can overlap across movie and TV namespaces.
+        assert_eq!(page["results"][3]["libraryItemId"], "s1");
+    }
 }
