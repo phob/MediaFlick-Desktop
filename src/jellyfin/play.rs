@@ -83,7 +83,10 @@ pub fn start(
         settings.streaming_quality,
         &options,
     )
-    .map_err(StartError::Api)?;
+    .map_err(|error| match services.session.scoped_error(scope, error) {
+        ApiError::AccountChanged => StartError::AccountChanged,
+        error => StartError::Api(error),
+    })?;
     if !services.session.scope_is_current(scope) {
         return Err(StartError::AccountChanged);
     }
@@ -171,8 +174,7 @@ pub fn prepare(
         audio_stream_index: effective_options.audio_stream_index,
         subtitle_stream_index: effective_options.subtitle_stream_index,
     };
-    let info = items::playback_info(client, user_id, &options.item_id, quality, &info_request)
-        .inspect_err(|error| session.note_scoped_error(scope, error))?;
+    let info = items::playback_info(client, user_id, &options.item_id, quality, &info_request)?;
 
     build(
         client,
