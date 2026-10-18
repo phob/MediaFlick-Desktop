@@ -150,6 +150,7 @@ check-pr base="origin/main": fmt-check ui
     just clippy-target aarch64-apple-darwin
     MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 cargo clippy --locked --all-targets -- -D warnings
     MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 cargo test --locked --all-targets
+    MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 cargo test --locked --bin mediaflick-desktop -- --list | grep -Fx 'shell::cef::api::wire::untyped_count::untyped_responses_only_shrink: test'
     MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 cargo build --locked --bin mediaflick-desktop
 
 # Continuously run the configured Rust quality job
