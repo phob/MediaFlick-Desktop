@@ -9,6 +9,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query"
 import { toast } from "sonner"
+import { toastFailure } from "./failure-toast"
 import {
   ApiError,
   PAGE_SIZE,
@@ -47,7 +48,7 @@ import type { BrowseSource, ListingSource } from "./libraries"
  */
 function reportError(client: QueryClient) {
   return (error: Error) => {
-    toast.error(error.message)
+    toastFailure(error)
     // The server rejected the token: re-read status so the shell falls back to
     // the sign-in view instead of leaving dead controls on screen.
     if (error instanceof ApiError && (error.expired || error.status === 401)) {
@@ -422,7 +423,7 @@ export function useSetPlaybackPreference(itemId: string) {
       reportError(client)(error)
       // A 409 means the file changed between reading and saving the controls.
       // Re-fetching restores safe current choices instead of keeping stale UI.
-      if (error instanceof ApiError && error.status === 409) {
+      if (error instanceof ApiError && error.status === 409 && !error.accountChanged) {
         void client.invalidateQueries({ queryKey: queryKeys.media(itemId) })
       }
     },

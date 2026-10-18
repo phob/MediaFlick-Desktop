@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
+use crate::jellyfin::api::ApiError;
 use crate::jellyfin::api::items::{self, PAGE_SIZE};
-use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::{Live, Session, SessionScope};
 use crate::library::catalog_libraries::{META_SWEEP_OWED, MembershipReplaced};
 use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
@@ -14,7 +14,8 @@ use super::{
     META_BOOTSTRAP_TOTAL, META_CATALOG_READY, META_EMPTY_SWEEP_AT, META_LAST_BOOTSTRAP,
     META_LAST_IDENTITY_SWEEP, META_LAST_SYNC, META_LATEST_FAILURE, META_WATERMARK,
     META_WATERMARK_IDS, MIN_CONFIRM_GAP, REBOOTSTRAP_INTERVAL, SyncHandle, SyncPhase, SyncReport,
-    Trigger, best_effort, cancelled, commit, first_catalog_download, now_unix, storage_error,
+    Trigger, best_effort, cancelled, commit, fetch_page, first_catalog_download, now_unix,
+    storage_error,
 };
 
 pub fn run_cycle(
@@ -33,8 +34,6 @@ pub(super) fn run_cycle_inner(
 ) -> Result<SyncReport, ApiError> {
     let started = Instant::now();
     let scope = session.scope()?;
-    let client = scope.client();
-    let user_id = scope.user_id();
     let initial_catalog = first_catalog_download(library).map_err(|error| storage_error(&error))?;
     let recovering_ownership = meta(library, META_LATEST_FAILURE)?.as_deref() == Some("1");
     let mut report = SyncReport::default();
@@ -53,22 +52,14 @@ pub(super) fn run_cycle_inner(
         if initial_catalog {
             walk_membership(library, session, &scope, true, control, &mut walked)?;
         }
-        report.bootstrapped = bootstrap(library, session, &scope, client, user_id, control)?;
+        report.bootstrapped = bootstrap(library, session, &scope, control)?;
         walked.walk_landed |= initial_catalog
             && !first_catalog_download(library).map_err(|error| storage_error(&error))?;
         cancelled(control, session, &scope)?;
         if let Some(control) = control {
             control.set_phase(SyncPhase::Reconciling);
         }
-        report.updated = incremental(
-            library,
-            session,
-            &scope,
-            client,
-            user_id,
-            &mut report.changes,
-            control,
-        )?;
+        report.updated = incremental(library, session, &scope, &mut report.changes, control)?;
         let swept = if initial_catalog {
             commit(session, &scope, |live| {
                 touch(library, live, META_LAST_IDENTITY_SWEEP)
@@ -303,8 +294,6 @@ fn bootstrap(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
-    client: &JellyfinClient,
-    user_id: &str,
     control: Option<&SyncHandle>,
 ) -> Result<usize, ApiError> {
     if meta(library, META_BOOTSTRAP_DONE)?.as_deref() == Some("1") {
@@ -328,7 +317,9 @@ fn bootstrap(
             break true;
         }
         let fetch_started = Instant::now();
-        let page = items::fetch_items_page(client, user_id, offset, "DateCreated", "Ascending")?;
+        let page = fetch_page(session, scope, |client, user_id| {
+            items::fetch_items_page(client, user_id, offset, "DateCreated", "Ascending")
+        })?;
         let fetch_ms = fetch_started.elapsed().as_millis() as u64;
         if page.items.is_empty() {
             commit_empty_bootstrap_page(
@@ -508,8 +499,6 @@ fn incremental(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
-    client: &JellyfinClient,
-    user_id: &str,
     changes: &mut LibraryChangeBatch,
     control: Option<&SyncHandle>,
 ) -> Result<usize, ApiError> {
@@ -522,7 +511,9 @@ fn incremental(
 
     for _ in 0..MAX_INCREMENTAL_PAGES {
         cancelled(control, session, scope)?;
-        let page = items::fetch_items_page(client, user_id, offset, "DateCreated", "Descending")?;
+        let page = fetch_page(session, scope, |client, user_id| {
+            items::fetch_items_page(client, user_id, offset, "DateCreated", "Descending")
+        })?;
         if page.items.is_empty() {
             break;
         }
@@ -660,12 +651,9 @@ fn walk_identity(
         if pages >= MAX_IDENTITY_PAGES {
             break true;
         }
-        let page = items::fetch_identity_page(
-            scope.client(),
-            scope.user_id(),
-            offset,
-            IDENTITY_PAGE_SIZE,
-        )?;
+        let page = fetch_page(session, scope, |client, user_id| {
+            items::fetch_identity_page(client, user_id, offset, IDENTITY_PAGE_SIZE)
+        })?;
         if page.items.is_empty() {
             counted_zero = page.total_record_count == Some(0);
             break false;

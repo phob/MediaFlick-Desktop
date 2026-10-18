@@ -4,7 +4,7 @@ use crate::library::libraries::{
 };
 use crate::library::{ItemPage, SortKey};
 
-use super::catalog::{ItemLetters, Params, library_query, param, still_signed_in};
+use super::catalog::{ItemLetters, Params, library_query, param};
 use super::*;
 
 const LATEST_LIMIT: i64 = 40;
@@ -145,9 +145,9 @@ fn answer(
         Grid::Live(query) => query,
     };
     let scope = scope.map_err(|error| ApiResponse::from_api_error(&error))?;
-    let response = items::fetch_live(scope.client(), scope.user_id(), &query)
-        .map_err(|error| scoped_failure(services, &scope, &error))?;
-    still_signed_in(services, &scope)?;
+    let response = fetch_current(services, &scope, |client, user_id| {
+        items::fetch_live(client, user_id, &query)
+    })?;
     Ok(browse::live_page(&response))
 }
 

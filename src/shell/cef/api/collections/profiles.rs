@@ -251,7 +251,8 @@ pub(super) fn preview(
     services: &Arc<Services>,
     body: Body<'_, ProfileDraft>,
 ) -> Result<ProviderResult, ApiResponse> {
-    let account = active_account(services)?;
+    let scope = active_scope(services)?;
+    let account = scope.account().clone();
     let draft = body.decode()?;
     let profile = match draft.into_profile(allocate_profile_id(), allocate_revision_id()) {
         Ok(profile) => profile,
@@ -267,7 +268,7 @@ pub(super) fn preview(
         }
         let result = match services
             .companion
-            .refresh_collection(&provider_request(services, &profile))
+            .refresh_collection(&scope, &provider_request(services, &profile))
         {
             Ok(result) => result,
             Err(error) => return Err(ApiResponse::from_api_error(&error)),
@@ -309,7 +310,7 @@ pub(super) fn preview(
     }
     match services
         .companion
-        .preview_collection(&provider_request(services, &profile))
+        .preview_collection(&scope, &provider_request(services, &profile))
     {
         Ok(result) => Ok(result),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
@@ -494,17 +495,19 @@ fn commit_result_profile(
     let attempt = crate::library::now_unix();
     let result = match services
         .companion
-        .refresh_collection(&provider_request(services, &profile))
+        .refresh_collection(&scope, &provider_request(services, &profile))
     {
         Ok(result) => result,
         Err(error) => {
-            services
-                .session
-                .commit_if_current(&scope, stale_account_response, |_live| {
+            let _ = services.session.commit_if_current(
+                &scope,
+                || (),
+                |_live| {
                     save_failed_refresh(&repository, account, &profile.id, attempt);
                     Ok(())
-                })?;
-            return Err(ApiResponse::from_api_error(&error));
+                },
+            );
+            return Err(scoped_failure(services, &scope, &error));
         }
     };
     if let (CollectionSource::MdbListPublicList { list_id, .. }, Some(source_identity)) =

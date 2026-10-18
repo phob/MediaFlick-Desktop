@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { useSourceDraft } from "@/hooks/use-source-draft"
 import { api, viewingSettingsWrite, type Library, type StartupDestination, type ViewingSettings as ViewingDraft } from "@/lib/api"
+import { toastFailure } from "@/lib/failure-toast"
 import { accountKey, useLibraries, useStatus } from "@/lib/queries"
 import { queryKeys } from "@/lib/query-client"
 import { isSettingsNumberValid } from "@/lib/settings-numbers"
@@ -83,7 +84,7 @@ export default function ViewingSettings() {
       acceptSubtitles(saved.subtitleLanguages.join(", "), submitted.subtitleLanguages.join(", "))
       toast.success("Viewing settings saved")
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toastFailure(error),
   })
   if (!status?.authenticated) return <SignInRequired name="Viewing" />
   if (query.error && !draft) return <SettingsError error={query.error} onRetry={() => void query.refetch()} />

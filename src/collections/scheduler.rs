@@ -272,9 +272,12 @@ pub fn hydrate_identity_map(services: &Services) {
     if requests.is_empty() {
         return;
     }
+    let Ok(scope) = services.session.scope() else {
+        return;
+    };
     let Ok(value) = services
         .companion
-        .resolve_collection_identities(&json!(requests))
+        .resolve_collection_identities(&scope, &json!(requests))
     else {
         return;
     };
@@ -295,6 +298,10 @@ fn refresh_profile(
     profile: &CollectionProfile,
     attempt: i64,
 ) -> bool {
+    let scope = match services.session.scope() {
+        Ok(scope) if scope.account() == account => scope,
+        _ => return false,
+    };
     let owned_tmdb_ids = matches!(
         profile.source,
         super::CollectionSource::TmdbCollection { .. }
@@ -304,21 +311,33 @@ fn refresh_profile(
             .unwrap_or_default()
     })
     .unwrap_or_default();
-    let result = match services.companion.refresh_collection(&json!({
-        "source": profile.source,
-        "mediaType": profile.media_type,
-        "limit": profile.limit,
-        "ownedTmdbIds": owned_tmdb_ids,
-    })) {
+    let result = match services.companion.refresh_collection(
+        &scope,
+        &json!({
+            "source": profile.source,
+            "mediaType": profile.media_type,
+            "limit": profile.limit,
+            "ownedTmdbIds": owned_tmdb_ids,
+        }),
+    ) {
         Ok(result) => result,
         Err(error) => {
-            save_failed_refresh(repository, account, &profile.id, attempt);
             tracing::debug!(
                 target: "collections",
                 profile_id = profile.id,
                 "automatic collection refresh failed: {error}"
             );
-            return true;
+            return services
+                .session
+                .commit_if_current(
+                    &scope,
+                    || false,
+                    |_live| {
+                        save_failed_refresh(repository, account, &profile.id, attempt);
+                        Ok(true)
+                    },
+                )
+                .unwrap_or(false);
         }
     };
     if !profile_is_current(services, account, profile) {

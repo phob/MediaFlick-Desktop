@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { api, type ItemRatings } from "./api"
+import { api, ApiError, type ItemRatings } from "./api"
 import { RatingsContext } from "./rating-context"
 import { queryKeys } from "./query-client"
 import { useRatingsStatus, useSettings } from "./queries"
@@ -107,7 +107,10 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
         refetchType: "active",
       })
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError")) {
+      if (error instanceof ApiError && error.accountChanged) {
+        // Two accounts on one server share item ids; the next account asks
+        // again for the cards it still shows.
+        for (const id of ids) if (active.current.has(id)) pending.current.add(id)
       }
     } finally {
       batches.current.delete(batch)

@@ -9,6 +9,7 @@ use super::ui_events::{
     ShellEvent, UPDATE_AVAILABLE, UPDATE_PROGRESS, UpdateProgress,
 };
 use super::*;
+use crate::jellyfin::session::Stale;
 use crate::playback::PlayerSnapshot;
 use crate::preferences::FullscreenBehavior;
 
@@ -218,6 +219,7 @@ pub(super) enum MpvSetupEvent {
 
 enum PlaybackCacheWriteError {
     StaleSession,
+    Absent,
     Storage(rusqlite::Error),
 }
 
@@ -392,15 +394,20 @@ fn mirror_playback_progress(state: &BrowserState, snapshot: &crate::playback::Pl
             } else {
                 let result = (|| {
                     let scope = services.session.scope()?;
-                    let item = items::fetch_item(scope.client(), scope.user_id(), &item_id)?;
+                    let item = scope
+                        .fetch(|client, user_id| items::fetch_item(client, user_id, &item_id))?;
                     Ok::<_, crate::jellyfin::api::ApiError>((scope, item))
                 })();
                 match result {
-                    Ok((scope, Some(item))) => {
+                    Ok((scope, item)) => {
                         let cached = services.session.commit_if_current(
                             &scope,
                             || PlaybackCacheWriteError::StaleSession,
                             |live| {
+                                let item = live
+                                    .open(item)
+                                    .map_err(|Stale| PlaybackCacheWriteError::StaleSession)?
+                                    .ok_or(PlaybackCacheWriteError::Absent)?;
                                 services
                                     .library
                                     .upsert_page(live, &[item])
@@ -417,6 +424,15 @@ fn mirror_playback_progress(state: &BrowserState, snapshot: &crate::playback::Pl
                                 );
                                 PlaybackCacheRefreshOutcome::Deferred
                             }
+                            Err(PlaybackCacheWriteError::Absent) => {
+                                tracing::debug!(
+                                    target: "jellyfin.playstate",
+                                    item_id,
+                                    "stopped item was absent from Jellyfin's playback-state refresh"
+                                );
+                                services.sync.request();
+                                PlaybackCacheRefreshOutcome::Deferred
+                            }
                             Err(PlaybackCacheWriteError::Storage(error)) => {
                                 tracing::warn!(
                                     target: "library.db",
@@ -427,15 +443,6 @@ fn mirror_playback_progress(state: &BrowserState, snapshot: &crate::playback::Pl
                                 PlaybackCacheRefreshOutcome::Deferred
                             }
                         }
-                    }
-                    Ok((_, None)) => {
-                        tracing::debug!(
-                            target: "jellyfin.playstate",
-                            item_id,
-                            "stopped item was absent from Jellyfin's playback-state refresh"
-                        );
-                        services.sync.request();
-                        PlaybackCacheRefreshOutcome::Deferred
                     }
                     Err(error) => {
                         tracing::debug!(

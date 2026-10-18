@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { useSourceDraft } from "@/hooks/use-source-draft"
 import { api, type ClientSettings } from "@/lib/api"
+import { toastFailure } from "@/lib/failure-toast"
 import { useSettings, useStatus } from "@/lib/queries"
 import { queryKeys, removeAccountQueryData } from "@/lib/query-client"
 import { DEFAULT_APPLICATION_SETTINGS } from "./defaults"
@@ -52,7 +53,7 @@ export default function ApplicationSettings() {
       acceptSaved(saved.client.application, submitted)
       saveSettings(cache, saved)
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toastFailure(error),
   })
   const deleteAccount = useMutation({
     mutationFn: api.collections.deleteLocalAccount,
@@ -62,7 +63,7 @@ export default function ApplicationSettings() {
       void cache.resetQueries({ queryKey: queryKeys.settings })
       toast.success("Local account data deleted")
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toastFailure(error),
   })
   if (settingsQuery.error && !settings) {
     return (

@@ -7,9 +7,13 @@
 //   the app sees as an unreachable server; `heal()` stops failing and
 //   `resumeFailing()` starts again.
 // - `answer(url, method)` returns `{ status, body }` to answer a request
-//   itself with JSON instead of forwarding it, or null to forward it.
+//   itself with JSON instead of forwarding it, or null to forward it. It may
+//   return a Promise of either, which holds the request until it settles.
 // - `delay(url, method)` returns how many milliseconds to hold a request
-//   before forwarding it, so a slow server can be watched.
+//   before forwarding it, so a slow server can be watched, or a Promise that
+//   holds it until the Promise settles, so a drive can release it on a gate.
+// Each request held on a Promise is recorded in `stats.held` when it arrives,
+// so a drive can wait until the app is really blocked on the server.
 // `cutSockets()` drops every open WebSocket and refuses new upgrades until
 // `restoreSockets()`, as a lost network would.
 // The app accepts `http://127.0.0.1:<port>` as a server address, so a drive
@@ -22,7 +26,7 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
   const base = new URL(upstream)
   const prefix = base.pathname.replace(/\/+$/, "")
   const transport = base.protocol === "https:" ? https : http
-  const stats = { forwarded: 0, failed: 0, delayed: 0, answered: [], streams: [], upgrades: 0, refusedUpgrades: 0 }
+  const stats = { forwarded: 0, failed: 0, delayed: 0, answered: [], held: [], streams: [], upgrades: 0, refusedUpgrades: 0 }
   const upgraded = new Set()
   let failing = true
   let socketsCut = false
@@ -46,16 +50,57 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
       return
     }
     const canned = answer(url, method)
-    if (canned) {
-      stats.answered.push({ at: new Date().toISOString(), method, path: url.pathname, search: url.search, status: canned.status })
-      log(`proxy: answered ${method} ${url.pathname} with HTTP ${canned.status}`)
-      const body = JSON.stringify(canned.body)
-      response.writeHead(canned.status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body) })
-      response.end(body)
-      request.resume()
+    if (isPromise(canned)) {
+      const entry = hold("answer", method, url)
+      request.pause()
+      canned.then((value) => {
+        entry.releasedAt = new Date().toISOString()
+        if (value) reply(request, response, url, method, value)
+        else delayThenForward(request, response, url, method)
+      }, (error) => {
+        log(`proxy: the answer gate for ${method} ${url.pathname} failed: ${error.message}`)
+        response.destroy()
+      })
       return
     }
+    if (canned) {
+      reply(request, response, url, method, canned)
+      return
+    }
+    delayThenForward(request, response, url, method)
+  })
+
+  const hold = (hook, method, url) => {
+    const entry = { at: new Date().toISOString(), hook, method, path: url.pathname, search: url.search, releasedAt: null }
+    stats.held.push(entry)
+    log(`proxy: holding ${method} ${url.pathname} on a gate (${hook})`)
+    return entry
+  }
+
+  const reply = (request, response, url, method, canned) => {
+    stats.answered.push({ at: new Date().toISOString(), method, path: url.pathname, search: url.search, status: canned.status })
+    log(`proxy: answered ${method} ${url.pathname} with HTTP ${canned.status}`)
+    const body = JSON.stringify(canned.body)
+    response.writeHead(canned.status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body) })
+    response.end(body)
+    request.resume()
+  }
+
+  const delayThenForward = (request, response, url, method) => {
     const held = delay(url, method)
+    if (isPromise(held)) {
+      stats.delayed++
+      const entry = hold("delay", method, url)
+      request.pause()
+      held.then(() => {
+        entry.releasedAt = new Date().toISOString()
+        forward(request, response, url, method)
+      }, (error) => {
+        log(`proxy: the delay gate for ${method} ${url.pathname} failed: ${error.message}`)
+        response.destroy()
+      })
+      return
+    }
     if (held > 0) {
       stats.delayed++
       request.pause()
@@ -63,7 +108,7 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
       return
     }
     forward(request, response, url, method)
-  })
+  }
 
   const forward = (request, response, url, method) => {
     stats.forwarded++
@@ -181,6 +226,8 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
     })
   })
 }
+
+const isPromise = (value) => typeof value?.then === "function"
 
 const JELLYFIN_SEGMENT_TYPES = ["Unknown", "Commercial", "Preview", "Recap", "Outro", "Intro"]
 const compactId = (id) => id.replace(/-/g, "").toLowerCase()

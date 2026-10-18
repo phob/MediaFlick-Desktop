@@ -88,7 +88,7 @@ fn calendar(services: &Arc<Services>, request: &ApiRequest) -> Result<Value, Api
     let scope = session_scope(services)?;
     services
         .companion
-        .calendar(&start, &end)
+        .calendar(&scope, &start, &end)
         .map_err(|error| scoped_failure(services, &scope, &error))
 }
 

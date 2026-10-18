@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { useSourceDraft } from "@/hooks/use-source-draft"
 import { api, type LetterboxdProfile, type Status } from "@/lib/api"
+import { toastFailure } from "@/lib/failure-toast"
 import { accountKey, letterboxdProfilesQueryOptions, useStatus } from "@/lib/queries"
 import { queryKeys } from "@/lib/query-client"
 import { same } from "./helpers"
@@ -116,15 +117,15 @@ export default function LetterboxdSettings() {
       }
     },
     onSuccess: () => toast.success("Letterboxd settings saved"),
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toastFailure(error),
     onSettled: refresh,
   })
   const verify = useMutation({
     mutationFn: api.letterboxd.refresh,
     onSuccess: refresh,
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toastFailure(error),
   })
-  const open = useMutation({ mutationFn: api.letterboxd.open, onError: (error: Error) => toast.error(error.message) })
+  const open = useMutation({ mutationFn: api.letterboxd.open, onError: (error: Error) => toastFailure(error) })
   const queuedAdditions = () => [...new Set([...additions, ...(entry.trim() ? [entry.trim()] : [])])]
   const clearPending = () => {
     setEntry("")

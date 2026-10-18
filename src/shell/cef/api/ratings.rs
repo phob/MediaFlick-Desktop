@@ -1,4 +1,4 @@
-use crate::integrations::mdblist::{RatingsBatchResponse, RatingsIntegrationStatus};
+use crate::integrations::mdblist::{RatingsBatchResponse, RatingsError, RatingsIntegrationStatus};
 
 use super::*;
 
@@ -29,6 +29,7 @@ fn ratings_batch(
     let body = body.decode()?;
     match services.ratings.batch(&body.ids) {
         Ok(ratings) => Ok(ratings),
+        Err(RatingsError::AccountChanged) => Err(stale_account_response()),
         Err(error) => Err(ApiResponse::error(500, error.to_string())),
     }
 }

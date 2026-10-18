@@ -21,7 +21,7 @@ use crate::jellyfin::api::items;
 use crate::jellyfin::api::model::{BaseItemDto, BaseItemPerson, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
-use crate::jellyfin::session::{SessionScope, SessionStatus};
+use crate::jellyfin::session::{Scoped, SessionScope, SessionStatus};
 use crate::library::sync::{Bootstrap, SyncProgress};
 use crate::library::{
     CatalogKind, ItemPlaybackPreference, ItemQuery, ItemSort, ItemSummary, KindFilter, Library,
@@ -91,16 +91,36 @@ fn session_scope(services: &Services) -> Result<SessionScope, ApiResponse> {
         .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
+/// Answers a failed call made for `scope`. A failure that arrives after the
+/// account changed answers the account-changed 409 instead of itself.
 fn scoped_failure(services: &Services, scope: &SessionScope, error: &ApiError) -> ApiResponse {
-    services.session.note_scoped_error(scope, error);
-    ApiResponse::from_api_error(error)
+    ApiResponse::from_api_error(&services.session.scoped_error(scope, error.clone()))
+}
+
+/// Calls Jellyfin as `scope` and opens the answer for the response, or
+/// answers the account-changed 409 when the account changed meanwhile.
+fn fetch_current<T>(
+    services: &Services,
+    scope: &SessionScope,
+    call: impl FnOnce(&JellyfinClient, &str) -> Result<T, ApiError>,
+) -> Result<T, ApiResponse> {
+    services
+        .session
+        .fetch_current(scope, call)
+        .map_err(|error| ApiResponse::from_api_error(&error))
+}
+
+/// Opens a fetched answer for the response, or answers why it can't be:
+/// the account-changed 409, or a 401 when the account's own token expired.
+fn confirmed<T>(services: &Services, scoped: Scoped<T>) -> Result<T, ApiResponse> {
+    services
+        .session
+        .confirm(scoped)
+        .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
 fn stale_account_response() -> ApiResponse {
-    ApiResponse::error(
-        409,
-        "the Jellyfin account changed while the request was running",
-    )
+    ApiResponse::from_api_error(&ApiError::AccountChanged)
 }
 
 pub fn handle(request: &ApiRequest) -> ApiResponse {
@@ -590,7 +610,10 @@ mod tests {
             .expect("sign out, keeping the cache");
         release_tx.send(()).expect("release");
 
-        assert_eq!(worker.join().expect("worker").status, 200);
+        let response = worker.join().expect("worker");
+        assert_eq!(response.status, 409);
+        let body: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
+        assert_eq!(body["accountChanged"], true);
         assert!(
             server
                 .join()
@@ -646,7 +669,10 @@ mod tests {
             .expect("switch to Bob");
         release_tx.send(()).expect("release");
 
-        assert_eq!(worker.join().expect("worker").status, 401);
+        let response = worker.join().expect("worker");
+        assert_eq!(response.status, 409);
+        let body: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
+        assert_eq!(body["accountChanged"], true);
         let (stale_line, login_line) = server.join().expect("server");
         assert!(
             stale_line.starts_with("GET /Items/f9e8d7c6b5a4938271605f4e3d2c1b0a/LocalTrailers"),
@@ -658,7 +684,7 @@ mod tests {
         );
         let session = &fixture.services.session;
         assert!(session.is_authenticated());
-        assert_eq!(session.user_id().as_deref(), Some("bob"));
+        assert_eq!(session.status().user_id.as_deref(), Some("bob"));
         assert!(!session.status().expired);
     }
 

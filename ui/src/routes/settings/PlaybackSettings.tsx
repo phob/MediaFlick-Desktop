@@ -1,8 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { toast } from "sonner"
 import SaveBar from "@/components/SettingsSaveBar"
 import { useSourceDraft } from "@/hooks/use-source-draft"
 import { api, STREAMING_QUALITIES, type ClientSettings } from "@/lib/api"
+import { toastFailure } from "@/lib/failure-toast"
 import { useSettings } from "@/lib/queries"
 import { DEFAULT_PLAYBACK_SETTINGS } from "./defaults"
 import { same, saveSettings } from "./helpers"
@@ -59,7 +59,7 @@ export default function PlaybackSettings() {
       acceptSaved(saved.client.playback, submitted)
       saveSettings(cache, saved)
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toastFailure(error),
   })
   if (settingsQuery.error && !settings) {
     return (

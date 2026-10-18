@@ -42,6 +42,7 @@ import {
 import { useSidebar } from "@/components/ui/sidebar-context"
 import { useLiveSearch } from "@/hooks/use-live-search"
 import { api } from "@/lib/api"
+import { toastFailure } from "@/lib/failure-toast"
 import { libraryIcon, libraryIdFromPath, libraryPath } from "@/lib/libraries"
 import { useLocalDate } from "@/lib/local-date"
 import { isSidebarRouteActive, librarySearchFromLocation, readDetailNavigationState } from "@/lib/navigation"
@@ -233,7 +234,7 @@ function UserMenu({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) 
                 void api
                   .sync()
                   .then(() => toast.success("Sync requested"))
-                  .catch((error: Error) => toast.error(error.message))
+                  .catch((error: Error) => toastFailure(error))
               }}
             >
               <RefreshCw />

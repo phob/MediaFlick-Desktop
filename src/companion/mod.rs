@@ -14,9 +14,10 @@ use crate::app::services::ShellBridge;
 use crate::collections::{ProviderReadiness, ProviderResult};
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::{ApiError, JellyfinClient};
-use crate::jellyfin::session::{Session, SessionScope};
+use crate::jellyfin::session::{Live, Scoped, Session, SessionScope, Stale};
 use crate::library::{CatalogKind, Library};
-use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
+
+mod seerr;
 
 const MIN_API_VERSION: i64 = 1;
 const MAX_API_VERSION: i64 = 1;
@@ -150,21 +151,13 @@ impl CompanionSession {
 
         let scope = self.session.scope()?;
         match scope
-            .client()
-            .companion_get_info_json::<CompanionInfo>("/MediaFlick/info")
+            .fetch(|client, _| client.companion_get_info_json::<CompanionInfo>("/MediaFlick/info"))
         {
             Ok(info) => {
-                let compatible = info.is_compatible();
-                tracing::info!(
-                    target: "companion",
-                    plugin_version = %info.plugin_version,
-                    api_version = info.api_version,
-                    compatible,
-                    "probed the MediaFlick Companion plugin"
-                );
-                self.replace_scoped(
-                    &scope,
-                    ProbeState {
+                let info = self.replace_scoped(&scope, |live| {
+                    let info = live.open(info).map_err(|Stale| ApiError::AccountChanged)?;
+                    let compatible = info.is_compatible();
+                    let state = ProbeState {
                         checked: true,
                         error: (!compatible).then(|| {
                             format!(
@@ -174,20 +167,28 @@ impl CompanionSession {
                         }),
                         info: Some(info.clone()),
                         checked_at: Some(Instant::now()),
-                    },
-                )?;
+                    };
+                    Ok((state, info))
+                })?;
+                tracing::info!(
+                    target: "companion",
+                    plugin_version = %info.plugin_version,
+                    api_version = info.api_version,
+                    compatible = info.is_compatible(),
+                    "probed the MediaFlick Companion plugin"
+                );
                 Ok(Some(info))
             }
             Err(ApiError::Status { status: 404 } | ApiError::Remote { status: 404, .. }) => {
-                self.replace_scoped(
-                    &scope,
-                    ProbeState {
+                self.replace_scoped(&scope, |_live| {
+                    let state = ProbeState {
                         checked: true,
                         info: None,
                         error: None,
                         checked_at: Some(Instant::now()),
-                    },
-                )?;
+                    };
+                    Ok((state, ()))
+                })?;
                 tracing::debug!(target: "companion", "the server has no companion plugin");
                 Ok(None)
             }
@@ -196,19 +197,18 @@ impl CompanionSession {
                 // client already strips HTTP diagnostics; retain only a fixed
                 // state label so logs and telemetry cannot reintroduce them.
                 let previous = self.read();
-                self.replace_scoped(
-                    &scope,
-                    ProbeState {
+                self.replace_scoped(&scope, |_live| {
+                    let state = ProbeState {
                         checked: true,
                         info: previous.info,
                         error: Some(
                             "the MediaFlick Companion plugin could not be reached".to_string(),
                         ),
                         checked_at: Some(Instant::now()),
-                    },
-                )?;
-                self.session.note_scoped_error(&scope, &error);
-                Err(error)
+                    };
+                    Ok((state, ()))
+                })?;
+                Err(self.session.scoped_error(&scope, error))
             }
         }
     }
@@ -242,27 +242,40 @@ impl CompanionSession {
         }
     }
 
-    pub fn ratings_v1(&self, body: &Value) -> Result<Value, ApiError> {
+    /// Asks for server ratings as `scope`. The answer stays sealed so the
+    /// ratings cache can open it under the commit that stores it.
+    pub fn ratings_v1(
+        &self,
+        scope: &SessionScope,
+        body: &Value,
+    ) -> Result<Scoped<Value>, ApiError> {
         let _ = self.probe(false);
         if !self.supports("ratings-v1") {
             return Err(ApiError::NotConfigured);
         }
-        self.client()?
-            .companion_post_ratings_json_once("/MediaFlick/ratings/v1/batch", body)
+        scope.fetch(|client, _| {
+            client.companion_post_ratings_json_once("/MediaFlick/ratings/v1/batch", body)
+        })
     }
 
-    pub fn calendar(&self, start: &str, end: &str) -> Result<Value, ApiError> {
+    pub fn calendar(
+        &self,
+        scope: &SessionScope,
+        start: &str,
+        end: &str,
+    ) -> Result<Value, ApiError> {
         let _ = self.probe(false);
         if self.supports("calendar") {
-            let client = self.session.client()?;
-            let mut value: Value = client.companion_get_json(
-                "/MediaFlick/calendar",
-                &[("start", start.to_string()), ("end", end.to_string())],
-            )?;
+            let mut value: Value = self.fetch(scope, |client, _| {
+                client.companion_get_json(
+                    "/MediaFlick/calendar",
+                    &[("start", start.to_string()), ("end", end.to_string())],
+                )
+            })?;
             join_calendar(&self.library, &mut value);
             return Ok(value);
         }
-        self.fallback_calendar(start, end)
+        self.fallback_calendar(scope, start, end)
     }
 
     pub fn collection_readiness(&self, force: bool) -> ProviderReadiness {
@@ -283,12 +296,20 @@ impl CompanionSession {
         }
     }
 
-    pub fn preview_collection(&self, body: &Value) -> Result<ProviderResult, ApiError> {
-        self.collection_operation("preview", body)
+    pub fn preview_collection(
+        &self,
+        scope: &SessionScope,
+        body: &Value,
+    ) -> Result<ProviderResult, ApiError> {
+        self.collection_operation(scope, "preview", body)
     }
 
-    pub fn refresh_collection(&self, body: &Value) -> Result<ProviderResult, ApiError> {
-        self.collection_operation("results", body)
+    pub fn refresh_collection(
+        &self,
+        scope: &SessionScope,
+        body: &Value,
+    ) -> Result<ProviderResult, ApiError> {
+        self.collection_operation(scope, "results", body)
     }
 
     pub fn resolve_franchises(
@@ -302,60 +323,78 @@ impl CompanionSession {
             FRANCHISE_MEMBERSHIPS_CAPABILITY,
             "MediaFlick Companion does not provide movie franchise membership refresh",
         )?;
-        if !self.session.scope_is_current(scope) {
-            return Err(ApiError::Cancelled);
-        }
-        scope.client().companion_post_json_once(
-            "/MediaFlick/collection-experience/v1/franchises",
-            &json!({ "tmdbIds": tmdb_ids, "collectionIds": collection_ids }),
-        )
+        self.fetch(scope, |client, _| {
+            client.companion_post_json_once(
+                "/MediaFlick/collection-experience/v1/franchises",
+                &json!({ "tmdbIds": tmdb_ids, "collectionIds": collection_ids }),
+            )
+        })
     }
 
-    pub fn search_public_lists(&self, query: &str) -> Result<Value, ApiError> {
-        self.collection_json_operation("mdblist/search", &json!({ "query": query }))
+    pub fn search_public_lists(
+        &self,
+        scope: &SessionScope,
+        query: &str,
+    ) -> Result<Value, ApiError> {
+        self.collection_json_operation(scope, "mdblist/search", &json!({ "query": query }))
     }
 
-    pub fn validate_public_list(&self, selector: &str) -> Result<Value, ApiError> {
-        self.collection_json_operation("mdblist/validate", &json!({ "selector": selector }))
+    pub fn validate_public_list(
+        &self,
+        scope: &SessionScope,
+        selector: &str,
+    ) -> Result<Value, ApiError> {
+        self.collection_json_operation(scope, "mdblist/validate", &json!({ "selector": selector }))
     }
 
-    pub fn resolve_collection_identities(&self, items: &Value) -> Result<Value, ApiError> {
-        self.collection_json_operation("identities", &json!({ "items": items }))
+    pub fn resolve_collection_identities(
+        &self,
+        scope: &SessionScope,
+        items: &Value,
+    ) -> Result<Value, ApiError> {
+        self.collection_json_operation(scope, "identities", &json!({ "items": items }))
     }
 
     pub fn collection_artwork(
         &self,
+        scope: &SessionScope,
         size: &str,
         path: &str,
     ) -> Result<(Vec<u8>, String), ApiError> {
         self.require_collection_experience()?;
-        self.client()?.companion_get_bytes(
-            "/MediaFlick/collection-experience/v1/artwork",
-            &[("size", size.to_string()), ("path", path.to_string())],
-        )
+        self.fetch(scope, |client, _| {
+            client.companion_get_bytes(
+                "/MediaFlick/collection-experience/v1/artwork",
+                &[("size", size.to_string()), ("path", path.to_string())],
+            )
+        })
     }
 
     fn collection_operation(
         &self,
+        scope: &SessionScope,
         operation: &str,
         body: &Value,
     ) -> Result<ProviderResult, ApiError> {
-        self.require_collection_experience()?;
-        let value = self.client()?.companion_post_json_once(
-            &format!("/MediaFlick/collection-experience/v1/{operation}"),
-            body,
-        )?;
+        let value = self.collection_json_operation(scope, operation, body)?;
         serde_json::from_value(value).map_err(|error| {
             ApiError::Decode(format!("invalid collection provider response: {error}"))
         })
     }
 
-    fn collection_json_operation(&self, operation: &str, body: &Value) -> Result<Value, ApiError> {
+    fn collection_json_operation(
+        &self,
+        scope: &SessionScope,
+        operation: &str,
+        body: &Value,
+    ) -> Result<Value, ApiError> {
         self.require_collection_experience()?;
-        self.client()?.companion_post_json_once(
-            &format!("/MediaFlick/collection-experience/v1/{operation}"),
-            body,
-        )
+        self.fetch(scope, |client, _| {
+            client.companion_post_json_once(
+                &format!("/MediaFlick/collection-experience/v1/{operation}"),
+                body,
+            )
+        })
     }
 
     fn require_collection_experience(&self) -> Result<(), ApiError> {
@@ -367,9 +406,15 @@ impl CompanionSession {
         }
     }
 
-    fn fallback_calendar(&self, start: &str, end: &str) -> Result<Value, ApiError> {
-        let (client, user_id) = self.session.client_and_user()?;
-        let response = items::fetch_upcoming(&client, &user_id, 500)?;
+    fn fallback_calendar(
+        &self,
+        scope: &SessionScope,
+        start: &str,
+        end: &str,
+    ) -> Result<Value, ApiError> {
+        let response = self.fetch(scope, |client, user_id| {
+            items::fetch_upcoming(client, user_id, 500)
+        })?;
         let cached_kind = |item_id: &str| {
             self.library.catalog_kind(item_id).unwrap_or_else(|error| {
                 tracing::warn!(target: "companion", item_id, "could not read a cached item kind: {error}");
@@ -441,32 +486,40 @@ impl CompanionSession {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = state;
     }
 
-    fn replace_scoped(&self, scope: &SessionScope, state: ProbeState) -> Result<(), ApiError> {
-        self.session.commit_if_current(
+    /// Stores the probe state `build` makes, while `scope` is still the
+    /// signed-in account, and returns what `build` returned with it.
+    fn replace_scoped<T>(
+        &self,
+        scope: &SessionScope,
+        build: impl FnOnce(&Live) -> Result<(ProbeState, T), ApiError>,
+    ) -> Result<T, ApiError> {
+        let (changed, answer) = self.session.commit_if_current(
             scope,
-            || ApiError::Cancelled,
-            |_live| {
+            || ApiError::AccountChanged,
+            |live| {
+                let (state, answer) = build(live)?;
                 let previous = self.cached_collection_readiness();
                 self.replace(state);
-                if previous != self.cached_collection_readiness() {
-                    self.shell.collections_changed();
-                }
-                Ok(())
+                Ok((previous != self.cached_collection_readiness(), answer))
             },
-        )
+        )?;
+        if changed {
+            self.shell.collections_changed();
+        }
+        Ok(answer)
     }
 
-    fn client(&self) -> Result<JellyfinClient, ApiError> {
-        self.session.client()
+    /// Calls the Companion as `scope` and opens the answer for the caller.
+    /// An answer or failure for an account that is no longer signed in is
+    /// [`ApiError::AccountChanged`].
+    fn fetch<T>(
+        &self,
+        scope: &SessionScope,
+        call: impl FnOnce(&JellyfinClient, &str) -> Result<T, ApiError>,
+    ) -> Result<T, ApiError> {
+        self.session.fetch_current(scope, call)
     }
 
-    fn get_seerr(&self, path: &str, query: &[(&str, String)]) -> Result<Value, ApiError> {
-        self.client()?.companion_get_json(path, query)
-    }
-
-    fn post_seerr(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
-        self.client()?.companion_post_json_once(path, body)
-    }
     fn require_capability(&self, capability: &str, message: &str) -> Result<(), ApiError> {
         self.probe(false)?;
         if self.supports(capability) {
@@ -477,175 +530,6 @@ impl CompanionSession {
             message: message.to_string(),
         })
     }
-
-    pub fn seerr_status(&self) -> Result<Value, ApiError> {
-        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
-        self.get_seerr("/MediaFlick/seerr/status", &[])
-    }
-
-    pub fn seerr_search(&self, query: &str, page: i64) -> Result<Value, ApiError> {
-        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
-        let mut value = self.get_seerr(
-            "/MediaFlick/seerr/search",
-            &[("query", query.to_string()), ("page", page.to_string())],
-        )?;
-        join_seerr_results(&self.library, &mut value);
-        Ok(value)
-    }
-
-    pub fn seerr_person_credits(&self, tmdb_id: i64) -> Result<Value, ApiError> {
-        self.require_capability(
-            "seerr-person-discovery",
-            "the MediaFlick Companion plugin must be updated for cast discovery",
-        )?;
-        let mut value =
-            self.get_seerr(&format!("/MediaFlick/seerr/person/{tmdb_id}/credits"), &[])?;
-        join_seerr_results(&self.library, &mut value);
-        Ok(value)
-    }
-
-    pub fn seerr_discover(
-        &self,
-        kind: DiscoverKind,
-        page: i64,
-        options: &DiscoverOptions,
-    ) -> Result<Value, ApiError> {
-        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
-        let query = options.query_pairs(kind, page);
-        let mut value = self.get_seerr(
-            &format!("/MediaFlick/seerr/discover/{}", kind.id()),
-            query.as_slice(),
-        )?;
-        join_seerr_results(&self.library, &mut value);
-        Ok(value)
-    }
-
-    pub fn seerr_genres(&self, media_type: &str) -> Result<Value, ApiError> {
-        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
-        self.get_seerr(&format!("/MediaFlick/seerr/genres/{media_type}"), &[])
-    }
-
-    pub fn seerr_media(&self, media_type: &str, tmdb_id: i64) -> Result<Value, ApiError> {
-        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
-        let mut value = self.get_seerr(
-            &format!("/MediaFlick/seerr/media/{media_type}/{tmdb_id}"),
-            &[],
-        )?;
-        join_seerr_item(&self.library, &mut value);
-        Ok(value)
-    }
-
-    pub fn seerr_request_options(&self, media_type: &str, is_4k: bool) -> Result<Value, ApiError> {
-        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
-        self.get_seerr(
-            &format!("/MediaFlick/seerr/request-options/{media_type}"),
-            &[("is4k", is_4k.to_string())],
-        )
-    }
-
-    pub fn seerr_create_request(
-        &self,
-        media_type: &str,
-        tmdb_id: i64,
-        seasons: Option<&[i64]>,
-        is_4k: bool,
-        profile: Option<RequestProfileSelection>,
-    ) -> Result<Value, ApiError> {
-        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
-        let mut value = self.post_seerr(
-            "/MediaFlick/seerr/request",
-            &json!({
-                "mediaType": media_type,
-                "tmdbId": tmdb_id,
-                "seasons": seasons,
-                "is4k": is_4k,
-                "serverId": profile.map(|selection| selection.server_id),
-                "profileId": profile.map(|selection| selection.profile_id),
-            }),
-        )?;
-        join_seerr_item(&self.library, &mut value);
-        Ok(value)
-    }
-
-    pub fn seerr_requests(&self, take: i64, skip: i64, filter: &str) -> Result<Value, ApiError> {
-        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
-        let mut value = self.get_seerr(
-            "/MediaFlick/seerr/requests",
-            &[
-                ("take", take.to_string()),
-                ("skip", skip.to_string()),
-                ("filter", filter.to_string()),
-            ],
-        )?;
-        join_seerr_results(&self.library, &mut value);
-        Ok(value)
-    }
-
-    pub fn seerr_cancel_request(&self, request_id: i64) -> Result<(), ApiError> {
-        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
-        self.client()?
-            .companion_delete_once(&format!("/MediaFlick/seerr/request/{request_id}"))?;
-        Ok(())
-    }
-}
-
-fn join_seerr_results(library: &Library, value: &mut Value) {
-    join_seerr_rows(library, value, "results");
-}
-
-/// Joins one array of shaped Seerr rows against the local cache. `field` is
-/// the array's name: discovery pages answer under `results`, collection
-/// details under `parts`.
-fn join_seerr_rows(library: &Library, value: &mut Value, field: &str) {
-    let Some(results) = value.get_mut(field).and_then(Value::as_array_mut) else {
-        return;
-    };
-    let movies = provider_ids(results, "movie");
-    let series = provider_ids(results, "tv");
-    let movie_ids = library.ids_by_tmdb("Movie", &movies).unwrap_or_default();
-    let series_ids = library.ids_by_tmdb("Series", &series).unwrap_or_default();
-    let movie_played = library.played_by_tmdb("Movie", &movies).unwrap_or_default();
-    for item in results {
-        let media_type = item["mediaType"].as_str().unwrap_or_default();
-        let Some(tmdb_id) = item["tmdbId"].as_i64() else {
-            continue;
-        };
-        let (owned, played) = if media_type == "movie" {
-            (&movie_ids, movie_played.get(&tmdb_id.to_string()).copied())
-        } else {
-            (&series_ids, None)
-        };
-        item["libraryItemId"] = owned
-            .get(&tmdb_id.to_string())
-            .map_or(Value::Null, |id| json!(id));
-        item["played"] = json!(played.unwrap_or(false));
-    }
-}
-
-fn provider_ids(results: &[Value], media_type: &str) -> Vec<String> {
-    results
-        .iter()
-        .filter(|item| item["mediaType"].as_str() == Some(media_type))
-        .filter_map(|item| item["tmdbId"].as_i64())
-        .map(|id| id.to_string())
-        .collect()
-}
-
-fn join_seerr_item(library: &Library, value: &mut Value) {
-    let media_type = value["mediaType"].as_str().unwrap_or_default();
-    let Some(tmdb_id) = value["tmdbId"].as_i64() else {
-        return;
-    };
-    let kind = if media_type == "movie" {
-        "Movie"
-    } else {
-        "Series"
-    };
-    value["libraryItemId"] = library
-        .ids_by_tmdb(kind, &[tmdb_id.to_string()])
-        .unwrap_or_default()
-        .remove(&tmdb_id.to_string())
-        .map_or(Value::Null, Value::String);
 }
 
 fn join_calendar(library: &Library, value: &mut Value) {
@@ -917,7 +801,7 @@ mod tests {
             ]
         });
 
-        super::join_seerr_rows(&library, &mut detail, "parts");
+        super::seerr::join_seerr_rows(&library, &mut detail, "parts");
 
         assert_eq!(detail["parts"][0]["libraryItemId"], "m1");
         assert_eq!(detail["parts"][0]["played"], true);

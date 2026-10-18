@@ -4,6 +4,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::jellyfin::api::ApiError;
+use crate::jellyfin::session::{SessionScope, Stale};
 use crate::library::{CachedRatings, RatingTarget, now_unix};
 
 use super::schema::{
@@ -47,6 +48,9 @@ impl RatingsService {
         if !self.companion.supports("ratings-v1") {
             return Ok(unavailable_ratings());
         }
+        let Ok(scope) = self.session.scope() else {
+            return Ok(unavailable_ratings());
+        };
 
         let targets = rating_targets(&self.library, &item_ids).map_err(storage_error)?;
         let now = now_unix();
@@ -70,7 +74,7 @@ impl RatingsService {
         let diagnostic = if owned.is_empty() {
             None
         } else {
-            let result = self.refresh_plugin(&owned).err();
+            let result = self.refresh_plugin(&scope, &owned).err();
             self.release(&owned);
             cache = self
                 .library
@@ -96,6 +100,9 @@ impl RatingsService {
                 })
             })
             .collect();
+        if !self.session.scope_is_current(&scope) {
+            return Err(RatingsError::AccountChanged);
+        }
         Ok(RatingsBatchResponse {
             available: true,
             effective_origin: EffectiveOrigin::Plugin,
@@ -156,19 +163,24 @@ impl RatingsService {
         }
     }
 
-    fn refresh_plugin(&self, targets: &[RatingTarget]) -> Result<(), String> {
+    fn refresh_plugin(&self, scope: &SessionScope, targets: &[RatingTarget]) -> Result<(), String> {
         let body = json!({
             "boundaryVersion": 1,
             "items": targets,
         });
         let response = self
             .companion
-            .ratings_v1(&body)
+            .ratings_v1(scope, &body)
             .map_err(|error| plugin_rating_error(&error))?;
-        let entries = normalize_plugin_batch(targets, &response, now_unix());
-        self.library
-            .save_rating_cache(&entries)
-            .map_err(|_| "could not cache server ratings; cached ratings remain usable".to_string())
+        let account_changed = || ApiError::AccountChanged.to_string();
+        self.session
+            .commit_if_current(scope, account_changed, |live| {
+                let response = live.open(response).map_err(|Stale| account_changed())?;
+                let entries = normalize_plugin_batch(targets, &response, now_unix());
+                self.library.save_rating_cache(&entries).map_err(|_| {
+                    "could not cache server ratings; cached ratings remain usable".to_string()
+                })
+            })
     }
 }
 
@@ -243,7 +255,7 @@ fn plugin_rating_error(error: &ApiError) -> String {
 }
 
 fn storage_error(_: rusqlite::Error) -> RatingsError {
-    RatingsError::new("ratings storage is unavailable")
+    RatingsError::Storage
 }
 
 fn target_key(target: &RatingTarget) -> String {

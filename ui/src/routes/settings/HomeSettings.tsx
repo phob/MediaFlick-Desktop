@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { useSourceDraft } from "@/hooks/use-source-draft"
 import { api, homeSettingsWrite, type HomeConfiguration } from "@/lib/api"
+import { toastFailure } from "@/lib/failure-toast"
 import { accountKey, useHomeSettings, useStatus } from "@/lib/queries"
 import { queryKeys } from "@/lib/query-client"
 import { same } from "./helpers"
@@ -154,7 +155,7 @@ export default function HomeSettings() {
       cache.removeQueries({ queryKey: queryKeys.billboard })
       toast.success("Home settings saved")
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toastFailure(error),
   })
   if (status.isPending) return <SettingsLoading />
   if (!status.data?.authenticated) return <SignInRequired name="Home" />

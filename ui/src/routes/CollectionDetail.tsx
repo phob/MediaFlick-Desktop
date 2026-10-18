@@ -1,7 +1,6 @@
 import { Layers } from "lucide-react"
 import { useMemo, useState } from "react"
 import { Link, useLocation, useParams } from "react-router-dom"
-import { toast } from "sonner"
 import { CollectionTitleGrid } from "@/components/CollectionTitleGrid"
 import { MediaCard } from "@/components/MediaCard"
 import { PageErrorState } from "@/components/PageHeader"
@@ -26,6 +25,7 @@ import {
   useSeerrMedia,
   useSeerrStatus,
 } from "@/lib/queries"
+import { toastFailure } from "@/lib/failure-toast"
 import { detailNavigationState } from "@/lib/navigation"
 import { useLocalDate } from "@/lib/local-date"
 
@@ -315,7 +315,7 @@ export function MyCollectionDetail() {
     setRefreshing(true)
     void api.collections.refreshProfile(profile.id).then(
       () => void query.refetch(),
-      (error: Error) => toast.error(error.message),
+      (error: Error) => toastFailure(error),
     ).finally(() => setRefreshing(false))
   } : undefined
   return (

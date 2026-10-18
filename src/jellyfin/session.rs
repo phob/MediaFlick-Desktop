@@ -88,27 +88,80 @@ impl SessionScope {
         &self.account
     }
 
-    pub fn client(&self) -> &JellyfinClient {
+    /// The raw client, for the socket, remote control and playback start,
+    /// which check the scope themselves. Everything else calls
+    /// [`Self::fetch`], whose answer can't be read before it is confirmed.
+    pub(in crate::jellyfin) fn client(&self) -> &JellyfinClient {
         &self.client
     }
 
     pub fn user_id(&self) -> &str {
         &self.user_id
     }
+
+    /// Calls Jellyfin as this account. The answer stays sealed until
+    /// [`Session::confirm`] or [`Live::open`] checks that this account is
+    /// still the signed-in one. A failure is not sealed; route it through
+    /// [`Session::scoped_error`] before answering with it.
+    pub fn fetch<T>(
+        &self,
+        call: impl FnOnce(&JellyfinClient, &str) -> Result<T, ApiError>,
+    ) -> Result<Scoped<T>, ApiError> {
+        let value = call(&self.client, &self.user_id)?;
+        Ok(Scoped {
+            generation: self.generation,
+            account: self.account.clone(),
+            value,
+        })
+    }
 }
+
+/// A Jellyfin answer fetched for one account. It opens only through
+/// [`Session::confirm`] or [`Live::open`], so an answer that outlived an
+/// account switch can reach neither the UI nor the cache.
+#[must_use = "a fetched answer must be opened with Session::confirm or Live::open"]
+pub struct Scoped<T> {
+    generation: u64,
+    account: AccountKey,
+    value: T,
+}
+
+/// The account a [`Scoped`] answer was fetched for is no longer signed in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stale;
 
 /// Proof that the signed-in account still matched a [`SessionScope`] while
 /// [`Session::commit_if_current`] held the operation gate. Only that method
 /// mints one, and only for the closure it runs, so a writer of account-owned
 /// cache state that requires `&Live` can't run for an account that was
 /// switched, signed out or deleted after its answer was fetched. The private
-/// field keeps every other module from making one.
-pub struct Live(());
+/// fields keep every other module from making one.
+///
+/// The proof covers the typed `Library` writers only.
+/// `Library::with_connection` and `with_transaction` are `pub(crate)` and take
+/// no proof, so raw SQL can still write catalog tables; today only the
+/// collection snapshot and identity-map writers use them for writes.
+pub struct Live {
+    generation: u64,
+    account: AccountKey,
+}
 
 impl Live {
+    /// Opens an answer fetched for the account this proof was minted for.
+    pub fn open<T>(&self, scoped: Scoped<T>) -> Result<T, Stale> {
+        if scoped.generation == self.generation && scoped.account == self.account {
+            Ok(scoped.value)
+        } else {
+            Err(Stale)
+        }
+    }
+
     #[cfg(test)]
     pub fn for_test() -> Self {
-        Self(())
+        Self {
+            generation: 0,
+            account: AccountKey::new("server", "user").expect("a non-empty test account key"),
+        }
     }
 }
 
@@ -150,10 +203,6 @@ impl Session {
         self.read().server_url
     }
 
-    pub fn user_id(&self) -> Option<String> {
-        self.read().user_id
-    }
-
     pub fn account_key(&self) -> Option<AccountKey> {
         let state = self.read();
         AccountKey::new(state.server_id?, state.user_id?)
@@ -185,20 +234,20 @@ impl Session {
             "/Users/{}",
             crate::app::urls::encode_path_segment(scope.user_id())
         );
-        let Ok(user) = scope
-            .client()
-            .get_json::<super::api::model::UserDto>(&path, &[])
+        let Ok(user) =
+            scope.fetch(|client, _| client.get_json::<super::api::model::UserDto>(&path, &[]))
         else {
             return;
         };
-        let restricted = user
-            .policy
-            .as_ref()
-            .is_none_or(super::api::model::UserPolicy::restricts_catalog);
         let _ = self.commit_if_current(
             &scope,
             || (),
-            |_live| {
+            |live| {
+                let user = live.open(user).map_err(drop)?;
+                let restricted = user
+                    .policy
+                    .as_ref()
+                    .is_none_or(super::api::model::UserPolicy::restricts_catalog);
                 if let Ok(mut state) = self.state.write() {
                     state.restricted = restricted;
                 }
@@ -253,28 +302,44 @@ impl Session {
         if !self.read().matches(scope) {
             return Err(stale());
         }
-        commit(&Live(()))
+        commit(&Live {
+            generation: scope.generation,
+            account: scope.account.clone(),
+        })
     }
 
-    pub fn client(&self) -> Result<JellyfinClient, ApiError> {
+    /// Opens a fetched answer if its account is still the signed-in one.
+    /// Otherwise the error says why, as [`Self::scoped_error`] would for a
+    /// failure: [`ApiError::Unauthorized`] while the account's own rejected
+    /// token expired it and nothing replaced it, so the UI shows sign-in, and
+    /// [`ApiError::AccountChanged`] after a switch, sign-out or deletion.
+    pub fn confirm<T>(&self, scoped: Scoped<T>) -> Result<T, ApiError> {
+        let _gate = self
+            .operation_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = self.read();
-        if state.expired || state.deleting {
-            return Err(ApiError::Unauthorized);
+        if state.is_current(scoped.generation, &scoped.account) {
+            Ok(scoped.value)
+        } else if state.expired_itself(scoped.generation, &scoped.account) {
+            Err(ApiError::Unauthorized)
+        } else {
+            Err(ApiError::AccountChanged)
         }
-        let (Some(server_url), Some(token)) = (state.server_url, state.token) else {
-            return Err(ApiError::NotConfigured);
-        };
-        Ok(JellyfinClient::new(
-            &server_url,
-            &state.device_id,
-            Some(&token),
-        ))
     }
 
-    pub fn client_and_user(&self) -> Result<(JellyfinClient, String), ApiError> {
-        let client = self.client()?;
-        let user_id = self.user_id().ok_or(ApiError::NotConfigured)?;
-        Ok((client, user_id))
+    /// Calls Jellyfin as `scope` and opens the answer for the caller, which
+    /// answers the UI with it. Any answer or failure for an account that is
+    /// no longer signed in comes back as [`ApiError::AccountChanged`].
+    pub fn fetch_current<T>(
+        &self,
+        scope: &SessionScope,
+        call: impl FnOnce(&JellyfinClient, &str) -> Result<T, ApiError>,
+    ) -> Result<T, ApiError> {
+        let fetched = scope
+            .fetch(call)
+            .map_err(|error| self.scoped_error(scope, error))?;
+        self.confirm(fetched)
     }
 
     pub fn anonymous_client(&self, server_url: &str) -> JellyfinClient {
@@ -419,8 +484,8 @@ impl Session {
     }
 
     pub fn logout(&self, forget_library: bool) -> rusqlite::Result<()> {
-        if let Ok(client) = self.client()
-            && let Err(error) = auth::logout(&client)
+        if let Ok(scope) = self.scope()
+            && let Err(error) = auth::logout(scope.client())
         {
             tracing::debug!(target: "jellyfin.session", "server-side logout failed: {error}");
         }
@@ -473,29 +538,41 @@ impl Session {
     /// about panel); without the push the app could sit on authenticated
     /// screens with dead controls until something re-read `/api/status`.
     pub fn note_scoped_error(&self, scope: &SessionScope, error: &ApiError) {
-        if *error == ApiError::Unauthorized && self.mark_expired_inner(scope) {
+        drop(self.scoped_error(scope, error.clone()));
+    }
+
+    /// Routes an API failure made for `scope` like [`Self::note_scoped_error`]
+    /// and returns the error to answer with. A failure for an account that
+    /// is no longer signed in is [`ApiError::AccountChanged`], so a late
+    /// rejection of the previous account's token never reaches the account
+    /// that replaced it.
+    pub fn scoped_error(&self, scope: &SessionScope, error: ApiError) -> ApiError {
+        let expired = {
+            let _gate = self
+                .operation_gate
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Ok(mut state) = self.state.write() else {
+                return error;
+            };
+            if !state.owns_failure(scope) {
+                return ApiError::AccountChanged;
+            }
+            if error != ApiError::Unauthorized || state.expired {
+                return error;
+            }
+            state.expired = true;
+            state.generation = next_generation(state.generation);
+            true
+        };
+        if expired {
             tracing::warn!(
                 target: "jellyfin.session",
                 "the Jellyfin server rejected the stored token; re-authentication required"
             );
             self.shell.session_expired();
         }
-    }
-
-    fn mark_expired_inner(&self, scope: &SessionScope) -> bool {
-        let _gate = self
-            .operation_gate
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Ok(mut state) = self.state.write() else {
-            return false;
-        };
-        if state.expired || state.deleting || !state.matches(scope) {
-            return false;
-        }
-        state.expired = true;
-        state.generation = next_generation(state.generation);
-        true
+        error
     }
 
     pub fn status(&self) -> SessionStatus {
@@ -521,10 +598,30 @@ impl SessionState {
     }
 
     fn matches(&self, scope: &SessionScope) -> bool {
+        self.is_current(scope.generation, scope.account())
+    }
+
+    fn is_current(&self, generation: u64, account: &AccountKey) -> bool {
         !self.expired
             && !self.deleting
-            && self.generation == scope.generation
-            && self.account_key().as_ref() == Some(scope.account())
+            && self.generation == generation
+            && self.account_key().as_ref() == Some(account)
+    }
+
+    /// Whether a failure for `scope` still belongs to the signed-in account:
+    /// the scope is current, or its own rejected token expired it and nothing
+    /// has replaced it since.
+    fn owns_failure(&self, scope: &SessionScope) -> bool {
+        self.matches(scope) || self.expired_itself(scope.generation, scope.account())
+    }
+
+    /// Whether the account fetched at `generation` is still signed in, but
+    /// expired by its own rejected token, with nothing replacing it since.
+    fn expired_itself(&self, generation: u64, account: &AccountKey) -> bool {
+        self.expired
+            && !self.deleting
+            && self.generation == next_generation(generation)
+            && self.account_key().as_ref() == Some(account)
     }
 }
 
@@ -574,10 +671,10 @@ mod tests {
 
         let session = Session::restore(library, Arc::default());
         assert!(session.is_authenticated());
-        let client = session.client().expect("client");
-        assert_eq!(client.base_url(), "http://server:8096");
-        assert_eq!(client.token(), Some("tok"));
-        assert_eq!(session.client_and_user().expect("client and user").1, "uid");
+        let scope = session.scope().expect("scope");
+        assert_eq!(scope.client().base_url(), "http://server:8096");
+        assert_eq!(scope.client().token(), Some("tok"));
+        assert_eq!(scope.user_id(), "uid");
     }
 
     #[test]
@@ -594,7 +691,7 @@ mod tests {
         let scope = session.scope().expect("scope");
         session.note_scoped_error(&scope, &ApiError::Unauthorized);
         assert!(!session.is_authenticated());
-        assert!(matches!(session.client(), Err(ApiError::Unauthorized)));
+        assert!(matches!(session.scope(), Err(ApiError::Unauthorized)));
         assert!(session.status().expired);
     }
 
@@ -647,7 +744,7 @@ mod tests {
         assert_eq!(result, Err("stale"));
         session.note_scoped_error(&alice, &ApiError::Unauthorized);
         assert!(session.is_authenticated());
-        assert_eq!(session.user_id().as_deref(), Some("bob"));
+        assert_eq!(session.status().user_id.as_deref(), Some("bob"));
         assert!(!session.status().expired);
     }
 
@@ -691,7 +788,6 @@ mod tests {
 
         assert!(!session.is_authenticated());
         assert!(session.scope().is_err());
-        assert!(session.client().is_err());
         assert_eq!(
             session.commit_if_current(&scope, || "stale", |_live| Ok::<_, &str>(())),
             Err("stale")

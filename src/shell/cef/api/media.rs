@@ -1,3 +1,4 @@
+use crate::jellyfin::session::Stale;
 use crate::library::model::ResolvedPlaybackPreference;
 
 use super::*;
@@ -197,7 +198,6 @@ fn technical_batch(
         return Ok(TechnicalBatch { items: Vec::new() });
     }
     let scope = session_scope(services)?;
-    let (client, user_id) = (scope.client(), scope.user_id());
     let mut results = Vec::new();
     for chunk in source_ids.chunks(TECHNICAL_BATCH_SIZE) {
         // The UI aborts a batch once none of its cards remains mounted; the
@@ -207,21 +207,16 @@ fn technical_batch(
         if request.is_cancelled() {
             return Err(ApiResponse::error(499, "the browser abandoned the request"));
         }
-        match items::fetch_media_stream_batch(client, user_id, chunk) {
-            Ok(response) => {
-                for dto in &response.items {
-                    let streams = technical_streams(&dto.media_streams);
-                    for card_id in cards_by_source.get(&dto.id).into_iter().flatten() {
-                        results.push(ItemTechnical {
-                            id: card_id.clone(),
-                            media_streams: streams.clone(),
-                        });
-                    }
-                }
-            }
-            Err(error) => {
-                services.session.note_scoped_error(&scope, &error);
-                return Err(ApiResponse::from_api_error(&error));
+        let response = fetch_current(services, &scope, |client, user_id| {
+            items::fetch_media_stream_batch(client, user_id, chunk)
+        })?;
+        for dto in &response.items {
+            let streams = technical_streams(&dto.media_streams);
+            for card_id in cards_by_source.get(&dto.id).into_iter().flatten() {
+                results.push(ItemTechnical {
+                    id: card_id.clone(),
+                    media_streams: streams.clone(),
+                });
             }
         }
     }
@@ -266,20 +261,14 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> Result<MediaInfoRespon
         });
     }
     let scope = session_scope(services)?;
-    let (client, user_id) = (scope.client(), scope.user_id());
-    match items::fetch_media_sources(client, user_id, item_id) {
-        Ok(sources) => {
-            let preference = services
-                .session
-                .account_key()
-                .and_then(|account| services.playback_preferences.get(&account, item_id));
-            Ok(MediaInfoResponse {
-                sources: sources.iter().map(MediaSourceView::of).collect(),
-                playback_preference: resolve_playback_preference(preference.as_ref(), &sources),
-            })
-        }
-        Err(error) => Err(scoped_failure(services, &scope, &error)),
-    }
+    let sources = fetch_current(services, &scope, |client, user_id| {
+        items::fetch_media_sources(client, user_id, item_id)
+    })?;
+    let preference = services.playback_preferences.get(scope.account(), item_id);
+    Ok(MediaInfoResponse {
+        sources: sources.iter().map(MediaSourceView::of).collect(),
+        playback_preference: resolve_playback_preference(preference.as_ref(), &sources),
+    })
 }
 
 /// Saves one complete source/audio/subtitle selection for an exact item.
@@ -309,13 +298,9 @@ fn set_item_playback_preference(
         .map(str::trim)
         .filter(|id| !id.is_empty());
     let scope = session_scope(services)?;
-    let sources = match items::fetch_media_sources(scope.client(), scope.user_id(), item_id) {
-        Ok(sources) => sources,
-        Err(error) => {
-            services.session.note_scoped_error(&scope, &error);
-            return Err(ApiResponse::from_api_error(&error));
-        }
-    };
+    let sources = fetch_current(services, &scope, |client, user_id| {
+        items::fetch_media_sources(client, user_id, item_id)
+    })?;
     let Some(source) = sources
         .get(source_index)
         .filter(|source| match requested_source_id {
@@ -398,22 +383,21 @@ fn set_item_playback_preference(
 
 fn trailer_info(services: &Arc<Services>, item_id: &str) -> Result<TrailerResponse, ApiResponse> {
     let scope = session_scope(services)?;
-    let (client, user_id) = (scope.client(), scope.user_id());
-    match items::fetch_local_trailers(client, user_id, item_id) {
-        Ok(trailers) => match trailers
-            .into_iter()
-            .find(|trailer| !trailer.id.trim().is_empty())
-        {
-            Some(trailer) => Ok(TrailerResponse {
-                trailer: Some(TrailerSummary {
-                    name: trailer.display_name().to_string(),
-                    id: Some(trailer.id),
-                    embed_url: None,
-                }),
+    let trailers = fetch_current(services, &scope, |client, user_id| {
+        items::fetch_local_trailers(client, user_id, item_id)
+    })?;
+    match trailers
+        .into_iter()
+        .find(|trailer| !trailer.id.trim().is_empty())
+    {
+        Some(trailer) => Ok(TrailerResponse {
+            trailer: Some(TrailerSummary {
+                name: trailer.display_name().to_string(),
+                id: Some(trailer.id),
+                embed_url: None,
             }),
-            None => remote_trailer_info(services, &scope, item_id),
-        },
-        Err(error) => Err(scoped_failure(services, &scope, &error)),
+        }),
+        None => remote_trailer_info(services, &scope, item_id),
     }
 }
 
@@ -422,19 +406,17 @@ fn remote_trailer_info(
     scope: &SessionScope,
     item_id: &str,
 ) -> Result<TrailerResponse, ApiResponse> {
-    match items::fetch_remote_trailers(scope.client(), scope.user_id(), item_id) {
-        Ok(trailers) => {
-            let trailer = trailers.into_iter().find_map(|trailer| {
-                youtube_embed_url(&trailer.url).map(|embed_url| TrailerSummary {
-                    id: None,
-                    name: trailer.name.unwrap_or_else(|| "Trailer".to_string()),
-                    embed_url: Some(embed_url),
-                })
-            });
-            Ok(TrailerResponse { trailer })
-        }
-        Err(error) => Err(scoped_failure(services, scope, &error)),
-    }
+    let trailers = fetch_current(services, scope, |client, user_id| {
+        items::fetch_remote_trailers(client, user_id, item_id)
+    })?;
+    let trailer = trailers.into_iter().find_map(|trailer| {
+        youtube_embed_url(&trailer.url).map(|embed_url| TrailerSummary {
+            id: None,
+            name: trailer.name.unwrap_or_else(|| "Trailer".to_string()),
+            embed_url: Some(embed_url),
+        })
+    });
+    Ok(TrailerResponse { trailer })
 }
 
 fn youtube_embed_url(value: &str) -> Option<String> {
@@ -475,19 +457,16 @@ fn trailer_stream(
     let scope = session_scope(services)?;
     let path = format!("/Videos/{}/stream", encode_path_segment(trailer_id));
     let range = bounded_byte_range(request.range.as_deref());
-    match scope
-        .client()
-        .get_bytes_range(&path, &[("static", "true".to_string())], Some(&range))
-    {
-        Ok(response) => Ok(BinaryAnswer::ranged_bytes(
-            response.status,
-            response.content_type,
-            response.body,
-            response.content_range,
-            response.accept_ranges,
-        )),
-        Err(error) => Err(scoped_failure(services, &scope, &error)),
-    }
+    let response = fetch_current(services, &scope, |client, _| {
+        client.get_bytes_range(&path, &[("static", "true".to_string())], Some(&range))
+    })?;
+    Ok(BinaryAnswer::ranged_bytes(
+        response.status,
+        response.content_type,
+        response.body,
+        response.content_range,
+        response.accept_ranges,
+    ))
 }
 
 fn bounded_byte_range(value: Option<&str>) -> String {
@@ -603,13 +582,16 @@ fn next_up(services: &Arc<Services>, item_id: &str) -> Result<NextUpResponse, Ap
         return Ok(NextUpResponse { item: None });
     }
     let from_server = match services.session.scope() {
-        Ok(scope) => items::fetch_next_up(scope.client(), scope.user_id(), Some(item_id), 1)
-            .map(|response| response.items.first().map(ItemSummary::from_dto))
-            .unwrap_or_else(|error| {
-                services.session.note_scoped_error(&scope, &error);
+        Ok(scope) => match services.session.fetch_current(&scope, |client, user_id| {
+            items::fetch_next_up(client, user_id, Some(item_id), 1)
+        }) {
+            Ok(response) => response.items.first().map(ItemSummary::from_dto),
+            Err(ApiError::AccountChanged) => return Err(stale_account_response()),
+            Err(error) => {
                 tracing::debug!(target: "app.api", "Next Up unavailable for {item_id}: {error}");
                 None
-            }),
+            }
+        },
         Err(_) => None,
     };
     let item = match from_server {
@@ -726,15 +708,19 @@ fn set_played(
     body: Body<'_, PlayedBody>,
 ) -> Result<PlayedState, ApiResponse> {
     let played = body.decode()?.played;
-    let scope = user_data_write(services, item_id, |client, user_id| {
+    user_data_write(services, item_id, |client, user_id| {
         items::set_played(client, user_id, item_id, played)
-    })?;
-    let _ = services.session.commit_if_current(
-        &scope,
-        || (),
-        |live| Ok(services.library.set_local_played(live, item_id, played)),
-    );
-    Ok(PlayedState { played })
+    })
+    .and_then(|(scope, written)| {
+        services
+            .session
+            .commit_if_current(&scope, stale_account_response, |live| {
+                live.open(written)
+                    .map_err(|Stale| stale_account_response())?;
+                let _ = services.library.set_local_played(live, item_id, played);
+                Ok(PlayedState { played })
+            })
+    })
 }
 
 fn set_favorite(
@@ -743,28 +729,32 @@ fn set_favorite(
     body: Body<'_, FavoriteBody>,
 ) -> Result<FavoriteState, ApiResponse> {
     let favorite = body.decode()?.favorite;
-    let scope = user_data_write(services, item_id, |client, user_id| {
+    user_data_write(services, item_id, |client, user_id| {
         items::set_favorite(client, user_id, item_id, favorite)
-    })?;
-    let _ = services.session.commit_if_current(
-        &scope,
-        || (),
-        |live| Ok(services.library.set_local_favorite(live, item_id, favorite)),
-    );
-    Ok(FavoriteState { favorite })
+    })
+    .and_then(|(scope, written)| {
+        services
+            .session
+            .commit_if_current(&scope, stale_account_response, |live| {
+                live.open(written)
+                    .map_err(|Stale| stale_account_response())?;
+                let _ = services.library.set_local_favorite(live, item_id, favorite);
+                Ok(FavoriteState { favorite })
+            })
+    })
 }
 
 fn user_data_write(
     services: &Arc<Services>,
     item_id: &str,
     write: impl FnOnce(&JellyfinClient, &str) -> Result<(), ApiError>,
-) -> Result<SessionScope, ApiResponse> {
+) -> Result<(SessionScope, Scoped<()>), ApiResponse> {
     let scope = session_scope(services)?;
-    write(scope.client(), scope.user_id()).map_err(|error| {
+    let written = scope.fetch(write).map_err(|error| {
         tracing::warn!(target: "app.api", item_id, "user-data write failed: {error}");
         scoped_failure(services, &scope, &error)
     })?;
-    Ok(scope)
+    Ok((scope, written))
 }
 
 #[cfg(test)]

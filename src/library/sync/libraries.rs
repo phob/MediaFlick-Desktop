@@ -7,8 +7,8 @@ use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary, Member
 use crate::library::{Library, TitleKind};
 
 use super::{
-    IDENTITY_PAGE_SIZE, MAX_IDENTITY_PAGES, SyncHandle, best_effort, cancelled, commit,
-    storage_error,
+    IDENTITY_PAGE_SIZE, MAX_IDENTITY_PAGES, SyncHandle, best_effort, cancelled, commit, fetch_page,
+    opened, storage_error,
 };
 
 pub(super) struct LibraryList {
@@ -29,24 +29,30 @@ pub(super) fn refresh_libraries(
     session: &Session,
     scope: &SessionScope,
 ) -> Result<LibraryList, ApiError> {
-    let views = items::fetch_user_views(scope.client(), scope.user_id())?;
-    let mut seen = HashSet::new();
-    let libraries = views
-        .iter()
-        .filter_map(|view| {
-            let parsed = MediaLibrary::from_view(view);
-            if parsed.is_none() {
-                tracing::warn!(target: "library.sync", id = view.id, "skipped a library with an unusable id");
-            }
-            parsed
-        })
-        .filter(|parsed| seen.insert(parsed.id.clone()))
-        .collect::<Vec<_>>();
-    let replaced = commit(session, scope, |live| {
-        library
+    let views = scope.fetch(items::fetch_user_views)?;
+    let (libraries, replaced, unusable) = commit(session, scope, |live| {
+        let views = opened(live, views)?;
+        let mut seen = HashSet::new();
+        let mut unusable = Vec::new();
+        let libraries = views
+            .iter()
+            .filter_map(|view| {
+                let parsed = MediaLibrary::from_view(view);
+                if parsed.is_none() {
+                    unusable.push(view.id.clone());
+                }
+                parsed
+            })
+            .filter(|parsed| seen.insert(parsed.id.clone()))
+            .collect::<Vec<_>>();
+        let replaced = library
             .replace_libraries(live, &libraries)
-            .map_err(|error| storage_error(&error))
+            .map_err(|error| storage_error(&error))?;
+        Ok((libraries, replaced, unusable))
     })?;
+    for id in unusable {
+        tracing::warn!(target: "library.sync", id, "skipped a library with an unusable id");
+    }
     Ok(LibraryList {
         libraries,
         changed: replaced.listing_changed,
@@ -125,14 +131,16 @@ fn member_ids(
     let mut server_count = None;
     for _ in 0..MAX_IDENTITY_PAGES {
         cancelled(control, session, scope)?;
-        let page = items::fetch_library_member_ids(
-            scope.client(),
-            scope.user_id(),
-            library_id.as_str(),
-            title.into(),
-            offset,
-            IDENTITY_PAGE_SIZE,
-        )?;
+        let page = fetch_page(session, scope, |client, user_id| {
+            items::fetch_library_member_ids(
+                client,
+                user_id,
+                library_id.as_str(),
+                title.into(),
+                offset,
+                IDENTITY_PAGE_SIZE,
+            )
+        })?;
         let counted = *server_count.get_or_insert(page.total_record_count);
         let received = page.items.len() as i64;
         ids.extend(

@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
 import { toast } from "sonner"
+import { toastFailure } from "./failure-toast"
 import { useViewing } from "./viewing"
 import { accountKey, useStatus } from "./queries"
 import { api, type PlayerState } from "./api"
@@ -78,7 +79,7 @@ export function usePlaybackEventsBridge() {
           if (disposed || !result.started) return
           toast.success("Playing the next episode")
           void queryClient.invalidateQueries({ queryKey: queryKeys.playerState })
-        }).catch((error: Error) => { continuing = false; if (!disposed) toast.error(error.message) })
+        }).catch((error: Error) => { continuing = false; if (!disposed) toastFailure(error) })
       }
       if (explicitNext || settings.nextEpisode === "auto") { playNext(); return }
       let remaining = settings.countdownSeconds
@@ -96,7 +97,7 @@ export function usePlaybackEventsBridge() {
         if (!next) { completed = 0; return }
         prompt()
         timer = setInterval(() => { remaining -= 1; if (remaining <= 0) playNext(); else prompt() }, 1000)
-      }).catch((error: Error) => { if (!disposed && generation === promptGeneration) toast.error(error.message) })
+      }).catch((error: Error) => { if (!disposed && generation === promptGeneration) toastFailure(error) })
     }
 
     window.__mediaFlickDesktopPlaybackCacheRefreshed = (payload) => {
