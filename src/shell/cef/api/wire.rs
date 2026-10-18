@@ -271,3 +271,5 @@ const UNTYPED_BODIES: usize = 0; // guard-ratchet
 mod guards;
 #[cfg(test)]
 mod typescript;
+#[cfg(test)]
+mod untyped_count;

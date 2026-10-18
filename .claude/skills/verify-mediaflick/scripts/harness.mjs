@@ -46,7 +46,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     throw new Error(`timed out after ${timeout} ms waiting for ${description} (last: ${JSON.stringify(last)})`)
   }
 
-  async function axQuery({ role, name, css }) {
+  async function axQuery({ role, name, css, within }) {
     const { root } = await app.send("DOM.getDocument", { depth: 0 })
     if (css) {
       const { nodeIds } = await app.send("DOM.querySelectorAll", { nodeId: root.nodeId, selector: css })
@@ -54,8 +54,13 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
       for (const nodeId of nodeIds) nodes.push({ backendDOMNodeId: (await app.send("DOM.describeNode", { nodeId })).node.backendNodeId })
       return nodes
     }
-    const { nodes } = await app.send("Accessibility.queryAXTree", { nodeId: root.nodeId, ...(role ? { role } : {}), ...(name !== undefined ? { accessibleName: name } : {}) })
-    return nodes.filter((node) => !node.ignored && node.backendDOMNodeId)
+    const scopes = within ? (await axQuery(within)).map((node) => ({ backendNodeId: node.backendDOMNodeId })) : [{ nodeId: root.nodeId }]
+    const found = []
+    for (const scope of scopes) {
+      const { nodes } = await app.send("Accessibility.queryAXTree", { ...scope, ...(role ? { role } : {}), ...(name !== undefined ? { accessibleName: name } : {}) })
+      found.push(...nodes.filter((node) => !node.ignored && node.backendDOMNodeId))
+    }
+    return found
   }
 
   async function box(backendNodeId) {
@@ -69,7 +74,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     }
   }
 
-  const describe = ({ role, name, css }) => (css ? `css ${css}` : `${role ?? "*"} ${JSON.stringify(name ?? "*")}`)
+  const describe = ({ role, name, css, within }) => (css ? `css ${css}` : `${role ?? "*"} ${JSON.stringify(name ?? "*")}${within ? ` in ${describe(within)}` : ""}`)
 
   async function find(target, { timeout = 15000, nth } = {}) {
     return until(async () => {

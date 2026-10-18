@@ -125,7 +125,7 @@ export default async function (ctx) {
 
 Run it with `just verify build/verify-drives/scrollbars.mjs`. Any thrown error fails the run and captures `failure.png` and `failure.ax.txt`.
 
-The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`, matched through CDP `Accessibility.queryAXTree` (exact accessible name, rendered elements only). `{ css }` is the fallback for controls with no stable name.
+The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`, matched through CDP `Accessibility.queryAXTree` (exact accessible name, rendered elements only). Add `within: { role, name }` to match only inside a container, such as `{ role: "link", name: "Collections", within: { role: "navigation", name: "Settings navigation" } }` when the sidebar has a link of the same name. `{ css }` is the fallback for controls with no stable name.
 
 | Helper | Use |
 |---|---|

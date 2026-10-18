@@ -6,8 +6,8 @@ Escape: MEDIAFLICK_GUARDS_CHANGED=1, which CI sets only from the PR's `guards-ch
 
 Lint configuration is compared by meaning: a new lint at full strength, a raised level
 or a lowered threshold passes. Guard code (CI scripts, workflows, check recipes, Cargo configuration,
-TypeScript and compiler-warning settings) has no such reading, so any change to it
-counts, except a version bump. CI runs the default branch's copy of this script
+TypeScript and compiler-warning settings, the count behind the wire ratchets) has no such
+reading, so any change to it counts, except a version bump. CI runs the default branch's copy of this script
 from a pull_request_target workflow, so a PR cannot edit the check that judges it.
 """
 
@@ -43,6 +43,7 @@ RUST_WORD = re.compile(r"[A-Za-z_]\w*")
 RUST_ITEMS = frozenset({"fn", "impl", "mod", "struct", "enum", "union", "trait", "const", "static", "type", "use", "macro_rules"})
 RUST_QUALIFIERS = frozenset({"pub", "crate", "super", "self", "in", "async", "unsafe", "default", "extern"})
 VERSION_PIN = re.compile(r"((?:uses:\s*[^@\s]+@)|(?:[\w-]*version[\w-]*:\s*))\S+", re.IGNORECASE)
+UNTYPED_COUNT_ITEMS = re.compile(r"\bmod\s+untyped_count\b|\bfn\s+untyped\s*\(")
 SCRIPT_SUPPRESSION = re.compile(r"(?:oxlint|eslint)-disable[^\n*]*|@ts-(?:ignore|expect-error|nocheck)")
 CSHARP_SUPPRESSION = re.compile(r"#pragma\s+warning\s+disable[^\n]*|SuppressMessage\s*\([^)]*\)")
 
@@ -56,15 +57,20 @@ def show(rev: str, path: str) -> str:
     return result.stdout.decode("utf-8", errors="replace") if result.returncode == 0 else ""
 
 
-def guard_lines(text: str) -> Counter[str]:
+def guard_lines(text: str, comments: tuple[str, ...]) -> Counter[str]:
     lines = (line.strip() for line in text.splitlines())
-    return Counter(line for line in lines if line and not line.startswith(("#", "//")))
+    return Counter(line for line in lines if line and not line.startswith(comments))
 
 
-def changed_lines(before: str, after: str) -> list[str]:
+def changed_lines(before: str, after: str, comments: tuple[str, ...] = ("#", "//")) -> list[str]:
     """Any guard line added or removed; moving a line within the file is fine."""
-    old, new = guard_lines(before), guard_lines(after)
+    old, new = guard_lines(before, comments), guard_lines(after, comments)
     return [f"removed `{line}`" for line in sorted(old - new)] + [f"added `{line}`" for line in sorted(new - old)]
+
+
+def rust_lines(before: str, after: str) -> list[str]:
+    """Like changed_lines, but a `#[test]` or `#[cfg]` line is code, not a comment."""
+    return changed_lines(before, after, comments=("//",))
 
 
 def workflow_lines(before: str, after: str) -> list[str]:
@@ -179,6 +185,29 @@ def ui_scripts(before: str, after: str) -> list[str]:
     return [f"changed script `{name}` from {old[name]!r} to {new.get(name)!r}" for name in UI_GUARD_SCRIPTS if name in old and old[name] != new.get(name)]
 
 
+def rust_declarations(pattern: re.Pattern[str]) -> Check:
+    """Lines matching `pattern` and the outer attributes on the item each starts, so a `#[cfg]` that turns one off counts."""
+
+    def keep(text: str) -> str:
+        kept = [line for line in text.splitlines() if pattern.search(line)]
+        for match in RUST_ATTRIBUTE.finditer(text):
+            if match.group() == "#![" or "//" in text[text.rfind("\n", 0, match.start()) + 1 : match.start()]:
+                continue
+            end = attribute_end(text, match.end() - 1)
+            item = RUST_GAP.match(text, end).end()
+            while text.startswith("#[", item):
+                item = RUST_GAP.match(text, attribute_end(text, item + 1)).end()
+            line_end = text.find("\n", item)
+            if pattern.search(text[item : line_end if line_end >= 0 else len(text)]):
+                kept.append(" ".join(text[match.start() : end].split()))
+        return "\n".join(kept)
+
+    def check(before: str, after: str) -> list[str]:
+        return rust_lines(keep(before), keep(after))
+
+    return check
+
+
 @dataclass(frozen=True)
 class Surface:
     name: str
@@ -202,6 +231,8 @@ SURFACES = (
     Surface("Cargo configuration", ".cargo/config*", changed_lines),
     Surface("Workflow", ".github/workflows/*", workflow_lines),
     Surface("Check recipes", "justfile", recipe_lines),
+    Surface("Wire ratchet count", "src/shell/cef/api/wire/untyped_count.rs", rust_lines),
+    Surface("Wire ratchet count", "src/shell/cef/api/wire.rs", rust_declarations(UNTYPED_COUNT_ITEMS)),
 )
 
 
