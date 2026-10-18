@@ -1,3 +1,4 @@
 ### Fixed
 
-- Seerr search no longer links a person to a library series that shares its TMDB id. Discover, search and cast results now leave out Seerr results that are neither a movie nor a series, so Discover search no longer fails with an application error when one arrives.
+- A Seerr request whose media type Seerr left out is no longer shown on Requests as the library series that shares its TMDB id.
+- Desktop now ignores Seerr search, discover and credit results that are neither a movie nor a series.
