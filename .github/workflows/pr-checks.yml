@@ -34,6 +34,9 @@ jobs:
           bash <(curl -sSfL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash") "$ACTIONLINT_VERSION"
           ./actionlint -color
 
+      - name: Test the guard check
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+
       # Labels are read live: a rerun of an older run must not reuse a stale event payload.
       - name: Check changelog fragment
         env:

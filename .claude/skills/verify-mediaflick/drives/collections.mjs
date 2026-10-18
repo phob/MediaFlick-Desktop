@@ -5,6 +5,7 @@
 // Writes only the disposable profile's collections.json; the template preview
 // and refresh are Companion provider reads (TMDB quota), never Jellyfin writes.
 const SIDEBAR = { css: '[data-sidebar="sidebar"]' }
+const COLLECTION_SETTINGS = { role: "link", name: "Collections", within: { role: "navigation", name: "Settings navigation" } }
 const TARGET = { css: "[data-verify-target]" }
 
 async function sidebarLink(ctx, name) {
@@ -82,7 +83,7 @@ export default async function collections(ctx) {
   await ctx.screenshot("04-my-collection")
 
   await ctx.press({ role: "link", name: "Settings" })
-  await ctx.press({ role: "link", name: "Collections" }, { nth: 0 })
+  await ctx.press(COLLECTION_SETTINGS)
   await ctx.choose({ name: "Collection mode" }, "Jellyfin")
   await ctx.press({ role: "button", name: "Save" })
   await ctx.until(() => ctx.readConfig("collections.json")?.accounts?.some((account) => account.modeSelection === "jellyfin"), "modeSelection jellyfin in collections.json")
@@ -103,7 +104,7 @@ export default async function collections(ctx) {
   await ctx.until(async () => (await ctx.pathname()) === "/collections/jellyfin", "/collections/franchises redirects to /collections/jellyfin")
 
   await ctx.press({ role: "link", name: "Settings" })
-  await ctx.press({ role: "link", name: "Collections" }, { nth: 0 })
+  await ctx.press(COLLECTION_SETTINGS)
   await ctx.press({ role: "button", name: `Delete ${title}` })
   await ctx.choose({ name: "Collection mode" }, "MediaFlick")
   await ctx.press({ role: "button", name: "Save" })

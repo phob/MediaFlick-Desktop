@@ -170,6 +170,14 @@ jobs:
       - name: Test
         run: cargo test --locked --all-targets
 
+      # Guard integrity reads the untyped-body count as text. This proves a
+      # test still runs under its path, which a wrapped or cfg'd module fails.
+      - name: Check that the untyped-body count runs
+        shell: bash
+        run: |
+          cargo test --locked --bin mediaflick-desktop -- --list \
+            | grep -Fx 'shell::cef::api::wire::untyped_count::untyped_responses_only_shrink: test'
+
       - name: Build
         run: cargo build --locked --bin mediaflick-desktop
 
