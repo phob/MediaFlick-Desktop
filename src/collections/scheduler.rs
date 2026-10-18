@@ -322,13 +322,22 @@ fn refresh_profile(
     ) {
         Ok(result) => result,
         Err(error) => {
-            save_failed_refresh(repository, account, &profile.id, attempt);
             tracing::debug!(
                 target: "collections",
                 profile_id = profile.id,
                 "automatic collection refresh failed: {error}"
             );
-            return true;
+            return services
+                .session
+                .commit_if_current(
+                    &scope,
+                    || false,
+                    |_live| {
+                        save_failed_refresh(repository, account, &profile.id, attempt);
+                        Ok(true)
+                    },
+                )
+                .unwrap_or(false);
         }
     };
     if !profile_is_current(services, account, profile) {

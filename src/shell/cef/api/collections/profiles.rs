@@ -499,13 +499,15 @@ fn commit_result_profile(
     {
         Ok(result) => result,
         Err(error) => {
-            services
-                .session
-                .commit_if_current(&scope, stale_account_response, |_live| {
+            let _ = services.session.commit_if_current(
+                &scope,
+                || (),
+                |_live| {
                     save_failed_refresh(&repository, account, &profile.id, attempt);
                     Ok(())
-                })?;
-            return Err(ApiResponse::from_api_error(&error));
+                },
+            );
+            return Err(scoped_failure(services, &scope, &error));
         }
     };
     if let (CollectionSource::MdbListPublicList { list_id, .. }, Some(source_identity)) =
