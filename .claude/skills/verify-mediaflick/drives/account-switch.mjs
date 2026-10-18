@@ -175,12 +175,18 @@ async function demoHasTitle(session, name) {
   return ((await response.json()).Items ?? []).some((item) => item.Name.toLowerCase().includes(name.toLowerCase()))
 }
 
+// The sign-in screen keeps the route it replaced, so after a sign-out from a
+// detail page the window title is that title's, not `Sign in`.
 async function signInThroughProxy(ctx, proxyUrl) {
-  await ctx.until("document.title === 'Sign in — MediaFlick'", "the sign-in screen", 30000)
+  await ctx.find(SERVER, { timeout: 30000 })
   await ctx.fill(SERVER, proxyUrl)
   await ctx.quickConnect({ approve: true, timeout: 60000 })
   ctx.revokeAppSessionAfterRun()
   const a = await status(ctx)
+  if ((await ctx.pathname()) !== "/") {
+    await ctx.hover({ css: '[data-sidebar="sidebar"]' })
+    await ctx.press({ role: "link", name: "Home" })
+  }
   await ctx.until(async () => (await ctx.pathname()) === "/", "A's Home")
   return a
 }
