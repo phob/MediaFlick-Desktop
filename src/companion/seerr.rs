@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::jellyfin::api::ApiError;
 use crate::jellyfin::session::SessionScope;
-use crate::library::Library;
+use crate::library::{CatalogKind, Library};
 use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
 
 use super::CompanionSession;
@@ -200,9 +200,15 @@ pub(super) fn join_seerr_rows(library: &Library, value: &mut Value, field: &str)
     };
     let movies = provider_ids(results, "movie");
     let series = provider_ids(results, "tv");
-    let movie_ids = library.ids_by_tmdb("Movie", &movies).unwrap_or_default();
-    let series_ids = library.ids_by_tmdb("Series", &series).unwrap_or_default();
-    let movie_played = library.played_by_tmdb("Movie", &movies).unwrap_or_default();
+    let movie_ids = library
+        .ids_by_tmdb(CatalogKind::Movie, &movies)
+        .unwrap_or_default();
+    let series_ids = library
+        .ids_by_tmdb(CatalogKind::Series, &series)
+        .unwrap_or_default();
+    let movie_played = library
+        .played_by_tmdb(CatalogKind::Movie, &movies)
+        .unwrap_or_default();
     for item in results {
         let media_type = item["mediaType"].as_str().unwrap_or_default();
         let Some(tmdb_id) = item["tmdbId"].as_i64() else {
@@ -235,9 +241,9 @@ fn join_seerr_item(library: &Library, value: &mut Value) {
         return;
     };
     let kind = if media_type == "movie" {
-        "Movie"
+        CatalogKind::Movie
     } else {
-        "Series"
+        CatalogKind::Series
     };
     value["libraryItemId"] = library
         .ids_by_tmdb(kind, &[tmdb_id.to_string()])

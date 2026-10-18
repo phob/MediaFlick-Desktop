@@ -226,7 +226,7 @@ impl Library {
 
     pub fn ids_by_tmdb(
         &self,
-        kind: &str,
+        kind: CatalogKind,
         tmdb_ids: &[String],
     ) -> rusqlite::Result<HashMap<String, String>> {
         self.ids_by_provider(kind, "tmdb_id", tmdb_ids)
@@ -234,7 +234,7 @@ impl Library {
 
     pub fn ids_by_tvdb(
         &self,
-        kind: &str,
+        kind: CatalogKind,
         tvdb_ids: &[String],
     ) -> rusqlite::Result<HashMap<String, String>> {
         self.ids_by_provider(kind, "tvdb_id", tvdb_ids)
@@ -242,7 +242,7 @@ impl Library {
 
     pub fn played_by_tmdb(
         &self,
-        kind: &str,
+        kind: CatalogKind,
         tmdb_ids: &[String],
     ) -> rusqlite::Result<HashMap<String, bool>> {
         if tmdb_ids.is_empty() {
@@ -255,7 +255,7 @@ impl Library {
                  LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
                  WHERE i.kind = ?1 AND i.tmdb_id IN ({placeholders})"
             ))?;
-            let arguments = std::iter::once(kind)
+            let arguments = std::iter::once(kind.as_str())
                 .chain(tmdb_ids.iter().map(String::as_str))
                 .collect::<Vec<_>>();
             let rows = statement
@@ -269,7 +269,7 @@ impl Library {
 
     fn ids_by_provider(
         &self,
-        kind: &str,
+        kind: CatalogKind,
         column: &str,
         provider_ids: &[String],
     ) -> rusqlite::Result<HashMap<String, String>> {
@@ -283,7 +283,7 @@ impl Library {
                 "SELECT {column}, jellyfin_id FROM items
                  WHERE kind = ?1 AND {column} IN ({placeholders})"
             ))?;
-            let arguments = std::iter::once(kind)
+            let arguments = std::iter::once(kind.as_str())
                 .chain(provider_ids.iter().map(String::as_str))
                 .collect::<Vec<_>>();
             let rows = statement
@@ -562,7 +562,7 @@ fn upsert_user_data(connection: &Connection, record: &UserDataRecord) -> rusqlit
 
 #[cfg(test)]
 mod tests {
-    use super::Library;
+    use super::{CatalogKind, Library};
     use crate::library::test_support::{dto, seeded};
 
     #[test]
@@ -583,12 +583,16 @@ mod tests {
             .expect("seed");
 
         let ids = ["603".to_string(), "329865".to_string(), "1".to_string()];
-        let movies = library.ids_by_tmdb("Movie", &ids).expect("movies");
+        let movies = library
+            .ids_by_tmdb(CatalogKind::Movie, &ids)
+            .expect("movies");
         assert_eq!(movies.get("603").map(String::as_str), Some("m1"));
         assert_eq!(movies.get("329865").map(String::as_str), Some("m2"));
         assert_eq!(movies.get("1"), None);
 
-        let series = library.ids_by_tmdb("Series", &ids).expect("series");
+        let series = library
+            .ids_by_tmdb(CatalogKind::Series, &ids)
+            .expect("series");
         assert_eq!(series.get("603").map(String::as_str), Some("s1"));
         assert_eq!(series.get("329865"), None);
     }
@@ -605,11 +609,13 @@ mod tests {
             .expect("seed");
 
         let ids = ["5161348".to_string()];
-        let episodes = library.ids_by_tvdb("Episode", &ids).expect("episodes");
+        let episodes = library
+            .ids_by_tvdb(CatalogKind::Episode, &ids)
+            .expect("episodes");
         assert_eq!(episodes.get("5161348").map(String::as_str), Some("e1"));
         assert!(
             library
-                .ids_by_tvdb("Movie", &ids)
+                .ids_by_tvdb(CatalogKind::Movie, &ids)
                 .expect("movies")
                 .is_empty()
         );

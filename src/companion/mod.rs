@@ -536,14 +536,14 @@ fn join_calendar(library: &Library, value: &mut Value) {
     let Some(entries) = value["entries"].as_array_mut() else {
         return;
     };
-    let mut tmdb_by_kind: std::collections::HashMap<&str, Vec<String>> =
+    let mut tmdb_by_kind: std::collections::HashMap<CatalogKind, Vec<String>> =
         std::collections::HashMap::new();
-    let mut tvdb_by_kind: std::collections::HashMap<&str, Vec<String>> =
+    let mut tvdb_by_kind: std::collections::HashMap<CatalogKind, Vec<String>> =
         std::collections::HashMap::new();
     for entry in entries.iter() {
         let kind = match entry["kind"].as_str() {
-            Some("movie") => "Movie",
-            Some("episode") => "Episode",
+            Some("movie") => CatalogKind::Movie,
+            Some("episode") => CatalogKind::Episode,
             _ => continue,
         };
         if let Some(id) = entry["tmdbId"].as_i64() {
@@ -552,32 +552,36 @@ fn join_calendar(library: &Library, value: &mut Value) {
         if let Some(id) = entry["tvdbId"].as_i64() {
             tvdb_by_kind.entry(kind).or_default().push(id.to_string());
         }
-        if kind == "Episode" {
+        if kind == CatalogKind::Episode {
             if let Some(id) = entry["seriesTmdbId"].as_i64() {
                 tmdb_by_kind
-                    .entry("Series")
+                    .entry(CatalogKind::Series)
                     .or_default()
                     .push(id.to_string());
             }
             if let Some(id) = entry["seriesTvdbId"].as_i64() {
                 tvdb_by_kind
-                    .entry("Series")
+                    .entry(CatalogKind::Series)
                     .or_default()
                     .push(id.to_string());
             }
         }
     }
-    let mut resolved: std::collections::HashMap<(&str, String), String> =
+    let mut resolved: std::collections::HashMap<(CatalogKind, String), String> =
         std::collections::HashMap::new();
-    for kind in ["Movie", "Episode", "Series"] {
+    for kind in [
+        CatalogKind::Movie,
+        CatalogKind::Episode,
+        CatalogKind::Series,
+    ] {
         for (id, item) in library
-            .ids_by_tmdb(kind, tmdb_by_kind.get(kind).map_or(&[], Vec::as_slice))
+            .ids_by_tmdb(kind, tmdb_by_kind.get(&kind).map_or(&[], Vec::as_slice))
             .unwrap_or_default()
         {
             resolved.insert((kind, format!("tmdb:{id}")), item);
         }
         for (id, item) in library
-            .ids_by_tvdb(kind, tvdb_by_kind.get(kind).map_or(&[], Vec::as_slice))
+            .ids_by_tvdb(kind, tvdb_by_kind.get(&kind).map_or(&[], Vec::as_slice))
             .unwrap_or_default()
         {
             resolved.insert((kind, format!("tvdb:{id}")), item);
@@ -585,9 +589,9 @@ fn join_calendar(library: &Library, value: &mut Value) {
     }
     for entry in entries {
         let kind = if entry["kind"] == "movie" {
-            "Movie"
+            CatalogKind::Movie
         } else {
-            "Episode"
+            CatalogKind::Episode
         };
         let item = entry["tmdbId"]
             .as_i64()
@@ -598,15 +602,15 @@ fn join_calendar(library: &Library, value: &mut Value) {
                     .and_then(|id| resolved.get(&(kind, format!("tvdb:{id}"))))
             });
         entry["libraryItemId"] = item.map_or(Value::Null, |id| json!(id));
-        let series_item = (kind == "Episode")
+        let series_item = (kind == CatalogKind::Episode)
             .then(|| {
                 entry["seriesTmdbId"]
                     .as_i64()
-                    .and_then(|id| resolved.get(&("Series", format!("tmdb:{id}"))))
+                    .and_then(|id| resolved.get(&(CatalogKind::Series, format!("tmdb:{id}"))))
                     .or_else(|| {
-                        entry["seriesTvdbId"]
-                            .as_i64()
-                            .and_then(|id| resolved.get(&("Series", format!("tvdb:{id}"))))
+                        entry["seriesTvdbId"].as_i64().and_then(|id| {
+                            resolved.get(&(CatalogKind::Series, format!("tvdb:{id}")))
+                        })
                     })
             })
             .flatten();

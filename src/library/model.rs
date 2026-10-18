@@ -281,7 +281,7 @@ pub struct ItemRecord {
     pub is_virtual: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CatalogKind {
     Movie,
     Series,
