@@ -118,7 +118,7 @@ wrap_browser_process_handler! {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
 
             app_scheme::register();
-            services::init_with_settings(self.config.settings.clone());
+            locator::init_with_settings(self.config.settings.clone());
 
             let show_state = if self.config.hidden {
                 ShowState::HIDDEN
@@ -127,7 +127,7 @@ wrap_browser_process_handler! {
             } else {
                 ShowState::NORMAL
             };
-            let settings = services::services()
+            let settings = locator::services()
                 .map(|services| services.preferences.snapshot())
                 .unwrap_or_else(|| self.config.settings.clone());
             let handler_state = new_browser_state(

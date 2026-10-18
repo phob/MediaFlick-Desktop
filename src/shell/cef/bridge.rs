@@ -78,7 +78,7 @@ pub(super) fn open_server_dashboard(state: &BrowserState) {
         .lock()
         .ok()
         .and_then(|state| state.settings.jellyfin_url.clone())
-        .or_else(|| services::services().and_then(|services| services.session.server_url()));
+        .or_else(|| locator::services().and_then(|services| services.session.server_url()));
     let Some(server_url) = server_url else {
         notify_error(
             state,
@@ -411,7 +411,7 @@ pub(super) fn open_settings_file_dialog(state: &BrowserState, request_id: String
         );
         return;
     };
-    let settings = services::services()
+    let settings = locator::services()
         .map(|services| services.preferences.snapshot())
         .unwrap_or_default();
     let mut filters = CefStringList::new();

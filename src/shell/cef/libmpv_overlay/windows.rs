@@ -375,7 +375,7 @@ impl LibmpvOverlaySurface {
         if unsafe { IsWindow(host) } != 0 {
             self.capture_window_settings(host);
         }
-        let Some(services) = crate::app::services::services() else {
+        let Some(services) = crate::shell::locator::services() else {
             return;
         };
         if let Err(error) = services
