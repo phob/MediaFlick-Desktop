@@ -11,6 +11,7 @@ reading, so any change to it counts, except a version bump. CI runs the default 
 from a pull_request_target workflow, so a PR cannot edit the check that judges it.
 """
 
+import difflib
 import fnmatch
 import json
 import os
@@ -69,8 +70,21 @@ def changed_lines(before: str, after: str, comments: tuple[str, ...] = ("#", "//
 
 
 def rust_lines(before: str, after: str) -> list[str]:
-    """Like changed_lines, but a `#[test]` or `#[cfg]` line is code, not a comment."""
-    return changed_lines(before, after, comments=("//",))
+    """Code lines of Rust in order, `#[...]` included, so moving a line counts too.
+
+    A ratchet's number is left to raised_ratchets, so lowering one passes.
+    """
+
+    def code(text: str) -> list[str]:
+        lines = (line.strip() for line in text.splitlines())
+        return [NUMBER.sub("#", line, count=1) if RATCHET.search(line) else line for line in lines if line and not line.startswith("//")]
+
+    old, new = code(before), code(after)
+    findings = []
+    for tag, old_start, old_end, new_start, new_end in difflib.SequenceMatcher(a=old, b=new, autojunk=False).get_opcodes():
+        if tag != "equal":
+            findings += [f"removed `{line}`" for line in old[old_start:old_end]] + [f"added `{line}`" for line in new[new_start:new_end]]
+    return findings
 
 
 def workflow_lines(before: str, after: str) -> list[str]:

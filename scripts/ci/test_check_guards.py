@@ -7,68 +7,21 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).with_name("check_guards.py")
+ROOT = Path(__file__).resolve().parents[2]
 WIRE = "src/shell/cef/api/wire.rs"
 COUNT = "src/shell/cef/api/wire/untyped_count.rs"
-WIRE_SOURCE = """\
-wire_types! {
-    AboutInfo,
-}
-
-#[derive(Serialize, TS)]
-struct ErrorBody {
-    error: String,
-}
-
-impl ApiResponse {
-    /// A response the UI reads without a generated type.
-    pub(super) fn untyped(value: impl Serialize) -> Self {
-        Self::json(200, value)
-    }
-}
-
-#[cfg(test)]
-const UNTYPED_RESPONSES: usize = 1; // guard-ratchet
-
-#[cfg(test)]
-mod guards;
-#[cfg(test)]
-mod untyped_count;
-"""
-COUNT_SOURCE = """\
-use super::UNTYPED_RESPONSES;
-
-/// Calls to the untyped escape, by name.
-#[derive(Default)]
-struct UntypedCalls {
-    responses: usize,
-}
-
-impl Visit<'_> for UntypedCalls {
-    fn visit_path(&mut self, path: &syn::Path) {
-        if path.segments.last().is_some_and(|last| last.ident == "untyped") {
-            self.responses += 1;
-        }
-    }
-}
-
-#[test]
-fn untyped_responses_only_shrink() {
-    let responses = count();
-    assert!(responses <= UNTYPED_RESPONSES, "new untyped API bodies");
-}
-"""
 
 
 class GuardCheck:
-    """A throwaway repository with the wire sources on `main` and a branch to change them on."""
+    """A throwaway repository with this checkout's wire sources on `main` and a branch to change them on."""
 
     def __init__(self, root: Path):
         self.root = root
         self.git("init", "-q", "-b", "main")
         self.git("config", "user.email", "guard@example.invalid")
         self.git("config", "user.name", "guard")
-        self.write(WIRE, WIRE_SOURCE)
-        self.write(COUNT, COUNT_SOURCE)
+        for path in (WIRE, COUNT):
+            self.write(path, (ROOT / path).read_text())
         self.commit("base")
         self.git("checkout", "-q", "-b", "change")
 
@@ -81,9 +34,9 @@ class GuardCheck:
 
     def edit(self, path: str, old: str, new: str) -> None:
         text = (self.root / path).read_text()
-        if old not in text:
-            raise AssertionError(f"{old!r} is not in {path}")
-        self.write(path, text.replace(old, new, 1))
+        if text.count(old) != 1:
+            raise AssertionError(f"{old!r} is not in {path} exactly once")
+        self.write(path, text.replace(old, new))
 
     def commit(self, message: str) -> None:
         self.git("add", "-A")
@@ -114,12 +67,12 @@ class WireRatchetCountTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_a_changed_count_fails(self):
-        self.repo.edit(COUNT, "self.responses += 1;", "self.responses += 0;")
-        self.assertBlocked(f"Wire ratchet count ({COUNT}): removed `self.responses += 1;`")
+        self.repo.edit(COUNT, '"untyped" => self.responses += 1,', '"untyped" => self.responses += 0,')
+        self.assertBlocked(f"Wire ratchet count ({COUNT}): removed `Some(last) if last.ident == \"untyped\" => self.responses += 1,`")
 
     def test_a_loosened_comparison_fails(self):
-        self.repo.edit(COUNT, "responses <= UNTYPED_RESPONSES", "responses <= UNTYPED_RESPONSES + 5")
-        self.assertBlocked(f"Wire ratchet count ({COUNT}): added `assert!(responses <= UNTYPED_RESPONSES + 5")
+        self.repo.edit(COUNT, "responses > UNTYPED_RESPONSES ||", "responses > UNTYPED_RESPONSES + 5 ||")
+        self.assertBlocked(f"Wire ratchet count ({COUNT}): added `responses > UNTYPED_RESPONSES + 5 ||")
 
     def test_an_ignored_count_test_fails(self):
         self.repo.edit(COUNT, "#[test]\n", "#[test]\n#[ignore]\n")
@@ -128,6 +81,18 @@ class WireRatchetCountTests(unittest.TestCase):
     def test_a_dropped_test_attribute_fails(self):
         self.repo.edit(COUNT, "#[test]\n", "")
         self.assertBlocked(f"Wire ratchet count ({COUNT}): removed `#[test]`")
+
+    def test_reordered_count_lines_fail(self):
+        self.repo.edit(COUNT, "    let UntypedCalls { responses, bodies } = calls;\n    let routes = relay_routes();\n", "    let routes = relay_routes();\n    let UntypedCalls { responses, bodies } = calls;\n")
+        self.assertBlocked(f"Wire ratchet count ({COUNT}): ", "`let routes = relay_routes();`")
+
+    def test_a_replaced_ratchet_constant_fails(self):
+        self.repo.edit(COUNT, "const UNTYPED_ROUTES: usize = 12; // guard-ratchet\n", "#[cfg(any())]\nconst UNTYPED_ROUTES: usize = 12; // guard-ratchet\nconst UNTYPED_ROUTES: usize = 40;\n")
+        self.assertBlocked(f"Wire ratchet count ({COUNT}): added `#[cfg(any())]`", f"Wire ratchet count ({COUNT}): added `const UNTYPED_ROUTES: usize = 40;`")
+
+    def test_a_raised_ratchet_fails(self):
+        self.repo.edit(COUNT, "UNTYPED_ROUTES: usize = 12;", "UNTYPED_ROUTES: usize = 13;")
+        self.assertBlocked(f"Ratchet ({COUNT}): raised ratchet `const UNTYPED_ROUTES: usize = 12; // guard-ratchet` to 13")
 
     def test_a_deleted_count_file_fails(self):
         (self.repo.root / COUNT).unlink()
@@ -158,25 +123,25 @@ class WireRatchetCountTests(unittest.TestCase):
         self.assertBlocked(f"Wire ratchet count ({WIRE}): removed `pub(super) fn untyped(value: impl Serialize) -> Self {{`")
 
     def test_the_label_accepts_a_changed_count(self):
-        self.repo.edit(COUNT, "self.responses += 1;", "self.responses += 0;")
+        self.repo.edit(COUNT, '"untyped" => self.responses += 1,', '"untyped" => self.responses += 0,')
         result = self.repo.run(labelled=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("accepted by the guards-changed label", result.stdout)
 
     def test_a_reworded_comment_in_the_count_file_passes(self):
-        self.repo.edit(COUNT, "/// Calls to the untyped escape, by name.", "/// Every call to the untyped escape, counted by name.")
-        self.assertAccepted()
-
-    def test_a_new_wire_type_passes(self):
-        self.repo.edit(WIRE, "    AboutInfo,\n", "    AboutInfo,\n    AddProfileBody,\n")
-        self.assertAccepted()
-
-    def test_a_new_error_field_with_attributes_passes(self):
-        self.repo.edit(WIRE, "    error: String,\n", '    error: String,\n    #[serde(skip_serializing_if = "Option::is_none")]\n    expired: Option<bool>,\n')
+        self.repo.edit(COUNT, "/// generated type.\n", "/// generated TypeScript type.\n")
         self.assertAccepted()
 
     def test_a_lowered_ratchet_passes(self):
-        self.repo.edit(WIRE, "UNTYPED_RESPONSES: usize = 1;", "UNTYPED_RESPONSES: usize = 0;")
+        self.repo.edit(COUNT, "UNTYPED_ROUTES: usize = 12;", "UNTYPED_ROUTES: usize = 11;")
+        self.assertAccepted()
+
+    def test_a_new_wire_type_passes(self):
+        self.repo.edit(WIRE, "wire_types! {\n", "wire_types! {\n    AaaNewBody,\n")
+        self.assertAccepted()
+
+    def test_a_new_error_field_with_attributes_passes(self):
+        self.repo.edit(WIRE, "struct ErrorBody {\n", 'struct ErrorBody {\n    #[ts(optional)]\n    #[serde(skip_serializing_if = "Option::is_none")]\n    retry: Option<bool>,\n')
         self.assertAccepted()
 
 

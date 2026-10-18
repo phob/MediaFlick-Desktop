@@ -259,14 +259,6 @@ impl ApiResponse {
     }
 }
 
-/// Calls to `ApiResponse::untyped`: the one that answers every `Relay`
-/// route. Nothing raises these, and request bodies, all typed now, stay at
-/// zero.
-#[cfg(test)]
-const UNTYPED_RESPONSES: usize = 1; // guard-ratchet
-#[cfg(test)]
-const UNTYPED_BODIES: usize = 0; // guard-ratchet
-
 #[cfg(test)]
 mod guards;
 #[cfg(test)]

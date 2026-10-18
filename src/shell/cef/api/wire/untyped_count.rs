@@ -1,12 +1,23 @@
-//! The untyped-call count behind `UNTYPED_RESPONSES` and `UNTYPED_BODIES`,
+//! The count of untyped API bodies, with the limits it may only fall below,
 //! and the source scan every wire guard reads. Guard integrity fails a
-//! change to this file's code unless the PR has the `guards-changed` label.
+//! change to this file's code unless the PR has the `guards-changed` label;
+//! lowering a limit passes.
 
 use std::path::{Path, PathBuf};
 
 use syn::visit::Visit;
 
-use super::{UNTYPED_BODIES, UNTYPED_RESPONSES};
+use super::super::MODULES;
+use super::super::routes::AnswerSpec;
+
+/// Calls to `ApiResponse::untyped`: the one that answers every `Relay`
+/// route. Nothing raises these, and request bodies, all typed now, stay at
+/// zero.
+const UNTYPED_RESPONSES: usize = 1; // guard-ratchet
+const UNTYPED_BODIES: usize = 0; // guard-ratchet
+/// Routes declared `-> Relay`, which pass Companion JSON through without a
+/// generated type.
+const UNTYPED_ROUTES: usize = 12; // guard-ratchet
 
 fn rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("read source dir").flatten() {
@@ -62,6 +73,14 @@ impl Visit<'_> for UntypedCalls {
     }
 }
 
+fn relay_routes() -> usize {
+    MODULES
+        .iter()
+        .flat_map(|routes| routes.table)
+        .filter(|route| matches!(route.answer, AnswerSpec::Relay))
+        .count()
+}
+
 #[test]
 fn untyped_responses_only_shrink() {
     let mut calls = UntypedCalls::default();
@@ -69,16 +88,20 @@ fn untyped_responses_only_shrink() {
         calls.visit_file(&file);
     }
     let UntypedCalls { responses, bodies } = calls;
-    let raised = responses > UNTYPED_RESPONSES || bodies > UNTYPED_BODIES;
+    let routes = relay_routes();
+    let raised =
+        responses > UNTYPED_RESPONSES || bodies > UNTYPED_BODIES || routes > UNTYPED_ROUTES;
     assert!(
         !raised,
-        "new untyped API bodies ({responses} responses, {bodies} request bodies; \
-         allowed {UNTYPED_RESPONSES} and {UNTYPED_BODIES}). Declare the route's answer \
-         and body as wire types in `routes!` and decode the body with `Body::decode`."
+        "new untyped API bodies ({responses} responses, {bodies} request bodies, \
+         {routes} `-> Relay` routes; allowed {UNTYPED_RESPONSES}, {UNTYPED_BODIES} and \
+         {UNTYPED_ROUTES}). Declare the route's answer and body as wire types in `routes!` \
+         and decode the body with `Body::decode`."
     );
     assert!(
-        responses == UNTYPED_RESPONSES && bodies == UNTYPED_BODIES,
-        "untyped API bodies went down to {responses} responses and {bodies} request bodies. \
-         Lower UNTYPED_RESPONSES and UNTYPED_BODIES in src/shell/cef/api/wire.rs to match."
+        responses == UNTYPED_RESPONSES && bodies == UNTYPED_BODIES && routes == UNTYPED_ROUTES,
+        "untyped API bodies went down to {responses} responses, {bodies} request bodies and \
+         {routes} `-> Relay` routes. Lower UNTYPED_RESPONSES, UNTYPED_BODIES and \
+         UNTYPED_ROUTES in src/shell/cef/api/wire/untyped_count.rs to match."
     );
 }

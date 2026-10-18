@@ -1,6 +1,6 @@
 ### Changed
 
-- The guard check now also fails a pull request that edits the count behind the untyped wire ratchets, or turns its test off, unless the PR has the `guards-changed` label. The guard check's own tests run with the PR checks and `just check-pr`.
+- The untyped-API ratchet now also counts routes that relay Companion JSON without a generated type, and Guard integrity treats its count and limits as guard code: editing them, or switching off their test, needs the `guards-changed` label, while lowering a limit still passes. CI also fails when the count's test is no longer compiled. The guard check's own tests run with the PR checks and `just check-pr`.
 
 ### Fixed
 
