@@ -33,7 +33,8 @@ export function SeerrGate({ children }: { children: ReactNode }) {
   const mappingMissing =
     companionManaged &&
     status.error instanceof ApiError &&
-    status.error.status === 409
+    status.error.status === 409 &&
+    !status.error.accountChanged
 
   return (
     <div className="grid h-full place-items-center p-6">

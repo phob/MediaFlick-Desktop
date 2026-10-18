@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { api, type MediaStream } from "./api"
+import { api, ApiError, type MediaStream } from "./api"
 import { useSettings } from "./queries"
 import { readShellEvent } from "./shell-events"
 import { TechnicalContext } from "./technical-context"
@@ -75,7 +75,11 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
       const now = Date.now()
       for (const id of ids) checkedAt.current.set(id, now)
     } catch (error) {
-      if (!isAbortError(error)) {
+      if (error instanceof ApiError && error.accountChanged) {
+        // Two accounts on one server share item ids, so the previous
+        // account's failure must not stand in for the next one's lookup.
+        for (const id of ids) if (active.current.has(id)) pending.current.add(id)
+      } else if (!isAbortError(error)) {
         const now = Date.now()
         for (const id of ids) checkedAt.current.set(id, now)
       }

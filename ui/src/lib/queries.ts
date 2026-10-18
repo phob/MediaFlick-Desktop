@@ -422,7 +422,7 @@ export function useSetPlaybackPreference(itemId: string) {
       reportError(client)(error)
       // A 409 means the file changed between reading and saving the controls.
       // Re-fetching restores safe current choices instead of keeping stale UI.
-      if (error instanceof ApiError && error.status === 409) {
+      if (error instanceof ApiError && error.status === 409 && !error.accountChanged) {
         void client.invalidateQueries({ queryKey: queryKeys.media(itemId) })
       }
     },

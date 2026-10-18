@@ -116,7 +116,7 @@ export function CompanionIntegration() {
     if (seerrQuery.data?.mapped) {
       return ` This account is mapped${seerrQuery.data.user?.name ? ` as ${seerrQuery.data.user.name}` : ""}.`
     }
-    if (seerrQuery.error instanceof ApiError && seerrQuery.error.status === 409) {
+    if (seerrQuery.error instanceof ApiError && seerrQuery.error.status === 409 && !seerrQuery.error.accountChanged) {
       return " This Jellyfin account has not been imported into Seerr."
     }
     if (seerrQuery.error) return " The account mapping could not be checked."

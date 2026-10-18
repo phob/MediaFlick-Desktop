@@ -36,11 +36,17 @@ export const PAGE_SIZE = 60
 export class ApiError extends Error {
   readonly status: number
   readonly expired: boolean
-  constructor(message: string, status: number, expired: boolean) {
+  /**
+   * The account was switched while the request ran. The 409 it comes with
+   * does not carry the route's own meaning of a 409.
+   */
+  readonly accountChanged: boolean
+  constructor(message: string, status: number, expired: boolean, accountChanged: boolean) {
     super(message)
     this.name = "ApiError"
     this.status = status
     this.expired = expired
+    this.accountChanged = accountChanged
   }
 }
 
@@ -78,9 +84,11 @@ function readApiErrorEnvelope(value: JsonValue): ApiErrorEnvelope | null {
   if (!isJsonObject(value)) return null
   const error = jsonString(value.error)
   const expired = jsonBoolean(value.expired)
+  const accountChanged = jsonBoolean(value.accountChanged)
   return {
     error: error ?? undefined,
     expired: expired ?? undefined,
+    accountChanged: accountChanged ?? undefined,
   }
 }
 
@@ -108,6 +116,7 @@ async function request<K extends JsonRoute>(route: K, ...[call]: CallArgs<K>): P
       envelope?.error ?? `request failed (${response.status})`,
       response.status,
       Boolean(envelope?.expired),
+      Boolean(envelope?.accountChanged),
     )
   }
   // SAFETY: The UI bundle ships inside the binary built from the same commit
