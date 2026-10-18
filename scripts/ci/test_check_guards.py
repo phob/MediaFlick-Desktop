@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,19 @@ class GuardCheck:
         if text.count(old) != 1:
             raise AssertionError(f"{old!r} is not in {path} exactly once")
         self.write(path, text.replace(old, new))
+
+    def edit_base(self, path: str, old: str, new: str) -> None:
+        self.git("checkout", "-q", "main")
+        self.edit(path, old, new)
+        self.commit("base")
+        self.git("checkout", "-q", "-B", "change", "main")
+
+    def ratchet(self, name: str) -> str:
+        """The declaration of ratchet `name`, read from the file so a lowered limit keeps these tests true."""
+        found = re.search(rf"const {name}: usize = \d+; // guard-ratchet\n", (self.root / COUNT).read_text())
+        if found is None:
+            raise AssertionError(f"{name} is not a ratchet in {COUNT}")
+        return found.group()
 
     def commit(self, message: str) -> None:
         self.git("add", "-A")
@@ -87,12 +101,14 @@ class WireRatchetCountTests(unittest.TestCase):
         self.assertBlocked(f"Wire ratchet count ({COUNT}): ", "`let routes = relay_routes();`")
 
     def test_a_replaced_ratchet_constant_fails(self):
-        self.repo.edit(COUNT, "const UNTYPED_ROUTES: usize = 12; // guard-ratchet\n", "#[cfg(any())]\nconst UNTYPED_ROUTES: usize = 12; // guard-ratchet\nconst UNTYPED_ROUTES: usize = 40;\n")
-        self.assertBlocked(f"Wire ratchet count ({COUNT}): added `#[cfg(any())]`", f"Wire ratchet count ({COUNT}): added `const UNTYPED_ROUTES: usize = 40;`")
+        limit = self.repo.ratchet("UNTYPED_ROUTES")
+        self.repo.edit(COUNT, limit, f"#[cfg(any())]\n{limit}const UNTYPED_ROUTES: usize = 1000;\n")
+        self.assertBlocked(f"Wire ratchet count ({COUNT}): added `#[cfg(any())]`", f"Wire ratchet count ({COUNT}): added `const UNTYPED_ROUTES: usize = 1000;`")
 
     def test_a_raised_ratchet_fails(self):
-        self.repo.edit(COUNT, "UNTYPED_ROUTES: usize = 12;", "UNTYPED_ROUTES: usize = 13;")
-        self.assertBlocked(f"Ratchet ({COUNT}): raised ratchet `const UNTYPED_ROUTES: usize = 12; // guard-ratchet` to 13")
+        limit = self.repo.ratchet("UNTYPED_ROUTES")
+        self.repo.edit(COUNT, limit, "const UNTYPED_ROUTES: usize = 1000; // guard-ratchet\n")
+        self.assertBlocked(f"Ratchet ({COUNT}): raised ratchet `{limit.strip()}` to 1000")
 
     def test_a_deleted_count_file_fails(self):
         (self.repo.root / COUNT).unlink()
@@ -128,20 +144,20 @@ class WireRatchetCountTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("accepted by the guards-changed label", result.stdout)
 
-    def test_a_reworded_comment_in_the_count_file_passes(self):
-        self.repo.edit(COUNT, "/// generated type.\n", "/// generated TypeScript type.\n")
+    def test_a_new_comment_in_the_count_file_passes(self):
+        text = (self.repo.root / COUNT).read_text()
+        self.repo.write(COUNT, "// Read by Guard integrity.\n" + text.replace("\n}\n", "\n    // The limits only fall.\n}\n", 1))
         self.assertAccepted()
 
     def test_a_lowered_ratchet_passes(self):
-        self.repo.edit(COUNT, "UNTYPED_ROUTES: usize = 12;", "UNTYPED_ROUTES: usize = 11;")
+        limit = self.repo.ratchet("UNTYPED_ROUTES")
+        self.repo.edit_base(COUNT, limit, "const UNTYPED_ROUTES: usize = 1000; // guard-ratchet\n")
+        self.repo.edit(COUNT, "const UNTYPED_ROUTES: usize = 1000; // guard-ratchet\n", limit)
         self.assertAccepted()
 
-    def test_a_new_wire_type_passes(self):
-        self.repo.edit(WIRE, "wire_types! {\n", "wire_types! {\n    AaaNewBody,\n")
-        self.assertAccepted()
-
-    def test_a_new_error_field_with_attributes_passes(self):
-        self.repo.edit(WIRE, "struct ErrorBody {\n", 'struct ErrorBody {\n    #[ts(optional)]\n    #[serde(skip_serializing_if = "Option::is_none")]\n    retry: Option<bool>,\n')
+    def test_an_unrelated_item_with_attributes_in_wire_passes(self):
+        text = (self.repo.root / WIRE).read_text()
+        self.repo.write(WIRE, text + '\n#[derive(Serialize, TS)]\n#[serde(rename_all = "camelCase")]\nstruct Retry {\n    #[ts(optional)]\n    after: Option<u32>,\n}\n')
         self.assertAccepted()
 
 
