@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { LogOut, RefreshCw } from "lucide-react"
-import { toast } from "sonner"
 import appIcon from "../../../distribution/app-icon.png?inline"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { api, type SyncRetry } from "@/lib/api"
+import { toastFailure } from "@/lib/failure-toast"
 import { useLogout } from "@/lib/queries"
 import { queryKeys } from "@/lib/query-client"
 import { SYNC_FAILURES } from "@/lib/sync-failure"
@@ -31,7 +31,7 @@ export function BootstrapRetry({ retry, attempting }: { retry: SyncRetry; attemp
   const request = useMutation({
     mutationFn: api.sync,
     onSuccess: () => client.invalidateQueries({ queryKey: queryKeys.status }),
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toastFailure(error),
   })
   const failure = SYNC_FAILURES[retry.reason]
   const seconds = retry.retryAt - now

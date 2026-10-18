@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { useSourceDraft } from "@/hooks/use-source-draft"
 import { api, viewingSettingsWrite, type AppearanceSettings, type RatingSourceDefinition, type Status } from "@/lib/api"
+import { toastFailure } from "@/lib/failure-toast"
 import { accountKey, useHome, useItem, useNextUp, useRatingsStatus, useSettings, useStatus } from "@/lib/queries"
 import { queryKeys } from "@/lib/query-client"
 import { RatingsContext, type RatingsContextValue } from "@/lib/rating-context"
@@ -289,7 +290,7 @@ export function Appearance() {
       }
     },
     onSuccess: () => toast.success("Appearance settings saved"),
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toastFailure(error),
   })
   if (statusQuery.error && !status) {
     return (

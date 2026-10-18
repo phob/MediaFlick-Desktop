@@ -18,6 +18,7 @@ import {
   type FranchiseCollectionSummary,
   type JellyfinCollectionSummary,
 } from "@/lib/api"
+import { toastFailure } from "@/lib/failure-toast"
 import { useLocalDate } from "@/lib/local-date"
 import {
   accountKey,
@@ -239,7 +240,7 @@ function ProfileMenu({
                 void cache.invalidateQueries({ queryKey: ["collections"] })
                 toast.success(`${profile.title} updated`)
               },
-              (error: Error) => toast.error(error.message),
+              (error: Error) => toastFailure(error),
             )
           }}
         >

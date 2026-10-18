@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useSourceDraft } from "@/hooks/use-source-draft"
 import { api, playerSettingsWrite, type ClientSettings, type PlayerComfort } from "@/lib/api"
+import { toastFailure } from "@/lib/failure-toast"
 import { PLAYER_SHORTCUTS, shortcutError } from "@/lib/player-shortcuts"
 import { useSettings } from "@/lib/queries"
 import { queryKeys } from "@/lib/query-client"
@@ -52,7 +53,7 @@ function installDetail(install: InstallState) {
 }
 
 function openMpvHelp() {
-  void api.shell.mpvHelp().catch((error: Error) => toast.error(error.message))
+  void api.shell.mpvHelp().catch((error: Error) => toastFailure(error))
 }
 
 export default function PlayerSettings() {
@@ -79,7 +80,7 @@ export default function PlayerSettings() {
           : "Player settings saved",
       )
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toastFailure(error),
   })
   const onShellEvent = useCallback((event: ShellEvent) => {
     if (event.type === "file-picker-completed") {
@@ -162,7 +163,7 @@ export default function PlayerSettings() {
       toast.error("The file picker returned an unexpected request identifier.")
     }).catch((error: Error) => {
       settle()
-      toast.error(error.message)
+      toastFailure(error)
     })
   }
   const installMpv = () => {
@@ -179,7 +180,7 @@ export default function PlayerSettings() {
     }).catch((error: Error) => {
       if (pendingInstall.current === id) pendingInstall.current = null
       setInstall({ state: "failed", message: error.message })
-      toast.error(error.message)
+      toastFailure(error)
     })
   }
 

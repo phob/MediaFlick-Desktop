@@ -1,6 +1,7 @@
 import { toast } from "sonner"
 import { ItemActionButtons } from "@/components/ItemActionButtons"
 import type { ItemSummary } from "@/lib/api"
+import { toastFailure } from "@/lib/failure-toast"
 import { useQualityOverride } from "@/lib/playback-quality"
 import { useNextUp, usePlay, useSetFavorite, useSetPlayed } from "@/lib/queries"
 
@@ -28,7 +29,7 @@ export function CardInlineActions({
     if (item.kind === "Series") {
       const result = await nextUp.refetch()
       if (result.isError) {
-        toast.error(result.error.message)
+        toastFailure(result.error)
         return
       }
       target = result.data?.item ?? null

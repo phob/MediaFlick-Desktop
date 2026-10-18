@@ -1,5 +1,4 @@
 import { useScrollRestoration } from "@/lib/scroll-restoration"
-import { toast } from "sonner"
 import { api } from "@/lib/api"
 import { DEFAULT_VIEWING, useViewing } from "@/lib/viewing"
 import { useBrowsing } from "@/lib/queries"
@@ -16,6 +15,7 @@ import { ServerCastExtras, type ServerCastExtrasProps } from "@/components/seerr
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { PersonIdentity } from "@/lib/api"
+import { toastFailure } from "@/lib/failure-toast"
 import {
   castSearchPath,
   readCastSearch,
@@ -227,7 +227,7 @@ function BrowsePage({
     next.set("filters", "true")
     setParams(next, {replace:false})
     if (library && rememberKey && preferences.rememberFilters) {
-      void api.saveBrowsing(rememberKey, libraryPath(library.id, next)).then(() => { void history.refetch() }).catch((error: Error) => toast.error(`Could not remember library filters: ${error.message}`))
+      void api.saveBrowsing(rememberKey, libraryPath(library.id, next)).then(() => { void history.refetch() }).catch((error: Error) => toastFailure(error, `Could not remember library filters: ${error.message}`))
     }
   }
 

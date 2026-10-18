@@ -38,6 +38,7 @@ import {
   type CollectionTemplate,
   type CollectionTemplates,
 } from "@/lib/api"
+import { toastFailure } from "@/lib/failure-toast"
 import { jsonString, sameJson } from "@/lib/json"
 import { queryKeys } from "@/lib/query-client"
 import {
@@ -339,7 +340,7 @@ function CollectionWizard({
       toast.success(profileId ? "Collection saved" : "Collection created")
       onOpenChange(false)
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toastFailure(error),
   })
   const busy = previewing || saveProfile.isPending
 
@@ -429,7 +430,7 @@ function CollectionWizard({
       const failure = error instanceof Error ? error : new Error("Preview failed")
       if (previewRequest.current.generation !== generation || failure.name === "AbortError") return null
       setPreviewError(failure.message)
-      toast.error(failure.message)
+      toastFailure(failure)
       return null
     } finally {
       if (previewRequest.current.generation === generation) {
@@ -695,7 +696,7 @@ export default function CollectionSettingsPage() {
       void cache.invalidateQueries({ queryKey: queryKeys.home })
       toast.success("Collection settings saved")
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toastFailure(error),
     onSettled: (_data, _error, submitted) => {
       if (submitted.deletedProfileIds.length) void cache.invalidateQueries({ queryKey: ["collections", account] })
     },
