@@ -3,8 +3,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::AppSettings;
 use super::json_file::{RecoveryNotice, load_with_recovery, save_with_backup};
+use super::{AppSettings, PlayerBackend};
 
 static SETTINGS_TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 static DEVICE_RECOVERY: std::sync::Mutex<Option<RecoveryNotice>> = std::sync::Mutex::new(None);
@@ -14,7 +14,42 @@ static DEVICE_RECOVERY: std::sync::Mutex<Option<RecoveryNotice>> = std::sync::Mu
 static DEVICE_FILE_HELD: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 impl AppSettings {
-    pub fn load() -> Self {
+    /// Reads settings.json for startup. `main` reads it once per process, and
+    /// the shell's service locator reads it again for each API request that
+    /// arrives before the services are open, including after a failed open.
+    /// Once they are open, runtime code receives settings from
+    /// `PreferencesService` instead of reading the file.
+    pub fn load_at_startup() -> Self {
+        Self::load()
+    }
+
+    /// Applies what the command line asked to change at launch and saves an
+    /// explicit change through the same guarded path as every settings write.
+    pub fn apply_launch_overrides(
+        &mut self,
+        jellyfin_url: Option<String>,
+        mpv_path: Option<String>,
+        default_mpv_path: impl FnOnce() -> Option<String>,
+    ) {
+        let mut changed = false;
+        if let Some(url) = jellyfin_url {
+            self.jellyfin_url = Some(url);
+            changed = true;
+        }
+        if let Some(mpv_path) = mpv_path {
+            self.mpv_path = Some(mpv_path);
+            self.player_backend = Some(PlayerBackend::Mpv);
+            changed = true;
+        } else if self.effective_backend() == PlayerBackend::Mpv && self.mpv_path.is_none() {
+            self.mpv_path = default_mpv_path();
+        }
+        self.sanitize();
+        if changed && let Err(error) = self.save() {
+            tracing::warn!(target: "main", "failed to save mediaflick-desktop config: {error}");
+        }
+    }
+
+    fn load() -> Self {
         let path = config_file_path();
         let loaded = load_with_recovery::<Self>(&path);
         if let Ok(mut held) = DEVICE_FILE_HELD.lock() {
@@ -40,7 +75,7 @@ impl AppSettings {
         }
     }
 
-    pub fn save(&self) -> io::Result<()> {
+    pub(in crate::preferences) fn save(&self) -> io::Result<()> {
         let held = DEVICE_FILE_HELD
             .lock()
             .map_err(|_| io::Error::other("settings state is unavailable"))?

@@ -205,7 +205,7 @@ impl LibmpvOverlaySurface {
         self.closing.set(true);
         self.browser.borrow_mut().take();
         self.window.borrow_mut().take();
-        if let Some(services) = crate::app::services::services()
+        if let Some(services) = crate::shell::locator::services()
             && let Err(error) = services
                 .preferences
                 .record_window(self.window_settings.get())

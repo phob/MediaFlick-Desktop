@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::app::ids::valid_opaque_id;
+use crate::app::services::Services;
 use crate::app::services::ShellRequest;
-use crate::app::services::{self, Services};
 use crate::app::urls::{encode_path_segment, percent_decode, query_param};
 use crate::companion::CompanionStatus;
 use crate::integrations::letterboxd as letterboxd_integration;
@@ -34,6 +34,7 @@ use crate::preferences::{
     StreamingQuality,
 };
 use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection, tmdb_image_path};
+use crate::shell::locator;
 
 const HOME_ROW_LIMIT: i64 = 24;
 const BILLBOARD_LIMIT: i64 = 5;
@@ -103,7 +104,7 @@ fn stale_account_response() -> ApiResponse {
 }
 
 pub fn handle(request: &ApiRequest) -> ApiResponse {
-    dispatch(request, services::init)
+    dispatch(request, locator::init)
 }
 
 fn dispatch(request: &ApiRequest, services: impl FnOnce() -> Option<Arc<Services>>) -> ApiResponse {
@@ -117,7 +118,7 @@ fn dispatch(request: &ApiRequest, services: impl FnOnce() -> Option<Arc<Services
     let Some(services) = services() else {
         return ApiResponse::error(
             503,
-            services::init_error().unwrap_or("the library database is unavailable"),
+            locator::init_error().unwrap_or("the library database is unavailable"),
         );
     };
     route(&services, api_path, request)

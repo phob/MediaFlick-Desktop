@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, RwLock, mpsc};
+use std::sync::{Arc, Mutex, RwLock, mpsc};
 
 use crate::app::paths;
 use crate::collections::artwork::{ArtworkStore, custom_art_dir};
@@ -20,12 +20,7 @@ use crate::preferences::{
     accounts_file_path, collections_file_path, pending_deletions_file_path,
     playback_preferences_file_path,
 };
-
-static SERVICES: OnceLock<Arc<Services>> = OnceLock::new();
-static INIT_ERROR: OnceLock<String> = OnceLock::new();
-/// `OnceLock::set` only makes the *result* single-shot, not the work leading up
-/// to it, so the whole sequence is serialized here instead.
-static INIT_LOCK: Mutex<()> = Mutex::new(());
+use crate::shell::InitPermit;
 
 pub struct Services {
     pub library: Arc<Library>,
@@ -192,34 +187,16 @@ impl Services {
     }
 }
 
-pub fn init() -> Option<Arc<Services>> {
-    services().or_else(|| init_with_settings(AppSettings::load()))
-}
-
-pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>> {
-    if let Some(services) = SERVICES.get() {
-        return Some(services.clone());
-    }
-    // Several CEF threads can reach the API at once before anything is up.
-    // Whoever takes this lock and still finds no services is the one that
-    // builds them; without it, both would open the database and spawn a sync
-    // thread, and the loser of the `SERVICES.set` race would leak its thread
-    // against a `Library` nothing else can see. A poisoned lock only means a
-    // previous attempt panicked, which the checks below already handle.
-    let _guard = INIT_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(services) = SERVICES.get() {
-        return Some(services.clone());
-    }
+/// Builds the services and resumes interrupted account deletions. The caller
+/// publishes them before `start` lets background work reach the shell.
+pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Services>, String> {
     let path = paths::library_db_path();
     let library = match Library::open(&path) {
         Ok(library) => Arc::new(library),
         Err(error) => {
             let message = format!("could not open {}: {error}", path.display());
             tracing::error!(target: "library.db", "{message}");
-            let _ = INIT_ERROR.set(message);
-            return None;
+            return Err(message);
         }
     };
     let restored = library.credentials().is_authenticated();
@@ -231,16 +208,16 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
     if let Err(error) =
         accounts.import_legacy_appearance(active_account.as_ref(), &initial_settings.appearance)
     {
-        return initialization_failure(format!(
+        return Err(initialization_failure(format!(
             "could not import legacy appearance settings: {error}"
-        ));
+        )));
     }
     let collections_path = collections_file_path();
     let collections = open_configuration(&collections_path, CollectionConfigurationService::open)?;
     let playback_path = playback_preferences_file_path();
     let playback_preferences = open_configuration(&playback_path, PlaybackPreferenceService::open)?;
     if let Err(error) = import_legacy_account_data(&library, &accounts, &playback_preferences) {
-        return initialization_failure(error);
+        return Err(initialization_failure(error));
     }
     let preferences = Arc::new(PreferencesService::new(
         initial_settings,
@@ -297,15 +274,21 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
     });
     connect_app_hooks(&services);
     resume_pending_deletions(&services);
-    let _ = SERVICES.set(services.clone());
-    crate::collections::scheduler::start(services.clone());
-    tracing::info!(target: "library.db", path = %path.display(), "library database ready");
-    Some(services)
+    Ok(services)
 }
 
-/// `init` holds INIT_LOCK, which the CEF UI thread waits on, so the probe must
-/// not wait on the network there; it warms the cache from its own thread and
-/// the API paths re-check lazily.
+pub fn start(_: &InitPermit, services: &Arc<Services>) {
+    crate::collections::scheduler::start(services.clone());
+    tracing::info!(
+        target: "library.db",
+        path = %services.library.path().display(),
+        "library database ready"
+    );
+}
+
+/// `open` runs under the shell's init lock, which the CEF UI thread waits on,
+/// so the probe must not wait on the network there; it warms the cache from
+/// its own thread and the API paths re-check lazily.
 fn warm_restored_session(session: Arc<Session>, companion: Arc<CompanionSession>) {
     crate::app::threads::spawn_named("session-restore", move || {
         session.refresh_user_policy();
@@ -347,22 +330,15 @@ fn resume_pending_deletions(services: &Arc<Services>) {
 fn open_configuration<T>(
     path: &Path,
     open: impl FnOnce(PathBuf) -> std::io::Result<T>,
-) -> Option<Arc<T>> {
-    match open(path.to_path_buf()) {
-        Ok(service) => Some(Arc::new(service)),
-        Err(error) => {
-            let message = format!("could not open {}: {error}", path.display());
-            tracing::error!(target: "config", "{message}");
-            let _ = INIT_ERROR.set(message);
-            None
-        }
-    }
+) -> Result<Arc<T>, String> {
+    open(path.to_path_buf()).map(Arc::new).map_err(|error| {
+        initialization_failure(format!("could not open {}: {error}", path.display()))
+    })
 }
 
-fn initialization_failure(message: String) -> Option<Arc<Services>> {
+fn initialization_failure(message: String) -> String {
     tracing::error!(target: "config", "{message}");
-    let _ = INIT_ERROR.set(message);
-    None
+    message
 }
 
 fn import_legacy_account_data(
@@ -471,14 +447,6 @@ fn complete_pending_deletion(
         .finish(&deletion.account)
         .map_err(|error| format!("could not finish the deletion journal: {error}"))?;
     Ok(())
-}
-
-pub fn services() -> Option<Arc<Services>> {
-    SERVICES.get().cloned()
-}
-
-pub fn init_error() -> Option<&'static str> {
-    INIT_ERROR.get().map(String::as_str)
 }
 
 #[cfg(test)]

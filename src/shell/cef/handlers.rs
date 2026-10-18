@@ -358,7 +358,7 @@ wrap_life_span_handler! {
                 if let Some(playback) = playback {
                     playback.shutdown();
                 }
-                if let Some(services) = services::services() {
+                if let Some(services) = locator::services() {
                     services.sync.stop();
                     services.socket.stop();
                 }

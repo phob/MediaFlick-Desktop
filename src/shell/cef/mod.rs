@@ -8,7 +8,7 @@ use std::time::Duration;
 use cef::*;
 
 use crate::app::paths::app_data_dir;
-use crate::app::services::{self, ShellRequest};
+use crate::app::services::ShellRequest;
 use crate::app::{build_info, logger, urls};
 use crate::jellyfin::api::items;
 use crate::jellyfin::bridge as jellyfin_bridge;
@@ -18,6 +18,7 @@ use crate::maintenance::updater::{self, UpdateRelease};
 use crate::playback::{PlaybackCoordinator, PlaybackEvent};
 use crate::players::build_backend;
 use crate::preferences::{AppSettings, CloseBehavior, SettingsChange, WebUiWindowSettings};
+use crate::shell::locator;
 use crate::shell::ui::{about, error_toast};
 use crate::windows::set_window_icon;
 
@@ -107,7 +108,7 @@ pub fn run(config: &AppConfig) -> i32 {
     if let Err(error) = thread::Builder::new()
         .name("services-init".to_string())
         .spawn(move || {
-            services::init_with_settings(service_settings);
+            locator::init_with_settings(service_settings);
         })
     {
         tracing::warn!(target: "main", "could not start services early: {error}");
@@ -282,7 +283,7 @@ fn save_webui_window_settings(state: Option<&BrowserState>) {
             return;
         }
     };
-    let Some(services) = services::services() else {
+    let Some(services) = locator::services() else {
         return;
     };
     if let Err(error) = services.preferences.record_window(settings.webui_window) {
@@ -398,7 +399,7 @@ fn new_browser_state(
         &settings,
         playback_event_tx.clone(),
     )));
-    if let Some(services) = services::services() {
+    if let Some(services) = locator::services() {
         services.attach_playback(playback.clone());
     }
     let state = Arc::new(Mutex::new(BrowserStateInner {

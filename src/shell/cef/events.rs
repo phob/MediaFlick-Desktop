@@ -129,7 +129,7 @@ fn playback_event_needs_log(
 /// and frame APIs are UI-thread-only, so relay its apply plan before touching
 /// either of them.
 pub(super) fn start_preferences_event_bridge(state: &BrowserState) {
-    let Some(services) = services::services() else {
+    let Some(services) = locator::services() else {
         return;
     };
     let receiver = services.preferences.subscribe();
@@ -148,7 +148,7 @@ pub(super) fn start_preferences_event_bridge(state: &BrowserState) {
 }
 
 pub(super) fn start_shell_request_bridge(state: &BrowserState) {
-    let Some(services) = services::services() else {
+    let Some(services) = locator::services() else {
         return;
     };
     let receiver = services.shell.subscribe();
@@ -373,7 +373,7 @@ fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent, log_even
 ///
 /// Runs off the UI thread because both network and database work can block.
 fn mirror_playback_progress(state: &BrowserState, snapshot: &crate::playback::PlayerSnapshot) {
-    let (Some(item_id), Some(services)) = (snapshot.item_id.clone(), services::services()) else {
+    let (Some(item_id), Some(services)) = (snapshot.item_id.clone(), locator::services()) else {
         return;
     };
     let refresh_state = state.clone();
@@ -570,7 +570,7 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
             let mpv_path = path.to_string_lossy().into_owned();
             tracing::info!(target: "mpv.setup", path = %mpv_path, "mpv installed");
             finished();
-            let save_result: Result<(), String> = match services::services() {
+            let save_result: Result<(), String> = match locator::services() {
                 Some(services) => services
                     .preferences
                     .set_mpv_path(mpv_path.clone())
