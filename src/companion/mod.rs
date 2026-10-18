@@ -445,7 +445,7 @@ impl CompanionSession {
         self.session.commit_if_current(
             scope,
             || ApiError::Cancelled,
-            || {
+            |_live| {
                 let previous = self.cached_collection_readiness();
                 self.replace(state);
                 if previous != self.cached_collection_readiness() {
@@ -895,13 +895,18 @@ mod tests {
             )
             .expect("series"),
         ];
-        library.upsert_page(&items).expect("seed");
         library
-            .apply_user_data(&[crate::library::UserDataRecord {
-                jellyfin_id: "m1".to_string(),
-                played: true,
-                ..Default::default()
-            }])
+            .upsert_page(&crate::jellyfin::session::Live::for_test(), &items)
+            .expect("seed");
+        library
+            .apply_user_data(
+                &crate::jellyfin::session::Live::for_test(),
+                &[crate::library::UserDataRecord {
+                    jellyfin_id: "m1".to_string(),
+                    played: true,
+                    ..Default::default()
+                }],
+            )
             .expect("user data");
         let mut detail = json!({
             "parts": [
@@ -937,7 +942,9 @@ mod tests {
             )
             .expect("episode"),
         ];
-        library.upsert_page(&items).expect("seed");
+        library
+            .upsert_page(&crate::jellyfin::session::Live::for_test(), &items)
+            .expect("seed");
         let mut calendar = json!({
             "entries": [{
                 "kind": "episode",

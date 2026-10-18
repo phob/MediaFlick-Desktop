@@ -374,7 +374,9 @@ mod tests {
             )
             .expect("second"),
         ];
-        library.upsert_page(&items).expect("items");
+        library
+            .upsert_page(&crate::jellyfin::session::Live::for_test(), &items)
+            .expect("items");
         let account = AccountKey::new("server", "user").expect("account");
         let classified = classify(
             &library,
@@ -445,7 +447,9 @@ mod tests {
             r#"{"Id":"imdb-edition","Name":"One","Type":"Movie","ProviderIds":{"Imdb":"tt1234567"}}"#,
         )
         .expect("item");
-        library.upsert_page(&[item]).expect("items");
+        library
+            .upsert_page(&crate::jellyfin::session::Live::for_test(), &[item])
+            .expect("items");
         assert_eq!(
             unresolved_secondary_identities(&library).expect("unresolved"),
             [SecondaryIdentityRequest {

@@ -334,7 +334,9 @@ mod tests {
         .into_iter()
         .map(|value| serde_json::from_str(value).expect("dto"))
         .collect();
-        library.upsert_page(&items).expect("seed");
+        library
+            .upsert_page(&crate::jellyfin::session::Live::for_test(), &items)
+            .expect("seed");
 
         let movies = latest_home_items(&library, CatalogKind::Movie);
         let shows = latest_home_items(&library, CatalogKind::Series);

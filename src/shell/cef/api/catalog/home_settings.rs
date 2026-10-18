@@ -331,7 +331,7 @@ pub(super) fn patch_home_settings(
     let scope = session_scope(services)?;
     services
         .session
-        .commit_if_current(&scope, stale_account_response, || {
+        .commit_if_current(&scope, stale_account_response, |_live| {
             services
                 .accounts
                 .save_home(&current.account, &requested)

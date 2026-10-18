@@ -27,6 +27,7 @@ use serde::{Serialize, Serializer};
 use serde_json::Value;
 
 use crate::app::ids::new_device_id;
+use crate::jellyfin::session::Live;
 use libraries::LibraryId;
 
 pub use model::{
@@ -433,7 +434,7 @@ impl Library {
         })
     }
 
-    pub fn set_meta(&self, key: &str, value: &str) -> rusqlite::Result<()> {
+    pub fn set_meta(&self, _live: &Live, key: &str, value: &str) -> rusqlite::Result<()> {
         self.db.with_connection(|connection| {
             connection.execute(
                 "INSERT INTO meta (key, value) VALUES (?1, ?2)
@@ -482,7 +483,7 @@ pub(super) mod test_support {
     pub fn seeded() -> Library {
         let library = Library::open_in_memory().expect("library");
         library
-            .upsert_page(&[
+            .upsert_page(&crate::jellyfin::session::Live::for_test(), &[
                 dto(
                     r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProductionYear":1999,
                         "Genres":["Action"],"DateCreated":"2024-01-02","CommunityRating":8.7,

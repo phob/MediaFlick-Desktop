@@ -316,7 +316,7 @@ mod tests {
         .expect("discovery identities");
         let entries = fixture.as_array().expect("identities");
         let library = Library::open_in_memory().expect("library");
-        library.upsert_page(&[
+        library.upsert_page(&crate::jellyfin::session::Live::for_test(), &[
             dto(r#"{"Id":"local-movie","Name":"Movie","Type":"Movie","ProviderIds":{"Tmdb":"603"}}"#),
             dto(r#"{"Id":"local-series","Name":"Series","Type":"Series","ProviderIds":{"Tmdb":"603"}}"#),
         ]).expect("seed");

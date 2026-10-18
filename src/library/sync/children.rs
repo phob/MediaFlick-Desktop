@@ -131,7 +131,7 @@ fn reconcile_children(
     let reconciled = session.commit_if_current(
         &scope,
         || (),
-        || Ok(library.reconcile_children(parent_id, &live_items)),
+        |live| Ok(library.reconcile_children(live, parent_id, &live_items)),
     );
     let Ok(reconciled) = reconciled else {
         tracing::debug!(

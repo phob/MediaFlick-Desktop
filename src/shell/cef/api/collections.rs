@@ -182,19 +182,21 @@ fn upload_artwork(
 ) -> Result<UploadedArtwork, ApiResponse> {
     let scope = active_scope(services)?;
     match services.artwork.stage(body.bytes()) {
-        Ok(id) => match services
-            .session
-            .commit_if_current(&scope, stale_account_response, || {
-                Ok(UploadedArtwork { id: id.clone() })
-            }) {
-            Ok(uploaded) => Ok(uploaded),
-            Err(response) => {
-                if let Err(error) = services.artwork.remove(&id) {
-                    tracing::warn!(target: "collections", "could not remove stale custom artwork: {error}");
+        Ok(id) => {
+            match services
+                .session
+                .commit_if_current(&scope, stale_account_response, |_live| {
+                    Ok(UploadedArtwork { id: id.clone() })
+                }) {
+                Ok(uploaded) => Ok(uploaded),
+                Err(response) => {
+                    if let Err(error) = services.artwork.remove(&id) {
+                        tracing::warn!(target: "collections", "could not remove stale custom artwork: {error}");
+                    }
+                    Err(response)
                 }
-                Err(response)
             }
-        },
+        }
         Err(error) => Err(configuration_failure(&error)),
     }
 }

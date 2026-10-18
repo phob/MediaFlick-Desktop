@@ -25,7 +25,7 @@ use serde::Serialize;
 
 use crate::app::services::ShellBridge;
 use crate::jellyfin::api::ApiError;
-use crate::jellyfin::session::{Session, SessionScope};
+use crate::jellyfin::session::{Live, Session, SessionScope};
 
 use super::{Library, LibraryChangeBatch};
 
@@ -416,7 +416,7 @@ pub(super) fn cancelled(
 pub(super) fn commit<T>(
     session: &Session,
     scope: &SessionScope,
-    work: impl FnOnce() -> Result<T, ApiError>,
+    work: impl FnOnce(&Live) -> Result<T, ApiError>,
 ) -> Result<T, ApiError> {
     session.commit_if_current(scope, || ApiError::Cancelled, work)
 }

@@ -229,7 +229,7 @@ fn patch_appearance_settings(
     let scope = session_scope(services)?;
     services
         .session
-        .commit_if_current(&scope, stale_account_response, || {
+        .commit_if_current(&scope, stale_account_response, |_live| {
             match services.preferences.patch_appearance(patch) {
                 Ok(change) => Ok(settings_view(&change.settings, Vec::new())),
                 Err(error) => Err(ApiResponse::error(400, error.to_string())),
@@ -331,7 +331,7 @@ fn save_viewing(
     let ViewingSettingsWrite(write) = body.decode()?;
     services
         .session
-        .commit_if_current(&scope, stale_account_response, || {
+        .commit_if_current(&scope, stale_account_response, |_live| {
             match services.accounts.save_viewing_with(key, |stored| {
                 write.apply(stored.startup_destination.clone())
             }) {
@@ -371,7 +371,7 @@ fn save_browsing(
     let (page, route) = (body.page.as_str(), body.route.as_str());
     services
         .session
-        .commit_if_current(&scope, stale_account_response, || {
+        .commit_if_current(&scope, stale_account_response, |_live| {
             match services.accounts.save_browsing(key, page, route) {
                 Ok(()) => Ok(BrowsingSaved { saved: true }),
                 Err(error) => Err(ApiResponse::error(400, error.to_string())),

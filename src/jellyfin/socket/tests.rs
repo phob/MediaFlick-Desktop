@@ -197,9 +197,10 @@ fn a_pushed_change_fetched_before_an_account_switch_is_not_cached() {
 fn pushed_removals_and_watch_state_for_a_signed_out_session_are_dropped() {
     let library = alice_library("http://server:8096");
     library
-        .ingest_page(&[
-            serde_json::from_str(r#"{"Id":"m1","Name":"Kept","Type":"Movie"}"#).expect("dto"),
-        ])
+        .ingest_page(
+            &crate::jellyfin::session::Live::for_test(),
+            &[serde_json::from_str(r#"{"Id":"m1","Name":"Kept","Type":"Movie"}"#).expect("dto")],
+        )
         .expect("ingest");
     let session = Session::restore(library.clone(), Arc::default());
     let alice = session.scope().expect("Alice scope");
@@ -331,9 +332,13 @@ fn pushed_watch_state_reaches_the_library_cache() {
     credentials.token = Some("tok".to_string());
     library.save_credentials(&credentials).expect("save");
     library
-        .ingest_page(&[
-            serde_json::from_str(r#"{"Id":"ep1","Name":"Pilot","Type":"Episode"}"#).expect("dto"),
-        ])
+        .ingest_page(
+            &crate::jellyfin::session::Live::for_test(),
+            &[
+                serde_json::from_str(r#"{"Id":"ep1","Name":"Pilot","Type":"Episode"}"#)
+                    .expect("dto"),
+            ],
+        )
         .expect("ingest");
     let session = Arc::new(Session::restore(library.clone(), Arc::default()));
 

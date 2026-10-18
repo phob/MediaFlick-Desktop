@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::jellyfin::api::items::{self, PAGE_SIZE};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
-use crate::jellyfin::session::{Session, SessionScope};
+use crate::jellyfin::session::{Live, Session, SessionScope};
 use crate::library::catalog_libraries::{META_SWEEP_OWED, MembershipReplaced};
 use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
 
@@ -70,7 +70,9 @@ pub(super) fn run_cycle_inner(
             control,
         )?;
         let swept = if initial_catalog {
-            commit(session, &scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
+            commit(session, &scope, |live| {
+                touch(library, live, META_LAST_IDENTITY_SWEEP)
+            })?;
             false
         } else if trigger.forces_identity_sweep()
             || meta(library, META_SWEEP_OWED)?.as_deref() == Some("1")
@@ -139,24 +141,24 @@ fn restart_bootstrap(
     session: &Session,
     scope: &SessionScope,
 ) -> Result<(), ApiError> {
-    commit(session, scope, || {
+    commit(session, scope, |live| {
         library
-            .set_meta(META_BOOTSTRAP_DONE, "0")
+            .set_meta(live, META_BOOTSTRAP_DONE, "0")
             .map_err(|error| storage_error(&error))?;
         library
-            .set_meta(META_BOOTSTRAP_OFFSET, "0")
+            .set_meta(live, META_BOOTSTRAP_OFFSET, "0")
             .map_err(|error| storage_error(&error))?;
         library
-            .set_meta(META_BOOTSTRAP_TOTAL, "")
+            .set_meta(live, META_BOOTSTRAP_TOTAL, "")
             .map_err(|error| storage_error(&error))?;
         Ok(())
     })
 }
 
 fn record_failure(library: &Library, session: &Session, scope: &SessionScope) {
-    let _ = commit(session, scope, || {
+    let _ = commit(session, scope, |live| {
         library
-            .set_meta(META_LATEST_FAILURE, "1")
+            .set_meta(live, META_LATEST_FAILURE, "1")
             .map_err(|storage| storage_error(&storage))
     });
 }
@@ -168,13 +170,13 @@ fn record_success(
     report: &SyncReport,
 ) -> Result<(), ApiError> {
     let serialized_report = serde_json::to_string(report).unwrap_or_default();
-    commit(session, scope, || {
+    commit(session, scope, |live| {
         library
-            .set_meta(META_LATEST_FAILURE, "0")
+            .set_meta(live, META_LATEST_FAILURE, "0")
             .map_err(|error| storage_error(&error))?;
-        touch(library, META_LAST_SYNC)?;
+        touch(library, live, META_LAST_SYNC)?;
         library
-            .set_meta("sync.last_report", &serialized_report)
+            .set_meta(live, "sync.last_report", &serialized_report)
             .map_err(|error| storage_error(&error))?;
         Ok(())
     })
@@ -202,8 +204,8 @@ fn sweep_identity(
     };
     let observed_at = meta(library, META_EMPTY_SWEEP_AT)?.and_then(|at| at.parse::<u64>().ok());
     let verdict = sweep_verdict(walk.answer, no_catalog_library, observed_at, now_unix());
-    let deletion_changes = commit(session, scope, || {
-        apply_sweep_verdict(library, verdict, &walk.seen)
+    let deletion_changes = commit(session, scope, |live| {
+        apply_sweep_verdict(library, live, verdict, &walk.seen)
     })?;
     report.user_data_refreshed = walk.refreshed;
     let deletion_ran = deletion_changes.is_some();
@@ -214,7 +216,9 @@ fn sweep_identity(
     if let Some(error) = failure {
         return Err(error);
     }
-    commit(session, scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
+    commit(session, scope, |live| {
+        touch(library, live, META_LAST_IDENTITY_SWEEP)
+    })?;
     Ok(deletion_ran)
 }
 
@@ -282,9 +286,9 @@ fn walk_membership(
     walked_so_far: &mut MembershipReplaced,
 ) -> Result<(), ApiError> {
     let owed = if owe_all {
-        commit(session, scope, || {
+        commit(session, scope, |live| {
             library
-                .owe_every_membership()
+                .owe_every_membership(live)
                 .map_err(|error| storage_error(&error))
         })
     } else {
@@ -402,23 +406,25 @@ fn commit_catalog_page(
     page: &crate::jellyfin::api::model::ItemsResponse,
     offset: i64,
 ) -> Result<LibraryChangeBatch, ApiError> {
-    commit(session, scope, || {
+    commit(session, scope, |live| {
         let changes = library
-            .ingest_page(&page.items)
+            .ingest_page(live, &page.items)
             .map_err(|error| storage_error(&error))?;
         if page.total_record_count > 0 || offset == 0 {
             library
                 .set_meta(
+                    live,
                     META_BOOTSTRAP_TOTAL,
                     &page.total_record_count.max(0).to_string(),
                 )
                 .map_err(|error| storage_error(&error))?;
         }
         library
-            .set_meta(META_CATALOG_READY, "1")
+            .set_meta(live, META_CATALOG_READY, "1")
             .map_err(|error| storage_error(&error))?;
         library
             .set_meta(
+                live,
                 META_BOOTSTRAP_OFFSET,
                 &(offset + page.items.len() as i64).to_string(),
             )
@@ -433,11 +439,11 @@ fn finish_bootstrap(
     scope: &SessionScope,
     written: usize,
 ) -> Result<usize, ApiError> {
-    commit(session, scope, || {
+    commit(session, scope, |live| {
         library
-            .set_meta(META_BOOTSTRAP_DONE, "1")
+            .set_meta(live, META_BOOTSTRAP_DONE, "1")
             .map_err(|error| storage_error(&error))?;
-        touch(library, META_LAST_BOOTSTRAP)
+        touch(library, live, META_LAST_BOOTSTRAP)
     })?;
     tracing::info!(target: "library.sync", items = written, "library bootstrap complete");
     Ok(written)
@@ -453,11 +459,11 @@ fn commit_bootstrap_watermark(
     let Some(watermark) = watermark else {
         return Ok(());
     };
-    commit(session, scope, || {
+    commit(session, scope, |live| {
         library
-            .set_meta(META_WATERMARK, watermark)
+            .set_meta(live, META_WATERMARK, watermark)
             .map_err(|error| storage_error(&error))?;
-        write_watermark_ids(library, watermark_ids)
+        write_watermark_ids(library, live, watermark_ids)
     })
 }
 
@@ -469,14 +475,18 @@ fn commit_empty_bootstrap_page(
     offset: i64,
     elapsed: Duration,
 ) -> Result<(), ApiError> {
-    commit(session, scope, || {
+    commit(session, scope, |live| {
         if total_record_count > 0 || offset == 0 {
             library
-                .set_meta(META_BOOTSTRAP_TOTAL, &total_record_count.max(0).to_string())
+                .set_meta(
+                    live,
+                    META_BOOTSTRAP_TOTAL,
+                    &total_record_count.max(0).to_string(),
+                )
                 .map_err(|error| storage_error(&error))?;
         }
         library
-            .set_meta(META_CATALOG_READY, "1")
+            .set_meta(live, META_CATALOG_READY, "1")
             .map_err(|error| storage_error(&error))?;
         Ok(())
     })?;
@@ -533,9 +543,9 @@ fn incremental(
                 .is_some_and(|(candidate, watermark)| candidate < watermark)
                 || item.date_created.is_none()
         });
-        let page_changes = commit(session, scope, || {
+        let page_changes = commit(session, scope, |live| {
             library
-                .ingest_page(&fresh)
+                .ingest_page(live, &fresh)
                 .map_err(|error| storage_error(&error))
         })?;
         written += fresh.len();
@@ -548,11 +558,11 @@ fn incremental(
     }
 
     if let Some(newest) = newest {
-        commit(session, scope, || {
+        commit(session, scope, |live| {
             library
-                .set_meta(META_WATERMARK, &newest)
+                .set_meta(live, META_WATERMARK, &newest)
                 .map_err(|error| storage_error(&error))?;
-            write_watermark_ids(library, &newest_ids)
+            write_watermark_ids(library, live, &newest_ids)
         })?;
     }
     Ok(written)
@@ -604,17 +614,24 @@ fn sweep_verdict(
 
 fn apply_sweep_verdict(
     library: &Library,
+    live: &Live,
     verdict: SweepVerdict,
     seen: &HashSet<String>,
 ) -> Result<Option<LibraryChangeBatch>, ApiError> {
     let written = match verdict {
         SweepVerdict::Wait => return Ok(None),
         SweepVerdict::ObserveEmpty(at) => library
-            .set_meta(META_EMPTY_SWEEP_AT, &at.to_string())
+            .set_meta(live, META_EMPTY_SWEEP_AT, &at.to_string())
             .map(|()| None),
-        SweepVerdict::ForgetEmpty => library.set_meta(META_EMPTY_SWEEP_AT, "").map(|()| None),
+        SweepVerdict::ForgetEmpty => library
+            .set_meta(live, META_EMPTY_SWEEP_AT, "")
+            .map(|()| None),
         SweepVerdict::Delete => library
-            .retain_ids_setting_meta(seen, &[(META_SWEEP_OWED, "0"), (META_EMPTY_SWEEP_AT, "")])
+            .retain_ids_setting_meta(
+                live,
+                seen,
+                &[(META_SWEEP_OWED, "0"), (META_EMPTY_SWEEP_AT, "")],
+            )
             .map(Some),
     };
     written.map_err(|error| storage_error(&error))
@@ -663,9 +680,9 @@ fn walk_identity(
                     .map(|user_data| UserDataRecord::from_dto(&item.id, user_data))
             })
             .collect::<Vec<_>>();
-        let changed = commit(session, scope, || {
+        let changed = commit(session, scope, |live| {
             library
-                .apply_user_data(&records)
+                .apply_user_data(live, &records)
                 .map_err(|error| storage_error(&error))
         })?;
         refreshed += changed.item_ids.len();
@@ -733,11 +750,16 @@ fn read_watermark_ids(library: &Library) -> Result<HashSet<String>, ApiError> {
         .collect())
 }
 
-fn write_watermark_ids(library: &Library, ids: &HashSet<String>) -> Result<(), ApiError> {
+fn write_watermark_ids(
+    library: &Library,
+    live: &Live,
+    ids: &HashSet<String>,
+) -> Result<(), ApiError> {
     let mut ids = ids.iter().cloned().collect::<Vec<_>>();
     ids.sort_unstable();
     library
         .set_meta(
+            live,
             META_WATERMARK_IDS,
             &serde_json::to_string(&ids).unwrap_or_default(),
         )
@@ -782,9 +804,9 @@ fn meta(library: &Library, key: &str) -> Result<Option<String>, ApiError> {
     library.meta(key).map_err(|error| storage_error(&error))
 }
 
-fn touch(library: &Library, key: &str) -> Result<(), ApiError> {
+fn touch(library: &Library, live: &Live, key: &str) -> Result<(), ApiError> {
     library
-        .set_meta(key, &now_unix().to_string())
+        .set_meta(live, key, &now_unix().to_string())
         .map_err(|error| storage_error(&error))
 }
 
