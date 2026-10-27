@@ -23,6 +23,7 @@ import {
   type SeerrResult,
 } from "@/lib/api"
 import { usePlay, useReleaseCalendar, useSeerrStatus } from "@/lib/queries"
+import { localDate } from "@/lib/local-date"
 import { detailNavigationState } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
 
@@ -34,13 +35,6 @@ const DATE_KINDS: { id: CalendarDateKind; label: string }[] = [
 ]
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
-function iso(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, "0")
-  const day = String(date.getDate()).padStart(2, "0")
-  return `${year}-${month}-${day}`
-}
-
 function addMonths(date: Date, amount: number) {
   return new Date(date.getFullYear(), date.getMonth() + amount, 1)
 }
@@ -51,7 +45,7 @@ function calendarWindow(month: Date) {
   gridStart.setDate(gridStart.getDate() - mondayOffset)
   const gridEnd = new Date(gridStart)
   gridEnd.setDate(gridStart.getDate() + 41)
-  return { start: iso(gridStart), end: iso(gridEnd), gridStart }
+  return { start: localDate(gridStart), end: localDate(gridEnd), gridStart }
 }
 
 function episodeLabel(entry: CalendarEntry) {
@@ -234,7 +228,7 @@ function MonthGrid({
       </div>
       <div className="grid grid-cols-7">
         {days.map((day) => {
-          const date = iso(day)
+          const date = localDate(day)
           const items = byDate.get(date) ?? []
           const outside = day.getMonth() !== month.getMonth()
           return (
@@ -247,7 +241,7 @@ function MonthGrid({
                 outside && "bg-black/12 text-muted-foreground/50",
               )}
             >
-              <div className={cn("mb-2 font-mono text-xs", iso(new Date()) === date && "text-primary")}>
+              <div className={cn("mb-2 font-mono text-xs", localDate() === date && "text-primary")}>
                 {day.getDate()}
               </div>
               <div className="flex flex-col gap-1">
@@ -288,7 +282,7 @@ export default function Calendar() {
   const [todayJumpRequest, setTodayJumpRequest] = useState(1)
   const completedTodayJump = useRef(0)
   const calendarRoot = useRef<HTMLDivElement>(null)
-  const today = iso(new Date())
+  const today = localDate()
   const window = useMemo(() => calendarWindow(month), [month])
   const calendar = useReleaseCalendar(window.start, window.end)
   const entries = useMemo(
