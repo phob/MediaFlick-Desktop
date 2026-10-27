@@ -154,12 +154,14 @@ export const queryKeys = {
 export function optionalIdQuery<Id, Data>(
   id: Id | null | undefined,
   queryKey: MintedQueryKey,
-  fetch: (id: Id, signal: AbortSignal) => Promise<Data>,
+  fetch: (id: Id, context: { readonly signal: AbortSignal }) => Promise<Data>,
   enabled = true,
 ) {
   return queryOptions({
     queryKey,
-    queryFn: ({ signal }) => (id ? fetch(id, signal) : Promise.reject(new Error("query ran without its id"))),
+    // Pass the context through untouched: reading `signal` makes TanStack cancel
+    // the query when its last observer unmounts, so only fetchers that read it opt in.
+    queryFn: (context) => (id ? fetch(id, context) : Promise.reject(new Error("query ran without its id"))),
     enabled: Boolean(id) && enabled,
   })
 }

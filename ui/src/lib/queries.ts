@@ -624,7 +624,7 @@ export function useQuickConnectStart() {
 export function useQuickConnectPoll(started: QuickConnectStart | undefined) {
   const client = useQueryClient()
   return useQuery({
-    ...optionalIdQuery(started, queryKeys.quickConnect(started?.secret ?? ""), async (started, signal) => {
+    ...optionalIdQuery(started, queryKeys.quickConnect(started?.secret ?? ""), async (started, { signal }) => {
       const result = await api.quickConnectPoll(started.serverUrl, started.secret, signal)
       if (result.authenticated) {
         // The shell gates on `/api/status`; re-reading it is what actually
@@ -693,7 +693,7 @@ export function useSeerrPersonCredits(
     ...optionalIdQuery(
       tmdbId,
       queryKeys.seerrPersonCredits(tmdbId ?? 0, jellyfinId ?? ""),
-      (tmdbId, signal) => api.seerr.personCredits(tmdbId, jellyfinId, signal),
+      (tmdbId, { signal }) => api.seerr.personCredits(tmdbId, jellyfinId, signal),
       enabled,
     ),
     retry: false,
@@ -948,7 +948,7 @@ export function useCollectionTitle(
     ...optionalIdQuery(
       mediaType && tmdbId ? { mediaType, tmdbId } : null,
       queryKeys.collectionTitle(account, mediaType ?? "", tmdbId ?? 0),
-      (title, signal) => api.collections.title(title.mediaType, title.tmdbId, signal),
+      (title, { signal }) => api.collections.title(title.mediaType, title.tmdbId, signal),
       enabled && Boolean(status?.authenticated),
     ),
     retry: false,
@@ -973,7 +973,7 @@ export function useJellyfinCollection(id: string | null) {
     ...optionalIdQuery(
       id,
       queryKeys.collectionJellyfinDetail(account, id ?? ""),
-      (id, signal) => api.collections.jellyfinDetail(id, signal),
+      (id, { signal }) => api.collections.jellyfinDetail(id, signal),
       Boolean(status?.authenticated),
     ),
     retry: false,
