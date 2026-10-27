@@ -1,4 +1,5 @@
-import { useCompanion, useSeerrPersonCredits, useSeerrStatus, useStatus } from "@/lib/queries"
+import { useSeerrPersonCredits, useSeerrStatus, useStatus } from "@/lib/queries"
+import { useCompanionCapabilities } from "@/lib/companion"
 
 /**
  * Everything both cast surfaces (the Discover row and the proven server
@@ -30,16 +31,11 @@ export function useCastCredits({
   resolutionError = null,
 }: CastCreditsInput) {
   const app = useStatus()
-  // The plugin's own probe-backed query, as in SeerrGate: the status snapshot
-  // can predate the Companion probe.
-  const companion = useCompanion()
-  const companionCapabilities = companion.data?.info?.capabilities ?? []
-  const companionProvidesSeerr = Boolean(
-    companion.data?.compatible && companionCapabilities.includes("seerr"),
-  )
+  const companion = useCompanionCapabilities()
+  const companionProvidesSeerr = companion.has("seerr")
   const seerr = useSeerrStatus(companionProvidesSeerr)
   const providerSupportsPeople =
-    !companionProvidesSeerr || companionCapabilities.includes("seerr-person-discovery")
+    !companionProvidesSeerr || companion.has("seerr-person-discovery")
   const linked = seerr.data?.linked ?? false
   const catalogComplete = app.data?.catalogComplete ?? false
   // With an exact Jellyfin person id the backend verifies every Seerr credit

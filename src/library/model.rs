@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, MediaStream, UserItemDataDto};
+use crate::playback::non_empty;
 
 use super::libraries::LibraryId;
 
@@ -29,10 +30,10 @@ impl TrackPreference {
     pub fn from_stream(stream: &MediaStream) -> Self {
         Self {
             index: stream.index,
-            language: normalized_owned(stream.language.as_deref()),
-            title: normalized_owned(stream.title.as_deref()),
-            display_title: normalized_owned(stream.display_title.as_deref()),
-            codec: normalized_owned(stream.codec.as_deref()),
+            language: non_empty(stream.language.as_deref()).map(str::to_string),
+            title: non_empty(stream.title.as_deref()).map(str::to_string),
+            display_title: non_empty(stream.display_title.as_deref()).map(str::to_string),
+            codec: non_empty(stream.codec.as_deref()).map(str::to_string),
             channels: stream.channels.filter(|channels| *channels > 0),
             is_default: stream.is_default,
             is_forced: stream.is_forced,
@@ -106,10 +107,10 @@ impl ItemPlaybackPreference {
     ) -> Self {
         Self {
             media_source: MediaSourcePreference {
-                id: normalized_owned(source.id.as_deref()),
+                id: non_empty(source.id.as_deref()).map(str::to_string),
                 index: source_index,
                 name: source.display_name().to_string(),
-                container: normalized_owned(source.container.as_deref()),
+                container: non_empty(source.container.as_deref()).map(str::to_string),
             },
             audio_track: audio_track.map(TrackPreference::from_stream),
             subtitle_track: subtitle_track.map(TrackPreference::from_stream),
@@ -168,7 +169,7 @@ pub fn resolve_playback_preference(
     };
 
     Some(ResolvedPlaybackPreference {
-        media_source_id: normalized_owned(source.id.as_deref()),
+        media_source_id: non_empty(source.id.as_deref()).map(str::to_string),
         media_source_index: source_index,
         audio_stream_index: audio.map(|stream| stream.index),
         subtitle_stream_index: subtitle.map(|stream| stream.index),
@@ -228,15 +229,8 @@ fn default_subtitle(source: &MediaSourceInfo) -> Option<&MediaStream> {
         })
 }
 
-fn normalized_owned(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
 fn optional_text_matches(saved: Option<&str>, current: Option<&str>) -> bool {
-    let Some(saved) = saved.map(str::trim).filter(|value| !value.is_empty()) else {
+    let Some(saved) = non_empty(saved) else {
         return true;
     };
     current
@@ -382,8 +376,9 @@ impl ItemRecord {
                 .clone()
                 .unwrap_or_else(|| "Unknown".to_string()),
             name: dto.display_name().to_string(),
-            original_title: non_empty(dto.original_title.as_deref()),
+            original_title: non_empty(dto.original_title.as_deref()).map(str::to_string),
             sort_name: non_empty(dto.sort_name.as_deref())
+                .map(str::to_string)
                 .or_else(|| Some(dto.display_name().to_lowercase())),
             // Jellyfin normally supplies ProductionYear for both films and
             // series (for a series it is the first-air year). Older servers
@@ -394,14 +389,14 @@ impl ItemRecord {
                     .as_deref()
                     .and_then(release_year_from_date)
             }),
-            premiere_date: non_empty(dto.premiere_date.as_deref()),
+            premiere_date: non_empty(dto.premiere_date.as_deref()).map(str::to_string),
             runtime_ticks: dto.run_time_ticks.filter(|ticks| *ticks > 0),
             community_rating: dto.community_rating,
-            official_rating: non_empty(dto.official_rating.as_deref()),
-            parent_id: non_empty(dto.parent_id.as_deref()),
-            series_id: non_empty(dto.series_id.as_deref()),
-            series_name: non_empty(dto.series_name.as_deref()),
-            season_id: non_empty(dto.season_id.as_deref()),
+            official_rating: non_empty(dto.official_rating.as_deref()).map(str::to_string),
+            parent_id: non_empty(dto.parent_id.as_deref()).map(str::to_string),
+            series_id: non_empty(dto.series_id.as_deref()).map(str::to_string),
+            series_name: non_empty(dto.series_name.as_deref()).map(str::to_string),
+            season_id: non_empty(dto.season_id.as_deref()).map(str::to_string),
             index_number: dto.index_number,
             parent_index_number: dto.parent_index_number,
             child_count: dto.child_count,
@@ -417,9 +412,9 @@ impl ItemRecord {
                 .or_else(|| dto.parent_backdrop_image_tags.first())
                 .cloned(),
             search_genres: dto.genres.join(", "),
-            date_created: non_empty(dto.date_created.as_deref()),
-            date_last_saved: non_empty(dto.date_last_saved.as_deref()),
-            series_status: non_empty(dto.status.as_deref()),
+            date_created: non_empty(dto.date_created.as_deref()).map(str::to_string),
+            date_last_saved: non_empty(dto.date_last_saved.as_deref()).map(str::to_string),
+            series_status: non_empty(dto.status.as_deref()).map(str::to_string),
             is_virtual: dto
                 .location_type
                 .as_deref()
@@ -448,7 +443,7 @@ impl UserDataRecord {
             playback_position_ticks: dto.playback_position_ticks.max(0),
             is_favorite: dto.is_favorite,
             played_percentage: dto.played_percentage,
-            last_played_date: non_empty(dto.last_played_date.as_deref()),
+            last_played_date: non_empty(dto.last_played_date.as_deref()).map(str::to_string),
         }
     }
 }
@@ -465,13 +460,6 @@ pub struct LibraryStats {
 
 fn json_text<T: Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "[]".to_string())
-}
-
-fn non_empty(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
 }
 
 fn release_year_from_date(value: &str) -> Option<i64> {
@@ -622,12 +610,12 @@ impl GenericItemDetail {
     pub fn from_dto(dto: &BaseItemDto) -> Self {
         Self {
             summary: ItemSummary {
-                overview: non_empty(dto.overview.as_deref()),
+                overview: non_empty(dto.overview.as_deref()).map(str::to_string),
                 ..ItemSummary::from_dto(dto)
             },
             genres: dto.genres.clone(),
             is_folder: dto.is_folder,
-            date_created: non_empty(dto.date_created.as_deref()),
+            date_created: non_empty(dto.date_created.as_deref()).map(str::to_string),
         }
     }
 }

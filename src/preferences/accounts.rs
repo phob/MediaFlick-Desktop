@@ -236,7 +236,8 @@ impl HomeSettings {
 }
 
 use super::json_file::{
-    RecoveryNotice, load_versioned_with_recovery, replace_backup_with_primary, save_with_backup,
+    RecoveryNotice, invalid_data, load_versioned_with_recovery, replace_backup_with_primary,
+    save_with_backup,
 };
 use super::store::config_dir;
 
@@ -801,10 +802,6 @@ fn route_fits(own_library: Option<&LibraryId>, route: &str) -> bool {
                     || path.starts_with("/collections/")
             }
         }
-}
-
-fn invalid_data(message: impl Into<String>) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
 
 #[cfg(test)]

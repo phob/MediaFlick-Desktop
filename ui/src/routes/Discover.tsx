@@ -15,6 +15,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLiveSearch } from "@/hooks/use-live-search"
+import { useCompanionCapabilities } from "@/lib/companion"
 import {
   SEERR_DISCOVER_ROWS,
   seerrImageUrl,
@@ -34,7 +35,6 @@ import {
   writeDiscoveryFilters,
 } from "@/lib/discovery"
 import {
-  useCompanion,
   useInfiniteSeerrSearch,
   useSeerrDiscover,
   useSeerrGenres,
@@ -516,7 +516,7 @@ function SearchResults({
  */
 export default function Discover() {
   const [params, setParams] = useSearchParams()
-  const companion = useCompanion()
+  const companion = useCompanionCapabilities()
   const term = params.get("q") ?? ""
   const commitSearch = useCallback(
     (next: string) => {
@@ -533,15 +533,13 @@ export default function Discover() {
     [setParams],
   )
   const [draft, setDraft, flushSearch] = useLiveSearch(term, commitSearch)
-  const companionCapabilities = companion.data?.info?.capabilities ?? []
-  const companionManaged =
-    companion.data?.compatible && companionCapabilities.includes("seerr")
-  const companionDiscoveryV3 = companionCapabilities.includes("seerr-discovery-v3")
-  const companionDiscoveryV4 = companionCapabilities.includes("seerr-discovery-v4")
+  const companionManaged = companion.has("seerr")
+  const companionDiscoveryV3 = companion.has("seerr-discovery-v3")
+  const companionDiscoveryV4 = companion.has("seerr-discovery-v4")
   const advancedDiscovery =
     !companion.isPending &&
     (!companionManaged ||
-      companionCapabilities.includes("seerr-discovery-v2") ||
+      companion.has("seerr-discovery-v2") ||
       companionDiscoveryV3 ||
       companionDiscoveryV4)
   // v3 carried the superseded century parameter. Only v4 understands decade;

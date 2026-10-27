@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 
 use crate::app::{logger, urls};
 use crate::playback::{
-    HttpHeader, PlaybackRequest, ReportingState, TICKS_PER_MILLISECOND, non_empty,
+    HttpHeader, PlaybackRequest, ReportingState, TICKS_PER_MILLISECOND, non_empty, query_auth_token,
 };
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -97,7 +97,7 @@ impl PlaybackReporter {
             target: "jellyfin.playstate",
             endpoint,
             item_id = %request.item_id,
-            play_session_id = %display_opt(request.play_session_id.as_deref()),
+            play_session_id = %logger::display_opt(request.play_session_id.as_deref()),
             state = %state,
             body = %logger::redacted_json(&request.body),
             "queued Jellyfin playback state"
@@ -204,7 +204,7 @@ fn send_playstate_report(agent: &ureq::Agent, report: &PlaystateRequest) {
         target: "jellyfin.playstate",
         endpoint = report.endpoint,
         item_id = %report.item_id,
-        play_session_id = %display_opt(report.play_session_id.as_deref()),
+        play_session_id = %logger::display_opt(report.play_session_id.as_deref()),
         state = %report.state,
         "sending queued Jellyfin playback state"
     );
@@ -429,20 +429,7 @@ fn token_from_launch(launch: &PlaybackRequest) -> Option<String> {
         return Some(token);
     }
 
-    for key in [
-        "api_key",
-        "apikey",
-        "access_token",
-        "accesstoken",
-        "x-emby-token",
-        "x-mediabrowser-token",
-    ] {
-        if let Some(value) = query_param_ci(&launch.media_url, key) {
-            return Some(value);
-        }
-    }
-
-    None
+    query_auth_token(&launch.media_url)
 }
 
 fn token_from_authorization(value: &str) -> Option<String> {
@@ -568,21 +555,6 @@ fn server_base_url(media_url: &str) -> Option<String> {
     let base_path = path[..base_path_end].trim_end_matches('/');
 
     Some(format!("{origin}{base_path}"))
-}
-
-fn query_param_ci(url: &str, key: &str) -> Option<String> {
-    let query = url.split_once('?')?.1.split('#').next().unwrap_or_default();
-    query.split('&').find_map(|pair| {
-        let (raw_key, raw_value) = pair.split_once('=')?;
-        urls::percent_decode(raw_key)
-            .eq_ignore_ascii_case(key)
-            .then(|| urls::percent_decode(raw_value))
-            .filter(|value| !value.trim().is_empty())
-    })
-}
-
-fn display_opt(value: Option<&str>) -> &str {
-    non_empty(value).unwrap_or("unknown")
 }
 
 fn unix_now_ticks() -> i64 {

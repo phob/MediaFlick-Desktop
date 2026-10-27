@@ -2,7 +2,8 @@ use std::collections::HashSet;
 
 use serde_json::json;
 
-use super::{ItemQuery, Library, WatchFilter, civil_from_days};
+use super::{ItemQuery, Library, WatchFilter};
+use crate::library::civil_from_days;
 use crate::library::test_support::{dto, seeded};
 use crate::library::{
     CatalogKind, ItemSort, KindFilter, current_release_decade, release_decade_from_id,

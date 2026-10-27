@@ -51,8 +51,12 @@ impl Library {
     }
 
     pub fn letter_index(&self, query: &ItemQuery) -> rusqlite::Result<Vec<(String, i64)>> {
-        let (from_clause, where_clause, arguments) = query_base(query, true);
-        let order = order_by(query);
+        let ItemSql {
+            from_clause,
+            where_clause,
+            order,
+            arguments,
+        } = query_base(query, true);
         let sql = format!(
             "SELECT letter, min(position) FROM (
                  SELECT CASE WHEN initial BETWEEN 'A' AND 'Z' THEN initial ELSE '#' END AS letter,
@@ -465,7 +469,12 @@ fn parsed_json(raw: &str) -> Value {
 
 fn count_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<i64> {
     let needs_user_data = query.watched.is_some() || query.favorite.is_some();
-    let (from_clause, where_clause, arguments) = query_base(query, needs_user_data);
+    let ItemSql {
+        from_clause,
+        where_clause,
+        arguments,
+        ..
+    } = query_base(query, needs_user_data);
     connection
         .prepare_cached(&format!("SELECT count(*) {from_clause}{where_clause}"))?
         .query_row(params_from_iter(arguments.iter()), |row| row.get(0))
@@ -480,8 +489,12 @@ fn page_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<Ve
 }
 
 fn page_sql(query: &ItemQuery) -> (String, Vec<SqlValue>) {
-    let (from_clause, where_clause, mut arguments) = query_base(query, true);
-    let order = order_by(query);
+    let ItemSql {
+        from_clause,
+        where_clause,
+        order,
+        mut arguments,
+    } = query_base(query, true);
     arguments.push(SqlValue::Integer(query.limit.clamp(1, 500)));
     arguments.push(SqlValue::Integer(query.offset.max(0)));
     (
@@ -489,22 +502,6 @@ fn page_sql(query: &ItemQuery) -> (String, Vec<SqlValue>) {
             "SELECT {SUMMARY_COLUMNS} {from_clause}{where_clause} ORDER BY {order} LIMIT ? OFFSET ?"
         ),
         arguments,
-    )
-}
-
-fn order_by(query: &ItemQuery) -> String {
-    if query
-        .search
-        .as_deref()
-        .and_then(fts_match_expression)
-        .is_some()
-    {
-        return "bm25(items_fts), i.id ASC".to_string();
-    }
-    query.sort.order_clause(
-        query
-            .direction
-            .unwrap_or_else(|| query.sort.natural_direction()),
     )
 }
 
@@ -563,15 +560,35 @@ fn in_progress() -> String {
     )
 }
 
-fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<SqlValue>) {
+/// The parts of one catalog item query. The full-text decision is made once
+/// here: a matchable search both joins `items_fts` and orders by its rank, and
+/// the order clause must never name `items_fts` when the FROM clause lacks it.
+struct ItemSql {
+    from_clause: String,
+    where_clause: String,
+    order: String,
+    arguments: Vec<SqlValue>,
+}
+
+fn query_base(query: &ItemQuery, with_user_data: bool) -> ItemSql {
     let mut conditions = Vec::new();
     let mut arguments = Vec::new();
 
     let search = query.search.as_deref().and_then(fts_match_expression);
-    let mut from_clause = if search.is_some() {
-        "FROM items_fts JOIN items i ON i.id = items_fts.rowid".to_string()
+    let (mut from_clause, order) = if search.is_some() {
+        (
+            "FROM items_fts JOIN items i ON i.id = items_fts.rowid".to_string(),
+            "bm25(items_fts), i.id ASC".to_string(),
+        )
     } else {
-        "FROM items i".to_string()
+        (
+            "FROM items i".to_string(),
+            query.sort.order_clause(
+                query
+                    .direction
+                    .unwrap_or_else(|| query.sort.natural_direction()),
+            ),
+        )
     };
     if with_user_data {
         from_clause.push_str(" LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id");
@@ -632,7 +649,12 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
     }
 
     let where_clause = format!(" WHERE {}", conditions.join(" AND "));
-    (from_clause, where_clause, arguments)
+    ItemSql {
+        from_clause,
+        where_clause,
+        order,
+        arguments,
+    }
 }
 
 fn natural_order(left: &str, right: &str) -> Ordering {
@@ -682,24 +704,6 @@ fn fts_match_expression(input: &str) -> Option<String> {
         .map(|token| format!("\"{token}\"*"))
         .collect::<Vec<_>>();
     (!tokens.is_empty()).then(|| tokens.join(" AND "))
-}
-
-pub(super) fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let day_of_era = z.rem_euclid(146_097);
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let shifted_month = (5 * day_of_year + 2) / 153;
-    let day = (day_of_year - (153 * shifted_month + 2) / 5 + 1) as u32;
-    let month = if shifted_month < 10 {
-        shifted_month + 3
-    } else {
-        shifted_month - 9
-    } as u32;
-    (if month <= 2 { year + 1 } else { year }, month, day)
 }
 
 #[cfg(test)]

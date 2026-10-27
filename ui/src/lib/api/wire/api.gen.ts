@@ -12,7 +12,6 @@ export type AppStatus = {
   lastSync: string | null,
   bootstrap: Bootstrap,
   syncProgress: SyncProgress,
-  companion: CompanionStatus,
   authenticated: boolean,
   expired: boolean,
   serverUrl: string | null,

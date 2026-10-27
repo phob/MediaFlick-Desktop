@@ -388,7 +388,7 @@ fn profile_is_current(
         .any(|profile| profile.id == expected.id && profile.revision == expected.revision)
 }
 
-fn save_failed_refresh(
+pub(crate) fn save_failed_refresh(
     repository: &SnapshotRepository<'_>,
     account: &AccountKey,
     profile_id: &str,
@@ -420,14 +420,14 @@ pub fn is_due(last_success: Option<i64>, cadence: RefreshCadence, now: i64) -> b
 
 pub fn current_utc_date() -> String {
     let timestamp = crate::library::now_unix();
-    let (year, month, day) = civil_from_days(timestamp.div_euclid(86_400));
+    let (year, month, day) = crate::library::civil_from_days(timestamp.div_euclid(86_400));
     format!("{year:04}-{month:02}-{day:02}")
 }
 
 fn next_month(timestamp: i64) -> i64 {
     let days = timestamp.div_euclid(86_400);
     let seconds = timestamp.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
+    let (year, month, day) = crate::library::civil_from_days(days);
     let (next_year, next_month) = if month == 12 {
         (year + 1, 1)
     } else {
@@ -461,21 +461,6 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let day_of_year = (153 * adjusted_month + 2) / 5 + day - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
-}
-
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let days = days + 719_468;
-    let era = days.div_euclid(146_097);
-    let day_of_era = days - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let mut year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_part = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_part + 2) / 5 + 1;
-    let month = month_part + if month_part < 10 { 3 } else { -9 };
-    year += i64::from(month <= 2);
-    (year, month, day)
 }
 
 #[cfg(test)]

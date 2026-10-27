@@ -40,7 +40,7 @@ pub const EARLIEST_RELEASE_DECADE: i64 = 1900;
 
 pub fn current_release_decade() -> i64 {
     let days = now_unix().div_euclid(86_400);
-    let (year, _, _) = query::civil_from_days(days);
+    let (year, _, _) = civil_from_days(days);
     year.div_euclid(10) * 10
 }
 
@@ -241,7 +241,14 @@ impl Serialize for SortKey {
 
 impl ItemSort {
     pub fn from_id(value: &str, seed: Option<u32>) -> Option<Self> {
-        Some(match SortKey::from_id(value)? {
+        Some(Self::with_key(
+            SortKey::from_id(value)?,
+            seed.unwrap_or_default(),
+        ))
+    }
+
+    fn with_key(key: SortKey, seed: u32) -> Self {
+        match key {
             SortKey::Name => Self::Name,
             SortKey::ReleaseDate => Self::ReleaseDate,
             SortKey::DateAdded => Self::DateAdded,
@@ -250,10 +257,8 @@ impl ItemSort {
             SortKey::DatePlayed => Self::DatePlayed,
             SortKey::PlayCount => Self::PlayCount,
             SortKey::Runtime => Self::Runtime,
-            SortKey::Random => Self::Random {
-                seed: seed.unwrap_or_default(),
-            },
-        })
+            SortKey::Random => Self::Random { seed },
+        }
     }
 
     pub fn key(self) -> SortKey {
@@ -277,43 +282,106 @@ impl ItemSort {
         }
     }
 
-    fn order_clause(self, direction: SortDirection) -> String {
-        const TIEBREAK: &str = "i.sort_name COLLATE NOCASE ASC, i.id ASC";
-        let direction = direction.sql();
-        let key = match self {
-            Self::Random { seed } => return format!("mediaflick_shuffle(i.id, {seed}), i.id ASC"),
-            Self::Name => {
-                return format!(
-                    "i.sort_name COLLATE NOCASE {direction}, i.name COLLATE NOCASE ASC, i.id ASC"
-                );
-            }
-            Self::ReleaseDate => {
-                return format!(
-                    "i.year {direction} NULLS LAST, i.premiere_date {direction} NULLS LAST, {TIEBREAK}"
-                );
-            }
-            Self::DateAdded => "i.date_created",
-            Self::EpisodeAdded => {
+    fn order(self) -> SortOrder {
+        const BY_NAME: &str = "sort_name COLLATE NOCASE";
+        let indexed = |keys, tiebreak, nulls_last| {
+            SortOrder::Indexed(IndexedSort {
+                keys,
+                tiebreak,
+                nulls_last,
+            })
+        };
+        match self {
+            Self::Name => indexed(&[BY_NAME], "name COLLATE NOCASE", false),
+            // Its index also serves release-decade filtering: kind, then a
+            // bounded year range.
+            Self::ReleaseDate => indexed(&["year", "premiere_date"], BY_NAME, true),
+            Self::DateAdded => indexed(&["date_created"], BY_NAME, true),
+            Self::EpisodeAdded => SortOrder::Computed(
                 "COALESCE((SELECT max(e.date_created) FROM items e
                     WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id
-                      AND e.is_virtual = 0), i.date_created)"
-            }
-            Self::CommunityRating => "i.community_rating",
+                      AND e.is_virtual = 0), i.date_created)",
+            ),
+            Self::CommunityRating => indexed(&["community_rating"], BY_NAME, true),
             // SQLite's two-argument max() is NULL when either side is, so
             // absent dates compare as '' and turn back into NULL afterwards.
-            Self::DatePlayed => {
+            Self::DatePlayed => SortOrder::Computed(
                 "CASE WHEN i.kind = 'Series' THEN NULLIF(max(
                     COALESCE(u.last_played_date, ''),
                     COALESCE((SELECT max(ue.last_played_date) FROM items e
                         JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
                         WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id), '')
-                ), '') ELSE u.last_played_date END"
-            }
-            Self::PlayCount => "COALESCE(u.play_count, 0)",
-            Self::Runtime => "i.runtime_ticks",
-        };
-        format!("{key} {direction} NULLS LAST, {TIEBREAK}")
+                ), '') ELSE u.last_played_date END",
+            ),
+            Self::PlayCount => SortOrder::Computed("COALESCE(u.play_count, 0)"),
+            Self::Runtime => indexed(&["runtime_ticks"], BY_NAME, true),
+            Self::Random { seed } => SortOrder::Shuffled(seed),
+        }
     }
+
+    fn order_clause(self, direction: SortDirection) -> String {
+        let direction = direction.sql();
+        match self.order() {
+            SortOrder::Indexed(sort) => {
+                let nulls = if sort.nulls_last { " NULLS LAST" } else { "" };
+                let keys = sort
+                    .keys
+                    .iter()
+                    .map(|key| format!("i.{key} {direction}{nulls}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{keys}, i.{} ASC, i.id ASC", sort.tiebreak)
+            }
+            SortOrder::Computed(key) => {
+                format!("{key} {direction} NULLS LAST, i.sort_name COLLATE NOCASE ASC, i.id ASC")
+            }
+            SortOrder::Shuffled(seed) => format!("mediaflick_shuffle(i.id, {seed}), i.id ASC"),
+        }
+    }
+}
+
+enum SortOrder {
+    /// Plain item columns, kept in an `items_kind_<sort id>` index.
+    Indexed(IndexedSort),
+    /// A value computed per row, which no index serves.
+    Computed(&'static str),
+    Shuffled(u32),
+}
+
+/// The ORDER BY clause and the library schema's index are both built from
+/// this, so the index always leads with the columns its sort orders by.
+struct IndexedSort {
+    /// Ordered in the requested direction; the index keeps them in the
+    /// sort's natural one.
+    keys: &'static [&'static str],
+    /// Ascending, after `keys` and before the row id.
+    tiebreak: &'static str,
+    nulls_last: bool,
+}
+
+/// One `items_kind_<sort id>` index per indexed sort.
+fn sort_indexes() -> String {
+    SortKey::ALL
+        .into_iter()
+        .filter_map(|key| {
+            let sort = ItemSort::with_key(key, 0);
+            let SortOrder::Indexed(indexed) = sort.order() else {
+                return None;
+            };
+            let direction = sort.natural_direction().sql();
+            let keys = indexed
+                .keys
+                .iter()
+                .map(|key| format!("{key} {direction}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(format!(
+                "CREATE INDEX items_kind_{} ON items (kind, {keys}, {});\n",
+                key.id(),
+                indexed.tiebreak
+            ))
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -469,6 +537,23 @@ pub(crate) fn now_unix() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as i64)
         .unwrap_or_default()
+}
+
+/// The proleptic Gregorian `(year, month, day)` of a day count since the Unix
+/// epoch, after Howard Hinnant; small enough not to warrant a date-time crate.
+pub(crate) fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let days = days + 719_468;
+    let era = days.div_euclid(146_097);
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_part = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_part + 2) / 5 + 1;
+    let month = month_part + if month_part < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    (year, month, day)
 }
 
 #[cfg(test)]

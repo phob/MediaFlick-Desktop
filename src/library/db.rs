@@ -185,6 +185,7 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         drop_everything(connection)?;
     }
     connection.execute_batch(SCHEMA)?;
+    connection.execute_batch(&super::sort_indexes())?;
     if let Some(session) = session {
         restore_session(connection, &session)?;
     }
@@ -459,16 +460,7 @@ CREATE TABLE items (
     synced_at           INTEGER NOT NULL
 );
 
-CREATE INDEX items_kind_name
-    ON items (kind, sort_name COLLATE NOCASE, name COLLATE NOCASE);
--- Also serves release-decade filtering: kind, then a bounded year range.
-CREATE INDEX items_kind_year
-    ON items (kind, year DESC, premiere_date DESC, sort_name COLLATE NOCASE);
-CREATE INDEX items_kind_added ON items (kind, date_created DESC, sort_name COLLATE NOCASE);
-CREATE INDEX items_kind_rating
-    ON items (kind, community_rating DESC, sort_name COLLATE NOCASE);
-CREATE INDEX items_kind_runtime
-    ON items (kind, runtime_ticks DESC, sort_name COLLATE NOCASE);
+-- The items_kind_<sort> indexes are built from ItemSort in library/mod.rs.
 CREATE INDEX items_series ON items (series_id, parent_index_number, index_number);
 CREATE INDEX items_series_episodes
     ON items (series_id, is_virtual, date_created, jellyfin_id) WHERE kind = 'Episode';

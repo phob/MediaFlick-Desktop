@@ -76,14 +76,6 @@ export function appStatus(overrides: Partial<Status> = {}): Status {
     lastSync: null,
     bootstrap: { state: "ready" },
     syncProgress: { active: false, phase: "complete", catalog, retry: null },
-    companion: {
-      available: false,
-      compatible: false,
-      checked: true,
-      info: null,
-      error: null,
-      supportedApi: { min: 1, max: 1 },
-    },
     ...overrides,
   }
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 
-export function currentLocalDate() {
-  const date = new Date()
+/** `date` as `YYYY-MM-DD` in the local time zone. */
+export function localDate(date = new Date()) {
   return [
     date.getFullYear(),
     String(date.getMonth() + 1).padStart(2, "0"),
@@ -10,14 +10,14 @@ export function currentLocalDate() {
 }
 
 export function useLocalDate() {
-  const [value, setValue] = useState(currentLocalDate)
+  const [value, setValue] = useState(() => localDate())
   useEffect(() => {
     let timer = 0
     const schedule = () => {
       const now = new Date()
       const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
       timer = window.setTimeout(() => {
-        setValue(currentLocalDate())
+        setValue(localDate())
         schedule()
       }, Math.max(1_000, next.getTime() - now.getTime() + 1_000))
     }

@@ -503,7 +503,12 @@ fn commit_result_profile(
                 &scope,
                 || (),
                 |_live| {
-                    save_failed_refresh(&repository, account, &profile.id, attempt);
+                    crate::collections::scheduler::save_failed_refresh(
+                        &repository,
+                        account,
+                        &profile.id,
+                        attempt,
+                    );
                     Ok(())
                 },
             );
@@ -582,20 +587,6 @@ fn commit_result_profile(
                 total: visible_total,
             })
         })
-}
-
-fn save_failed_refresh(
-    repository: &SnapshotRepository<'_>,
-    account: &AccountKey,
-    profile_id: &str,
-    attempt: i64,
-) {
-    let mut state = repository
-        .refresh_state(account, profile_id)
-        .unwrap_or_default();
-    state.last_attempt = Some(attempt);
-    state.latest_failure = Some("Results unavailable".to_string());
-    let _ = repository.save_refresh_state(account, profile_id, &state);
 }
 
 fn profile(

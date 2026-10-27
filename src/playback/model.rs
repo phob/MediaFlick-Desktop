@@ -46,6 +46,21 @@ pub const TOKEN_QUERY_KEYS: &[&str] = &[
     "x-mediabrowser-token",
 ];
 
+/// The first non-empty access token `url`'s query carries under one of
+/// [`TOKEN_QUERY_KEYS`].
+pub fn query_auth_token(url: &str) -> Option<String> {
+    let query = url.split_once('?')?.1.split('#').next().unwrap_or_default();
+    TOKEN_QUERY_KEYS.iter().find_map(|key| {
+        query.split('&').find_map(|pair| {
+            let (raw_key, raw_value) = pair.split_once('=')?;
+            percent_decode(raw_key)
+                .eq_ignore_ascii_case(key)
+                .then(|| percent_decode(raw_value))
+                .filter(|value| !value.trim().is_empty())
+        })
+    })
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct HttpHeader {
