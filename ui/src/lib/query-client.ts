@@ -1,4 +1,4 @@
-import { QueryClient } from "@tanstack/react-query"
+import { QueryClient, queryOptions } from "@tanstack/react-query"
 import { ApiError, type ItemQuery, type PlayerState } from "./api"
 import type { TitleKind } from "./kinds"
 import type { BrowseSource } from "./libraries"
@@ -141,6 +141,27 @@ export const queryKeys = {
     key("collections", account, "jellyfin", id),
   movieCollection: (account: string, tmdbId: number) =>
     key("collections", account, "movie", tmdbId),
+}
+
+/**
+ * Options for a query on an id the caller may not have yet: it runs once the id
+ * is there, and every observer of the key carries the real fetcher.
+ *
+ * Use it instead of `id!` in a fetcher. Do not stand in `skipToken` for the
+ * missing id: observers of one key share its options, so a `skipToken`
+ * observer leaves the others nothing to refetch with (b2926ab).
+ */
+export function optionalIdQuery<Id, Data>(
+  id: Id | null | undefined,
+  queryKey: MintedQueryKey,
+  fetch: (id: Id, signal: AbortSignal) => Promise<Data>,
+  enabled = true,
+) {
+  return queryOptions({
+    queryKey,
+    queryFn: ({ signal }) => (id ? fetch(id, signal) : Promise.reject(new Error("query ran without its id"))),
+    enabled: Boolean(id) && enabled,
+  })
 }
 
 const ACCOUNT_QUERY_ROOTS = new Set([

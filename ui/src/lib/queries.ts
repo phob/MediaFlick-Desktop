@@ -7,7 +7,6 @@ import {
   useQuery,
   useQueryClient,
   type QueryClient,
-  type QueryKey,
 } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { toastFailure } from "./failure-toast"
@@ -33,6 +32,7 @@ import {
 import {
   invalidateMediaSurfaces,
   invalidateSeerrSurfaces,
+  optionalIdQuery,
   patchPlayerState,
   queryKeys,
   removeAccountQueryData,
@@ -57,27 +57,6 @@ function reportError(client: QueryClient) {
       void client.invalidateQueries({ queryKey: queryKeys.status })
     }
   }
-}
-
-/**
- * Options for a query on an id the caller may not have yet: it runs once the id
- * is there, and every observer of the key carries the real fetcher.
- *
- * Use it instead of `id!` in a fetcher. Do not stand in `skipToken` for the
- * missing id: observers of one key share its options, so a `skipToken`
- * observer leaves the others nothing to refetch with (b2926ab).
- */
-function optionalIdQuery<Id, Data>(
-  id: Id | null | undefined,
-  queryKey: QueryKey,
-  fetch: (id: Id, signal: AbortSignal) => Promise<Data>,
-  enabled = true,
-) {
-  return queryOptions({
-    queryKey,
-    queryFn: ({ signal }) => (id ? fetch(id, signal) : Promise.reject(new Error("query ran without its id"))),
-    enabled: Boolean(id) && enabled,
-  })
 }
 
 /**

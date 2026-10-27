@@ -21,7 +21,7 @@ CONFIG = UI / "lint" / "ratchet.json"
 OXLINT = UI / "node_modules" / ".bin" / "oxlint"
 FIXES = {
     "typescript(no-non-null-assertion)": "narrow the value instead; a query on an id that may be missing uses"
-    " `optionalIdQuery` in ui/src/lib/queries.ts (never `skipToken` on a shared key)",
+    " `optionalIdQuery` in ui/src/lib/query-client.ts (never `skipToken` on a shared key)",
     "ui(no-query-data-empty-fallback)": "render the query's pending and error states instead of an empty value",
     "ui(no-palette-color)": "use a theme color from ui/src/app.css, such as `scrim` for a dark overlay",
 }
