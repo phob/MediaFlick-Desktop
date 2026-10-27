@@ -1,3 +1,5 @@
+use crate::library::{EARLIEST_RELEASE_DECADE, current_release_decade};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoverKind {
     Trending,
@@ -42,45 +44,6 @@ pub struct DiscoverOptions {
     release_decade: Option<u16>,
     media_type: Option<TrendingMediaType>,
     time_window: Option<TrendingWindow>,
-}
-
-const EARLIEST_RELEASE_DECADE: u16 = 1900;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct UtcDate {
-    pub(super) year: u16,
-}
-
-impl UtcDate {
-    fn today() -> Self {
-        let days = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_secs() / 86_400)
-            .unwrap_or_default();
-        Self::from_unix_days(i64::try_from(days).unwrap_or_default())
-    }
-
-    // Gregorian civil date conversion by Howard Hinnant. Keeping this tiny
-    // avoids adding a date-time dependency solely to cap one query parameter.
-    pub(super) fn from_unix_days(days: i64) -> Self {
-        let days = days + 719_468;
-        let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
-        let day_of_era = days - era * 146_097;
-        let year_of_era =
-            (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-        let mut year = year_of_era + era * 400;
-        let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-        let month_prime = (5 * day_of_year + 2) / 153;
-        let month = month_prime + if month_prime < 10 { 3 } else { -9 };
-        year += i64::from(month <= 2);
-        Self {
-            year: u16::try_from(year).unwrap_or_default(),
-        }
-    }
-
-    fn decade(self) -> u16 {
-        self.year / 10 * 10
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +101,7 @@ impl DiscoverOptions {
                     .ok_or_else(|| "minimum rating must be between 0 and 10".to_string())
             })
             .transpose()?;
-        let current_decade = UtcDate::today().decade();
+        let current_decade = current_release_decade();
         let release_decade = release_decade
             .map(|value| {
                 value
@@ -146,7 +109,8 @@ impl DiscoverOptions {
                     .ok()
                     .filter(|value| {
                         value.is_multiple_of(10)
-                            && (EARLIEST_RELEASE_DECADE..=current_decade).contains(value)
+                            && (EARLIEST_RELEASE_DECADE..=current_decade)
+                                .contains(&i64::from(*value))
                     })
                     .ok_or_else(|| {
                         format!(

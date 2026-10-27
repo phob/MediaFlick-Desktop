@@ -7,7 +7,7 @@ use tracing_appender::non_blocking::{NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 
-use crate::playback::{HttpHeader, PlaybackRequest};
+use crate::playback::{HttpHeader, PlaybackRequest, non_empty};
 use crate::preferences::config_dir;
 
 const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
@@ -81,7 +81,7 @@ pub fn init(path: &Path, filter: &str) -> LogGuard {
         }
     };
 
-    let env_filter = EnvFilter::try_new(non_empty(filter).unwrap_or("debug"))
+    let env_filter = EnvFilter::try_new(non_empty(Some(filter)).unwrap_or("debug"))
         .unwrap_or_else(|_| EnvFilter::new("debug"));
     let console_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
@@ -106,7 +106,7 @@ pub fn init(path: &Path, filter: &str) -> LogGuard {
     tracing::info!(
         target: "main",
         path = %path.display(),
-        filter = %non_empty(filter).unwrap_or("debug"),
+        filter = %non_empty(Some(filter)).unwrap_or("debug"),
         "app logging initialized"
     );
 
@@ -488,16 +488,8 @@ fn is_secret_header(key: &str) -> bool {
         .any(|secret| key.eq_ignore_ascii_case(secret))
 }
 
-fn display_opt(value: Option<&str>) -> &str {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unknown")
-}
-
-fn non_empty(value: &str) -> Option<&str> {
-    let value = value.trim();
-    (!value.is_empty()).then_some(value)
+pub fn display_opt(value: Option<&str>) -> &str {
+    non_empty(value).unwrap_or("unknown")
 }
 
 #[cfg(test)]

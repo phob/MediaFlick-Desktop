@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use crate::collections::{CollectionMode, CollectionProfile, ProviderReadiness};
 
 use super::AccountKey;
-use super::json_file::{RecoveryNotice, load_versioned_with_recovery, save_with_backup};
+use super::json_file::{
+    RecoveryNotice, invalid_data, load_versioned_with_recovery, save_with_backup,
+};
 use super::store::config_dir;
 
 const COLLECTION_CONFIG_VERSION: u32 = 1;
@@ -353,10 +355,6 @@ fn validate_accounts(document: &CollectionConfigurationFile) -> io::Result<()> {
         }
     }
     Ok(())
-}
-
-fn invalid_data(message: impl Into<String>) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
 
 fn scrub_backup(path: &Path) -> io::Result<()> {

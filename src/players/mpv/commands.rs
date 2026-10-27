@@ -2,10 +2,9 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use serde_json::{Map, Value, json};
 
-use crate::app::urls::percent_decode;
 use crate::playback::{
-    HttpHeader, PlaybackRequest, PlayerCommand, TOKEN_QUERY_KEYS, ToneMapping, VideoAspect,
-    VideoFit, non_empty,
+    HttpHeader, PlaybackRequest, PlayerCommand, ToneMapping, VideoAspect, VideoFit, non_empty,
+    query_auth_token,
 };
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
@@ -238,22 +237,6 @@ fn sanitize_option(value: &str) -> String {
         .chars()
         .filter(|ch| !matches!(ch, '\0' | '\r' | '\n'))
         .collect::<String>()
-}
-
-fn query_auth_token(url: &str) -> Option<String> {
-    TOKEN_QUERY_KEYS
-        .iter()
-        .find_map(|key| query_param_ci(url, key))
-}
-
-fn query_param_ci(url: &str, key: &str) -> Option<String> {
-    let query = url.split_once('?')?.1.split('#').next().unwrap_or_default();
-    query.split('&').find_map(|pair| {
-        let (raw_key, raw_value) = pair.split_once('=')?;
-        percent_decode(raw_key)
-            .eq_ignore_ascii_case(key)
-            .then(|| percent_decode(raw_value))
-    })
 }
 
 #[cfg(test)]

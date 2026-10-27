@@ -61,10 +61,9 @@ where
     if let Some(version) = declared
         && version != u64::from(supported_version)
     {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("unsupported {document_name} version {version}"),
-        ));
+        return Err(invalid_data(format!(
+            "unsupported {document_name} version {version}"
+        )));
     }
     parse_or_recover(path, &bytes, declared.is_some())
 }
@@ -103,17 +102,14 @@ where
             document,
             recovery: None,
         })),
-        Err(primary_error) if intact => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "{} was written by a different MediaFlick version and was left unchanged: \
+        Err(primary_error) if intact => Err(invalid_data(format!(
+            "{} was written by a different MediaFlick version and was left unchanged: \
                  {primary_error}",
-                path.file_name().map_or_else(
-                    || path.display().to_string(),
-                    |name| name.to_string_lossy().into_owned()
-                )
-            ),
-        )),
+            path.file_name().map_or_else(
+                || path.display().to_string(),
+                |name| name.to_string_lossy().into_owned()
+            )
+        ))),
         Err(primary_error) => recover_from_backup(path, &primary_error),
     }
 }
@@ -186,6 +182,11 @@ pub fn replace_backup_with_primary(path: &Path) -> io::Result<()> {
         atomic_write(&backup_path(path), &std::fs::read(path)?)?;
     }
     Ok(())
+}
+
+/// A durable document this app refuses to load or save as written.
+pub fn invalid_data(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
 
 pub fn backup_path(path: &Path) -> PathBuf {
