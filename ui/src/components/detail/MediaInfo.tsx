@@ -98,7 +98,7 @@ function SourceCard({ source, selected }: { source: MediaSource; selected: boole
 
   return (
     <div
-      className={`flex flex-col gap-4 rounded-xl border bg-card p-4 shadow-lg shadow-black/40 ${
+      className={`flex flex-col gap-4 rounded-xl border bg-card p-4 shadow-lg shadow-scrim/40 ${
         selected ? "border-primary/35" : "border-border/60"
       }`}
     >
@@ -195,7 +195,7 @@ function PlaybackTrackControls({
   }
 
   return (
-    <div className="grid gap-3 rounded-xl border border-primary/15 bg-card p-4 shadow-lg shadow-black/40 sm:grid-cols-3">
+    <div className="grid gap-3 rounded-xl border border-primary/15 bg-card p-4 shadow-lg shadow-scrim/40 sm:grid-cols-3">
       {sources.length > 1 && (
         <div className="flex min-w-0 flex-col gap-1.5">
           <Label htmlFor="media-source-select">Media source</Label>

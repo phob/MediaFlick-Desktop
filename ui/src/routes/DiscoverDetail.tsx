@@ -157,7 +157,7 @@ function Seasons({ detail }: { detail: SeerrMediaDetail }) {
         {detail.seasons.map((season) => (
           <div
             key={season.seasonNumber}
-            className="flex min-w-0 items-center justify-between gap-4 rounded-xl border border-border/60 bg-card px-4 py-3 shadow-lg shadow-black/40"
+            className="flex min-w-0 items-center justify-between gap-4 rounded-xl border border-border/60 bg-card px-4 py-3 shadow-lg shadow-scrim/40"
           >
             <div className="min-w-0">
               <div className="truncate text-sm font-medium">

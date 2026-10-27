@@ -141,7 +141,7 @@ export const SeerrCard = memo(function SeerrCard({
             title={`Request ${result.title}`}
             onClick={() => setRequesting(true)}
             className={cn(
-              "quick-request-action absolute right-2 z-20 grid size-11 place-items-center rounded-media border border-primary/45 bg-background/90 text-primary shadow-lg shadow-black/60 backdrop-blur-sm outline-none transition-[opacity,transform,background-color,border-color] duration-150 hover:border-primary hover:bg-primary hover:text-primary-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+              "quick-request-action absolute right-2 z-20 grid size-11 place-items-center rounded-media border border-primary/45 bg-background/90 text-primary shadow-lg shadow-scrim/60 backdrop-blur-sm outline-none transition-[opacity,transform,background-color,border-color] duration-150 hover:border-primary hover:bg-primary hover:text-primary-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               quickRequestVisible
                 ? "pointer-events-auto translate-y-0 opacity-100"
                 : "pointer-events-none translate-y-1 opacity-0",

@@ -239,7 +239,7 @@ function MonthGrid({
               data-calendar-cell
               className={cn(
                 "min-h-32 scroll-mt-4 border-r border-b border-white/6 p-2 last:border-r-0",
-                outside && "bg-black/12 text-muted-foreground/50",
+                outside && "bg-scrim/12 text-muted-foreground/50",
               )}
             >
               <div className={cn("mb-2 font-mono text-xs", localDate() === date && "text-primary")}>

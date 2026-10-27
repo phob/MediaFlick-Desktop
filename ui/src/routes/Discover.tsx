@@ -225,7 +225,7 @@ function GenreBrowser({
                         className="media-backdrop-image absolute inset-0 h-full w-full object-cover transition duration-200 group-hover:scale-[1.03]"
                       />
                     ) : null}
-                    <span className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-black/10" />
+                    <span className="absolute inset-0 bg-gradient-to-t from-scrim via-scrim/45 to-scrim/10" />
                     <span className="absolute inset-x-3 bottom-3 truncate text-sm font-semibold">
                       {genre.name}
                     </span>
@@ -637,7 +637,7 @@ export default function Discover() {
             placeholder="Search movies and series…"
             aria-label="Search Seerr"
             minLength={2}
-            className="h-12 rounded-xl border-edge bg-field pr-12 pl-12 text-base shadow-lg shadow-black/10 placeholder:text-muted-foreground/75"
+            className="h-12 rounded-xl border-edge bg-field pr-12 pl-12 text-base shadow-lg shadow-scrim/10 placeholder:text-muted-foreground/75"
           />
           {draft ? (
             <Button

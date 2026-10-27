@@ -343,7 +343,7 @@ function PreviewPanel({
         if (!pointerInside.current) onRelease()
       }}
       style={{ left, top, width: PANEL_WIDTH }}
-      className="preview-panel fixed z-50 overflow-hidden rounded-media bg-card shadow-2xl shadow-black/80 ring-1 ring-primary/25"
+      className="preview-panel fixed z-50 overflow-hidden rounded-media bg-card shadow-2xl shadow-scrim/80 ring-1 ring-primary/25"
     >
       <Link
         to={detailPath}

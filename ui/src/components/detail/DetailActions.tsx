@@ -55,7 +55,7 @@ function QualityPicker() {
       <SelectTrigger
         size="sm"
         aria-label="Streaming quality"
-        className="bg-card shadow-2xl shadow-black/60 dark:bg-card"
+        className="bg-card shadow-2xl shadow-scrim/60 dark:bg-card"
       >
         <SelectValue />
       </SelectTrigger>

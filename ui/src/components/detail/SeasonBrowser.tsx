@@ -162,7 +162,7 @@ function EpisodeCard({
             accent fill and watched simply fills the track completely. */}
         {(progress > 0 || episode.played) && (
           <div
-            className="pointer-events-none absolute inset-x-0 bottom-0 z-[7] h-[3px] bg-black/65"
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-[7] h-[3px] bg-scrim/65"
             title={progress > 0 ? undefined : "Watched"}
           >
             <div className="h-full bg-primary" style={{ width: `${(progress || 1) * 100}%` }} />
@@ -210,7 +210,7 @@ function EpisodeActions({ episode, parentId }: { episode: ItemSummary; parentId:
   const resumable = episode.positionTicks > 0
 
   return (
-    <div className="absolute inset-x-0 bottom-0 z-[2] flex items-center gap-2 bg-gradient-to-t from-black/75 to-transparent p-2 pt-8 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+    <div className="absolute inset-x-0 bottom-0 z-[2] flex items-center gap-2 bg-gradient-to-t from-scrim/75 to-transparent p-2 pt-8 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
       <Button
         size="sm"
         disabled={play.isPending}

@@ -49,7 +49,7 @@ function RequestCard({ request }: { request: SeerrRequest }) {
   const date = requestedOn(request)
 
   return (
-    <li className="group relative flex min-h-32 items-center gap-4 overflow-hidden rounded-xl border border-hairline bg-card/55 p-4 shadow-lg shadow-black/10 transition hover:border-edge hover:bg-card/75">
+    <li className="group relative flex min-h-32 items-center gap-4 overflow-hidden rounded-xl border border-hairline bg-card/55 p-4 shadow-lg shadow-scrim/10 transition hover:border-edge hover:bg-card/75">
       {backdrop && (
         <div className="pointer-events-none absolute inset-y-0 right-0 w-2/3 opacity-15 transition-opacity group-hover:opacity-20">
           <img src={backdrop} alt="" decoding="async" className="media-backdrop-image h-full w-full object-cover" />

@@ -25,7 +25,7 @@ const VARIANTS = {
   card: {
     icon: "size-4",
     button: "",
-    toggle: "bg-black/85",
+    toggle: "bg-scrim/85",
     off: "border-white/35 text-white hover:border-primary/70 hover:text-primary",
     favoriteOn: "border-primary/70 text-primary",
     playedOn: "border-primary/70 text-primary",

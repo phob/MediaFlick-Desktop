@@ -50,3 +50,21 @@ jobs:
 
       - name: Check file sizes
         run: python3 scripts/ci/check_file_size.py "$BASE"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: ui/package.json
+
+      - name: Install Node toolchain
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Install UI dependencies
+        run: pnpm --dir ui install --frozen-lockfile
+
+      - name: Check UI rule ratchets
+        run: python3 scripts/ci/check_ui_ratchet.py "$BASE"
