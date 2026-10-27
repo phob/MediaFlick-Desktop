@@ -88,7 +88,7 @@ export interface ReleaseDecadeOption {
   label: string
 }
 
-export function releaseDecades(currentYear = new Date().getUTCFullYear()): ReleaseDecadeOption[] {
+function releaseDecades(currentYear = new Date().getUTCFullYear()): ReleaseDecadeOption[] {
   const currentDecade = Math.floor(currentYear / 10) * 10
   const decades: ReleaseDecadeOption[] = []
   for (let decade = currentDecade; decade >= 1900; decade -= 10) {

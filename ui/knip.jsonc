@@ -1,0 +1,10 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignore": [
+    // shadcn/ui components ship their full API; the app uses part of it.
+    "src/components/ui/**",
+    // Generated from the Rust wire types (`just wire-types`), which emit every
+    // type a route touches whether or not the UI names it.
+    "src/lib/api/wire/**"
+  ]
+}

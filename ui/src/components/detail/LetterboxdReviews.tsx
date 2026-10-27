@@ -396,7 +396,7 @@ export function LetterboxdReviews({
   return <LetterboxdReviewSection lookup={lookup} />
 }
 
-export function LetterboxdMovieReviews({
+function LetterboxdMovieReviews({
   tmdbId,
   queries = DEFAULT_LETTERBOXD_QUERIES,
 }: {

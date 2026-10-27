@@ -11,8 +11,6 @@ export type Person = Wire.Person
 
 export type PersonIdentity = Wire.PersonIdentity
 
-export type PersonResolution = Wire.PersonResolution
-
 export interface PersonResolveQuery {
   jellyfinId?: string
   tmdbId?: number
@@ -26,8 +24,6 @@ export type GenericItemDetail = Extract<Wire.DetailView, { layout: "generic" }>
 export type AnyItemDetail = Wire.DetailView
 
 export type ItemAbout = Wire.ItemAbout
-
-export type ItemSynopsis = Wire.ItemSynopsis
 
 export type SortOrder = "asc" | "desc"
 

@@ -10,8 +10,6 @@ export type StartupResponse = Wire.StartupResponse
 
 export type CompanionService = "sonarr" | "radarr" | "seerr" | "mdblist" | "tmdb"
 
-export type CompanionInfo = Wire.CompanionInfo
-
 export type CompanionStatus = Wire.CompanionStatus
 
 export type SyncFailure = Wire.SyncFailure
@@ -24,6 +22,4 @@ export type SyncRetry = Wire.Retry
  * Home needs a usable catalog. A retry outlives the next attempt, so it stays
  * while `Status.syncing` reports that attempt running.
  */
-export type Bootstrap = Wire.Bootstrap
-
 export type SyncProgress = Wire.SyncProgress

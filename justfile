@@ -143,6 +143,7 @@ check-pr base="origin/main": fmt-check ui
     shellcheck distribution/libmpv/linux/build.sh distribution/linux/build-appimage.sh
     python3 -m unittest discover -s distribution/libmpv/linux -p 'test_*.py'
     pnpm --dir ui lint
+    pnpm --dir ui knip
     pnpm --dir ui test
     python3 scripts/ci/check_clones.py
     git diff --exit-code ui/pnpm-lock.yaml

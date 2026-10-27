@@ -63,11 +63,11 @@ function reportError(client: QueryClient) {
  * with every committed page, so they are left out here: a poll during a sync
  * then keeps the same `data` reference and does not re-render the observers.
  */
-export type SessionStatus = Omit<Status, "library" | "lastSync" | "syncProgress"> & {
+type SessionStatus = Omit<Status, "library" | "lastSync" | "syncProgress"> & {
   catalogComplete: boolean
 }
 
-export function sessionStatus(status: Status): SessionStatus {
+function sessionStatus(status: Status): SessionStatus {
   const { library: _library, lastSync: _lastSync, syncProgress, ...session } = status
   return { ...session, catalogComplete: syncProgress.catalog.complete }
 }
@@ -130,7 +130,7 @@ export function viewingQueryOptions(account: string) {
   return queryOptions({ queryKey: queryKeys.viewing(account), queryFn: api.viewing })
 }
 
-export function browsingQueryOptions(account: string) {
+function browsingQueryOptions(account: string) {
   return queryOptions({ queryKey: queryKeys.browsing(account), queryFn: api.browsing })
 }
 

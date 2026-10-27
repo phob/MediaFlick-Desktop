@@ -383,5 +383,3 @@ export function JellyfinCollectionDetail() {
     </CollectionShell>
   )
 }
-
-export default MyCollectionDetail
