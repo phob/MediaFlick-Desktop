@@ -6,7 +6,8 @@ Escape: MEDIAFLICK_GUARDS_CHANGED=1, which CI sets only from the PR's `guards-ch
 
 Lint configuration is compared by meaning: a new lint at full strength, a raised level
 or a lowered threshold passes. Guard code (CI scripts, workflows, check recipes, Cargo configuration,
-TypeScript and compiler-warning settings, the count behind the wire ratchets) has no such
+TypeScript and compiler-warning settings, the UI's own lint rules and ratchet, the knip configuration,
+the count behind the wire ratchets) has no such
 reading, so any change to it counts, except a version bump. CI runs the default branch's copy of this script
 from a pull_request_target workflow, so a PR cannot edit the check that judges it.
 """
@@ -27,7 +28,7 @@ Check = Callable[[str, str], list[str]]
 
 RUST_LEVELS = {"allow": 0, "warn": 1, "deny": 2, "forbid": 3}
 OXLINT_LEVELS = {"off": 0, "allow": 0, 0: 0, "warn": 1, 1: 1, "error": 2, "deny": 2, 2: 2}
-UI_GUARD_SCRIPTS = ("build", "lint", "test", "test:unit", "test:ui")
+UI_GUARD_SCRIPTS = ("build", "knip", "lint", "test", "test:unit", "test:ui")
 GUARD_RECIPES = ("check-pr", "clippy", "clippy-target", "fmt-check", "rust-quality", "test", "ui")
 MSBUILD_WARNINGS = re.compile(
     r"TreatWarningsAsErrors|WarningsAsErrors|WarningsNotAsErrors|NoWarn|WarningLevel|AnalysisLevel|AnalysisMode"
@@ -235,6 +236,8 @@ SURFACES = (
     Surface("Oxlint configuration", "ui/.oxlintrc.json", oxlint_config),
     Surface("UI check scripts", "ui/package.json", ui_scripts),
     Surface("TypeScript configuration", "ui/tsconfig*.json", changed_lines),
+    Surface("UI lint rules and ratchet", "ui/lint/*", changed_lines),
+    Surface("Knip configuration", "ui/knip.jsonc", changed_lines),
     Surface("MSBuild warning settings", "*Directory.Build.*", matching_lines(MSBUILD_WARNINGS)),
     Surface("Companion warning settings", "plugin/*.props", matching_lines(MSBUILD_WARNINGS)),
     Surface("Companion warning settings", "plugin/*.targets", matching_lines(MSBUILD_WARNINGS)),

@@ -26,6 +26,7 @@ import { usePlay, useReleaseCalendar, useSeerrStatus } from "@/lib/queries"
 import { localDate } from "@/lib/local-date"
 import { detailNavigationState } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
+import { seerrMediaType, titleKindOfCalendar } from "@/lib/kinds"
 
 const DATE_KINDS: { id: CalendarDateKind; label: string }[] = [
   { id: "air", label: "Episodes" },
@@ -98,7 +99,7 @@ function EntryActions({ entry }: { entry: CalendarEntry }) {
     )
   }
 
-  const requestMediaType = entry.kind === "movie" ? "movie" : "tv"
+  const requestMediaType = seerrMediaType(titleKindOfCalendar(entry.kind))
   const requestTmdbId = entry.kind === "movie" ? entry.tmdbId : entry.seriesTmdbId
   if (requestTmdbId && seerr.data?.linked) {
     const result: SeerrResult = {
@@ -238,7 +239,7 @@ function MonthGrid({
               data-calendar-cell
               className={cn(
                 "min-h-32 scroll-mt-4 border-r border-b border-white/6 p-2 last:border-r-0",
-                outside && "bg-black/12 text-muted-foreground/50",
+                outside && "bg-scrim/12 text-muted-foreground/50",
               )}
             >
               <div className={cn("mb-2 font-mono text-xs", localDate() === date && "text-primary")}>

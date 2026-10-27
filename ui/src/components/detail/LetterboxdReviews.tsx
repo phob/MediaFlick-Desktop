@@ -283,7 +283,7 @@ function ProfileTile({ entry }: { entry: LetterboxdReview }) {
               closeAndRestoreFocus()
             }}
             aria-label={`${entry.displayName}'s Letterboxd review`}
-            className="z-50 w-[min(24rem,calc(100vw-2rem))] origin-(--radix-popover-content-transform-origin) animate-in rounded-media border border-border/80 bg-popover/95 p-4 text-popover-foreground shadow-2xl shadow-black/40 backdrop-blur-xl fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
+            className="z-50 w-[min(24rem,calc(100vw-2rem))] origin-(--radix-popover-content-transform-origin) animate-in rounded-media border border-border/80 bg-popover/95 p-4 text-popover-foreground shadow-2xl shadow-scrim/40 backdrop-blur-xl fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
           >
             <div className="flex flex-col gap-3">
               <div className="min-w-0">
@@ -396,7 +396,7 @@ export function LetterboxdReviews({
   return <LetterboxdReviewSection lookup={lookup} />
 }
 
-export function LetterboxdMovieReviews({
+function LetterboxdMovieReviews({
   tmdbId,
   queries = DEFAULT_LETTERBOXD_QUERIES,
 }: {

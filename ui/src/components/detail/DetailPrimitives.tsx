@@ -70,7 +70,7 @@ export function DetailFact({ label, children }: { label: string; children: React
 
 export function DetailFactPanel({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <dl className={cn("divide-y divide-border/60 rounded-xl border border-border/60 bg-card px-4 py-1 shadow-lg shadow-black/40", className)}>
+    <dl className={cn("divide-y divide-border/60 rounded-xl border border-border/60 bg-card px-4 py-1 shadow-lg shadow-scrim/40", className)}>
       {children}
     </dl>
   )

@@ -1,4 +1,5 @@
 import type * as Wire from "../wire.gen.ts"
+import type { TitleKind } from "../../kinds.ts"
 
 export const CATALOG_KINDS = ["Movie", "Series", "Season", "Episode"] as const
 
@@ -9,8 +10,6 @@ export type ItemSummary = Wire.ItemSummary
 export type Person = Wire.Person
 
 export type PersonIdentity = Wire.PersonIdentity
-
-export type PersonResolution = Wire.PersonResolution
 
 export interface PersonResolveQuery {
   jellyfinId?: string
@@ -25,8 +24,6 @@ export type GenericItemDetail = Extract<Wire.DetailView, { layout: "generic" }>
 export type AnyItemDetail = Wire.DetailView
 
 export type ItemAbout = Wire.ItemAbout
-
-export type ItemSynopsis = Wire.ItemSynopsis
 
 export type SortOrder = "asc" | "desc"
 
@@ -43,7 +40,7 @@ export type SeriesStatus = "Continuing" | "Ended"
 export interface ItemQuery {
   search?: string
   personId?: string
-  kind?: string
+  kind?: readonly TitleKind[]
   genre?: string
   /** Inclusive first year of a standard release decade (for example 1990). */
   decade?: number

@@ -72,7 +72,7 @@ export function useLibraryMetadataBridge() {
         return
       }
       if (detail?.type === "collections-changed") {
-        void queryClient.invalidateQueries({ queryKey: ["collections"] })
+        void queryClient.invalidateQueries({ queryKey: queryKeys.root("collections") })
         void queryClient.invalidateQueries({ queryKey: queryKeys.home, exact: true })
         void queryClient.invalidateQueries({ queryKey: queryKeys.homeSettings, exact: true })
         return

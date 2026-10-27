@@ -37,6 +37,7 @@ import { castSearchPath } from "@/lib/cast-search"
 import { formatDate, formatLanguage } from "@/lib/format"
 import { detailNavigationState, readDetailNavigationState } from "@/lib/navigation"
 import { useCollectionTitle, useSeerrMedia, useSeerrStatus } from "@/lib/queries"
+import { titleKindOfCollection } from "@/lib/kinds"
 
 function CollectionSnapshotDetail({ item }: { item: NormalizedCollectionTitle }) {
   const location = useLocation()
@@ -53,7 +54,7 @@ function CollectionSnapshotDetail({ item }: { item: NormalizedCollectionTitle })
         <div className="max-w-3xl self-end pb-2">
           <DetailBackLink to={back.from} label={back.label} />
           <h1 className="text-3xl font-semibold tracking-tight">{item.title}</h1>
-          <div className="mt-2 flex gap-2"><Badge variant="secondary">{item.mediaType === "series" ? "Series" : "Movie"}</Badge>{item.year && <Badge variant="outline">{item.year}</Badge>}</div>
+          <div className="mt-2 flex gap-2"><Badge variant="secondary">{titleKindOfCollection(item.mediaType)}</Badge>{item.year && <Badge variant="outline">{item.year}</Badge>}</div>
           {item.overview && <p className="mt-5 text-sm leading-relaxed text-foreground/85">{item.overview}</p>}
           <p className="mt-5 text-sm text-muted-foreground">Seerr is unavailable for this title. Request actions are not available.</p>
         </div>
@@ -156,7 +157,7 @@ function Seasons({ detail }: { detail: SeerrMediaDetail }) {
         {detail.seasons.map((season) => (
           <div
             key={season.seasonNumber}
-            className="flex min-w-0 items-center justify-between gap-4 rounded-xl border border-border/60 bg-card px-4 py-3 shadow-lg shadow-black/40"
+            className="flex min-w-0 items-center justify-between gap-4 rounded-xl border border-border/60 bg-card px-4 py-3 shadow-lg shadow-scrim/40"
           >
             <div className="min-w-0">
               <div className="truncate text-sm font-medium">

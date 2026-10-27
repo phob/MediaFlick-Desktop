@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react"
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
+import { Pressable } from "@/components/ui/pressable"
 
 /**
  * One horizontally scrolling shelf: a heading, an optional "Browse all", and
@@ -124,8 +125,7 @@ function RailArrow({
 }) {
   const Icon = side === "start" ? ChevronLeft : ChevronRight
   return (
-    <button
-      type="button"
+    <Pressable
       aria-label={side === "start" ? `Previous ${title}` : `Next ${title}`}
       disabled={hidden}
       onClick={onClick}
@@ -136,6 +136,6 @@ function RailArrow({
       )}
     >
       <Icon className="size-7" />
-    </button>
+    </Pressable>
   )
 }

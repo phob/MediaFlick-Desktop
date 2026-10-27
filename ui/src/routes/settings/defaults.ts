@@ -30,7 +30,7 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   ratingSources: [],
 }
 
-export const DEFAULT_MARK_WATCHED_NEXT = "w"
+const DEFAULT_MARK_WATCHED_NEXT = "w"
 
 /**
  * Player defaults depend on the device: the built-in player where this build

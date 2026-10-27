@@ -555,7 +555,7 @@ export function LibraryFilters({
   const libraryOptions = useLibraryOptions(listsOptions ? libraryId : null)
   const titleViewOptions = listsOptions && source.scope === "titles"
   const genres = useGenres(titleViewOptions)
-  const ratings = useOfficialRatings(source.scope === "titles" ? source.query.kind ?? "" : "", titleViewOptions)
+  const ratings = useOfficialRatings(source.scope === "titles" ? source.query.kind ?? [] : [], titleViewOptions)
   const touchInput = useTouchInput()
   const options: FilterOptions = libraryId === null
     ? {

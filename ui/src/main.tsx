@@ -19,8 +19,10 @@ installAppSurfaceGuard()
 const router = createBrowserRouter([{ path: "*", element: <NavigationHistory><App /></NavigationHistory> }])
 const queryClient = createQueryClient()
 listenForLibrariesChangedBeforeBridge()
+const root = document.getElementById("root")
+if (!root) throw new Error("index.html has no #root element")
 void primeStartupQueries(queryClient, window.location.pathname).finally(() => {
-  createRoot(document.getElementById("root")!).render(
+  createRoot(root).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />

@@ -2,6 +2,7 @@ import { Check, Heart, Play } from "lucide-react"
 import type { MouseEvent } from "react"
 import type { ItemSummary } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { Pressable } from "@/components/ui/pressable"
 
 export interface ItemActionMutation<Input> {
   isPending: boolean
@@ -24,7 +25,7 @@ const VARIANTS = {
   card: {
     icon: "size-4",
     button: "",
-    toggle: "bg-black/85",
+    toggle: "bg-scrim/85",
     off: "border-white/35 text-white hover:border-primary/70 hover:text-primary",
     favoriteOn: "border-primary/70 text-primary",
     playedOn: "border-primary/70 text-primary",
@@ -70,8 +71,7 @@ export function ItemActionButtons({
   return (
     <>
       {play && (
-        <button
-          type="button"
+        <Pressable
           disabled={play.disabled}
           aria-label={play.label}
           title={play.label}
@@ -79,10 +79,9 @@ export function ItemActionButtons({
           className={cn("preview-action bg-primary text-primary-foreground hover:bg-primary/85", styles.button)}
         >
           <Play className={cn(styles.icon, "fill-current")} />
-        </button>
+        </Pressable>
       )}
-      <button
-        type="button"
+      <Pressable
         disabled={favorite.isPending}
         aria-label={favoriteLabel}
         aria-pressed={item.favorite}
@@ -96,9 +95,8 @@ export function ItemActionButtons({
         )}
       >
         <Heart className={cn(styles.icon, item.favorite && "fill-current")} />
-      </button>
-      <button
-        type="button"
+      </Pressable>
+      <Pressable
         disabled={played.isPending}
         aria-label={playedLabel}
         aria-pressed={item.played}
@@ -112,7 +110,7 @@ export function ItemActionButtons({
         )}
       >
         <Check className={styles.icon} />
-      </button>
+      </Pressable>
     </>
   )
 }

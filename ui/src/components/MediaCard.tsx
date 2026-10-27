@@ -174,7 +174,7 @@ export const MediaCard = memo(function MediaCard({
               watched simply fills the track completely. */}
           {(progress > 0 || item.played) && (
             <div
-              className="absolute inset-x-0 bottom-0 z-[7] h-[3px] bg-black/65"
+              className="absolute inset-x-0 bottom-0 z-[7] h-[3px] bg-scrim/65"
               title={progress > 0 ? undefined : "Watched"}
             >
               <div className="h-full bg-primary" style={{ width: `${(progress || 1) * 100}%` }} />

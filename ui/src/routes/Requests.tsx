@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { seerrImageUrl, type SeerrRequest } from "@/lib/api"
 import { useSeerrCancelRequest, useSeerrMedia, useSeerrRequests } from "@/lib/queries"
 import { detailNavigationState } from "@/lib/navigation"
+import { titleKindOfSeerr } from "@/lib/kinds"
 
 const FILTERS = [
   { id: "all", label: "All" },
@@ -48,7 +49,7 @@ function RequestCard({ request }: { request: SeerrRequest }) {
   const date = requestedOn(request)
 
   return (
-    <li className="group relative flex min-h-32 items-center gap-4 overflow-hidden rounded-xl border border-hairline bg-card/55 p-4 shadow-lg shadow-black/10 transition hover:border-edge hover:bg-card/75">
+    <li className="group relative flex min-h-32 items-center gap-4 overflow-hidden rounded-xl border border-hairline bg-card/55 p-4 shadow-lg shadow-scrim/10 transition hover:border-edge hover:bg-card/75">
       {backdrop && (
         <div className="pointer-events-none absolute inset-y-0 right-0 w-2/3 opacity-15 transition-opacity group-hover:opacity-20">
           <img src={backdrop} alt="" decoding="async" className="media-backdrop-image h-full w-full object-cover" />
@@ -83,7 +84,7 @@ function RequestCard({ request }: { request: SeerrRequest }) {
           {request.is4k && <Badge variant="outline">4K</Badge>}
         </div>
         <div className="truncate text-xs text-muted-foreground">
-          {[request.mediaType === "tv" ? "Series" : "Movie", seasons, date && `requested ${date}`]
+          {[titleKindOfSeerr(request.mediaType), seasons, date && `requested ${date}`]
             .filter(Boolean)
             .join(" · ")}
         </div>

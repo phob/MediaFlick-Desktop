@@ -17,8 +17,8 @@ const queryClient = createQueryClient()
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); queryClient.clear() })
 
 function seed(viewing: ViewingSettings = DEFAULT_VIEWING) {
-  queryClient.setQueryDefaults(["status"], {staleTime:Infinity})
-  queryClient.setQueryDefaults(["viewing"], {staleTime:Infinity})
+  queryClient.setQueryDefaults(queryKeys.status, {staleTime:Infinity})
+  queryClient.setQueryDefaults(queryKeys.root("viewing"), {staleTime:Infinity})
   queryClient.setQueryData(queryKeys.status, appStatus({authenticated:true, serverUrl:"server", userId:"user"}))
   queryClient.setQueryData(queryKeys.viewing("server:user"), viewing)
 }

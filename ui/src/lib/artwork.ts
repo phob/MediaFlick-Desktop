@@ -1,5 +1,5 @@
-export const SQUARE_ART_MIN = 0.8
-export const SQUARE_ART_MAX = 1.3
+const SQUARE_ART_MIN = 0.8
+const SQUARE_ART_MAX = 1.3
 
 export type ArtworkShape = "portrait" | "square" | "landscape"
 

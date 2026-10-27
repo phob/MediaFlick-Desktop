@@ -1,0 +1,11 @@
+{
+  "$schema": "../node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript"],
+  "jsPlugins": ["./plugin.mjs"],
+  "categories": { "correctness": "off" },
+  "rules": {
+    "typescript/no-non-null-assertion": "error",
+    "ui/no-query-data-empty-fallback": "error",
+    "ui/no-palette-color": "error"
+  }
+}

@@ -32,6 +32,7 @@ import {
 import {
   invalidateMediaSurfaces,
   invalidateSeerrSurfaces,
+  optionalIdQuery,
   patchPlayerState,
   queryKeys,
   removeAccountQueryData,
@@ -40,6 +41,7 @@ import {
   discoveryResultSetKey,
   type DiscoveryAvailability,
 } from "./discovery"
+import type { TitleKind } from "./kinds"
 import type { BrowseSource, ListingSource } from "./libraries"
 
 /**
@@ -62,11 +64,11 @@ function reportError(client: QueryClient) {
  * with every committed page, so they are left out here: a poll during a sync
  * then keeps the same `data` reference and does not re-render the observers.
  */
-export type SessionStatus = Omit<Status, "library" | "lastSync" | "syncProgress"> & {
+type SessionStatus = Omit<Status, "library" | "lastSync" | "syncProgress"> & {
   catalogComplete: boolean
 }
 
-export function sessionStatus(status: Status): SessionStatus {
+function sessionStatus(status: Status): SessionStatus {
   const { library: _library, lastSync: _lastSync, syncProgress, ...session } = status
   return { ...session, catalogComplete: syncProgress.catalog.complete }
 }
@@ -129,7 +131,7 @@ export function viewingQueryOptions(account: string) {
   return queryOptions({ queryKey: queryKeys.viewing(account), queryFn: api.viewing })
 }
 
-export function browsingQueryOptions(account: string) {
+function browsingQueryOptions(account: string) {
   return queryOptions({ queryKey: queryKeys.browsing(account), queryFn: api.browsing })
 }
 
@@ -225,10 +227,10 @@ export function useGenres(enabled = true) {
   })
 }
 
-export function useOfficialRatings(kind: string, enabled = true) {
+export function useOfficialRatings(kinds: readonly TitleKind[], enabled = true) {
   return useQuery({
-    queryKey: queryKeys.officialRatings(kind),
-    queryFn: () => api.officialRatings(kind),
+    queryKey: queryKeys.officialRatings(kinds),
+    queryFn: () => api.officialRatings(kinds),
     staleTime: 30 * 60_000,
     enabled,
   })
@@ -332,18 +334,12 @@ export function useBrowsePages(source: BrowseSource, pages: number[]) {
 }
 
 export function useItem(id: string | undefined) {
-  return useQuery({
-    queryKey: queryKeys.item(id ?? ""),
-    queryFn: () => api.item(id!),
-    enabled: Boolean(id),
-  })
+  return useQuery(optionalIdQuery(id, queryKeys.item(id ?? ""), (id) => api.item(id)))
 }
 
 export function useItemSynopsis(id: string | undefined, enabled = true) {
   return useQuery({
-    queryKey: queryKeys.itemSynopsis(id ?? ""),
-    queryFn: () => api.itemSynopsis(id!),
-    enabled: Boolean(id) && enabled,
+    ...optionalIdQuery(id, queryKeys.itemSynopsis(id ?? ""), (id) => api.itemSynopsis(id), enabled),
     staleTime: 10 * 60_000,
     retry: false,
   })
@@ -357,9 +353,7 @@ export function useItemSynopsis(id: string | undefined, enabled = true) {
  */
 export function useItemAbout(id: string | undefined, enabled = true) {
   return useQuery({
-    queryKey: queryKeys.itemAbout(id ?? ""),
-    queryFn: () => api.itemAbout(id!),
-    enabled: Boolean(id) && enabled,
+    ...optionalIdQuery(id, queryKeys.itemAbout(id ?? ""), (id) => api.itemAbout(id), enabled),
     staleTime: 5 * 60_000,
     retry: false,
   })
@@ -367,9 +361,7 @@ export function useItemAbout(id: string | undefined, enabled = true) {
 
 export function useLetterboxdReviews(id: string | undefined, enabled = true) {
   return useQuery({
-    queryKey: queryKeys.letterboxdReviews(id ?? ""),
-    queryFn: () => api.itemLetterboxd(id!),
-    enabled: Boolean(id) && enabled,
+    ...optionalIdQuery(id, queryKeys.letterboxdReviews(id ?? ""), (id) => api.itemLetterboxd(id), enabled),
     staleTime: 30 * 60_000,
     retry: false,
   })
@@ -377,20 +369,19 @@ export function useLetterboxdReviews(id: string | undefined, enabled = true) {
 
 export function useLetterboxdMovieReviews(tmdbId: number | null, enabled = true) {
   return useQuery({
-    queryKey: queryKeys.letterboxdMovieReviews(tmdbId ?? 0),
-    queryFn: () => api.movieLetterboxd(tmdbId!),
-    enabled: tmdbId != null && tmdbId > 0 && enabled,
+    ...optionalIdQuery(
+      tmdbId,
+      queryKeys.letterboxdMovieReviews(tmdbId ?? 0),
+      (tmdbId) => api.movieLetterboxd(tmdbId),
+      enabled,
+    ),
     staleTime: 30 * 60_000,
     retry: false,
   })
 }
 
 export function useChildren(id: string | undefined, enabled = true) {
-  return useQuery({
-    queryKey: queryKeys.children(id ?? ""),
-    queryFn: () => api.children(id!),
-    enabled: Boolean(id) && enabled,
-  })
+  return useQuery(optionalIdQuery(id, queryKeys.children(id ?? ""), (id) => api.children(id), enabled))
 }
 
 /**
@@ -400,9 +391,7 @@ export function useChildren(id: string | undefined, enabled = true) {
  */
 export function useMediaInfo(id: string | undefined, enabled = true) {
   return useQuery({
-    queryKey: queryKeys.media(id ?? ""),
-    queryFn: () => api.media(id!),
-    enabled: Boolean(id) && enabled,
+    ...optionalIdQuery(id, queryKeys.media(id ?? ""), (id) => api.media(id), enabled),
     staleTime: 30 * 60_000,
     retry: false,
   })
@@ -432,20 +421,14 @@ export function useSetPlaybackPreference(itemId: string) {
 
 export function useTrailer(id: string | undefined, enabled = true) {
   return useQuery({
-    queryKey: queryKeys.trailer(id ?? ""),
-    queryFn: () => api.trailer(id!),
-    enabled: Boolean(id) && enabled,
+    ...optionalIdQuery(id, queryKeys.trailer(id ?? ""), (id) => api.trailer(id), enabled),
     staleTime: 30 * 60_000,
     retry: false,
   })
 }
 
 export function useNextUp(id: string | undefined, enabled = true) {
-  return useQuery({
-    queryKey: queryKeys.nextUp(id ?? ""),
-    queryFn: () => api.nextUp(id!),
-    enabled: Boolean(id) && enabled,
-  })
+  return useQuery(optionalIdQuery(id, queryKeys.nextUp(id ?? ""), (id) => api.nextUp(id), enabled))
 }
 
 export function useOpenExternal() {
@@ -459,9 +442,12 @@ export function useOpenExternal() {
 
 export function usePlaybackNeighbors(itemId: string | undefined, enabled = true) {
   return useQuery({
-    queryKey: queryKeys.playbackNeighbors(itemId ?? ""),
-    queryFn: () => api.playbackNeighbors(itemId!),
-    enabled: Boolean(itemId) && enabled,
+    ...optionalIdQuery(
+      itemId,
+      queryKeys.playbackNeighbors(itemId ?? ""),
+      (itemId) => api.playbackNeighbors(itemId),
+      enabled,
+    ),
     staleTime: 30_000,
     retry: false,
   })
@@ -638,9 +624,8 @@ export function useQuickConnectStart() {
 export function useQuickConnectPoll(started: QuickConnectStart | undefined) {
   const client = useQueryClient()
   return useQuery({
-    queryKey: queryKeys.quickConnect(started?.secret ?? ""),
-    queryFn: async ({ signal }) => {
-      const result = await api.quickConnectPoll(started!.serverUrl, started!.secret, signal)
+    ...optionalIdQuery(started, queryKeys.quickConnect(started?.secret ?? ""), async (started, { signal }) => {
+      const result = await api.quickConnectPoll(started.serverUrl, started.secret, signal)
       if (result.authenticated) {
         // The shell gates on `/api/status`; re-reading it is what actually
         // swaps the sign-in view for the app. A billboard selection belongs to
@@ -651,8 +636,7 @@ export function useQuickConnectPoll(started: QuickConnectStart | undefined) {
         invalidateMediaSurfaces(client)
       }
       return result
-    },
-    enabled: Boolean(started),
+    }),
     refetchInterval: (query) => (query.state.data?.authenticated ? false : 2000),
     staleTime: 0,
     gcTime: 0,
@@ -706,9 +690,12 @@ export function useSeerrPersonCredits(
   enabled = true,
 ) {
   return useQuery({
-    queryKey: queryKeys.seerrPersonCredits(tmdbId ?? 0, jellyfinId ?? ""),
-    queryFn: ({ signal }) => api.seerr.personCredits(tmdbId!, jellyfinId, signal),
-    enabled: enabled && tmdbId !== null,
+    ...optionalIdQuery(
+      tmdbId,
+      queryKeys.seerrPersonCredits(tmdbId ?? 0, jellyfinId ?? ""),
+      (tmdbId, { signal }) => api.seerr.personCredits(tmdbId, jellyfinId, signal),
+      enabled,
+    ),
     retry: false,
   })
 }
@@ -770,9 +757,12 @@ export function useSeerrMedia(
   enabled = true,
 ) {
   return useQuery({
-    queryKey: queryKeys.seerrMedia(mediaType ?? "", tmdbId ?? 0),
-    queryFn: () => api.seerr.media(mediaType!, tmdbId!),
-    enabled: enabled && Boolean(mediaType) && Boolean(tmdbId),
+    ...optionalIdQuery(
+      mediaType && tmdbId ? { mediaType, tmdbId } : null,
+      queryKeys.seerrMedia(mediaType ?? "", tmdbId ?? 0),
+      (title) => api.seerr.media(title.mediaType, title.tmdbId),
+      enabled,
+    ),
     staleTime: 10 * 60_000,
     retry: false,
   })
@@ -955,9 +945,12 @@ export function useCollectionTitle(
   const { data: status } = useStatus()
   const account = accountKey(status)
   return useQuery({
-    queryKey: queryKeys.collectionTitle(account, mediaType ?? "", tmdbId ?? 0),
-    queryFn: ({ signal }) => api.collections.title(mediaType!, tmdbId!, signal),
-    enabled: enabled && Boolean(status?.authenticated) && Boolean(mediaType) && tmdbId !== null,
+    ...optionalIdQuery(
+      mediaType && tmdbId ? { mediaType, tmdbId } : null,
+      queryKeys.collectionTitle(account, mediaType ?? "", tmdbId ?? 0),
+      (title, { signal }) => api.collections.title(title.mediaType, title.tmdbId, signal),
+      enabled && Boolean(status?.authenticated),
+    ),
     retry: false,
   })
 }
@@ -977,9 +970,12 @@ export function useJellyfinCollection(id: string | null) {
   const { data: status } = useStatus()
   const account = accountKey(status)
   return useQuery({
-    queryKey: queryKeys.collectionJellyfinDetail(account, id ?? ""),
-    queryFn: ({ signal }) => api.collections.jellyfinDetail(id!, signal),
-    enabled: id !== null && Boolean(status?.authenticated),
+    ...optionalIdQuery(
+      id,
+      queryKeys.collectionJellyfinDetail(account, id ?? ""),
+      (id, { signal }) => api.collections.jellyfinDetail(id, signal),
+      Boolean(status?.authenticated),
+    ),
     retry: false,
   })
 }
@@ -988,9 +984,12 @@ export function useMovieCollection(tmdbId: number | null, enabled = true) {
   const { data: status } = useStatus()
   const account = accountKey(status)
   return useQuery({
-    queryKey: queryKeys.movieCollection(account, tmdbId ?? 0),
-    queryFn: () => api.collections.forMovie(tmdbId!),
-    enabled: enabled && tmdbId !== null && Boolean(status?.authenticated),
+    ...optionalIdQuery(
+      tmdbId,
+      queryKeys.movieCollection(account, tmdbId ?? 0),
+      (tmdbId) => api.collections.forMovie(tmdbId),
+      enabled && Boolean(status?.authenticated),
+    ),
     staleTime: 30 * 60_000,
     retry: false,
   })

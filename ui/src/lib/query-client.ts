@@ -1,5 +1,6 @@
-import { QueryClient } from "@tanstack/react-query"
+import { QueryClient, queryOptions } from "@tanstack/react-query"
 import { ApiError, type ItemQuery, type PlayerState } from "./api"
+import type { TitleKind } from "./kinds"
 import type { BrowseSource } from "./libraries"
 
 /**
@@ -34,78 +35,135 @@ const ITEMS_ROOT = "items"
 const BROWSE_ROOT = "browse"
 const LIBRARY_LATEST_ROOT = "library-latest"
 
+declare const minted: unique symbol
+
+/**
+ * A key from `queryKeys` below. Registered with TanStack Query, so every
+ * `queryKey` the app hands a hook, a filter or the cache must come from this
+ * registry: a raw `["seerr", ...]` literal no longer type-checks.
+ */
+type MintedQueryKey = readonly unknown[] & { readonly [minted]: true }
+
+declare module "@tanstack/react-query" {
+  interface Register {
+    queryKey: MintedQueryKey
+  }
+}
+
+function key<const Parts extends readonly unknown[]>(...parts: Parts) {
+  // SAFETY: the brand is a phantom type with no runtime field. Minting it here,
+  // and only here, is the fact it records.
+  return parts as Parts & MintedQueryKey
+}
+
+/** Roots whose every key one invalidation covers. */
+type QueryRoot =
+  | typeof ITEMS_ROOT
+  | typeof BROWSE_ROOT
+  | typeof LIBRARY_LATEST_ROOT
+  | "person-items"
+  | "viewing"
+  | "letterboxd"
+  | "collections"
+
 export const queryKeys = {
-  status: ["status"] as const,
-  companion: ["companion"] as const,
-  calendar: (start: string, end: string) => ["calendar", start, end] as const,
-  settings: ["settings"] as const,
-  viewing: (account: string) => ["viewing", account] as const,
-  browsing: (account: string) => ["browsing", account] as const,
-  ratingsStatus: ["ratings", "status"] as const,
-  home: ["home"] as const,
-  homeResume: ["home", "resume"] as const,
-  homeSettings: ["home", "settings"] as const,
-  billboard: ["billboard"] as const,
-  genres: ["genres"] as const,
-  libraries: ["libraries"] as const,
-  libraryOptions: (id: string) => ["library-options", id] as const,
-  libraryLatest: (id: string) => [LIBRARY_LATEST_ROOT, id] as const,
-  officialRatings: (kind: string) => ["official-ratings", kind] as const,
-  serverInfo: (server: string) => ["server-info", server] as const,
-  quickConnect: (secret: string) => ["quick-connect", secret] as const,
+  root: (root: QueryRoot) => key(root),
+  seerrScope: (scope: "requests" | "search" | "person" | "discover" | "media") => key("seerr", scope),
+  collectionsOf: (account: string) => key("collections", account),
+  status: key("status"),
+  companion: key("companion"),
+  calendar: (start: string, end: string) => key("calendar", start, end),
+  settings: key("settings"),
+  viewing: (account: string) => key("viewing", account),
+  browsing: (account: string) => key("browsing", account),
+  ratingsStatus: key("ratings", "status"),
+  home: key("home"),
+  homeResume: key("home", "resume"),
+  homeSettings: key("home", "settings"),
+  billboard: key("billboard"),
+  genres: key("genres"),
+  libraries: key("libraries"),
+  libraryOptions: (id: string) => key("library-options", id),
+  libraryLatest: (id: string) => key(LIBRARY_LATEST_ROOT, id),
+  officialRatings: (kinds: readonly TitleKind[]) => key("official-ratings", kinds),
+  serverInfo: (server: string) => key("server-info", server),
+  quickConnect: (secret: string) => key("quick-connect", secret),
   // Live exact-person pages are not local SQLite projections. Keeping their
   // root separate prevents every committed sync batch from re-running the
   // same Jellyfin filmography query.
   items: (query: ItemQuery) =>
-    query.personId ? (["person-items", query] as const) : ([ITEMS_ROOT, query] as const),
+    query.personId ? key("person-items", query) : key(ITEMS_ROOT, query),
   browsePage: (source: BrowseSource, offset: number, limit: number) =>
-    [BROWSE_ROOT, source, { offset, limit }] as const,
-  browseLetters: (source: BrowseSource) => [BROWSE_ROOT, source, "letters"] as const,
+    key(BROWSE_ROOT, source, { offset, limit }),
+  browseLetters: (source: BrowseSource) => key(BROWSE_ROOT, source, "letters"),
   personResolution: (jellyfinId: string, tmdbId: number | null, name: string) =>
-    ["person", "resolve", jellyfinId, tmdbId, name] as const,
-  item: (id: string) => ["item", id] as const,
-  itemSynopsis: (id: string) => ["item", id, "synopsis"] as const,
-  itemAbout: (id: string) => ["item", id, "about"] as const,
-  letterboxdReviews: (id: string) => ["letterboxd", "item", id] as const,
-  letterboxdMovieReviews: (tmdbId: number) => ["letterboxd", "movie", tmdbId] as const,
-  letterboxdProfiles: ["letterboxd", "profiles"] as const,
-  children: (id: string) => ["item", id, "children"] as const,
-  media: (id: string) => ["item", id, "media"] as const,
-  trailer: (id: string) => ["item", id, "trailer"] as const,
-  nextUp: (id: string) => ["item", id, "nextup"] as const,
-  playbackNeighbors: (id: string) => ["player", "neighbors", id] as const,
-  playerState: ["player", "state"] as const,
-  seerrStatus: ["seerr", "status"] as const,
-  seerrSearch: (term: string) => ["seerr", "search", term] as const,
-  seerrSearchInfinite: (term: string) => ["seerr", "search", term, "infinite"] as const,
+    key("person", "resolve", jellyfinId, tmdbId, name),
+  item: (id: string) => key("item", id),
+  itemSynopsis: (id: string) => key("item", id, "synopsis"),
+  itemAbout: (id: string) => key("item", id, "about"),
+  letterboxdReviews: (id: string) => key("letterboxd", "item", id),
+  letterboxdMovieReviews: (tmdbId: number) => key("letterboxd", "movie", tmdbId),
+  letterboxdProfiles: key("letterboxd", "profiles"),
+  children: (id: string) => key("item", id, "children"),
+  media: (id: string) => key("item", id, "media"),
+  trailer: (id: string) => key("item", id, "trailer"),
+  nextUp: (id: string) => key("item", id, "nextup"),
+  playbackNeighbors: (id: string) => key("player", "neighbors", id),
+  playerState: key("player", "state"),
+  seerrStatus: key("seerr", "status"),
+  seerrSearch: (term: string) => key("seerr", "search", term),
+  seerrSearchInfinite: (term: string) => key("seerr", "search", term, "infinite"),
   seerrPersonCredits: (tmdbId: number, jellyfinId: string) =>
-    ["seerr", "person", tmdbId, jellyfinId, "credits"] as const,
+    key("seerr", "person", tmdbId, jellyfinId, "credits"),
   seerrDiscover: (row: string, resultSetKey: string) =>
-    ["seerr", "discover", row, resultSetKey] as const,
-  seerrGenres: (mediaType: string) => ["seerr", "genres", mediaType] as const,
-  seerrMedia: (mediaType: string, tmdbId: number) => ["seerr", "media", mediaType, tmdbId] as const,
+    key("seerr", "discover", row, resultSetKey),
+  seerrGenres: (mediaType: string) => key("seerr", "genres", mediaType),
+  seerrMedia: (mediaType: string, tmdbId: number) => key("seerr", "media", mediaType, tmdbId),
   seerrRequestOptions: (mediaType: string, is4k: boolean) =>
-    ["seerr", "request-options", mediaType, is4k] as const,
-  seerrRequests: (filter: string) => ["seerr", "requests", filter] as const,
-  collectionSettings: (account: string) => ["collections", account, "settings"] as const,
-  collectionTemplates: (account: string) => ["collections", account, "templates"] as const,
-  collectionProfiles: (account: string) => ["collections", account, "profiles"] as const,
+    key("seerr", "request-options", mediaType, is4k),
+  seerrRequests: (filter: string) => key("seerr", "requests", filter),
+  collectionSettings: (account: string) => key("collections", account, "settings"),
+  collectionTemplates: (account: string) => key("collections", account, "templates"),
+  collectionProfiles: (account: string) => key("collections", account, "profiles"),
   collectionPublicListSearch: (account: string, term: string) =>
-    ["collections", account, "public-list-search", term] as const,
-  collectionMine: (account: string) => ["collections", account, "mine"] as const,
+    key("collections", account, "public-list-search", term),
+  collectionMine: (account: string) => key("collections", account, "mine"),
   collectionMineDetail: (account: string, id: string) =>
-    ["collections", account, "mine", id] as const,
+    key("collections", account, "mine", id),
   collectionFranchises: (account: string, localDate: string) =>
-    ["collections", account, "franchises", localDate] as const,
+    key("collections", account, "franchises", localDate),
   collectionFranchise: (account: string, id: number, localDate: string) =>
-    ["collections", account, "franchises", id, localDate] as const,
+    key("collections", account, "franchises", id, localDate),
   collectionTitle: (account: string, mediaType: string, tmdbId: number) =>
-    ["collections", account, "title", mediaType, tmdbId] as const,
-  collectionJellyfin: (account: string) => ["collections", account, "jellyfin"] as const,
+    key("collections", account, "title", mediaType, tmdbId),
+  collectionJellyfin: (account: string) => key("collections", account, "jellyfin"),
   collectionJellyfinDetail: (account: string, id: string) =>
-    ["collections", account, "jellyfin", id] as const,
+    key("collections", account, "jellyfin", id),
   movieCollection: (account: string, tmdbId: number) =>
-    ["collections", account, "movie", tmdbId] as const,
+    key("collections", account, "movie", tmdbId),
+}
+
+/**
+ * Options for a query on an id the caller may not have yet: it runs once the id
+ * is there, and every observer of the key carries the real fetcher.
+ *
+ * Use it instead of `id!` in a fetcher. Do not stand in `skipToken` for the
+ * missing id: observers of one key share its options, so a `skipToken`
+ * observer leaves the others nothing to refetch with (b2926ab).
+ */
+export function optionalIdQuery<Id, Data>(
+  id: Id | null | undefined,
+  queryKey: MintedQueryKey,
+  fetch: (id: Id, context: { readonly signal: AbortSignal }) => Promise<Data>,
+  enabled = true,
+) {
+  return queryOptions({
+    queryKey,
+    // Pass the context through untouched: reading `signal` makes TanStack cancel
+    // the query when its last observer unmounts, so only fetchers that read it opt in.
+    queryFn: (context) => (id ? fetch(id, context) : Promise.reject(new Error("query ran without its id"))),
+    enabled: Boolean(id) && enabled,
+  })
 }
 
 const ACCOUNT_QUERY_ROOTS = new Set([
@@ -143,12 +201,12 @@ export function removeAccountQueryData(client: QueryClient) {
  */
 export function invalidateSeerrSurfaces(client: QueryClient) {
   const active = { refetchType: "active" as const }
-  void client.invalidateQueries({ queryKey: ["seerr", "requests"], ...active })
-  void client.invalidateQueries({ queryKey: ["seerr", "search"], ...active })
-  void client.invalidateQueries({ queryKey: ["seerr", "person"], ...active })
-  void client.invalidateQueries({ queryKey: ["seerr", "discover"], ...active })
-  void client.invalidateQueries({ queryKey: ["seerr", "media"], ...active })
-  void client.invalidateQueries({ queryKey: ["collections"], ...active })
+  void client.invalidateQueries({ queryKey: queryKeys.seerrScope("requests"), ...active })
+  void client.invalidateQueries({ queryKey: queryKeys.seerrScope("search"), ...active })
+  void client.invalidateQueries({ queryKey: queryKeys.seerrScope("person"), ...active })
+  void client.invalidateQueries({ queryKey: queryKeys.seerrScope("discover"), ...active })
+  void client.invalidateQueries({ queryKey: queryKeys.seerrScope("media"), ...active })
+  void client.invalidateQueries({ queryKey: queryKeys.root("collections"), ...active })
   void client.invalidateQueries({ queryKey: queryKeys.seerrStatus, ...active })
 }
 
@@ -181,10 +239,10 @@ export function invalidateMediaSurfaces(
   // Billboard slides come from a randomized endpoint. Their user-data controls
   // are patched by the mutations, so refreshing that query here would replace
   // the active title instead of merely updating it.
-  void client.invalidateQueries({ queryKey: [ITEMS_ROOT], ...active })
-  void client.invalidateQueries({ queryKey: ["person-items"], ...active })
-  void client.invalidateQueries({ queryKey: [BROWSE_ROOT], ...active })
-  void client.invalidateQueries({ queryKey: [LIBRARY_LATEST_ROOT], ...active })
+  void client.invalidateQueries({ queryKey: queryKeys.root(ITEMS_ROOT), ...active })
+  void client.invalidateQueries({ queryKey: queryKeys.root("person-items"), ...active })
+  void client.invalidateQueries({ queryKey: queryKeys.root(BROWSE_ROOT), ...active })
+  void client.invalidateQueries({ queryKey: queryKeys.root(LIBRARY_LATEST_ROOT), ...active })
   for (const itemId of itemIds) {
     if (!itemId) continue
     void client.invalidateQueries({ queryKey: queryKeys.item(itemId), ...exactActive })
@@ -284,10 +342,10 @@ export function invalidateLibraryChanged(
 
 export function invalidateLibrariesChanged(client: QueryClient) {
   void client.invalidateQueries({ queryKey: queryKeys.libraries })
-  void client.invalidateQueries({ queryKey: [LIBRARY_LATEST_ROOT] })
+  void client.invalidateQueries({ queryKey: queryKeys.root(LIBRARY_LATEST_ROOT) })
   void client.invalidateQueries({ queryKey: queryKeys.home, exact: true })
   void client.invalidateQueries({ queryKey: queryKeys.homeSettings, exact: true })
-  void client.invalidateQueries({ queryKey: ["viewing"] })
+  void client.invalidateQueries({ queryKey: queryKeys.root("viewing") })
 }
 
 export function invalidateLibraryMemberships(client: QueryClient) {

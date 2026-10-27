@@ -71,19 +71,19 @@ export function DetailHeroLayout({
   return (
     <header className="relative" data-testid="detail-hero-layout">
       <div className={cn("relative flex gap-8 px-6 pt-14 pb-12 sm:px-10 lg:px-14", !compact && "min-h-[26rem]")}>
-        {showPoster && (
+        {poster && showPoster && (
           <div
-            className="relative hidden shrink-0 self-start overflow-hidden rounded-xl shadow-2xl shadow-black/60 ring-1 ring-edge sm:block"
+            className="relative hidden shrink-0 self-start overflow-hidden rounded-xl shadow-2xl shadow-scrim/60 ring-1 ring-edge sm:block"
           >
             <img
-              src={poster!.src}
+              src={poster.src}
               alt=""
               decoding="async"
-              onError={() => setFailedPoster(poster!.src)}
+              onError={() => setFailedPoster(poster.src)}
               className={cn("media-artwork-image", frame)}
             />
             {progress > 0 && (
-              <div className="absolute inset-x-0 bottom-0 h-1 bg-black/60">
+              <div className="absolute inset-x-0 bottom-0 h-1 bg-scrim/60">
                 <div className="h-full bg-primary" style={{ width: `${progress * 100}%` }} />
               </div>
             )}
@@ -100,12 +100,12 @@ export function DetailHeroLayout({
                 {title}
               </span>
             </h1>
-            {showLogo && (
+            {logo && showLogo && (
               <img
-                src={logo!}
+                src={logo}
                 alt=""
                 decoding="async"
-                onError={() => setFailedLogo(logo!)}
+                onError={() => setFailedLogo(logo)}
                 className="max-h-24 w-auto max-w-md self-start object-contain object-left drop-shadow-2xl sm:max-h-28"
               />
             )}

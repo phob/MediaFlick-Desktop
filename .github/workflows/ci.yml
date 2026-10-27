@@ -64,6 +64,9 @@ jobs:
       - name: Lint UI
         run: pnpm --dir ui lint
 
+      - name: Find unused UI code
+        run: pnpm --dir ui knip
+
       # `pnpm build` runs `tsc -b` before the Vite bundle.
       - name: Type-check and build UI
         run: pnpm --dir ui build

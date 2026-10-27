@@ -28,6 +28,7 @@ import {
 import { toastFailure } from "@/lib/failure-toast"
 import { detailNavigationState } from "@/lib/navigation"
 import { useLocalDate } from "@/lib/local-date"
+import { seerrMediaType, titleKindOfCollection } from "@/lib/kinds"
 
 function CollectionShell({
   backTo,
@@ -155,7 +156,7 @@ function OwnedCard({
 
 function discoveryResult(title: NormalizedCollectionTitle): SeerrResult {
   return {
-    mediaType: title.mediaType === "series" ? "tv" : "movie",
+    mediaType: seerrMediaType(titleKindOfCollection(title.mediaType)),
     tmdbId: title.tmdbId,
     title: title.title,
     year: title.year ?? null,
@@ -178,7 +179,7 @@ function MissingCard({
   requestsEnabled?: boolean
   capabilities?: SeerrCapabilities | null
 }) {
-  const mediaType = title.mediaType === "series" ? "tv" : "movie"
+  const mediaType = seerrMediaType(titleKindOfCollection(title.mediaType))
   const media = useSeerrMedia(mediaType, title.tmdbId, requestsEnabled)
 
   if (requestsEnabled) {
@@ -382,5 +383,3 @@ export function JellyfinCollectionDetail() {
     </CollectionShell>
   )
 }
-
-export default MyCollectionDetail

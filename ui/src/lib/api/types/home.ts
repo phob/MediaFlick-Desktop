@@ -27,7 +27,3 @@ function homeElementWrite(element: HomeElement): Wire.HomeElement {
 }
 
 export type HomeRow = Wire.HomeRow
-
-export type HomeResponse = Wire.HomeResponse
-
-export type HomeResumeResponse = Wire.HomeResumeResponse

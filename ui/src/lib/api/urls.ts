@@ -1,6 +1,7 @@
 import type { ItemDetail, ItemSummary, Person } from "./types/catalog.ts"
 import type { SeerrMediaDetail } from "./types/seerr.ts"
 import { link } from "./routes.ts"
+import { seerrMediaType, titleKindOfSeerr, type TitleKind } from "../kinds.ts"
 
 const POSTER_WIDTH = 400
 export const LANDSCAPE_WIDTH = 560
@@ -127,7 +128,6 @@ const EXTERNAL_PROVIDERS = [
 
 export type ExternalProvider = (typeof EXTERNAL_PROVIDERS)[number]["id"]
 type ExternalIdSource = (typeof EXTERNAL_PROVIDERS)[number]["source"]
-type DiscoveryMediaKind = "Movie" | "Series"
 type ExternalLinkId = ExternalProvider | "rotten-tomatoes-search"
 
 export interface ExternalMediaLink {
@@ -177,10 +177,12 @@ export function externalLinksFor(
   return rottenTomatoes ? [...exactLinks, rottenTomatoes] : exactLinks
 }
 
+const TVDB_PATHS = { Movie: "movie", Series: "series" } satisfies Record<TitleKind, string>
+
 function externalMediaUrl(
   provider: ExternalProvider,
   id: string | null | undefined,
-  kind: DiscoveryMediaKind,
+  kind: TitleKind,
 ) {
   const definition = EXTERNAL_PROVIDERS.find((candidate) => candidate.id === provider)
   if (!definition || !validExternalId(definition.source, id)) return null
@@ -189,9 +191,9 @@ function externalMediaUrl(
     case "imdb":
       return `https://www.imdb.com/title/${id}/`
     case "tmdb":
-      return `https://www.themoviedb.org/${kind === "Movie" ? "movie" : "tv"}/${id}`
+      return `https://www.themoviedb.org/${seerrMediaType(kind)}/${id}`
     case "tvdb":
-      return `https://thetvdb.com/dereferrer/${kind === "Movie" ? "movie" : "series"}/${id}`
+      return `https://thetvdb.com/dereferrer/${TVDB_PATHS[kind]}/${id}`
     case "letterboxd":
       return `https://letterboxd.com/tmdb/${id}`
     case "trakt":
@@ -202,7 +204,7 @@ function externalMediaUrl(
 export function discoveryExternalLinksFor(
   item: Pick<SeerrMediaDetail, "mediaType" | "tmdbId" | "title" | "year" | "externalIds">,
 ): ExternalMediaLink[] {
-  const kind = item.mediaType === "movie" ? "Movie" : "Series"
+  const kind = titleKindOfSeerr(item.mediaType)
   const externalIds = item.externalIds ?? { imdb: null, tvdb: null }
   const ids = {
     imdb: externalIds.imdb,

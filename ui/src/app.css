@@ -52,6 +52,9 @@
   --field-hover: rgb(255 255 255 / 8%);
   --edge: rgb(255 255 255 / 10%);
   --hairline: rgb(255 255 255 / 5%);
+  /* The dark wash behind dialogs, over artwork and under raised surfaces.
+     Each use sets its strength, as in `bg-scrim/60` or `shadow-scrim/40`. */
+  --scrim: #000;
 
   --border: #202c27;
   --input: #202c27;
@@ -140,6 +143,7 @@
   --color-field-hover: var(--field-hover);
   --color-edge: var(--edge);
   --color-hairline: var(--hairline);
+  --color-scrim: var(--scrim);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);

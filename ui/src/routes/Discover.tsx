@@ -40,6 +40,7 @@ import {
   useSeerrGenres,
 } from "@/lib/queries"
 import { cn } from "@/lib/utils"
+import { Pressable } from "@/components/ui/pressable"
 
 type AvailabilityFilter = DiscoveryAvailability
 type SearchMediaFilter = "all" | SeerrMediaType
@@ -186,8 +187,7 @@ function GenreBrowser({
         <p className="text-sm text-destructive">{genres.error.message}</p>
       ) : (
         <div className="media-strip -mx-1 flex snap-x gap-3 overflow-x-auto px-1 pt-1 pb-2">
-          <button
-            type="button"
+          <Pressable
             aria-pressed={!selected}
             onClick={() => onSelect(undefined)}
             className={cn(
@@ -197,7 +197,7 @@ function GenreBrowser({
           >
             <span className="absolute inset-0 bg-[radial-gradient(circle_at_20%_15%,color-mix(in_srgb,var(--primary)_30%,transparent),transparent_55%),linear-gradient(135deg,var(--card),var(--background))]" />
             <span className="absolute inset-x-3 bottom-3 text-sm font-semibold">All genres</span>
-          </button>
+          </Pressable>
           {genres.isPending
             ? Array.from({ length: 7 }, (_, index) => (
                 <Skeleton key={index} className="h-20 w-36 shrink-0 rounded-media" />
@@ -205,9 +205,8 @@ function GenreBrowser({
             : genres.data?.map((genre) => {
                 const backdrop = seerrImageUrl(genre.backdrops[0], "w300")
                 return (
-                  <button
+                  <Pressable
                     key={genre.id}
-                    type="button"
                     aria-pressed={selected === genre.id}
                     onClick={() => onSelect(genre.id)}
                     className={cn(
@@ -226,11 +225,11 @@ function GenreBrowser({
                         className="media-backdrop-image absolute inset-0 h-full w-full object-cover transition duration-200 group-hover:scale-[1.03]"
                       />
                     ) : null}
-                    <span className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-black/10" />
+                    <span className="absolute inset-0 bg-gradient-to-t from-scrim via-scrim/45 to-scrim/10" />
                     <span className="absolute inset-x-3 bottom-3 truncate text-sm font-semibold">
                       {genre.name}
                     </span>
-                  </button>
+                  </Pressable>
                 )
               })}
         </div>
@@ -638,7 +637,7 @@ export default function Discover() {
             placeholder="Search movies and series…"
             aria-label="Search Seerr"
             minLength={2}
-            className="h-12 rounded-xl border-edge bg-field pr-12 pl-12 text-base shadow-lg shadow-black/10 placeholder:text-muted-foreground/75"
+            className="h-12 rounded-xl border-edge bg-field pr-12 pl-12 text-base shadow-lg shadow-scrim/10 placeholder:text-muted-foreground/75"
           />
           {draft ? (
             <Button

@@ -8,6 +8,7 @@ import type {
   SortOrder,
   WatchFilter,
 } from "./api"
+import { isTitleKind } from "./kinds.ts"
 
 export interface LibrarySort {
   id: LibrarySortId
@@ -87,7 +88,7 @@ export interface ReleaseDecadeOption {
   label: string
 }
 
-export function releaseDecades(currentYear = new Date().getUTCFullYear()): ReleaseDecadeOption[] {
+function releaseDecades(currentYear = new Date().getUTCFullYear()): ReleaseDecadeOption[] {
   const currentDecade = Math.floor(currentYear / 10) * 10
   const decades: ReleaseDecadeOption[] = []
   for (let decade = currentDecade; decade >= 1900; decade -= 10) {
@@ -180,16 +181,14 @@ export function libraryQuery(params: URLSearchParams, capabilities: BrowseCapabi
   }
 }
 
-const TITLE_VIEW_KINDS: ReadonlySet<string> = new Set(["Movie", "Series"])
-
 export function libraryItemQuery(params: URLSearchParams, capabilities: BrowseCapabilities): ItemQuery {
   const kinds = (params.get("kind") ?? "")
     .split(",")
     .map((kind) => kind.trim())
-    .filter((kind) => TITLE_VIEW_KINDS.has(kind))
+    .filter(isTitleKind)
   return {
     search: params.get("search") ?? "",
-    kind: [...new Set(kinds)].join(","),
+    kind: [...new Set(kinds)],
     ...libraryQuery(params, capabilities),
   }
 }

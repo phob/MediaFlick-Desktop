@@ -2,6 +2,7 @@ import { isJsonObject, jsonBoolean, jsonString, type JsonValue } from "../json.t
 import type * as Wire from "./wire.gen.ts"
 import type { ReleaseCalendar } from "./types/calendar.ts"
 import type { ItemQuery, PersonResolveQuery } from "./types/catalog.ts"
+import type { TitleKind } from "../kinds.ts"
 import type { CollectionProfileDraft, PublicCollectionList } from "./types/collections.ts"
 import type { HomeSettingsWrite } from "./types/home.ts"
 import type { BrowsingPage, LibraryQuery } from "./types/libraries.ts"
@@ -181,12 +182,14 @@ export const api = {
   homeResume: () => request("GET /api/home/resume"),
   billboard: () => request("GET /api/billboard"),
   genres: () => request("GET /api/genres"),
-  officialRatings: (kind: string) => request("GET /api/official-ratings", { query: { kind } }),
+  officialRatings: (kinds: readonly TitleKind[]) =>
+    request("GET /api/official-ratings", { query: { kind: kinds.join(",") } }),
   resolvePerson: (query: PersonResolveQuery, signal?: AbortSignal) =>
     request("GET /api/person/resolve", { query: { ...query }, signal }),
-  items: (query: ItemQuery, signal?: AbortSignal) => request("GET /api/items", { query: { ...query }, signal }),
+  items: (query: ItemQuery, signal?: AbortSignal) =>
+    request("GET /api/items", { query: { ...query, kind: query.kind?.join(",") }, signal }),
   itemLetters: (query: ItemQuery, signal?: AbortSignal) =>
-    request("GET /api/items/letters", { query: { ...query }, signal }),
+    request("GET /api/items/letters", { query: { ...query, kind: query.kind?.join(",") }, signal }),
   libraries: () => request("GET /api/libraries"),
   libraryItems: (id: string, query: LibraryQuery, offset: number, limit: number, signal?: AbortSignal) =>
     request("GET /api/libraries/{id}/items", { params: { id }, query: { ...query, offset, limit }, signal }),

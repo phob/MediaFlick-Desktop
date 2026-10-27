@@ -359,7 +359,7 @@ function ActivePlayerBar({
       {player.diagnostics?.buffering && (
         <div
           role="status"
-          className="pointer-events-none absolute bottom-full left-1/2 mb-8 flex -translate-x-1/2 items-center gap-2 rounded-md border border-edge bg-black/82 px-4 py-2 text-sm font-medium text-white shadow-xl"
+          className="pointer-events-none absolute bottom-full left-1/2 mb-8 flex -translate-x-1/2 items-center gap-2 rounded-md border border-edge bg-scrim/82 px-4 py-2 text-sm font-medium text-white shadow-xl"
         >
           <LoaderCircle className="size-4 animate-spin" />
           Buffering
@@ -368,7 +368,7 @@ function ActivePlayerBar({
       {feedback && !player.diagnostics?.buffering && (
         <div
           role="status"
-          className="pointer-events-none absolute bottom-full left-1/2 mb-8 -translate-x-1/2 rounded-md border border-edge bg-black/82 px-4 py-2 text-sm font-medium text-white shadow-xl"
+          className="pointer-events-none absolute bottom-full left-1/2 mb-8 -translate-x-1/2 rounded-md border border-edge bg-scrim/82 px-4 py-2 text-sm font-medium text-white shadow-xl"
         >
           {feedback}
         </div>
