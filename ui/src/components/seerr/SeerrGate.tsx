@@ -5,21 +5,17 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ApiError } from "@/lib/api"
-import { useCompanion, useSeerrStatus } from "@/lib/queries"
+import { useSeerrStatus } from "@/lib/queries"
+import { useCompanionCapabilities } from "@/lib/companion"
 
 /**
  * Guards the Seerr views. The sidebar hides them without the Companion
  * capability, while deep links and unmapped users land on an explanation.
  */
 export function SeerrGate({ children }: { children: ReactNode }) {
-  // The plugin's own probe-backed query, not the status snapshot: the gate
-  // must reflect whether the Companion manages Seerr even when no /api/status
-  // refetch has happened since startup.
-  const companion = useCompanion()
-  const companionManaged =
-    companion.data?.compatible &&
-    companion.data.info?.capabilities.includes("seerr")
-  const status = useSeerrStatus(Boolean(companionManaged))
+  const companion = useCompanionCapabilities()
+  const companionManaged = companion.has("seerr")
+  const status = useSeerrStatus(companionManaged)
 
   if (companion.isPending || (companionManaged && status.isPending)) {
     return (

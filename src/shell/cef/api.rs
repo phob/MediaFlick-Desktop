@@ -234,7 +234,6 @@ struct AppStatus {
     last_sync: Option<String>,
     bootstrap: Bootstrap,
     sync_progress: SyncProgress,
-    companion: CompanionStatus,
 }
 
 fn app_status(services: &Services) -> AppStatus {
@@ -249,7 +248,6 @@ fn app_status(services: &Services) -> AppStatus {
         last_sync: services.library.meta("sync.completed_at").ok().flatten(),
         bootstrap: sync.bootstrap,
         sync_progress: sync.progress,
-        companion: services.companion.status(),
     }
 }
 
@@ -408,7 +406,6 @@ mod tests {
         for key in [
             "authenticated",
             "bootstrap",
-            "companion",
             "deviceId",
             "expired",
             "lastSync",

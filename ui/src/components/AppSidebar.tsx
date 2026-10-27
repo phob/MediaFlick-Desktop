@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/sidebar"
 import { useSidebar } from "@/components/ui/sidebar-context"
 import { useLiveSearch } from "@/hooks/use-live-search"
+import { useCompanionCapabilities } from "@/lib/companion"
 import { api } from "@/lib/api"
 import { toastFailure } from "@/lib/failure-toast"
 import { libraryIcon, libraryIdFromPath, libraryPath } from "@/lib/libraries"
@@ -51,7 +52,6 @@ import {
   franchisesQueryOptions,
   myCollectionsQueryOptions,
   useCollectionSettings,
-  useCompanion,
   useItem,
   useLibraries,
   useLogout,
@@ -288,10 +288,8 @@ export function AppSidebar({ onUserMenuOpenChange, ...props }: AppSidebarProps =
       && originUrl?.pathname === "/library"
       && originUrl.searchParams.get("favorite") === "true"
       && !originUrl.searchParams.has("kind")
-  const { data: companion } = useCompanion()
+  const companionSeerr = useCompanionCapabilities().has("seerr")
   const { data: collectionSettings } = useCollectionSettings()
-  const companionSeerr =
-    companion?.compatible && companion.info?.capabilities.includes("seerr")
   const collectionNavigation = collectionSettings?.effectiveMode === "mediaFlick"
     ? [
         { title: "Movie Franchises", to: "/collections/franchises" },
