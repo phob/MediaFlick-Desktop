@@ -71,6 +71,10 @@ jobs:
       - name: Test UI
         run: pnpm --dir ui test
 
+      # jscpd comes from the UI dependencies installed above.
+      - name: Check for code copied between files
+        run: python3 scripts/ci/check_clones.py
+
       - name: Check that pnpm left the lockfile unchanged
         run: git diff --exit-code ui/pnpm-lock.yaml
 
