@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { seerrImageUrl, type SeerrRequest } from "@/lib/api"
 import { useSeerrCancelRequest, useSeerrMedia, useSeerrRequests } from "@/lib/queries"
 import { detailNavigationState } from "@/lib/navigation"
+import { titleKindOfSeerr } from "@/lib/kinds"
 
 const FILTERS = [
   { id: "all", label: "All" },
@@ -83,7 +84,7 @@ function RequestCard({ request }: { request: SeerrRequest }) {
           {request.is4k && <Badge variant="outline">4K</Badge>}
         </div>
         <div className="truncate text-xs text-muted-foreground">
-          {[request.mediaType === "tv" ? "Series" : "Movie", seasons, date && `requested ${date}`]
+          {[titleKindOfSeerr(request.mediaType), seasons, date && `requested ${date}`]
             .filter(Boolean)
             .join(" · ")}
         </div>

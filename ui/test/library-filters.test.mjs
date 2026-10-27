@@ -41,7 +41,7 @@ test("every library filter round-trips in the URL", () => {
   const query = libraryItemQuery(written, TITLES)
   assert.deepEqual(query, {
     search: "matrix",
-    kind: "Movie",
+    kind: ["Movie"],
     favorite: true,
     genre: "Science Fiction",
     decade: 1990,
@@ -69,7 +69,7 @@ test("invalid URL filter enums do not become API filters", () => {
   })
   assert.deepEqual(libraryItemQuery(params, TITLES), {
     search: "",
-    kind: "",
+    kind: [],
     favorite: undefined,
     genre: "",
     decade: undefined,
@@ -83,10 +83,10 @@ test("invalid URL filter enums do not become API filters", () => {
 })
 
 test("the title view keeps catalog kinds from old links and lists both without one", () => {
-  assert.equal(libraryItemQuery(new URLSearchParams("search=matrix"), TITLES).kind, "")
-  assert.equal(libraryItemQuery(new URLSearchParams("kind=Series&favorite=true"), TITLES).kind, "Series")
-  assert.equal(libraryItemQuery(new URLSearchParams("kind=Movie%2CSeries&genre=Drama"), TITLES).kind, "Movie,Series")
-  assert.equal(libraryItemQuery(new URLSearchParams("kind=MusicAlbum"), TITLES).kind, "")
+  assert.deepEqual(libraryItemQuery(new URLSearchParams("search=matrix"), TITLES).kind, [])
+  assert.deepEqual(libraryItemQuery(new URLSearchParams("kind=Series&favorite=true"), TITLES).kind, ["Series"])
+  assert.deepEqual(libraryItemQuery(new URLSearchParams("kind=Movie%2CSeries&genre=Drama"), TITLES).kind, ["Movie", "Series"])
+  assert.deepEqual(libraryItemQuery(new URLSearchParams("kind=MusicAlbum"), TITLES).kind, [])
 })
 
 test("a library offers and sends only what its capabilities list", () => {
@@ -119,7 +119,7 @@ test("the items API sends decade and page bounds to the server", async () => {
   }
 
   try {
-    await api.items({ kind: "Series", decade: 2010, limit: PAGE_SIZE, offset: PAGE_SIZE })
+    await api.items({ kind: ["Series"], decade: 2010, limit: PAGE_SIZE, offset: PAGE_SIZE })
   } finally {
     globalThis.fetch = originalFetch
   }

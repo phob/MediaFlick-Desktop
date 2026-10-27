@@ -14,6 +14,7 @@ import {
 } from "@/lib/api"
 import { canQuickRequest } from "@/lib/seerr-request"
 import { cn } from "@/lib/utils"
+import { titleKindOfSeerr } from "@/lib/kinds"
 
 function Poster({ result }: { result: SeerrResult }) {
   const [failed, setFailed] = useState(false)
@@ -71,7 +72,7 @@ export const SeerrCard = memo(function SeerrCard({
   const [requesting, setRequesting] = useState(false)
   const quickRequestable = canQuickRequest(result, capabilities)
   const quickRequestVisible = hovered || focused
-  const subtitle = [result.year, result.mediaType === "tv" ? "Series" : "Movie"]
+  const subtitle = [result.year, titleKindOfSeerr(result.mediaType)]
     .filter(Boolean)
     .join(" · ")
   const rating =

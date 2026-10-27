@@ -1,5 +1,6 @@
 import { QueryClient } from "@tanstack/react-query"
 import { ApiError, type ItemQuery, type PlayerState } from "./api"
+import type { TitleKind } from "./kinds"
 import type { BrowseSource } from "./libraries"
 
 /**
@@ -84,7 +85,7 @@ export const queryKeys = {
   libraries: key("libraries"),
   libraryOptions: (id: string) => key("library-options", id),
   libraryLatest: (id: string) => key(LIBRARY_LATEST_ROOT, id),
-  officialRatings: (kind: string) => key("official-ratings", kind),
+  officialRatings: (kinds: readonly TitleKind[]) => key("official-ratings", kinds),
   serverInfo: (server: string) => key("server-info", server),
   quickConnect: (secret: string) => key("quick-connect", secret),
   // Live exact-person pages are not local SQLite projections. Keeping their

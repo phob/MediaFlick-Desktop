@@ -61,7 +61,7 @@ function FilterHarness({ initial = EMPTY }: { initial?: LibraryFilterState }) {
         onChange={(patch) => setFilters((previous) => ({ ...previous, ...patch }))}
         total={123}
         capabilities={MOVIE_BROWSE}
-        source={{ scope: "titles", query: { kind: "Movie" } }}
+        source={{ scope: "titles", query: { kind: ["Movie"] } }}
       />
       <output data-filter-state>{JSON.stringify(filters)}</output>
     </>

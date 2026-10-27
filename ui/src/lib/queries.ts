@@ -40,6 +40,7 @@ import {
   discoveryResultSetKey,
   type DiscoveryAvailability,
 } from "./discovery"
+import type { TitleKind } from "./kinds"
 import type { BrowseSource, ListingSource } from "./libraries"
 
 /**
@@ -225,10 +226,10 @@ export function useGenres(enabled = true) {
   })
 }
 
-export function useOfficialRatings(kind: string, enabled = true) {
+export function useOfficialRatings(kinds: readonly TitleKind[], enabled = true) {
   return useQuery({
-    queryKey: queryKeys.officialRatings(kind),
-    queryFn: () => api.officialRatings(kind),
+    queryKey: queryKeys.officialRatings(kinds),
+    queryFn: () => api.officialRatings(kinds),
     staleTime: 30 * 60_000,
     enabled,
   })

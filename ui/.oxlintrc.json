@@ -14,10 +14,18 @@
     ".windsurf/**"
   ],
   "plugins": ["react", "typescript", "oxc"],
+  "jsPlugins": ["./lint/plugin.mjs"],
   "rules": {
     "typescript/no-empty-object-type": "error",
     "typescript/no-explicit-any": "error",
     "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
+    "react/only-export-components": ["warn", { "allowConstantExport": true }],
+    "ui/no-inline-kind-translation": "error"
+  },
+  "overrides": [
+    {
+      "files": ["src/lib/kinds.ts", "test/**"],
+      "rules": { "ui/no-inline-kind-translation": "off" }
+    }
+  ]
 }

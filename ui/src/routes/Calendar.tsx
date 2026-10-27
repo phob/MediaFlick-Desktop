@@ -26,6 +26,7 @@ import { usePlay, useReleaseCalendar, useSeerrStatus } from "@/lib/queries"
 import { localDate } from "@/lib/local-date"
 import { detailNavigationState } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
+import { seerrMediaType, titleKindOfCalendar } from "@/lib/kinds"
 
 const DATE_KINDS: { id: CalendarDateKind; label: string }[] = [
   { id: "air", label: "Episodes" },
@@ -98,7 +99,7 @@ function EntryActions({ entry }: { entry: CalendarEntry }) {
     )
   }
 
-  const requestMediaType = entry.kind === "movie" ? "movie" : "tv"
+  const requestMediaType = seerrMediaType(titleKindOfCalendar(entry.kind))
   const requestTmdbId = entry.kind === "movie" ? entry.tmdbId : entry.seriesTmdbId
   if (requestTmdbId && seerr.data?.linked) {
     const result: SeerrResult = {

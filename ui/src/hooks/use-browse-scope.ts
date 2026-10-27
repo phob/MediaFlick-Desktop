@@ -41,7 +41,7 @@ export function useBrowseScope(): BrowseScope {
       ? `Results for “${search}”`
       : params.get("favorite") === "true" && !params.has("kind")
         ? "Favorites"
-        : KIND_TITLES[query.kind ?? ""] ?? "Library"
+        : KIND_TITLES[query.kind?.join(",") ?? ""] ?? "Library"
     return {
       status: "ready",
       title,
