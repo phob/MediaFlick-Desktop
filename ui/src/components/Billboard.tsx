@@ -23,6 +23,7 @@ import {
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 import { detailNavigationState } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
+import { Pressable } from "@/components/ui/pressable"
 
 const NO_TRAILER_DWELL_MS = 12_000
 const TRAILER_DELAY_MS = 2_500
@@ -212,9 +213,8 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
           </span>
           <div className="flex items-center gap-1.5">
             {items.map((item, slide) => (
-              <button
+              <Pressable
                 key={item.id}
-                type="button"
                 aria-label={`Show ${item.name}`}
                 aria-current={slide === index}
                 onClick={() => selectSlide(slide)}

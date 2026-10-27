@@ -18,6 +18,7 @@ import { useQualityOverride } from "@/lib/playback-quality"
 import { usePreview } from "@/lib/preview"
 import { usePlay, useSetPlayed } from "@/lib/queries"
 import { cn } from "@/lib/utils"
+import { Pressable } from "@/components/ui/pressable"
 
 function SeasonPoster({ season, selected }: { season: ItemSummary; selected: boolean }) {
   const [failed, setFailed] = useState(false)
@@ -72,8 +73,7 @@ function SeasonRail({
         const selected = season.id === selectedId
         return (
           <li key={season.id} className="shrink-0">
-            <button
-              type="button"
+            <Pressable
               aria-pressed={selected}
               onClick={() => onSelect(season)}
               className={cn(
@@ -90,7 +90,7 @@ function SeasonRail({
               >
                 {season.name}
               </span>
-            </button>
+            </Pressable>
           </li>
         )
       })}

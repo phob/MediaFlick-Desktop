@@ -15,6 +15,7 @@ import {
 import { canQuickRequest } from "@/lib/seerr-request"
 import { cn } from "@/lib/utils"
 import { titleKindOfSeerr } from "@/lib/kinds"
+import { Pressable } from "@/components/ui/pressable"
 
 function Poster({ result }: { result: SeerrResult }) {
   const [failed, setFailed] = useState(false)
@@ -134,8 +135,7 @@ export const SeerrCard = memo(function SeerrCard({
           {caption}
         </Link>
         {quickRequestable && (
-          <button
-            type="button"
+          <Pressable
             aria-label={`Request ${result.title}`}
             aria-haspopup="dialog"
             title={`Request ${result.title}`}
@@ -148,7 +148,7 @@ export const SeerrCard = memo(function SeerrCard({
             )}
           >
             <Plus className="size-5" aria-hidden />
-          </button>
+          </Pressable>
         )}
       </div>
       {requesting && (
