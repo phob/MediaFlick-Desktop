@@ -20,6 +20,7 @@ import {
 } from "@/lib/api"
 import { toastFailure } from "@/lib/failure-toast"
 import { useLocalDate } from "@/lib/local-date"
+import { queryKeys } from "@/lib/query-client"
 import {
   accountKey,
   franchiseQueryOptions,
@@ -237,7 +238,7 @@ function ProfileMenu({
           onSelect={() => {
             void api.collections.refreshProfile(profile.id).then(
               () => {
-                void cache.invalidateQueries({ queryKey: ["collections"] })
+                void cache.invalidateQueries({ queryKey: queryKeys.root("collections") })
                 toast.success(`${profile.title} updated`)
               },
               (error: Error) => toastFailure(error),

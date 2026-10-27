@@ -77,7 +77,7 @@ export default function LetterboxdSettings() {
     if (!isCurrentAccount()) throw new Error("The signed-in account changed. Remaining profile changes were not saved.")
   }
   const refresh = () => {
-    if (isCurrentAccount()) void cache.invalidateQueries({ queryKey: ["letterboxd"] })
+    if (isCurrentAccount()) void cache.invalidateQueries({ queryKey: queryKeys.root("letterboxd") })
   }
   const rememberProfile = (profile: LetterboxdProfile) => {
     checkAccount()

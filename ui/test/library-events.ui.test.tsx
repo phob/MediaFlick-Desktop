@@ -1,4 +1,4 @@
-import { QueryClientProvider } from "@tanstack/react-query"
+import { QueryClientProvider, type QueryKey } from "@tanstack/react-query"
 import { act, render } from "@testing-library/react"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import type * as Wire from "../src/lib/api/wire.gen"
@@ -31,11 +31,11 @@ describe("native library change bridge", () => {
     queryClient.clear()
   })
 
-  function seed(...queryKeys: (readonly unknown[])[]) {
+  function seed(...queryKeys: QueryKey[]) {
     for (const queryKey of queryKeys) queryClient.setQueryData(queryKey, {})
   }
 
-  function invalidated(queryKey: readonly unknown[]) {
+  function invalidated(queryKey: QueryKey) {
     return queryClient.getQueryState(queryKey)?.isInvalidated ?? false
   }
 

@@ -71,7 +71,7 @@ async function browse(url: string, mediaType: SeerrMediaType) {
   const client = testQueryClient()
   client.setQueryData(queryKeys.companion, { compatible: false })
   client.setQueryData(queryKeys.seerrStatus, { capabilities: null })
-  client.setQueryData(["seerr", "genres", mediaType], [])
+  client.setQueryData(queryKeys.seerrGenres(mediaType), [])
   const discover = vi.spyOn(api.seerr, "discover").mockImplementation(async (_row, _filters, number = 1) => page(mediaType, number))
   const search = vi.spyOn(api.seerr, "search").mockImplementation(async (_term, number = 1) => page(mediaType, number))
   const requests = url.includes("q=") ? search : discover
@@ -106,7 +106,7 @@ test.each([
   ["/discover?q=space", "movie"],
 ] as const)("Back to %s restores loaded pages without fetching them again", async (url, mediaType) => {
   const { client, router, view, viewport, requests, requestCount } = await browse(url, mediaType)
-  for (const query of client.getQueryCache().findAll({ queryKey: ["seerr", url.includes("q=") ? "search" : "discover"] })) {
+  for (const query of client.getQueryCache().findAll({ queryKey: queryKeys.seerrScope(url.includes("q=") ? "search" : "discover") })) {
     client.setQueryData(query.queryKey, query.state.data, { updatedAt: Date.now() - 60 * 60_000 })
   }
   fireEvent.click(screen.getByRole("link", { name: "Back to discovery" }))
@@ -127,7 +127,7 @@ test.each([
 
 test("an expired Discovery snapshot does not auto-load pages to reach the saved offset", async () => {
   const { client, view, viewport, requests, requestCount } = await browse("/discover?row=movies", "movie")
-  client.removeQueries({ queryKey: ["seerr", "discover"] })
+  client.removeQueries({ queryKey: queryKeys.seerrScope("discover") })
   fireEvent.click(screen.getByRole("link", { name: "Back to discovery" }))
   await waitFor(() => expect(view.container.querySelectorAll("[data-quick-request-card]")).toHaveLength(20))
   await act(() => new Promise((resolve) => setTimeout(resolve, 20)))

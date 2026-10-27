@@ -334,7 +334,7 @@ function CollectionWizard({
     mutationFn: (value: CollectionProfileDraft) =>
       profileId ? api.collections.updateProfile(profileId, value) : api.collections.createProfile(value),
     onSuccess: () => {
-      void cache.invalidateQueries({ queryKey: ["collections", account] })
+      void cache.invalidateQueries({ queryKey: queryKeys.collectionsOf(account) })
       void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
       void cache.invalidateQueries({ queryKey: queryKeys.home })
       toast.success(profileId ? "Collection saved" : "Collection created")
@@ -698,7 +698,7 @@ export default function CollectionSettingsPage() {
     },
     onError: (error: Error) => toastFailure(error),
     onSettled: (_data, _error, submitted) => {
-      if (submitted.deletedProfileIds.length) void cache.invalidateQueries({ queryKey: ["collections", account] })
+      if (submitted.deletedProfileIds.length) void cache.invalidateQueries({ queryKey: queryKeys.collectionsOf(account) })
     },
   })
 
