@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
 import { Check, ChevronsUpDown } from "lucide-react"
 import { useState } from "react"
-import { Button } from "@/components/ui/button"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { useLiveSearch } from "@/hooks/use-live-search"
 import { api, type SeerrCompany } from "@/lib/api"
 import { queryKeys } from "@/lib/query-client"
 import { cn } from "@/lib/utils"
+import { useLiveSearch } from "@/hooks/use-live-search"
+import { Button } from "@/components/ui/button"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 
 /** Searches TMDB companies through Seerr and picks one for the movie catalog. */
 export function StudioCombobox({ value, onValueChange }: {
