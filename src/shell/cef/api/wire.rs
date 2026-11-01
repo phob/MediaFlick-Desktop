@@ -12,7 +12,7 @@ use ts_rs::TS;
 use crate::jellyfin::api::ApiError;
 
 use crate::collections::{CollectionProfile, ProviderResult};
-use crate::companion::CompanionStatus;
+use crate::companion::{CompanionStatus, SeerrCompanyPage, SeerrNetworkList};
 use crate::integrations::letterboxd::ReviewLookup;
 use crate::integrations::mdblist::{RatingsBatchResponse, RatingsIntegrationStatus};
 use crate::jellyfin::session::{QuickConnectPoll, QuickConnectStart, ServerInfo};
@@ -174,6 +174,8 @@ wire_types! {
     RatingsIntegrationStatus,
     ReorderBody,
     ReviewLookup,
+    SeerrCompanyPage,
+    SeerrNetworkList,
     SeerrRequestBody,
     SeerrRequestCancelled,
     ServerBody,

@@ -10,7 +10,7 @@ namespace Jellyfin.Plugin.MediaFlick.Services;
 /// Runs Seerr calls as the Seerr user mapped to the signed-in Jellyfin user
 /// and reshapes every answer into the typed Desktop contract.
 /// </summary>
-public sealed class SeerrGateway
+public sealed partial class SeerrGateway
 {
     private const ulong Admin = 2;
     private const ulong Request = 32;
@@ -171,164 +171,6 @@ public sealed class SeerrGateway
         return ShapePersonCredits(
             credits,
             await FactsAsync(Titles(PersonCredits(credits)), cancellationToken).ConfigureAwait(false));
-    }
-
-    public async Task<SeerrPageResponse<SeerrResultResponse>> DiscoverAsync(
-        Guid jellyfinUserId,
-        string kind,
-        int page,
-        int? genre,
-        string? sortBy,
-        int? voteAverageGte,
-        int? releaseDecade,
-        string? mediaType,
-        string? timeWindow,
-        CancellationToken cancellationToken)
-    {
-        var path = BuildDiscoverPath(
-            kind,
-            page,
-            genre,
-            sortBy,
-            voteAverageGte,
-            releaseDecade,
-            mediaType,
-            timeWindow,
-            DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime));
-        var user = await ResolveUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
-        var response = await SendMappedAsync(
-            HttpMethod.Get,
-            path,
-            null,
-            user,
-            cancellationToken).ConfigureAwait(false);
-        return ShapeSearchPage(
-            response,
-            await FactsAsync(Titles((response as JsonObject)?["results"]), cancellationToken)
-                .ConfigureAwait(false));
-    }
-
-    internal static string BuildDiscoverPath(
-        string kind,
-        int page,
-        int? genre,
-        string? sortBy,
-        int? voteAverageGte,
-        int? releaseDecade,
-        string? mediaType,
-        string? timeWindow,
-        DateOnly today)
-    {
-        var currentDecade = (today.Year / 10) * 10;
-        var endpoint = kind.ToLowerInvariant() switch
-        {
-            "trending" => "trending",
-            "movies" => "movies",
-            "tv" => "tv",
-            "upcoming-movies" => "movies/upcoming",
-            "upcoming-tv" => "tv/upcoming",
-            _ => throw new GatewayException(StatusCodes.Status404NotFound, "unknown discover kind")
-        };
-        if (genre is <= 0)
-        {
-            throw new GatewayException(StatusCodes.Status400BadRequest, "genre must be positive");
-        }
-        if (voteAverageGte is < 0 or > 10)
-        {
-            throw new GatewayException(
-                StatusCodes.Status400BadRequest,
-                "minimum rating must be between 0 and 10");
-        }
-        if (releaseDecade is { } requestedDecade
-            && (requestedDecade < 1900
-                || requestedDecade > currentDecade
-                || requestedDecade % 10 != 0))
-        {
-            throw new GatewayException(
-                StatusCodes.Status400BadRequest,
-                string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"release decade must be a ten-year start from 1900 through {currentDecade}"));
-        }
-        var safeSortBy = sortBy?.ToLowerInvariant() switch
-        {
-            null or "" => null,
-            "popularity.desc" => "popularity.desc",
-            "vote_average.desc" => "vote_average.desc",
-            "primary_release_date.desc" when endpoint == "movies" => "primary_release_date.desc",
-            "first_air_date.desc" when endpoint == "tv" => "first_air_date.desc",
-            _ => throw new GatewayException(
-                StatusCodes.Status400BadRequest,
-                "unknown discovery sort")
-        };
-        var safeMediaType = mediaType?.ToLowerInvariant() switch
-        {
-            null or "" => null,
-            "all" => "all",
-            "movie" => "movie",
-            "tv" => "tv",
-            _ => throw new GatewayException(
-                StatusCodes.Status400BadRequest,
-                "unknown trending media type")
-        };
-        var safeTimeWindow = timeWindow?.ToLowerInvariant() switch
-        {
-            null or "" => null,
-            "day" => "day",
-            "week" => "week",
-            _ => throw new GatewayException(
-                StatusCodes.Status400BadRequest,
-                "unknown trending time window")
-        };
-        var query = new List<string>
-        {
-            string.Create(CultureInfo.InvariantCulture, $"page={Math.Max(1, page)}")
-        };
-        if (endpoint is "movies" or "tv")
-        {
-            if (genre is { } genreId)
-            {
-                query.Add(string.Create(CultureInfo.InvariantCulture, $"genre={genreId}"));
-            }
-            if (releaseDecade is { } decade)
-            {
-                var dateName = endpoint == "movies" ? "primaryReleaseDate" : "firstAirDate";
-                var lastDate = decade == currentDecade
-                    ? today
-                    : new DateOnly(decade + 9, 12, 31);
-                query.Add(string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"{dateName}Gte={decade:D4}-01-01"));
-                query.Add(string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"{dateName}Lte={lastDate:yyyy-MM-dd}"));
-            }
-            if (safeSortBy is not null)
-            {
-                query.Add($"sortBy={safeSortBy}");
-                if (safeSortBy == "vote_average.desc")
-                {
-                    query.Add("voteCountGte=50");
-                }
-            }
-            if (voteAverageGte is { } score)
-            {
-                query.Add(string.Create(CultureInfo.InvariantCulture, $"voteAverageGte={score}"));
-            }
-        }
-        else if (endpoint == "trending")
-        {
-            if (safeMediaType is not null)
-            {
-                query.Add($"mediaType={safeMediaType}");
-            }
-            if (safeTimeWindow is not null)
-            {
-                query.Add($"timeWindow={safeTimeWindow}");
-            }
-        }
-
-        return $"api/v1/discover/{endpoint}?{string.Join('&', query)}";
     }
 
     public async Task<IReadOnlyList<SeerrGenreResponse>> GenresAsync(
@@ -879,6 +721,8 @@ public sealed class SeerrGateway
             JsonRead.Positive(detail["revenue"]),
             Names(detail["productionCompanies"]).ToArray(),
             Names(detail["networks"]).ToArray(),
+            Companies(detail["productionCompanies"]),
+            Companies(detail["networks"]),
             ShapeCodeNames(detail["productionCountries"], "iso_3166_1", "name"),
             ShapeCodeNames(detail["spokenLanguages"], "iso_639_1", "englishName"),
             ShapeCast(detail),

@@ -78,6 +78,7 @@ public sealed class InfoController : ControllerBase
             capabilities.Add("seerr-person-discovery");
             capabilities.Add("seerr-discovery-v2");
             capabilities.Add("seerr-discovery-v4");
+            capabilities.Add("seerr-discovery-v5");
             capabilities.Add("seerr-request-profiles");
         }
 
@@ -168,6 +169,8 @@ public sealed class SeerrController : ControllerBase
         [FromQuery] string? sortBy = null,
         [FromQuery] int? voteAverageGte = null,
         [FromQuery] int? releaseDecade = null,
+        [FromQuery] int? studio = null,
+        [FromQuery] int? network = null,
         [FromQuery] string? mediaType = null,
         [FromQuery] string? timeWindow = null,
         CancellationToken cancellationToken = default)
@@ -179,9 +182,26 @@ public sealed class SeerrController : ControllerBase
             sortBy,
             voteAverageGte,
             releaseDecade,
+            studio,
+            network,
             mediaType,
             timeWindow,
             cancellationToken));
+
+    [HttpGet("companies")]
+    public Task<IActionResult> Companies(
+        [FromQuery] string? query,
+        [FromQuery] int page = 1,
+        CancellationToken cancellationToken = default)
+        => RunAsync(userId => _gateway.CompaniesAsync(userId, query, page, cancellationToken));
+
+    /// <summary>
+    /// The curated TV networks for the TV catalog's network filter. Static
+    /// plugin data: no Seerr call and no user mapping.
+    /// </summary>
+    [HttpGet("networks")]
+    public IActionResult Networks()
+        => new JsonResult(new SeerrNetworksResponse(SeerrNetworks.All), CompanionJson.CamelCase);
 
     [HttpGet("genres/{mediaType}")]
     public Task<IActionResult> Genres(string mediaType, CancellationToken cancellationToken)

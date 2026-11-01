@@ -1,6 +1,7 @@
 //! Seerr through the Companion: discovery, details and requests, joined
 //! against the local library so rows know which titles are owned.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::jellyfin::api::ApiError;
@@ -9,6 +10,36 @@ use crate::library::{CatalogKind, Library, TitleKind};
 use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
 
 use super::CompanionSession;
+
+/// Studio and network filters, company search and the network list.
+const STUDIO_NETWORK_DISCOVERY: &str = "seerr-discovery-v5";
+
+/// The longest company search the Companion accepts.
+pub const MAX_COMPANY_QUERY_CHARS: usize = 100;
+
+/// A TMDB production company or TV network.
+#[derive(Debug, Deserialize, Serialize, ts_rs::TS)]
+pub struct SeerrCompany {
+    id: i64,
+    name: String,
+}
+
+/// `GET /api/seerr/companies`: one page of TMDB companies matching a name.
+#[derive(Debug, Deserialize, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SeerrCompanyPage {
+    page: i64,
+    total_pages: i64,
+    total_results: i64,
+    results: Vec<SeerrCompany>,
+}
+
+/// `GET /api/seerr/networks`: the Companion's curated TV networks, in its
+/// order.
+#[derive(Debug, Deserialize, Serialize, ts_rs::TS)]
+pub struct SeerrNetworkList {
+    networks: Vec<SeerrCompany>,
+}
 
 impl CompanionSession {
     fn get_seerr(
@@ -79,6 +110,17 @@ impl CompanionSession {
     ) -> Result<Value, ApiError> {
         self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
         let query = options.query_pairs(kind, page);
+        // An older Companion ignores these parameters and would answer with
+        // the unfiltered catalog.
+        if query
+            .iter()
+            .any(|(name, _)| matches!(*name, "studio" | "network"))
+        {
+            self.require_capability(
+                STUDIO_NETWORK_DISCOVERY,
+                "the MediaFlick Companion plugin must be updated for studio and network filters",
+            )?;
+        }
         let mut value = self.get_seerr(
             scope,
             &format!("/MediaFlick/seerr/discover/{}", kind.id()),
@@ -86,6 +128,34 @@ impl CompanionSession {
         )?;
         join_seerr_results(&self.library, &mut value, OtherKinds::Drop);
         Ok(value)
+    }
+
+    pub fn seerr_companies(
+        &self,
+        scope: &SessionScope,
+        query: &str,
+        page: i64,
+    ) -> Result<SeerrCompanyPage, ApiError> {
+        self.require_capability(
+            STUDIO_NETWORK_DISCOVERY,
+            "the MediaFlick Companion plugin must be updated for studio search",
+        )?;
+        self.fetch(scope, |client, _| {
+            client.companion_get_json(
+                "/MediaFlick/seerr/companies",
+                &[("query", query.to_string()), ("page", page.to_string())],
+            )
+        })
+    }
+
+    pub fn seerr_networks(&self, scope: &SessionScope) -> Result<SeerrNetworkList, ApiError> {
+        self.require_capability(
+            STUDIO_NETWORK_DISCOVERY,
+            "the MediaFlick Companion plugin must be updated for network filters",
+        )?;
+        self.fetch(scope, |client, _| {
+            client.companion_get_json("/MediaFlick/seerr/networks", &[])
+        })
     }
 
     pub fn seerr_genres(&self, scope: &SessionScope, media_type: &str) -> Result<Value, ApiError> {

@@ -1,5 +1,6 @@
 use super::images::{cache_key, image_mime_type, store_image};
 use super::*;
+use crate::companion::{MAX_COMPANY_QUERY_CHARS, SeerrCompanyPage, SeerrNetworkList};
 
 routes! {
     |services, request|
@@ -10,6 +11,10 @@ routes! {
         seerr_person_credits(services, &percent_decode(tmdb_id), request),
     GET ["seerr", "discover", kind] -> Relay =
         seerr_discover(services, &percent_decode(kind), request),
+    GET ["seerr", "companies"] -> SeerrCompanyPage = seerr_companies(services, request),
+    GET ["seerr", "networks"] -> SeerrNetworkList = companion_call(services, |scope| {
+        services.companion.seerr_networks(scope)
+    }),
     GET ["seerr", "genres", media_type] -> Relay =
         seerr_genres(services, &percent_decode(media_type)),
     GET ["seerr", "media", media_type, tmdb_id] -> Relay =
@@ -24,10 +29,10 @@ routes! {
         seerr_image(services, &percent_decode(size), &percent_decode(file)),
 }
 
-fn companion_call(
+fn companion_call<T>(
     services: &Arc<Services>,
-    call: impl FnOnce(&SessionScope) -> Result<Value, ApiError>,
-) -> Result<Value, ApiResponse> {
+    call: impl FnOnce(&SessionScope) -> Result<T, ApiError>,
+) -> Result<T, ApiResponse> {
     let scope = session_scope(services)?;
     call(&scope).map_err(|error| scoped_failure(services, &scope, &error))
 }
@@ -312,14 +317,7 @@ fn seerr_discover(
     let Some(kind) = DiscoverKind::from_id(kind) else {
         return Err(ApiResponse::error(404, "unknown discover row"));
     };
-    let options = match DiscoverOptions::from_values(
-        request.param("genre").as_deref(),
-        request.param("sort").as_deref(),
-        request.param("minRating").as_deref(),
-        request.param("decade").as_deref(),
-        request.param("mediaType").as_deref(),
-        request.param("timeWindow").as_deref(),
-    ) {
+    let options = match DiscoverOptions::from_query(|name| request.param(name)) {
         Ok(options) => options,
         Err(error) => return Err(ApiResponse::error(400, &error)),
     };
@@ -327,6 +325,30 @@ fn seerr_discover(
         services
             .companion
             .seerr_discover(scope, kind, page_param(request), &options)
+    })
+}
+
+fn seerr_companies(
+    services: &Arc<Services>,
+    request: &ApiRequest,
+) -> Result<SeerrCompanyPage, ApiResponse> {
+    let query = request.param("q").unwrap_or_default();
+    let query = query.trim();
+    if query.is_empty() || query.chars().count() > MAX_COMPANY_QUERY_CHARS {
+        return Err(ApiResponse::error(
+            400,
+            format!("a studio search must be 1 to {MAX_COMPANY_QUERY_CHARS} characters"),
+        ));
+    }
+    let page = page_param(request);
+    if !(1..=500).contains(&page) {
+        return Err(ApiResponse::error(
+            400,
+            "a studio search page must be 1 to 500",
+        ));
+    }
+    companion_call(services, |scope| {
+        services.companion.seerr_companies(scope, query, page)
     })
 }
 

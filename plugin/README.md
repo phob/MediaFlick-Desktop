@@ -180,6 +180,25 @@ from Seerr's queue, and every other in-progress title has a null activity,
 which Desktop shows as "Processing" with a description saying the request is
 approved and on its way.
 
+## Seerr studio and network discovery
+
+`seerr-discovery-v5` adds Discover filters by studio (movie catalog) and by
+network (TV catalog):
+
+- `GET /MediaFlick/seerr/discover/movies?studio=<TMDB company id>` and
+  `GET /MediaFlick/seerr/discover/tv?network=<TMDB network id>`. Ids must be
+  positive, and each parameter is rejected with `400` on any other catalog.
+  Both combine with the genre, decade, sort and score filters.
+- `GET /MediaFlick/seerr/companies?query=&page=` searches TMDB companies
+  through Seerr as the mapped user. The trimmed query must be 1 to 100
+  characters and the page 1 to 500; answers carry only company ids and names.
+- `GET /MediaFlick/seerr/networks` returns the curated network list in
+  `Services/SeerrNetworks.cs`. Neither Seerr nor TMDB can search networks, so
+  the plugin owns this list and updates it with new releases. Each id was
+  checked against `themoviedb.org/network/{id}`.
+- Title details add `studioRefs` and `networkRefs` (id and name) beside the
+  name-only `studios` and `networks`, which older Desktops keep reading.
+
 ## Collection experience v1
 
 Authenticated Desktop clients use `collection-experience-v1` for normalized

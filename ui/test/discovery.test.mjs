@@ -20,7 +20,7 @@ test("decade and genre survive URL serialization together", () => {
   assert.equal(written.get("genre"), "18")
   assert.equal(written.get("decade"), "1990")
   assert.equal(written.get("library"), "outside")
-  assert.deepEqual(readDiscoveryFilters(written, "movies", true, true), {
+  assert.deepEqual(readDiscoveryFilters(written, "movies", true, true, false), {
     genre: 18,
     decade: 1990,
     sort: "rating",
@@ -30,15 +30,15 @@ test("decade and genre survive URL serialization together", () => {
 
 test("unsupported decades do not become discovery API filters", () => {
   assert.deepEqual(
-    readDiscoveryFilters(new URLSearchParams("genre=18&decade=1995"), "movies", true, true),
+    readDiscoveryFilters(new URLSearchParams("genre=18&decade=1995"), "movies", true, true, false),
     { genre: 18, sort: "popular" },
   )
   assert.deepEqual(
-    readDiscoveryFilters(new URLSearchParams("decade=1890"), "tv", true, true),
+    readDiscoveryFilters(new URLSearchParams("decade=1890"), "tv", true, true, false),
     { sort: "popular" },
   )
   assert.deepEqual(
-    readDiscoveryFilters(new URLSearchParams("decade=1990"), "movies", true, false),
+    readDiscoveryFilters(new URLSearchParams("decade=1990"), "movies", true, false, false),
     { sort: "popular" },
   )
 })

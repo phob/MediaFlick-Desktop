@@ -1,4 +1,5 @@
 import type {
+  SeerrCompany,
   SeerrDiscoverFilters,
   SeerrDiscoverRow,
   SeerrResult,
@@ -12,6 +13,10 @@ export const DISCOVERY_FILTER_KEYS = [
   "sort",
   "minRating",
   "decade",
+  "studio",
+  "studioName",
+  "network",
+  "networkName",
   "mediaType",
   "timeWindow",
 ] as const
@@ -55,6 +60,8 @@ export function discoveryResultSetKey(
     `row=${row}`,
     `genre=${filters.genre ?? ""}`,
     `decade=${filters.decade ?? ""}`,
+    `studio=${filters.studio?.id ?? ""}`,
+    `network=${filters.network?.id ?? ""}`,
     `sort=${filters.sort ?? ""}`,
     `rating=${filters.minRating ?? ""}`,
     `media=${filters.mediaType ?? ""}`,
@@ -107,11 +114,23 @@ function positiveInteger(value: string | null) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
+/**
+ * A studio or network from the URL. The name only labels the active-filter
+ * chip; Seerr filters by the id.
+ */
+function readCompany(params: URLSearchParams, key: "studio" | "network"): SeerrCompany | undefined {
+  const id = positiveInteger(params.get(key))
+  if (!id) return undefined
+  const name = params.get(`${key}Name`)?.trim()
+  return { id, name: name || `${key === "studio" ? "Studio" : "Network"} ${id}` }
+}
+
 export function readDiscoveryFilters(
   params: URLSearchParams,
   row: SeerrDiscoverRow,
   advancedDiscovery: boolean,
   decadeDiscovery: boolean,
+  studioNetworkDiscovery: boolean,
 ): SeerrDiscoverFilters {
   const filters = defaultDiscoveryFilters(row, advancedDiscovery)
   if (!advancedDiscovery) return filters
@@ -141,6 +160,12 @@ export function readDiscoveryFilters(
     ? RELEASE_DECADES[mediaType].find((option) => option.value === decade)
     : undefined
   if (selectedDecade) filters.decade = selectedDecade.value
+
+  if (studioNetworkDiscovery) {
+    const company = readCompany(params, row === "movies" ? "studio" : "network")
+    if (company && row === "movies") filters.studio = company
+    if (company && row === "tv") filters.network = company
+  }
   return filters
 }
 
@@ -167,5 +192,20 @@ export function writeDiscoveryFilters(
   if (filters.sort && filters.sort !== "popular") next.set("sort", filters.sort)
   if (filters.minRating) next.set("minRating", String(filters.minRating))
   if (filters.decade) next.set("decade", String(filters.decade))
+  if (row === "movies" && filters.studio) {
+    next.set("studio", String(filters.studio.id))
+    next.set("studioName", filters.studio.name)
+  }
+  if (row === "tv" && filters.network) {
+    next.set("network", String(filters.network.id))
+    next.set("networkName", filters.network.name)
+  }
   return next
+}
+
+/** Discover's catalog for one studio's films or one network's series. */
+export function discoverCompanyPath(filter: { studio: SeerrCompany } | { network: SeerrCompany }) {
+  const row = "studio" in filter ? "movies" : "tv"
+  const params = writeDiscoveryFilters(new URLSearchParams({ row }), row, filter)
+  return `/discover?${params.toString()}`
 }

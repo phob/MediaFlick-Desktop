@@ -42,6 +42,10 @@ pub struct DiscoverOptions {
     sort: Option<DiscoverSort>,
     min_rating: Option<u8>,
     release_decade: Option<u16>,
+    /// A TMDB company id; the movie catalog only.
+    studio: Option<i64>,
+    /// A TMDB network id; the TV catalog only.
+    network: Option<i64>,
     media_type: Option<TrendingMediaType>,
     time_window: Option<TrendingWindow>,
 }
@@ -67,24 +71,26 @@ enum TrendingWindow {
 }
 
 impl DiscoverOptions {
-    pub fn from_values(
-        genre: Option<&str>,
-        sort: Option<&str>,
-        min_rating: Option<&str>,
-        release_decade: Option<&str>,
-        media_type: Option<&str>,
-        time_window: Option<&str>,
-    ) -> Result<Self, String> {
-        let genre = genre
-            .map(|value| {
-                value
-                    .parse::<i64>()
-                    .ok()
-                    .filter(|value| *value > 0)
-                    .ok_or_else(|| "genre must be a positive number".to_string())
-            })
-            .transpose()?;
-        let sort = sort
+    /// Reads the UI's discovery query parameters, by name, from `param`.
+    pub fn from_query(param: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
+        // TMDB ids, which the Companion reads as 32-bit integers.
+        let positive = |name: &str, message: &str| {
+            param(name)
+                .map(|value| {
+                    value
+                        .parse::<i32>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .map(i64::from)
+                        .ok_or_else(|| message.to_string())
+                })
+                .transpose()
+        };
+        let genre = positive("genre", "genre must be a positive number")?;
+        let studio = positive("studio", "studio must be a positive TMDB company id")?;
+        let network = positive("network", "network must be a positive TMDB network id")?;
+        let sort = param("sort")
+            .as_deref()
             .map(|value| match value {
                 "popular" => Ok(DiscoverSort::Popular),
                 "rating" => Ok(DiscoverSort::Rating),
@@ -92,7 +98,8 @@ impl DiscoverOptions {
                 _ => Err("unknown discovery sort".to_string()),
             })
             .transpose()?;
-        let min_rating = min_rating
+        let min_rating = param("minRating")
+            .as_deref()
             .map(|value| {
                 value
                     .parse::<u8>()
@@ -102,7 +109,8 @@ impl DiscoverOptions {
             })
             .transpose()?;
         let current_decade = current_release_decade();
-        let release_decade = release_decade
+        let release_decade = param("decade")
+            .as_deref()
             .map(|value| {
                 value
                     .parse::<u16>()
@@ -119,7 +127,8 @@ impl DiscoverOptions {
                     })
             })
             .transpose()?;
-        let media_type = media_type
+        let media_type = param("mediaType")
+            .as_deref()
             .map(|value| match value {
                 "all" => Ok(TrendingMediaType::All),
                 "movie" => Ok(TrendingMediaType::Movie),
@@ -127,7 +136,8 @@ impl DiscoverOptions {
                 _ => Err("unknown trending media type".to_string()),
             })
             .transpose()?;
-        let time_window = time_window
+        let time_window = param("timeWindow")
+            .as_deref()
             .map(|value| match value {
                 "day" => Ok(TrendingWindow::Day),
                 "week" => Ok(TrendingWindow::Week),
@@ -140,6 +150,8 @@ impl DiscoverOptions {
             sort,
             min_rating,
             release_decade,
+            studio,
+            network,
             media_type,
             time_window,
         })
@@ -174,8 +186,16 @@ impl DiscoverOptions {
             }
             DiscoverKind::Movies => {
                 self.push_catalog_filters(&mut query, "primary_release_date.desc");
+                if let Some(studio) = self.studio {
+                    query.push(("studio", studio.to_string()));
+                }
             }
-            DiscoverKind::Tv => self.push_catalog_filters(&mut query, "first_air_date.desc"),
+            DiscoverKind::Tv => {
+                self.push_catalog_filters(&mut query, "first_air_date.desc");
+                if let Some(network) = self.network {
+                    query.push(("network", network.to_string()));
+                }
+            }
             DiscoverKind::UpcomingMovies | DiscoverKind::UpcomingTv => {}
         }
 

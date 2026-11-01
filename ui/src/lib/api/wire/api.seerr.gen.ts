@@ -1,5 +1,7 @@
 // Generated from src/shell/cef/api/wire.rs by `just wire-types`. Do not edit.
 
+import type { SeerrCompanyPage, SeerrNetworkList } from "./companion.seerr.gen.ts"
+
 export type SeerrRequestBody = {
   mediaType: string,
   tmdbId: number,
@@ -23,6 +25,8 @@ export type ApiSeerrRoutes = {
   "GET /api/seerr/search": { params: null, body: null, kind: "relay" },
   "GET /api/seerr/person/{tmdbId}/credits": { params: { tmdbId: string | number }, body: null, kind: "relay" },
   "GET /api/seerr/discover/{kind}": { params: { kind: string | number }, body: null, kind: "relay" },
+  "GET /api/seerr/companies": { params: null, body: null, kind: "json", response: SeerrCompanyPage },
+  "GET /api/seerr/networks": { params: null, body: null, kind: "json", response: SeerrNetworkList },
   "GET /api/seerr/genres/{mediaType}": { params: { mediaType: string | number }, body: null, kind: "relay" },
   "GET /api/seerr/media/{mediaType}/{tmdbId}": { params: { mediaType: string | number, tmdbId: string | number }, body: null, kind: "relay" },
   "GET /api/seerr/request-options/{mediaType}": { params: { mediaType: string | number }, body: null, kind: "relay" },
