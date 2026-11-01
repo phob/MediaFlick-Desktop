@@ -16,10 +16,10 @@ export function SimilarTitles({ item }: { item: ItemDetail }) {
     staleTime: 30 * 60_000,
     retry: false,
   })
-  const items = data?.items ?? []
-  if (!items.length) return null
+  if (!data?.items.length) return null
+  const { items } = data
   return (
-    <MediaRail title="More like this" itemCount={items.length} resetKey={items[0]?.id}>
+    <MediaRail title="More like this" itemCount={items.length} resetKey={items[0].id}>
       {items.map((similar) => (
         <MediaCard key={similar.id} item={similar} className="home-media-card shrink-0 snap-start" />
       ))}
