@@ -12,8 +12,9 @@ use super::libraries::{
 };
 use super::model::is_synced_kind;
 use super::{
-    DEFAULT_PAGE_SIZE, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort, ItemSummary,
-    KindFilter, Library, MAX_CHILD_PAGE_LIMIT, SortDirection, SortKey, TitleDetail, TitleKind,
+    DEFAULT_PAGE_SIZE, Facet, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort,
+    ItemSummary, KindFilter, Library, MAX_CHILD_PAGE_LIMIT, SortDirection, SortKey, TitleDetail,
+    TitleKind,
 };
 
 #[derive(Debug)]
@@ -34,6 +35,8 @@ impl From<rusqlite::Error> for BrowseError {
 #[serde(rename_all = "camelCase")]
 pub struct FilterOptions {
     pub genres: Vec<String>,
+    pub studios: Vec<String>,
+    pub tags: Vec<String>,
     pub official_ratings: Vec<String>,
 }
 
@@ -121,11 +124,15 @@ pub fn library_options(library: &Library, id: &LibraryId) -> Result<FilterOption
     let entry = registered(library, id)?;
     match entry.kind().profile().grid {
         GridSource::Catalog { title } => Ok(FilterOptions {
-            genres: library.genres(Some(id))?,
+            genres: library.facet_values(Facet::Genre, Some(id))?,
+            studios: library.facet_values(Facet::Studio, Some(id))?,
+            tags: library.facet_values(Facet::Tag, Some(id))?,
             official_ratings: library.official_ratings(&[title.into()], Some(id))?,
         }),
         GridSource::Live { .. } => Ok(FilterOptions {
             genres: Vec::new(),
+            studios: Vec::new(),
+            tags: Vec::new(),
             official_ratings: Vec::new(),
         }),
     }
@@ -427,6 +434,8 @@ fn check(query: &ItemQuery, browse: &BrowseCapabilities) -> Result<(), BrowseErr
     }
     let filters = [
         (query.genre.is_some(), FilterKey::Genre),
+        (query.studio.is_some(), FilterKey::Studio),
+        (query.tag.is_some(), FilterKey::Tag),
         (query.release_decade.is_some(), FilterKey::Decade),
         (query.watched.is_some(), FilterKey::Watched),
         (query.official_rating.is_some(), FilterKey::Parental),

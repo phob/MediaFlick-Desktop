@@ -28,7 +28,7 @@ const SORTS = {
   added: { sortBy: "DateCreated,SortName", order: "Descending" },
   year: { sortBy: "ProductionYear,PremiereDate,SortName", order: "Descending" },
 }
-const UNOFFERED = ["sort=random&seed=7", "sort=rating", "sort=episode-added", "sort=plays", "watched=unwatched", "genre=Rock", "decade=1990", "parental=PG", "seriesStatus=Ended", "favorite=false"]
+const UNOFFERED = ["sort=random&seed=7", "sort=rating", "sort=episode-added", "sort=plays", "watched=unwatched", "genre=Rock", "studio=Pixar", "tag=christmas", "decade=1990", "parental=PG", "seriesStatus=Ended", "favorite=false"]
 const PAGE = 24
 const LATEST_LIMIT = 20
 const IDS_ONLY = "Fields=&EnableImages=false&EnableUserData=false"
@@ -197,7 +197,7 @@ export default async function liveLibraries(ctx) {
     entry.refusals = await refusals(ctx, expect, library)
     const options = await ctx.api(`/api/libraries/${library.id}/options`)
     entry.options = { status: options.status, body: options.body }
-    expect(options.status === 200 && sameList(options.body, { genres: [], officialRatings: [] }), `${library.name} (${library.kind}): options answer empty lists (${options.status} ${JSON.stringify(options.body)})`)
+    expect(options.status === 200 && sameList(options.body, { genres: [], studios: [], tags: [], officialRatings: [] }), `${library.name} (${library.kind}): options answer empty lists (${options.status} ${JSON.stringify(options.body)})`)
     entry.latest = await latestCase(ctx, expect, userId, library)
     report.live.push(entry)
   }

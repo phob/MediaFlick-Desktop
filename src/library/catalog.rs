@@ -423,12 +423,12 @@ const UPSERT_ITEM_SQL: &str = "INSERT INTO items (
         jellyfin_id, kind, name, original_title, sort_name, year, premiere_date,
         runtime_ticks, community_rating, official_rating, parent_id, series_id,
         series_name, season_id, index_number, parent_index_number, child_count,
-        tmdb_id, imdb_id, tvdb_id, genres, image_tags, primary_image_tag,
+        tmdb_id, imdb_id, tvdb_id, genres, studios, tags, image_tags, primary_image_tag,
         backdrop_image_tag, search_genres, date_created, date_last_saved, series_status,
         is_virtual, synced_at
     ) VALUES (
         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-        ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30
+        ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32
     )
     ON CONFLICT(jellyfin_id) DO UPDATE SET
         kind = excluded.kind,
@@ -451,6 +451,8 @@ const UPSERT_ITEM_SQL: &str = "INSERT INTO items (
         imdb_id = excluded.imdb_id,
         tvdb_id = excluded.tvdb_id,
         genres = excluded.genres,
+        studios = excluded.studios,
+        tags = excluded.tags,
         image_tags = excluded.image_tags,
         primary_image_tag = excluded.primary_image_tag,
         backdrop_image_tag = excluded.backdrop_image_tag,
@@ -480,6 +482,8 @@ const UPSERT_ITEM_SQL: &str = "INSERT INTO items (
         OR imdb_id IS NOT excluded.imdb_id
         OR tvdb_id IS NOT excluded.tvdb_id
         OR genres IS NOT excluded.genres
+        OR studios IS NOT excluded.studios
+        OR tags IS NOT excluded.tags
         OR image_tags IS NOT excluded.image_tags
         OR primary_image_tag IS NOT excluded.primary_image_tag
         OR backdrop_image_tag IS NOT excluded.backdrop_image_tag
@@ -514,6 +518,8 @@ fn upsert_item_if_changed(connection: &Connection, record: &ItemRecord) -> rusql
             record.imdb_id,
             record.tvdb_id,
             record.genres,
+            record.studios,
+            record.tags,
             record.image_tags,
             record.primary_image_tag,
             record.backdrop_image_tag,

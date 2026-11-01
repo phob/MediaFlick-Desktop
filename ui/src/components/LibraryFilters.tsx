@@ -1,6 +1,7 @@
-import { ArrowDownWideNarrow, ArrowUpNarrowWide, Heart, ListFilter, Shuffle, X } from "lucide-react"
-import { useId, type ComponentProps, type ReactNode } from "react"
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, Check, Heart, ListFilter, Shuffle, X } from "lucide-react"
+import { useId, useState, type ComponentProps, type FocusEvent, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
+import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import {
@@ -48,16 +49,27 @@ import {
   WATCH_FILTERS,
   type LibraryFilterState,
 } from "@/lib/library-filters"
-import { useGenres, useLibraryOptions, useOfficialRatings } from "@/lib/queries"
+import { useGenres, useStudios, useTags } from "@/lib/facet-queries"
+import { useLibraryOptions, useOfficialRatings } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 const ANY = "__any__"
 
 const WATCHED = [{ id: ANY, label: "Any watch status" }, ...WATCH_FILTERS]
 
+/** A studio or tag list as its query stands: no values yet while it loads. */
+interface FacetList {
+  values: readonly string[] | undefined
+  error: Error | null
+}
+
 interface FilterOptions {
   genres: string[]
   genresLoading: boolean
+  studios: FacetList
+  /** "Network" in TV libraries, where Jellyfin keeps a series' networks as its studios. */
+  studioLabel: string
+  tags: FacetList
   ratings: string[]
   ratingsLoading: boolean
   offered: (filter: LibraryFilterId) => boolean
@@ -82,6 +94,71 @@ interface LibraryFiltersProps {
 
 function currentValue(value: string, fallback: string) {
   return value || fallback
+}
+
+const NO_VALUES: readonly string[] = []
+
+/** Studio and tag lists run into the thousands; past this many matches the picker asks for a narrower search. */
+const FACET_MATCH_LIMIT = 100
+
+/**
+ * A searchable single choice for long value lists. It stops key events at its
+ * root so that, inside a dropdown menu, typing reaches the search field instead
+ * of the menu's typeahead and arrow keys move through the matches.
+ */
+function FacetPicker({
+  noun,
+  list,
+  value,
+  onChange,
+}: {
+  noun: string
+  list: FacetList
+  value: string
+  onChange: (value: string) => void
+}) {
+  const [term, setTerm] = useState("")
+  const needle = term.trim().toLocaleLowerCase()
+  const values = list.values ?? NO_VALUES
+  const matches = needle ? values.filter((option) => option.toLocaleLowerCase().includes(needle)) : values
+  const shown = matches.slice(0, FACET_MATCH_LIMIT)
+  const choice = (option: string, label: string) => (
+    <CommandItem key={option || ANY} value={option || ANY} className="min-h-9" onSelect={() => onChange(option)}>
+      <Check aria-hidden className={cn("size-4", value === option ? "opacity-100" : "opacity-0")} />
+      <span className="min-w-0 break-words">
+        {label}
+        {value === option && <span className="sr-only"> (selected)</span>}
+      </span>
+    </CommandItem>
+  )
+
+  return (
+    <Command shouldFilter={false} label={`Search ${noun}s`} onKeyDown={(event) => event.stopPropagation()}>
+      <CommandInput placeholder={`Search ${noun}s`} value={term} onValueChange={setTerm} />
+      <CommandList label={`${noun[0].toUpperCase()}${noun.slice(1)}s`} className="max-h-72">
+        <CommandGroup>
+          {!needle && choice("", `Any ${noun}`)}
+          {shown.map((option) => choice(option, option))}
+        </CommandGroup>
+        {list.error && !list.values ? (
+          <p className="px-3 py-2 text-sm text-destructive">Could not load {noun}s.</p>
+        ) : !list.values ? (
+          <p className="px-3 py-2 text-sm text-muted-foreground">Loading {noun}s…</p>
+        ) : needle && !matches.length ? (
+          <p className="px-3 py-2 text-sm text-muted-foreground">No {noun}s found.</p>
+        ) : matches.length > shown.length ? (
+          <p className="px-3 py-2 text-xs text-muted-foreground">
+            {(matches.length - shown.length).toLocaleString()} more. Type to narrow the list.
+          </p>
+        ) : null}
+      </CommandList>
+    </Command>
+  )
+}
+
+/** A submenu opened from the keyboard focuses its own content; hand that focus to the picker's search field. */
+function focusSearch(event: FocusEvent<HTMLDivElement>) {
+  if (event.target === event.currentTarget) event.currentTarget.querySelector("input")?.focus()
 }
 
 function FiltersButton({
@@ -120,17 +197,31 @@ function FiltersButton({
 function DesktopFilters({
   value,
   onChange,
-  options: { genres, genresLoading, ratings, ratingsLoading, offered },
+  options: {
+    genres,
+    genresLoading,
+    studios,
+    studioLabel,
+    tags,
+    ratings,
+    ratingsLoading,
+    offered,
+  },
 }: {
   value: LibraryFilterState
   onChange: LibraryFiltersProps["onChange"]
   options: FilterOptions
 }) {
+  const [open, setOpen] = useState(false)
   const count = activeLibraryFilterCount(value)
   const watchedLabel = WATCHED.find((option) => option.id === (value.watched || ANY))?.label
+  const pick = (patch: Partial<LibraryFilterState>) => {
+    onChange(patch)
+    setOpen(false)
+  }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <FiltersButton count={count} />
       </DropdownMenuTrigger>
@@ -165,6 +256,44 @@ function DesktopFilters({
                   Loading genres…
                 </DropdownMenuItem>
               )}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
+
+        {offered("studio") && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="min-h-9">
+              <span>{studioLabel}</span>
+              <span className="ml-auto max-w-28 truncate text-xs text-muted-foreground">
+                {currentValue(value.studio, "Any")}
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-64 p-0" onFocus={focusSearch}>
+              <FacetPicker
+                noun={studioLabel.toLowerCase()}
+                list={studios}
+                value={value.studio}
+                onChange={(studio) => pick({ studio })}
+              />
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
+
+        {offered("tag") && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="min-h-9">
+              <span>Tag</span>
+              <span className="ml-auto max-w-28 truncate text-xs text-muted-foreground">
+                {currentValue(value.tag, "Any")}
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-64 p-0" onFocus={focusSearch}>
+              <FacetPicker
+                noun="tag"
+                list={tags}
+                value={value.tag}
+                onChange={(tag) => pick({ tag })}
+              />
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         )}
@@ -358,10 +487,28 @@ function TouchGroup({
   )
 }
 
+function TouchFacet({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <p className="mb-2 text-sm font-medium text-foreground">{label}</p>
+      <div className="overflow-hidden rounded-md border border-edge">{children}</div>
+    </div>
+  )
+}
+
 function TouchFilters({
   value,
   onChange,
-  options: { genres, genresLoading, ratings, ratingsLoading, offered },
+  options: {
+    genres,
+    genresLoading,
+    studios,
+    studioLabel,
+    tags,
+    ratings,
+    ratingsLoading,
+    offered,
+  },
 }: {
   value: LibraryFilterState
   onChange: LibraryFiltersProps["onChange"]
@@ -396,6 +543,28 @@ function TouchFilters({
                 <p className="px-3 py-2 text-sm text-muted-foreground">Loading genres…</p>
               )}
             </TouchGroup>
+          )}
+
+          {offered("studio") && (
+            <TouchFacet label={studioLabel}>
+              <FacetPicker
+                noun={studioLabel.toLowerCase()}
+                list={studios}
+                value={value.studio}
+                onChange={(studio) => onChange({ studio })}
+              />
+            </TouchFacet>
+          )}
+
+          {offered("tag") && (
+            <TouchFacet label="Tag">
+              <FacetPicker
+                noun="tag"
+                list={tags}
+                value={value.tag}
+                onChange={(tag) => onChange({ tag })}
+              />
+            </TouchFacet>
           )}
 
           {offered("decade") && (
@@ -486,14 +655,18 @@ function ActiveFilters({
   value,
   onChange,
   touch,
+  studioLabel,
 }: {
   value: LibraryFilterState
   onChange: LibraryFiltersProps["onChange"]
   touch: boolean
+  studioLabel: string
 }) {
   type FilterChip = { key: string; label: string; patch: Partial<LibraryFilterState> }
   const candidates: Array<FilterChip | null> = [
     value.genre ? { key: "genre", label: `Genre: ${value.genre}`, patch: { genre: "" } } : null,
+    value.studio ? { key: "studio", label: `${studioLabel}: ${value.studio}`, patch: { studio: "" } } : null,
+    value.tag ? { key: "tag", label: `Tag: ${value.tag}`, patch: { tag: "" } } : null,
     value.decade ? { key: "decade", label: `Released: ${value.decade}s`, patch: { decade: "" } } : null,
     value.watched ? {
       key: "watched",
@@ -551,16 +724,22 @@ export function LibraryFilters({
 }: LibraryFiltersProps) {
   const offered = (filter: LibraryFilterId) => offersFilter(capabilities, filter)
   const libraryId = source.scope === "library" ? source.libraryId : null
-  const listsOptions = offered("genre") || offered("parental")
+  const listsOptions = offered("genre") || offered("studio") || offered("tag") || offered("parental")
   const libraryOptions = useLibraryOptions(listsOptions ? libraryId : null)
   const titleViewOptions = listsOptions && source.scope === "titles"
   const genres = useGenres(titleViewOptions)
+  const studios = useStudios(titleViewOptions && offered("studio"))
+  const tags = useTags(titleViewOptions && offered("tag"))
+  const studioLabel = tvShowsLibrary ? "Network" : "Studio"
   const ratings = useOfficialRatings(source.scope === "titles" ? source.query.kind ?? [] : [], titleViewOptions)
   const touchInput = useTouchInput()
   const options: FilterOptions = libraryId === null
     ? {
         genres: genres.data?.genres ?? [],
         genresLoading: genres.isPending,
+        studios: { values: studios.data?.studios, error: studios.error },
+        studioLabel,
+        tags: { values: tags.data?.tags, error: tags.error },
         ratings: ratings.data?.officialRatings ?? [],
         ratingsLoading: ratings.isPending,
         offered,
@@ -568,6 +747,9 @@ export function LibraryFilters({
     : {
         genres: libraryOptions.data?.genres ?? [],
         genresLoading: libraryOptions.isPending,
+        studios: { values: libraryOptions.data?.studios, error: libraryOptions.error },
+        studioLabel,
+        tags: { values: libraryOptions.data?.tags, error: libraryOptions.error },
         ratings: libraryOptions.data?.officialRatings ?? [],
         ratingsLoading: libraryOptions.isPending,
         offered,
@@ -643,7 +825,7 @@ export function LibraryFilters({
           </span>
         )}
       </div>
-      <ActiveFilters value={value} onChange={onChange} touch={touchInput} />
+      <ActiveFilters value={value} onChange={onChange} touch={touchInput} studioLabel={studioLabel} />
     </div>
   )
 }

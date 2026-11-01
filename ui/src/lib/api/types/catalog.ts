@@ -42,6 +42,8 @@ export interface ItemQuery {
   personId?: string
   kind?: readonly TitleKind[]
   genre?: string
+  studio?: string
+  tag?: string
   /** Inclusive first year of a standard release decade (for example 1990). */
   decade?: number
   watched?: WatchFilter | ""

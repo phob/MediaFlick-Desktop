@@ -189,6 +189,10 @@ const LIVE_SORT_KEYS: [SortKey; LiveSort::ALL.len()] = {
 #[ts(rename_all = "camelCase")]
 pub enum FilterKey {
     Genre,
+    /// Labelled Network in TV libraries: Jellyfin stores a series' networks
+    /// as its studios.
+    Studio,
+    Tag,
     Decade,
     Watched,
     Parental,
@@ -200,6 +204,8 @@ impl FilterKey {
     pub fn id(self) -> &'static str {
         match self {
             Self::Genre => "genre",
+            Self::Studio => "studio",
+            Self::Tag => "tag",
             Self::Decade => "decade",
             Self::Watched => "watched",
             Self::Parental => "parental",
@@ -238,6 +244,8 @@ pub static MOVIE_BROWSE: BrowseCapabilities = BrowseCapabilities {
     ],
     filters: &[
         FilterKey::Genre,
+        FilterKey::Studio,
+        FilterKey::Tag,
         FilterKey::Decade,
         FilterKey::Watched,
         FilterKey::Parental,
@@ -258,6 +266,8 @@ pub static SHOW_BROWSE: BrowseCapabilities = BrowseCapabilities {
     ],
     filters: &[
         FilterKey::Genre,
+        FilterKey::Studio,
+        FilterKey::Tag,
         FilterKey::Decade,
         FilterKey::Watched,
         FilterKey::Parental,
@@ -278,6 +288,8 @@ pub static CROSS_LIBRARY_BROWSE: BrowseCapabilities = BrowseCapabilities {
     ],
     filters: &[
         FilterKey::Genre,
+        FilterKey::Studio,
+        FilterKey::Tag,
         FilterKey::Decade,
         FilterKey::Watched,
         FilterKey::Parental,

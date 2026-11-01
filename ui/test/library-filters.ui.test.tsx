@@ -21,6 +21,8 @@ const EMPTY: LibraryFilterState = {
   order: "asc",
   seed: "",
   genre: "",
+  studio: "",
+  tag: "",
   decade: "",
   watched: "",
   parental: "",

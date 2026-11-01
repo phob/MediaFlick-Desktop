@@ -14,7 +14,7 @@ import {
   type ItemDetail,
 } from "@/lib/api"
 import { formatCommunityRating, formatRuntime, formatYearOnly } from "@/lib/format"
-import { genreRoute } from "@/lib/libraries"
+import { facetRoute } from "@/lib/libraries"
 import type { DetailNavigationState } from "@/lib/navigation"
 
 function Breadcrumb({ item, navigationState }: { item: ItemDetail; navigationState: DetailNavigationState }) {
@@ -132,7 +132,7 @@ export function DetailHero({
       }
       genres={item.genres.map((genre) => ({
         label: genre,
-        to: genreRoute(genre, item),
+        to: facetRoute("genre", genre, item),
       }))}
       overview={
         aboutPending ? (

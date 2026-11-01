@@ -17,6 +17,8 @@ export type BrowsingPage = "last" | `library:${string}`
 
 export interface LibraryQuery {
   genre?: string
+  studio?: string
+  tag?: string
   decade?: number
   watched?: WatchFilter | ""
   favorite?: boolean

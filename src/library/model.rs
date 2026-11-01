@@ -240,8 +240,8 @@ fn optional_text_matches(saved: Option<&str>, current: Option<&str>) -> bool {
 
 /// One cached library item — the thin catalog index row. Provider IDs get
 /// dedicated columns because they are the join keys for external metadata
-/// features. Rich metadata (synopsis, cast, streams, tags, studios, critic
-/// ratings) is never cached; surfaces fetch it live from Jellyfin.
+/// features. Rich metadata (synopsis, cast, streams, critic ratings) is never
+/// cached; surfaces fetch it live from Jellyfin.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ItemRecord {
     pub jellyfin_id: String,
@@ -265,6 +265,11 @@ pub struct ItemRecord {
     pub imdb_id: Option<String>,
     pub tvdb_id: Option<String>,
     pub genres: String,
+    /// Studio names, kept for movies and series only: the library grids that
+    /// filter by them list titles. TV libraries call them networks.
+    pub studios: String,
+    /// Kept for movies and series only, as `studios` is.
+    pub tags: String,
     pub image_tags: String,
     pub primary_image_tag: Option<String>,
     pub backdrop_image_tag: Option<String>,
@@ -369,6 +374,16 @@ impl KindFilter {
 
 impl ItemRecord {
     pub fn from_dto(dto: &BaseItemDto) -> Self {
+        let (studios, tags) = if matches!(dto.item_type.as_deref(), Some("Movie" | "Series")) {
+            let studios = dto
+                .studios
+                .iter()
+                .filter_map(|studio| non_empty(studio.name.as_deref()))
+                .collect();
+            (studios, dto.tags.as_slice())
+        } else {
+            (Vec::new(), [].as_slice())
+        };
         Self {
             jellyfin_id: dto.id.clone(),
             kind: dto
@@ -404,6 +419,8 @@ impl ItemRecord {
             imdb_id: dto.provider_id("Imdb").map(str::to_string),
             tvdb_id: dto.provider_id("Tvdb").map(str::to_string),
             genres: json_text(&dto.genres),
+            studios: json_text(&studios),
+            tags: json_text(&tags),
             image_tags: json_text(&dto.image_tags),
             primary_image_tag: dto.primary_image_tag().map(str::to_string),
             backdrop_image_tag: dto

@@ -218,15 +218,6 @@ export function useBillboard(enabled = true) {
   })
 }
 
-export function useGenres(enabled = true) {
-  return useQuery({
-    queryKey: queryKeys.genres,
-    queryFn: api.genres,
-    staleTime: 30 * 60_000,
-    enabled,
-  })
-}
-
 export function useOfficialRatings(kinds: readonly TitleKind[], enabled = true) {
   return useQuery({
     queryKey: queryKeys.officialRatings(kinds),

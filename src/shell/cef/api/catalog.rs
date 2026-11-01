@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::library::libraries::FilterKey;
 use crate::library::model::DetailView;
-use crate::library::{DEFAULT_PAGE_SIZE, ItemPage};
+use crate::library::{DEFAULT_PAGE_SIZE, Facet, ItemPage, facet_value_from_id};
 
 use super::*;
 
@@ -23,6 +23,16 @@ use person::{query_person_items, resolve_person};
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct Genres {
     genres: Vec<String>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct Studios {
+    studios: Vec<String>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct Tags {
+    tags: Vec<String>,
 }
 
 #[derive(Serialize, ts_rs::TS)]
@@ -56,7 +66,10 @@ routes! {
     GET ["billboard"] -> Billboard = billboard_view(services),
     GET ["items"] -> ItemPage = query_items(services, request),
     GET ["items", "letters"] -> ItemLetters = item_letters(services, request),
-    GET ["genres"] -> Genres = genres(services),
+    GET ["genres"] -> Genres = facet_values(services, Facet::Genre).map(|genres| Genres { genres }),
+    GET ["studios"] -> Studios =
+        facet_values(services, Facet::Studio).map(|studios| Studios { studios }),
+    GET ["tags"] -> Tags = facet_values(services, Facet::Tag).map(|tags| Tags { tags }),
     GET ["official-ratings"] -> OfficialRatings = official_ratings(services, request),
     GET ["person", "resolve"] -> PersonResolution = resolve_person(services, request),
     GET ["item", id] -> DetailView = item_detail(services, id),
@@ -65,11 +78,11 @@ routes! {
     GET ["item", id, "children"] -> ItemPage = children(services, id, request),
 }
 
-fn genres(services: &Arc<Services>) -> Result<Genres, ApiResponse> {
-    match services.library.genres(None) {
-        Ok(genres) => Ok(Genres { genres }),
-        Err(error) => Err(storage_failure(&error)),
-    }
+fn facet_values(services: &Arc<Services>, facet: Facet) -> Result<Vec<String>, ApiResponse> {
+    services
+        .library
+        .facet_values(facet, None)
+        .map_err(|error| storage_failure(&error))
 }
 
 fn calendar(services: &Arc<Services>, request: &ApiRequest) -> Result<Value, ApiResponse> {
@@ -186,7 +199,9 @@ pub(super) fn library_query(
         })?
         .unwrap_or_default(),
         direction: param(request, params, "order", SortDirection::from_id)?,
-        genre: request.param(FilterKey::Genre.id()),
+        genre: param(request, params, FilterKey::Genre.id(), facet_value_from_id)?,
+        studio: param(request, params, FilterKey::Studio.id(), facet_value_from_id)?,
+        tag: param(request, params, FilterKey::Tag.id(), facet_value_from_id)?,
         release_decade: param(
             request,
             params,

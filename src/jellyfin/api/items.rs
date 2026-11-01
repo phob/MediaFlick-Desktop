@@ -22,14 +22,14 @@ use super::model::{
 /// Lightweight fields required to browse, sort, filter, join, and draw cards.
 /// Name, id, type, year, runtime, hierarchy, and image tags are part of
 /// Jellyfin's base item shape; the fields below opt into only the additional
-/// catalog signals the local index needs. Rich prose, cast, studios, tags,
-/// and media streams are never cached.
+/// catalog signals the local index needs. Studios and tags feed the library
+/// filters. Rich prose, cast and media streams are never cached.
 ///
 /// `DateLastSaved` is deliberately absent: it is a valid `ItemFields` value but
 /// servers return it empty, and it is not a valid `ItemSortBy` value, so the
 /// cache keys freshness on `DateCreated` instead. See `library::sync`.
-pub const CATALOG_FIELDS: &str = "ProviderIds,Genres,DateCreated,OriginalTitle,SortName,\
-PremiereDate,OfficialRating,CommunityRating,ChildCount,ParentId";
+pub const CATALOG_FIELDS: &str = "ProviderIds,Genres,Studios,Tags,DateCreated,OriginalTitle,\
+SortName,PremiereDate,OfficialRating,CommunityRating,ChildCount,ParentId";
 
 const CHILD_FIELDS: &str = "ProviderIds,Overview,Genres,DateCreated,OriginalTitle,SortName,\
 PremiereDate,OfficialRating,CommunityRating,ChildCount,ParentId";
