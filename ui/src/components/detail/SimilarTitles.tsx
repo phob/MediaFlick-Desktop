@@ -1,8 +1,9 @@
+import { useQuery } from "@tanstack/react-query"
 import { MediaCard } from "@/components/MediaCard"
 import { MediaRail } from "@/components/MediaRail"
-import type { ItemDetail } from "@/lib/api"
+import { api, type ItemDetail } from "@/lib/api"
 import { isTitleKind } from "@/lib/kinds"
-import { useSimilarItems } from "@/lib/queries"
+import { optionalIdQuery, queryKeys } from "@/lib/query-client"
 
 /**
  * Jellyfin's similar titles for a film or series. Optional garnish: while it
@@ -10,7 +11,11 @@ import { useSimilarItems } from "@/lib/queries"
  * no rail.
  */
 export function SimilarTitles({ item }: { item: ItemDetail }) {
-  const { data } = useSimilarItems(item.id, isTitleKind(item.kind))
+  const { data } = useQuery({
+    ...optionalIdQuery(item.id, queryKeys.similar(item.id), (id) => api.similar(id), isTitleKind(item.kind)),
+    staleTime: 30 * 60_000,
+    retry: false,
+  })
   const items = data?.items ?? []
   if (!items.length) return null
   return (
