@@ -35,6 +35,7 @@ pub use model::{
     ItemSummary, KindFilter, LibraryStats, ProviderIds, TitleDetail, TitleKind, UserDataRecord,
     resolve_playback_preference,
 };
+pub use query::Facet;
 
 pub const EARLIEST_RELEASE_DECADE: i64 = 1900;
 
@@ -53,6 +54,16 @@ pub fn release_decade_from_id(value: &str) -> Option<i64> {
         && decade <= current_release_decade()
         && decade.rem_euclid(10) == 0)
         .then_some(decade)
+}
+
+/// Longest genre, studio or tag name a filter accepts, in characters. Far
+/// above any real name; it only bounds what a hand-written URL can send.
+const MAX_FACET_VALUE_CHARS: usize = 256;
+
+/// A genre, studio or tag filter value, matched exactly against the names
+/// Jellyfin sent.
+pub fn facet_value_from_id(value: &str) -> Option<String> {
+    (value.chars().count() <= MAX_FACET_VALUE_CHARS).then(|| value.to_string())
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -431,6 +442,8 @@ pub struct ItemQuery {
     pub kinds: KindFilter,
     pub library: Option<LibraryId>,
     pub genre: Option<String>,
+    pub studio: Option<String>,
+    pub tag: Option<String>,
     /// Inclusive first year of a standard ten-year release decade.
     pub release_decade: Option<i64>,
     pub watched: Option<WatchFilter>,

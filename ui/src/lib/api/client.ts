@@ -182,6 +182,8 @@ export const api = {
   homeResume: () => request("GET /api/home/resume"),
   billboard: () => request("GET /api/billboard"),
   genres: () => request("GET /api/genres"),
+  studios: () => request("GET /api/studios"),
+  tags: () => request("GET /api/tags"),
   officialRatings: (kinds: readonly TitleKind[]) =>
     request("GET /api/official-ratings", { query: { kind: kinds.join(",") } }),
   resolvePerson: (query: PersonResolveQuery, signal?: AbortSignal) =>

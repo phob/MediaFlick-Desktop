@@ -85,7 +85,8 @@ export function startupRoute(destination: StartupDestination, last: string | und
   }
 }
 
-export function genreRoute(genre: string, item: ItemDetail) {
-  const params = new URLSearchParams({ genre })
+/** The item's library filtered to one genre, studio or tag, or every title when it has no library. */
+export function facetRoute(facet: "genre" | "studio" | "tag", value: string, item: ItemDetail) {
+  const params = new URLSearchParams({ [facet]: value })
   return item.libraryId ? libraryPath(item.libraryId, params) : `/library?${params}`
 }

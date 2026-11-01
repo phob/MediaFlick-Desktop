@@ -1,4 +1,5 @@
 use crate::collections::CollectionMode;
+use crate::library::Facet;
 use crate::library::libraries::LibraryRegistry;
 use crate::preferences::HomeWatchingSettings;
 
@@ -21,7 +22,7 @@ pub(super) fn resolved_home(services: &Services) -> Result<ResolvedHome, ApiResp
         .ok_or_else(|| ApiResponse::error(401, "sign in to configure Home"))?;
     let genres = services
         .library
-        .genres(None)
+        .facet_values(Facet::Genre, None)
         .map_err(|error| storage_failure(&error))?;
     let profiles = services.collections.account(&account).profiles;
     let libraries = services

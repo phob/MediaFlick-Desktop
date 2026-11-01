@@ -63,6 +63,8 @@ export const REMEMBERED_LIBRARY_PARAMS = [
   "order",
   "seed",
   "genre",
+  "studio",
+  "tag",
   "decade",
   "watched",
   "parental",
@@ -76,6 +78,8 @@ export interface LibraryFilterState {
   order: SortOrder
   seed: string
   genre: string
+  studio: string
+  tag: string
   decade: string
   watched: WatchFilter | ""
   parental: string
@@ -111,6 +115,8 @@ function validSeed(value: string | null) {
 
 const LIBRARY_FILTERS: readonly LibraryFilterId[] = [
   "genre",
+  "studio",
+  "tag",
   "decade",
   "watched",
   "parental",
@@ -133,6 +139,8 @@ export function readLibraryFilters(
     order: order === "asc" || order === "desc" ? order : sort.natural,
     seed: sort.id === "random" ? validSeed(params.get("seed")) : "",
     genre: offered("genre") ? params.get("genre") ?? "" : "",
+    studio: offered("studio") ? params.get("studio") ?? "" : "",
+    tag: offered("tag") ? params.get("tag") ?? "" : "",
     decade: offered("decade") ? validDecade(params.get("decade")) : "",
     watched: offered("watched") ? watched?.id ?? "" : "",
     parental: offered("parental") ? params.get("parental")?.trim() ?? "" : "",
@@ -169,6 +177,8 @@ export function libraryQuery(params: URLSearchParams, capabilities: BrowseCapabi
   return {
     favorite: filters.favorite || undefined,
     genre: filters.genre,
+    studio: filters.studio,
+    tag: filters.tag,
     decade: filters.decade ? Number(filters.decade) : undefined,
     sort: filters.sort,
     order: filters.order === librarySort(filters.sort, capabilities).natural
@@ -196,6 +206,8 @@ export function libraryItemQuery(params: URLSearchParams, capabilities: BrowseCa
 export function activeLibraryFilterCount(filters: LibraryFilterState) {
   return (
     Number(Boolean(filters.genre))
+    + Number(Boolean(filters.studio))
+    + Number(Boolean(filters.tag))
     + Number(Boolean(filters.decade))
     + Number(Boolean(filters.watched))
     + Number(Boolean(filters.parental))
@@ -206,9 +218,11 @@ export function activeLibraryFilterCount(filters: LibraryFilterState) {
 
 export const CLEARED_LIBRARY_FILTERS: Pick<
   LibraryFilterState,
-  "genre" | "decade" | "watched" | "parental" | "seriesStatus" | "favorite"
+  "genre" | "studio" | "tag" | "decade" | "watched" | "parental" | "seriesStatus" | "favorite"
 > = {
   genre: "",
+  studio: "",
+  tag: "",
   decade: "",
   watched: "",
   parental: "",

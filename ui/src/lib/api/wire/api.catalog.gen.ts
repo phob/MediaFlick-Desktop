@@ -20,6 +20,14 @@ export type OfficialRatings = {
   officialRatings: Array<string>,
 };
 
+export type Studios = {
+  studios: Array<string>,
+};
+
+export type Tags = {
+  tags: Array<string>,
+};
+
 export type ApiCatalogRoutes = {
   "GET /api/calendar": { params: null, body: null, kind: "relay" },
   "GET /api/settings/home": { params: null, body: null, kind: "json", response: HomeSettingsResponse },
@@ -30,6 +38,8 @@ export type ApiCatalogRoutes = {
   "GET /api/items": { params: null, body: null, kind: "json", response: ItemPage },
   "GET /api/items/letters": { params: null, body: null, kind: "json", response: ItemLetters },
   "GET /api/genres": { params: null, body: null, kind: "json", response: Genres },
+  "GET /api/studios": { params: null, body: null, kind: "json", response: Studios },
+  "GET /api/tags": { params: null, body: null, kind: "json", response: Tags },
   "GET /api/official-ratings": { params: null, body: null, kind: "json", response: OfficialRatings },
   "GET /api/person/resolve": { params: null, body: null, kind: "json", response: PersonResolution },
   "GET /api/item/{id}": { params: { id: string | number }, body: null, kind: "json", response: DetailView },

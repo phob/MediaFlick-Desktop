@@ -32,7 +32,7 @@ use super::super::ui_events::{
 use super::auth::{LoginBody, LogoutBody, QuickConnectPollBody, ServerBody};
 use super::catalog::{
     Billboard, Genres, HomeResponse, HomeResumeResponse, HomeSettingsResponse, ItemAbout,
-    ItemLetters, ItemSynopsis, OfficialRatings, PersonResolution,
+    ItemLetters, ItemSynopsis, OfficialRatings, PersonResolution, Studios, Tags,
 };
 use super::collections::{
     CollectionProfileDetail, CollectionProfilesIndex, CollectionSettings, CollectionTemplates,
@@ -186,7 +186,9 @@ wire_types! {
     ShellRequestQueued,
     SimilarItems,
     StartupResponse,
+    Studios,
     SyncRequested,
+    Tags,
     TechnicalBatch,
     TrailerResponse,
     UpdateProgress,

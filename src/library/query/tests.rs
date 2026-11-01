@@ -6,7 +6,7 @@ use super::{ItemQuery, Library, WatchFilter};
 use crate::library::civil_from_days;
 use crate::library::test_support::{dto, seeded};
 use crate::library::{
-    CatalogKind, ItemSort, KindFilter, current_release_decade, release_decade_from_id,
+    CatalogKind, Facet, ItemSort, KindFilter, current_release_decade, release_decade_from_id,
 };
 
 #[test]
@@ -298,7 +298,7 @@ fn genre_lookups_follow_items_through_updates() {
         )
         .expect("seed");
     assert_eq!(
-        library.genres(None).expect("genres"),
+        library.facet_values(Facet::Genre, None).expect("genres"),
         vec!["Action", "drama"],
         "ordered case-insensitively, without empty names"
     );
@@ -312,7 +312,7 @@ fn genre_lookups_follow_items_through_updates() {
         )
         .expect("retag");
     assert_eq!(
-        library.genres(None).expect("genres"),
+        library.facet_values(Facet::Genre, None).expect("genres"),
         vec!["Action", "Comedy"]
     );
     let action = library
@@ -328,7 +328,10 @@ fn genre_lookups_follow_items_through_updates() {
     library
         .forget(&crate::jellyfin::session::Live::for_test(), "b")
         .expect("forget");
-    assert_eq!(library.genres(None).expect("genres"), vec!["Comedy"]);
+    assert_eq!(
+        library.facet_values(Facet::Genre, None).expect("genres"),
+        vec!["Comedy"]
+    );
 }
 
 #[test]

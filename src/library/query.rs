@@ -16,6 +16,26 @@ use super::{
 const TMDB_CANDIDATE_CHUNK: usize = 400;
 const ITEM_ID_CHUNK: usize = 400;
 
+/// A title attribute with many values per item, each normalized into its own
+/// lookup table by the schema's triggers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Facet {
+    Genre,
+    Studio,
+    Tag,
+}
+
+impl Facet {
+    /// The lookup table and its value column, both fixed SQL identifiers.
+    const fn table(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Genre => ("item_genres", "genre"),
+            Self::Studio => ("item_studios", "studio"),
+            Self::Tag => ("item_tags", "tag"),
+        }
+    }
+}
+
 impl Library {
     pub fn stats(&self) -> LibraryStats {
         self.db
@@ -269,18 +289,36 @@ impl Library {
         })
     }
 
-    pub fn genres(&self, library: Option<&LibraryId>) -> rusqlite::Result<Vec<String>> {
+    /// Every value of `facet` on a cached item, or on a title in `library`.
+    pub fn facet_values(
+        &self,
+        facet: Facet,
+        library: Option<&LibraryId>,
+    ) -> rusqlite::Result<Vec<String>> {
+        let (table, column) = facet.table();
+        let sql = match library {
+            // Each step seeks the next distinct value in the primary key
+            // instead of walking every tagged item.
+            None => format!(
+                "WITH RECURSIVE distinct_values(value) AS (
+                     SELECT min({column}) FROM {table}
+                     UNION ALL
+                     SELECT (SELECT min({column}) FROM {table} WHERE {column} > previous.value)
+                     FROM distinct_values previous WHERE previous.value IS NOT NULL
+                 )
+                 SELECT value FROM distinct_values WHERE value IS NOT NULL
+                 ORDER BY value COLLATE NOCASE ASC"
+            ),
+            Some(_) => format!(
+                "SELECT DISTINCT f.{column} FROM item_libraries l
+                 JOIN items i ON i.jellyfin_id = l.item_id
+                 JOIN {table} f ON f.item_id = i.id
+                 WHERE l.library_id = ?1
+                 ORDER BY f.{column} COLLATE NOCASE ASC"
+            ),
+        };
         self.db.with_connection(|connection| {
-            let mut statement = match library {
-                None => connection.prepare_cached(DISTINCT_GENRES_SKIP_SCAN)?,
-                Some(_) => connection.prepare_cached(
-                    "SELECT DISTINCT g.genre FROM item_libraries l
-                     JOIN items i ON i.jellyfin_id = l.item_id
-                     JOIN item_genres g ON g.item_id = i.id
-                     WHERE l.library_id = ?1
-                     ORDER BY g.genre COLLATE NOCASE ASC",
-                )?,
-            };
+            let mut statement = connection.prepare_cached(&sql)?;
             let library = library.map(LibraryId::as_str);
             let rows = statement
                 .query_map(params_from_iter(library), |row| row.get::<_, String>(0))?
@@ -529,17 +567,6 @@ fn splitmix64_finalize(value: u64) -> u64 {
     mixed ^ (mixed >> 31)
 }
 
-/// Each step seeks the next distinct genre in the primary key instead of
-/// walking every tagged item.
-const DISTINCT_GENRES_SKIP_SCAN: &str = "WITH RECURSIVE distinct_genres(genre) AS (
-        SELECT min(genre) FROM item_genres
-        UNION ALL
-        SELECT (SELECT min(genre) FROM item_genres WHERE genre > previous.genre)
-        FROM distinct_genres previous WHERE previous.genre IS NOT NULL
-    )
-    SELECT genre FROM distinct_genres WHERE genre IS NOT NULL
-    ORDER BY genre COLLATE NOCASE ASC";
-
 const SERIES_HAS_STARTED_EPISODE: &str = "EXISTS (SELECT 1 FROM items e
     JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
     WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id
@@ -616,9 +643,18 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> ItemSql {
         );
         arguments.push(SqlValue::Text(library.as_str().to_string()));
     }
-    if let Some(genre) = &query.genre {
-        conditions.push("i.id IN (SELECT item_id FROM item_genres WHERE genre = ?)".to_string());
-        arguments.push(SqlValue::Text(genre.clone()));
+    for (facet, value) in [
+        (Facet::Genre, &query.genre),
+        (Facet::Studio, &query.studio),
+        (Facet::Tag, &query.tag),
+    ] {
+        if let Some(value) = value {
+            let (table, column) = facet.table();
+            conditions.push(format!(
+                "i.id IN (SELECT item_id FROM {table} WHERE {column} = ?)"
+            ));
+            arguments.push(SqlValue::Text(value.clone()));
+        }
     }
     if let Some(decade) = query.release_decade {
         conditions.push("i.year >= ? AND i.year < ?".to_string());

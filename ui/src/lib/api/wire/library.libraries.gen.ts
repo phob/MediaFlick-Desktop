@@ -10,6 +10,8 @@ export type BrowseCapabilities = {
 
 export type FilterKey =
   | "genre"
+  | "studio"
+  | "tag"
   | "decade"
   | "watched"
   | "parental"

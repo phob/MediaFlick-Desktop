@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use rusqlite::{Connection, OpenFlags};
 
-pub const SCHEMA_VERSION: i32 = 22;
+pub const SCHEMA_VERSION: i32 = 23;
 
 const MAX_IDLE_CONNECTIONS: usize = 4;
 
@@ -412,8 +412,8 @@ pub const CATALOG_TABLES: [&str; 8] = [
 ///
 /// `items` is a thin catalog index: one row per Movie/Series/Season/Episode
 /// with only what browsing, sorting, filtering, joining, and drawing cards
-/// needs. Rich metadata — synopsis, cast, technical streams, tags, studios,
-/// critic ratings — is fetched live from Jellyfin when a surface asks for it.
+/// needs. Rich metadata — synopsis, cast, technical streams, critic ratings —
+/// is fetched live from Jellyfin when a surface asks for it.
 const SCHEMA: &str = r#"
 CREATE TABLE credentials (
     id           INTEGER PRIMARY KEY CHECK (id = 1),
@@ -449,6 +449,8 @@ CREATE TABLE items (
     imdb_id             TEXT,
     tvdb_id             TEXT,
     genres              TEXT NOT NULL DEFAULT '[]',
+    studios             TEXT NOT NULL DEFAULT '[]',
+    tags                TEXT NOT NULL DEFAULT '[]',
     image_tags          TEXT NOT NULL DEFAULT '{}',
     primary_image_tag   TEXT,
     backdrop_image_tag  TEXT,
@@ -495,6 +497,55 @@ END;
 
 CREATE TRIGGER item_genres_delete AFTER DELETE ON items BEGIN
     DELETE FROM item_genres WHERE item_id = old.id;
+END;
+
+-- `items.studios` and `items.tags`, normalized as `item_genres` is.
+CREATE TABLE item_studios (
+    studio  TEXT NOT NULL,
+    item_id INTEGER NOT NULL,
+    PRIMARY KEY (studio, item_id)
+) WITHOUT ROWID;
+CREATE INDEX item_studios_item ON item_studios (item_id);
+
+CREATE TRIGGER item_studios_insert AFTER INSERT ON items BEGIN
+    INSERT OR IGNORE INTO item_studios (studio, item_id)
+    SELECT value, new.id FROM json_each(new.studios) WHERE type = 'text' AND value <> '';
+END;
+
+CREATE TRIGGER item_studios_update AFTER UPDATE OF studios ON items
+    WHEN old.studios IS NOT new.studios
+BEGIN
+    DELETE FROM item_studios WHERE item_id = old.id;
+    INSERT OR IGNORE INTO item_studios (studio, item_id)
+    SELECT value, new.id FROM json_each(new.studios) WHERE type = 'text' AND value <> '';
+END;
+
+CREATE TRIGGER item_studios_delete AFTER DELETE ON items BEGIN
+    DELETE FROM item_studios WHERE item_id = old.id;
+END;
+
+CREATE TABLE item_tags (
+    tag     TEXT NOT NULL,
+    item_id INTEGER NOT NULL,
+    PRIMARY KEY (tag, item_id)
+) WITHOUT ROWID;
+CREATE INDEX item_tags_item ON item_tags (item_id);
+
+CREATE TRIGGER item_tags_insert AFTER INSERT ON items BEGIN
+    INSERT OR IGNORE INTO item_tags (tag, item_id)
+    SELECT value, new.id FROM json_each(new.tags) WHERE type = 'text' AND value <> '';
+END;
+
+CREATE TRIGGER item_tags_update AFTER UPDATE OF tags ON items
+    WHEN old.tags IS NOT new.tags
+BEGIN
+    DELETE FROM item_tags WHERE item_id = old.id;
+    INSERT OR IGNORE INTO item_tags (tag, item_id)
+    SELECT value, new.id FROM json_each(new.tags) WHERE type = 'text' AND value <> '';
+END;
+
+CREATE TRIGGER item_tags_delete AFTER DELETE ON items BEGIN
+    DELETE FROM item_tags WHERE item_id = old.id;
 END;
 
 CREATE TABLE user_data (

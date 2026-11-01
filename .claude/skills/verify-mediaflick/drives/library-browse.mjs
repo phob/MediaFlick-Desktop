@@ -39,6 +39,10 @@ const SORT_IDS = {
 }
 const FILTER_IDS = [
   ["Genre", "genre"],
+  // TV libraries label the studio filter Network.
+  ["Studio", "studio"],
+  ["Network", "studio"],
+  ["Tag", "tag"],
   ["Release decade", "decade"],
   ["Watch status", "watched"],
   ["Parental rating", "parental"],

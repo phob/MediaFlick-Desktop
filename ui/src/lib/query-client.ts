@@ -83,6 +83,8 @@ export const queryKeys = {
   homeSettings: key("home", "settings"),
   billboard: key("billboard"),
   genres: key("genres"),
+  studios: key("studios"),
+  tags: key("tags"),
   libraries: key("libraries"),
   libraryOptions: (id: string) => key("library-options", id),
   libraryLatest: (id: string) => key(LIBRARY_LATEST_ROOT, id),
@@ -191,6 +193,8 @@ const ACCOUNT_QUERY_ROOTS = new Set([
   "ratings",
   "seerr",
   "similar",
+  "studios",
+  "tags",
 ])
 
 export function removeAccountQueryData(client: QueryClient) {
@@ -259,7 +263,17 @@ export function invalidateMediaSurfaces(
 
 type LibraryChangeScope = "library" | "catalog" | "items" | "live" | "resync"
 
-const LIST_ROOTS = [ITEMS_ROOT, "genres", "libraries", "library-options", "official-ratings", "status", "collections"]
+const LIST_ROOTS = [
+  ITEMS_ROOT,
+  "genres",
+  "studios",
+  "tags",
+  "libraries",
+  "library-options",
+  "official-ratings",
+  "status",
+  "collections",
+]
 
 const LIBRARY_CHANGE_REFRESHES: Record<
   LibraryChangeScope,
