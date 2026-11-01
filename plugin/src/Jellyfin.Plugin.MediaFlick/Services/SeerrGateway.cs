@@ -28,6 +28,10 @@ public sealed class SeerrGateway
     private const ulong RequestTv = 524288;
     private const int UserPageSize = 50;
     private const int MaxUserScan = 10_000;
+    private const int MaxCompanyQueryLength = 100;
+
+    /// <summary>TMDB serves at most 500 pages of any search.</summary>
+    private const int MaxCompanyPage = 500;
     internal static readonly TimeSpan MappingLifetime = TimeSpan.FromMinutes(10);
 
     /// <summary>
@@ -181,6 +185,8 @@ public sealed class SeerrGateway
         string? sortBy,
         int? voteAverageGte,
         int? releaseDecade,
+        int? studio,
+        int? network,
         string? mediaType,
         string? timeWindow,
         CancellationToken cancellationToken)
@@ -192,6 +198,8 @@ public sealed class SeerrGateway
             sortBy,
             voteAverageGte,
             releaseDecade,
+            studio,
+            network,
             mediaType,
             timeWindow,
             DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime));
@@ -215,6 +223,8 @@ public sealed class SeerrGateway
         string? sortBy,
         int? voteAverageGte,
         int? releaseDecade,
+        int? studio,
+        int? network,
         string? mediaType,
         string? timeWindow,
         DateOnly today)
@@ -232,6 +242,20 @@ public sealed class SeerrGateway
         if (genre is <= 0)
         {
             throw new GatewayException(StatusCodes.Status400BadRequest, "genre must be positive");
+        }
+        // Seerr filters the movie catalog by TMDB company and the TV catalog
+        // by TMDB network; neither applies to any other endpoint.
+        if (studio is { } studioId && (studioId <= 0 || endpoint != "movies"))
+        {
+            throw new GatewayException(
+                StatusCodes.Status400BadRequest,
+                "studio must be a positive TMDB company id on the movie catalog");
+        }
+        if (network is { } networkId && (networkId <= 0 || endpoint != "tv"))
+        {
+            throw new GatewayException(
+                StatusCodes.Status400BadRequest,
+                "network must be a positive TMDB network id on the TV catalog");
         }
         if (voteAverageGte is < 0 or > 10)
         {
@@ -290,6 +314,14 @@ public sealed class SeerrGateway
             {
                 query.Add(string.Create(CultureInfo.InvariantCulture, $"genre={genreId}"));
             }
+            if (studio is { } studioFilter)
+            {
+                query.Add(string.Create(CultureInfo.InvariantCulture, $"studio={studioFilter}"));
+            }
+            if (network is { } networkFilter)
+            {
+                query.Add(string.Create(CultureInfo.InvariantCulture, $"network={networkFilter}"));
+            }
             if (releaseDecade is { } decade)
             {
                 var dateName = endpoint == "movies" ? "primaryReleaseDate" : "firstAirDate";
@@ -329,6 +361,49 @@ public sealed class SeerrGateway
         }
 
         return $"api/v1/discover/{endpoint}?{string.Join('&', query)}";
+    }
+
+    /// <summary>
+    /// TMDB companies by name, for the movie catalog's studio filter. The
+    /// query and page are bounded before Seerr sees them.
+    /// </summary>
+    public async Task<SeerrPageResponse<SeerrCompanyResponse>> CompaniesAsync(
+        Guid jellyfinUserId,
+        string? query,
+        int page,
+        CancellationToken cancellationToken)
+    {
+        var term = query?.Trim();
+        if (string.IsNullOrEmpty(term) || term.Length > MaxCompanyQueryLength)
+        {
+            throw new GatewayException(
+                StatusCodes.Status400BadRequest,
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"query must be 1 to {MaxCompanyQueryLength} characters"));
+        }
+        if (page is < 1 or > MaxCompanyPage)
+        {
+            throw new GatewayException(
+                StatusCodes.Status400BadRequest,
+                string.Create(CultureInfo.InvariantCulture, $"page must be 1 to {MaxCompanyPage}"));
+        }
+
+        var user = await ResolveUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
+        var response = await SendMappedAsync(
+            HttpMethod.Get,
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"api/v1/search/company?query={Uri.EscapeDataString(term)}&page={page}"),
+            null,
+            user,
+            cancellationToken).ConfigureAwait(false) as JsonObject;
+        var results = Companies(response?["results"]);
+        return new SeerrPageResponse<SeerrCompanyResponse>(
+            JsonRead.Int32(response, "page") ?? page,
+            JsonRead.Int32(response, "totalPages") ?? 0,
+            JsonRead.Int32(response, "totalResults") ?? results.Length,
+            results);
     }
 
     public async Task<IReadOnlyList<SeerrGenreResponse>> GenresAsync(
@@ -879,6 +954,8 @@ public sealed class SeerrGateway
             JsonRead.Positive(detail["revenue"]),
             Names(detail["productionCompanies"]).ToArray(),
             Names(detail["networks"]).ToArray(),
+            Companies(detail["productionCompanies"]),
+            Companies(detail["networks"]),
             ShapeCodeNames(detail["productionCountries"], "iso_3166_1", "name"),
             ShapeCodeNames(detail["spokenLanguages"], "iso_639_1", "englishName"),
             ShapeCast(detail),
@@ -920,6 +997,15 @@ public sealed class SeerrGateway
             .Select(static value => JsonRead.String(value, "name")?.Trim())
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Select(static value => value!);
+
+    private static SeerrCompanyResponse[] Companies(JsonNode? node)
+        => Objects(node)
+            .Select(static value => (
+                Id: JsonRead.Int32(value, "id"),
+                Name: JsonRead.String(value, "name")?.Trim()))
+            .Where(static value => value.Id is > 0 && !string.IsNullOrWhiteSpace(value.Name))
+            .Select(static value => new SeerrCompanyResponse(value.Id!.Value, value.Name!))
+            .ToArray();
 
     private static SeerrCodeNameResponse[] ShapeCodeNames(
         JsonNode? node,

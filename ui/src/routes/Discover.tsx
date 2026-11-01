@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { PageHeader } from "@/components/PageHeader"
 import { SeerrResults } from "@/components/seerr/SeerrResults"
+import { StudioCombobox } from "@/components/seerr/StudioCombobox"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -19,6 +20,7 @@ import { useCompanionCapabilities } from "@/lib/companion"
 import {
   SEERR_DISCOVER_ROWS,
   seerrImageUrl,
+  type SeerrCompany,
   type SeerrDiscoverFilters,
   type SeerrDiscoverRow,
   type SeerrMediaType,
@@ -38,6 +40,7 @@ import {
   useInfiniteSeerrSearch,
   useSeerrDiscover,
   useSeerrGenres,
+  useSeerrNetworks,
 } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { Pressable } from "@/components/ui/pressable"
@@ -238,6 +241,67 @@ function GenreBrowser({
   )
 }
 
+function NetworkSelect({
+  value,
+  onChange,
+}: {
+  value: SeerrCompany | undefined
+  onChange: (network: SeerrCompany | undefined) => void
+}) {
+  const networks = useSeerrNetworks()
+  const listed = networks.data?.networks ?? []
+  // A detail-page link can name a network outside the curated list.
+  const options = value && !listed.some((network) => network.id === value.id) ? [value, ...listed] : listed
+  return (
+    <Select
+      value={value ? String(value.id) : "all"}
+      onValueChange={(id) => onChange(options.find((network) => String(network.id) === id))}
+    >
+      <SelectTrigger
+        aria-label="Filter by network"
+        className="h-10 min-w-44 border-edge bg-field"
+        disabled={networks.isPending && !value}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">Any network</SelectItem>
+        {options.map((network) => (
+          <SelectItem key={network.id} value={String(network.id)}>
+            {network.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
+
+/** The applied studio or network, with a button that removes it. */
+function CompanyFilterChip({
+  label,
+  company,
+  onClear,
+}: {
+  label: string
+  company: SeerrCompany
+  onClear: () => void
+}) {
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      size="sm"
+      aria-label={`Clear ${label.toLowerCase()} filter: ${company.name}`}
+      onClick={onClear}
+      className="h-8 max-w-72 gap-1.5 rounded-full border border-primary/40 bg-primary/15 pr-2 pl-3"
+    >
+      <span className="data-label text-muted-foreground">{label}</span>
+      <span className="truncate">{company.name}</span>
+      <X className="size-3.5" />
+    </Button>
+  )
+}
+
 function DiscoveryControls({
   row,
   filters,
@@ -246,6 +310,7 @@ function DiscoveryControls({
   onAvailabilityChange,
   advancedDiscovery = true,
   decadeDiscovery = true,
+  studioNetworkDiscovery = false,
 }: {
   row: SeerrDiscoverRow
   filters: SeerrDiscoverFilters
@@ -254,6 +319,7 @@ function DiscoveryControls({
   onAvailabilityChange: (value: AvailabilityFilter) => void
   advancedDiscovery?: boolean
   decadeDiscovery?: boolean
+  studioNetworkDiscovery?: boolean
 }) {
   const catalogue = row === "movies" || row === "tv"
   const catalogueMediaType = row === "movies" ? "movie" : "tv"
@@ -359,6 +425,22 @@ function DiscoveryControls({
               </Select>
             </FilterField>
           ) : null}
+          {studioNetworkDiscovery && row === "movies" ? (
+            <FilterField label="Studio">
+              <StudioCombobox
+                value={filters.studio}
+                onValueChange={(studio) => onFiltersChange({ ...filters, studio })}
+              />
+            </FilterField>
+          ) : null}
+          {studioNetworkDiscovery && row === "tv" ? (
+            <FilterField label="Network">
+              <NetworkSelect
+                value={filters.network}
+                onChange={(network) => onFiltersChange({ ...filters, network })}
+              />
+            </FilterField>
+          ) : null}
           <FilterField label="Minimum score">
             <Select
               value={String(filters.minRating ?? 0)}
@@ -384,6 +466,25 @@ function DiscoveryControls({
       ) : null}
 
       <AvailabilitySelect value={availability} onChange={onAvailabilityChange} />
+
+      {filters.studio || filters.network ? (
+        <div className="flex h-10 flex-wrap items-center gap-2" aria-label="Active filters" role="group">
+          {filters.studio ? (
+            <CompanyFilterChip
+              label="Studio"
+              company={filters.studio}
+              onClear={() => onFiltersChange({ ...filters, studio: undefined })}
+            />
+          ) : null}
+          {filters.network ? (
+            <CompanyFilterChip
+              label="Network"
+              company={filters.network}
+              onClear={() => onFiltersChange({ ...filters, network: undefined })}
+            />
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -544,6 +645,8 @@ export default function Discover() {
   // v3 carried the superseded century parameter. Only v4 understands decade;
   // older Companions still keep their otherwise-supported discovery controls.
   const decadeDiscovery = advancedDiscovery && (!companionManaged || companionDiscoveryV4)
+  // The network list and company search come from the Companion itself.
+  const studioNetworkDiscovery = advancedDiscovery && companion.has("seerr-discovery-v5")
   const discoveryRows = advancedDiscovery
     ? SEERR_DISCOVER_ROWS
     : BASIC_DISCOVERY_ROWS
@@ -552,7 +655,13 @@ export default function Discover() {
   const row = discoveryRows.some((entry) => entry.id === requestedRow)
     ? requestedRow
     : "trending"
-  const filters = readDiscoveryFilters(params, row, advancedDiscovery, decadeDiscovery)
+  const filters = readDiscoveryFilters(
+    params,
+    row,
+    advancedDiscovery,
+    decadeDiscovery,
+    studioNetworkDiscovery,
+  )
   const availability = availabilityFilter(params.get("library"))
   const resultSetKey = discoveryResultSetKey(row, filters, availability)
 
@@ -564,7 +673,14 @@ export default function Discover() {
     const hasAdvancedFilters = DISCOVERY_FILTER_KEYS.some((key) => params.has(key))
     const clearAdvancedFilters = !advancedDiscovery && hasAdvancedFilters
     const clearUnsupportedDecade = !decadeDiscovery && params.has("decade")
-    if (!unsupportedRow && !clearAdvancedFilters && !clearUnsupportedDecade) {
+    const clearUnsupportedCompany =
+      !studioNetworkDiscovery && (params.has("studio") || params.has("network"))
+    if (
+      !unsupportedRow &&
+      !clearAdvancedFilters &&
+      !clearUnsupportedDecade &&
+      !clearUnsupportedCompany
+    ) {
       return
     }
 
@@ -574,8 +690,11 @@ export default function Discover() {
         if (unsupportedRow) next.delete("row")
         if (unsupportedRow || clearAdvancedFilters) {
           for (const key of DISCOVERY_FILTER_KEYS) next.delete(key)
-        } else if (clearUnsupportedDecade) {
-          next.delete("decade")
+        } else {
+          if (clearUnsupportedDecade) next.delete("decade")
+          if (clearUnsupportedCompany) {
+            for (const key of ["studio", "studioName", "network", "networkName"]) next.delete(key)
+          }
         }
         return next
       },
@@ -584,6 +703,7 @@ export default function Discover() {
   }, [
     advancedDiscovery,
     decadeDiscovery,
+    studioNetworkDiscovery,
     companion.isPending,
     discoveryRows,
     params,
@@ -713,6 +833,7 @@ export default function Discover() {
                 onAvailabilityChange={updateAvailability}
                 advancedDiscovery={advancedDiscovery}
                 decadeDiscovery={decadeDiscovery}
+                studioNetworkDiscovery={studioNetworkDiscovery}
               />
               <DiscoverRow
                 key={resultSetKey}

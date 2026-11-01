@@ -50,6 +50,12 @@ const COMPANION_FEATURES: ReadonlyArray<{
     description: "Discover cannot send release-decade filters to this server plugin.",
   },
   {
+    capability: "seerr-discovery-v5",
+    requires: "seerr",
+    name: "Studio and network filters",
+    description: "Discover cannot filter films by studio or series by network with this server plugin.",
+  },
+  {
     capability: "seerr-request-profiles",
     requires: "seerr",
     name: "Request profile selection",

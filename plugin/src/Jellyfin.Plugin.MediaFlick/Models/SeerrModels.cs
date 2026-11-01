@@ -70,6 +70,11 @@ public sealed record SeerrResultResponse(
     string? Activity = null,
     string? Activity4k = null);
 
+/// <summary>A TMDB production company or TV network, by id and name.</summary>
+public sealed record SeerrCompanyResponse(int Id, string Name);
+
+public sealed record SeerrNetworksResponse(IReadOnlyList<SeerrCompanyResponse> Networks);
+
 public sealed record SeerrGenreResponse(int Id, string Name, IReadOnlyList<string> Backdrops);
 
 public sealed record SeerrSeasonResponse(
@@ -147,6 +152,8 @@ public sealed record SeerrMediaDetailResponse(
     long? Revenue,
     IReadOnlyList<string> Studios,
     IReadOnlyList<string> Networks,
+    IReadOnlyList<SeerrCompanyResponse> StudioRefs,
+    IReadOnlyList<SeerrCompanyResponse> NetworkRefs,
     IReadOnlyList<SeerrCodeNameResponse> ProductionCountries,
     IReadOnlyList<SeerrCodeNameResponse> SpokenLanguages,
     IReadOnlyList<SeerrCastMemberResponse> Cast,

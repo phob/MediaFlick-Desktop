@@ -246,10 +246,17 @@ export const api = {
       request("GET /api/seerr/person/{tmdbId}/credits", { params: { tmdbId }, query: { personId: jellyfinId }, signal }),
     discover: (
       row: SeerrDiscoverRow,
-      filters: SeerrDiscoverFilters = {},
+      { studio, network, ...filters }: SeerrDiscoverFilters = {},
       page = 1,
       signal?: AbortSignal,
-    ) => request("GET /api/seerr/discover/{kind}", { params: { kind: row }, query: { page, ...filters }, signal }),
+    ) =>
+      request("GET /api/seerr/discover/{kind}", {
+        params: { kind: row },
+        query: { page, ...filters, studio: studio?.id, network: network?.id },
+        signal,
+      }),
+    companies: (q: string, signal?: AbortSignal) => request("GET /api/seerr/companies", { query: { q }, signal }),
+    networks: (signal?: AbortSignal) => request("GET /api/seerr/networks", { signal }),
     genres: (mediaType: SeerrMediaType, signal?: AbortSignal) =>
       request("GET /api/seerr/genres/{mediaType}", { params: { mediaType }, signal }),
     media: (mediaType: SeerrMediaType, tmdbId: number) =>

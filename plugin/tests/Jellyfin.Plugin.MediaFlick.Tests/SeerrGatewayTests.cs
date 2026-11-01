@@ -242,6 +242,95 @@ public sealed class SeerrGatewayTests
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, error.StatusCode);
     }
 
+    [Fact]
+    public async Task CompanySearchIsBoundedEscapedAndTyped()
+    {
+        _seerr.Handle("api/v1/search/company", _ => JsonNode.Parse(
+            """
+            {"page":2,"totalPages":3,"totalResults":41,"results":[
+              {"id":420,"name":" Marvel Studios ","logo_path":"/hUzeosd33nzE5MCNsZxCGEKTXaQ.png","origin_country":"US"},
+              {"id":0,"name":"Zero"},
+              {"id":7,"name":"  "},
+              {"name":"No id"},
+              {"id":19551,"name":"Marvel Enterprises","internal":"http://seerr.internal:5055"}
+            ]}
+            """));
+
+        var page = await _gateway.CompaniesAsync(
+            Mapped,
+            " marvel&page=9/../#x ",
+            2,
+            TestContext.Current.CancellationToken);
+
+        var call = Assert.Single(_seerr.Calls, call => call.Path.StartsWith("api/v1/search/company?", StringComparison.Ordinal));
+        Assert.Equal("api/v1/search/company?query=marvel%26page%3D9%2F..%2F%23x&page=2", call.Path);
+        Assert.Equal(SeerrUserId, call.SeerrUserId);
+        Assert.Equal(["420:Marvel Studios", "19551:Marvel Enterprises"], page.Results.Select(company => $"{company.Id}:{company.Name}"));
+        Assert.Equal((2, 3, 41), (page.Page, page.TotalPages, page.TotalResults));
+        var json = JsonSerializer.Serialize(page, CompanionJson.CamelCase);
+        Assert.DoesNotContain("logo", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("seerr.internal", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("origin", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("", 1)]
+    [InlineData("   ", 1)]
+    [InlineData("marvel", 0)]
+    [InlineData("marvel", 501)]
+    public async Task InvalidCompanySearchesNeverReachSeerr(string query, int page)
+    {
+        var error = await Assert.ThrowsAsync<GatewayException>(() =>
+            _gateway.CompaniesAsync(Mapped, query, page, TestContext.Current.CancellationToken));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, error.StatusCode);
+        Assert.Empty(_seerr.Calls);
+    }
+
+    [Fact]
+    public async Task OverlongCompanySearchesNeverReachSeerr()
+    {
+        var error = await Assert.ThrowsAsync<GatewayException>(() => _gateway.CompaniesAsync(
+            Mapped,
+            new string('a', 101),
+            1,
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, error.StatusCode);
+        Assert.Empty(_seerr.Calls);
+    }
+
+    [Fact]
+    public void TheNetworkCatalogHasUniquePositiveIdsAndNames()
+    {
+        Assert.InRange(SeerrNetworks.All.Count, 20, 40);
+        Assert.All(SeerrNetworks.All, network =>
+        {
+            Assert.True(network.Id > 0);
+            Assert.False(string.IsNullOrWhiteSpace(network.Name));
+        });
+        Assert.Equal(SeerrNetworks.All.Count, SeerrNetworks.All.Select(network => network.Id).Distinct().Count());
+        Assert.Contains(SeerrNetworks.All, network => network is { Id: 213, Name: "Netflix" });
+    }
+
+    [Fact]
+    public void DetailKeepsStudioAndNetworkNamesAndAddsTheirIds()
+    {
+        var detail = SeerrGateway.ShapeMedia(
+            Assert.IsType<JsonObject>(JsonNode.Parse(
+                """
+                {"id":1399,"name":"Game of Thrones",
+                 "productionCompanies":[{"id":76043,"name":"Revolution Sun Studios","logoPath":"/x.png"},{"id":0,"name":"Zero"},{"id":5,"name":" "},{"name":"No id"}],
+                 "networks":[{"id":49,"name":"HBO","originCountry":"US"}]}
+                """)),
+            "tv");
+
+        Assert.Equal(["Revolution Sun Studios", "Zero", "No id"], detail.Studios);
+        Assert.Equal(["HBO"], detail.Networks);
+        Assert.Equal(["76043:Revolution Sun Studios"], detail.StudioRefs.Select(studio => $"{studio.Id}:{studio.Name}"));
+        Assert.Equal(["49:HBO"], detail.NetworkRefs.Select(network => $"{network.Id}:{network.Name}"));
+    }
+
     private sealed record SeerrCall(HttpMethod Method, string Path, JsonNode? Body, int? SeerrUserId);
 
     private sealed class FakeSeerr : ISeerrTransport

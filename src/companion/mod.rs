@@ -19,6 +19,7 @@ use crate::jellyfin::session::{Live, Scoped, Session, SessionScope, Stale};
 use crate::library::{CatalogKind, Library};
 
 mod seerr;
+pub use seerr::{MAX_COMPANY_QUERY_CHARS, SeerrCompanyPage, SeerrNetworkList};
 
 const MIN_API_VERSION: i64 = 1;
 const MAX_API_VERSION: i64 = 1;

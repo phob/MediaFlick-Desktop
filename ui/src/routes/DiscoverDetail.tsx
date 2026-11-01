@@ -30,14 +30,36 @@ import {
   seerrImageUrl,
   type NormalizedCollectionTitle,
   type SeerrCapabilities,
+  type SeerrCompany,
   type SeerrMediaDetail,
   type SeerrReleaseDate,
 } from "@/lib/api"
 import { castSearchPath } from "@/lib/cast-search"
+import { discoverCompanyPath } from "@/lib/discovery"
 import { formatDate, formatLanguage } from "@/lib/format"
 import { detailNavigationState, readDetailNavigationState } from "@/lib/navigation"
 import { useCollectionTitle, useSeerrMedia, useSeerrStatus } from "@/lib/queries"
 import { titleKindOfCollection } from "@/lib/kinds"
+
+/** Studios or networks, each opening Discover filtered to it. */
+function CompanyLinks({ companies, filter }: { companies: SeerrCompany[]; filter: "studio" | "network" }) {
+  return (
+    <span>
+      {companies.map((company, index) => (
+        <span key={company.id}>
+          {index > 0 && ", "}
+          <Link
+            to={discoverCompanyPath(filter === "studio" ? { studio: company } : { network: company })}
+            aria-label={`Discover ${filter === "studio" ? "films from" : "series on"} ${company.name}`}
+            className="text-primary hover:underline"
+          >
+            {company.name}
+          </Link>
+        </span>
+      ))}
+    </span>
+  )
+}
 
 function CollectionSnapshotDetail({ item }: { item: NormalizedCollectionTitle }) {
   const location = useLocation()
@@ -278,8 +300,30 @@ export default function DiscoverDetail() {
           value: item.spokenLanguages.map((spoken) => spoken.name || spoken.code).join(", "),
         }
       : null,
-    item.studios.length ? { label: "Studios", value: item.studios.join(", ") } : null,
-    item.networks.length ? { label: "Networks", value: item.networks.join(", ") } : null,
+    // Seerr filters only the movie catalog by studio and only the series
+    // catalog by network, so each links from its own kind of title.
+    item.studios.length
+      ? {
+          label: "Studios",
+          value:
+            item.mediaType === "movie" && item.studioRefs?.length ? (
+              <CompanyLinks companies={item.studioRefs} filter="studio" />
+            ) : (
+              item.studios.join(", ")
+            ),
+        }
+      : null,
+    item.networks.length
+      ? {
+          label: "Networks",
+          value:
+            item.mediaType === "tv" && item.networkRefs?.length ? (
+              <CompanyLinks companies={item.networkRefs} filter="network" />
+            ) : (
+              item.networks.join(", ")
+            ),
+        }
+      : null,
     moneyLabel(item.budget) ? { label: "Budget", value: moneyLabel(item.budget) } : null,
     moneyLabel(item.revenue) ? { label: "Revenue", value: moneyLabel(item.revenue) } : null,
     homepage

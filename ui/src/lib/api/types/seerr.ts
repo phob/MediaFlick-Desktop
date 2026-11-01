@@ -1,3 +1,4 @@
+import type * as Wire from "../wire.gen.ts"
 import type { ItemSummary } from "./catalog.ts"
 
 export type SeerrMediaType = "movie" | "tv"
@@ -117,6 +118,12 @@ export interface SeerrMediaDetail extends SeerrResult {
   revenue: number | null
   studios: string[]
   networks: string[]
+  /**
+   * The studios and networks with a TMDB id, for Discover links. Absent when
+   * an older compatible Companion serves the detail response.
+   */
+  studioRefs?: SeerrCompany[]
+  networkRefs?: SeerrCompany[]
   productionCountries: { code: string; name: string }[]
   spokenLanguages: { code: string; name: string }[]
   cast: SeerrCastMember[]
@@ -258,8 +265,19 @@ type SeerrTrendingMediaType = "all" | SeerrMediaType
 
 type SeerrTrendingWindow = "day" | "week"
 
+/** A TMDB production company or TV network. */
+export type SeerrCompany = Wire.SeerrCompany
+
+/**
+ * Discover's filters. A studio or network keeps its name beside the id so
+ * the active-filter chip can name it; only the id reaches Seerr.
+ */
 export interface SeerrDiscoverFilters {
   genre?: number
+  /** The movie catalog only. */
+  studio?: SeerrCompany
+  /** The TV catalog only. */
+  network?: SeerrCompany
   sort?: SeerrDiscoverSort
   minRating?: number
   decade?: SeerrReleaseDecade

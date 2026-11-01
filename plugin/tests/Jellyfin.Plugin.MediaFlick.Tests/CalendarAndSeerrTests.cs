@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Models;
 using Jellyfin.Plugin.MediaFlick.Services;
+using Microsoft.AspNetCore.Http;
 using Xunit;
 
 namespace Jellyfin.Plugin.MediaFlick.Tests;
@@ -224,13 +225,13 @@ public sealed class CalendarAndSeerrTests
     {
         var today = new DateOnly(2026, 8, 1);
         var movies = SeerrGateway.BuildDiscoverPath(
-            "movies", 4, 18, "vote_average.desc", 7, 1990, null, null, today);
+            "movies", 4, 18, "vote_average.desc", 7, 1990, null, null, null, null, today);
         Assert.StartsWith("api/v1/discover/movies?", movies, StringComparison.Ordinal);
         Assert.All(
             ["page=4", "genre=18", "primaryReleaseDateGte=1990-01-01", "primaryReleaseDateLte=1999-12-31", "sortBy=vote_average.desc", "voteAverageGte=7"],
             part => Assert.Contains(part, movies, StringComparison.Ordinal));
         var trending = SeerrGateway.BuildDiscoverPath(
-            "trending", -1, null, null, null, null, "tv", "week", today);
+            "trending", -1, null, null, null, null, null, null, "tv", "week", today);
         Assert.StartsWith("api/v1/discover/trending?", trending, StringComparison.Ordinal);
         Assert.All(
             ["page=1", "mediaType=tv", "timeWindow=week"],
@@ -238,28 +239,66 @@ public sealed class CalendarAndSeerrTests
         Assert.Equal(
             "api/v1/discover/tv/upcoming?page=2",
             SeerrGateway.BuildDiscoverPath(
-                "upcoming-tv", 2, null, null, null, null, null, null, today));
+                "upcoming-tv", 2, null, null, null, null, null, null, null, null, today));
         var tv = SeerrGateway.BuildDiscoverPath(
-            "tv", 1, 18, null, null, 2020, null, null, today);
+            "tv", 1, 18, null, null, 2020, null, null, null, null, today);
         Assert.StartsWith("api/v1/discover/tv?", tv, StringComparison.Ordinal);
         Assert.All(
             ["page=1", "genre=18", "firstAirDateGte=2020-01-01"],
             part => Assert.Contains(part, tv, StringComparison.Ordinal));
         var earliestDecade = SeerrGateway.BuildDiscoverPath(
-            "movies", 1, null, "popularity.desc", null, 1900, null, null, today);
+            "movies", 1, null, "popularity.desc", null, 1900, null, null, null, null, today);
         Assert.StartsWith("api/v1/discover/movies?", earliestDecade, StringComparison.Ordinal);
         Assert.All(
             ["page=1", "primaryReleaseDateGte=1900-01-01", "primaryReleaseDateLte=1909-12-31", "sortBy=popularity.desc"],
             part => Assert.Contains(part, earliestDecade, StringComparison.Ordinal));
         Assert.Throws<GatewayException>(() =>
             SeerrGateway.BuildDiscoverPath(
-                "movies", 1, null, null, null, 1995, null, null, today));
+                "movies", 1, null, null, null, 1995, null, null, null, null, today));
         Assert.Throws<GatewayException>(() =>
             SeerrGateway.BuildDiscoverPath(
-                "movies", 1, null, null, null, 1890, null, null, today));
+                "movies", 1, null, null, null, 1890, null, null, null, null, today));
         Assert.Throws<GatewayException>(() =>
             SeerrGateway.BuildDiscoverPath(
-                "movies", 1, null, null, null, 2030, null, null, today));
+                "movies", 1, null, null, null, 2030, null, null, null, null, today));
+    }
+
+    [Fact]
+    public void StudioAndNetworkFiltersReachOnlyTheirOwnCatalog()
+    {
+        var today = new DateOnly(2026, 8, 1);
+        var movies = SeerrGateway.BuildDiscoverPath(
+            "movies", 1, 18, "popularity.desc", 7, 1990, 420, null, null, null, today);
+        Assert.All(
+            ["genre=18", "primaryReleaseDateGte=1990-01-01", "sortBy=popularity.desc", "voteAverageGte=7", "studio=420"],
+            part => Assert.Contains(part, movies, StringComparison.Ordinal));
+        Assert.DoesNotContain("network=", movies, StringComparison.Ordinal);
+        var tv = SeerrGateway.BuildDiscoverPath(
+            "tv", 2, 18, "first_air_date.desc", null, 2020, null, 213, null, null, today);
+        Assert.All(
+            ["page=2", "genre=18", "firstAirDateGte=2020-01-01", "sortBy=first_air_date.desc", "network=213"],
+            part => Assert.Contains(part, tv, StringComparison.Ordinal));
+        Assert.DoesNotContain("studio=", tv, StringComparison.Ordinal);
+
+        foreach (var kind in new[] { "tv", "trending", "upcoming-movies", "upcoming-tv" })
+        {
+            var studio = Assert.Throws<GatewayException>(() => SeerrGateway.BuildDiscoverPath(
+                kind, 1, null, null, null, null, 420, null, null, null, today));
+            Assert.Equal(StatusCodes.Status400BadRequest, studio.StatusCode);
+        }
+        foreach (var kind in new[] { "movies", "trending", "upcoming-movies", "upcoming-tv" })
+        {
+            var network = Assert.Throws<GatewayException>(() => SeerrGateway.BuildDiscoverPath(
+                kind, 1, null, null, null, null, null, 213, null, null, today));
+            Assert.Equal(StatusCodes.Status400BadRequest, network.StatusCode);
+        }
+        foreach (var id in new[] { 0, -5 })
+        {
+            Assert.Throws<GatewayException>(() => SeerrGateway.BuildDiscoverPath(
+                "movies", 1, null, null, null, null, id, null, null, null, today));
+            Assert.Throws<GatewayException>(() => SeerrGateway.BuildDiscoverPath(
+                "tv", 1, null, null, null, null, null, id, null, null, today));
+        }
     }
 
     [Fact]

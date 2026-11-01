@@ -124,6 +124,8 @@ export const queryKeys = {
   seerrDiscover: (row: string, resultSetKey: string) =>
     key("seerr", "discover", row, resultSetKey),
   seerrGenres: (mediaType: string) => key("seerr", "genres", mediaType),
+  seerrCompanies: (term: string) => key("seerr", "companies", term),
+  seerrNetworks: key("seerr", "networks"),
   seerrMedia: (mediaType: string, tmdbId: number) => key("seerr", "media", mediaType, tmdbId),
   seerrRequestOptions: (mediaType: string, is4k: boolean) =>
     key("seerr", "request-options", mediaType, is4k),
