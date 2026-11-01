@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query"
 import { Filter, Search, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
@@ -19,6 +20,7 @@ import { useLiveSearch } from "@/hooks/use-live-search"
 import { useCompanionCapabilities } from "@/lib/companion"
 import {
   SEERR_DISCOVER_ROWS,
+  api,
   seerrImageUrl,
   type SeerrCompany,
   type SeerrDiscoverFilters,
@@ -40,8 +42,8 @@ import {
   useInfiniteSeerrSearch,
   useSeerrDiscover,
   useSeerrGenres,
-  useSeerrNetworks,
 } from "@/lib/queries"
+import { queryKeys } from "@/lib/query-client"
 import { cn } from "@/lib/utils"
 import { Pressable } from "@/components/ui/pressable"
 
@@ -248,7 +250,13 @@ function NetworkSelect({
   value: SeerrCompany | undefined
   onChange: (network: SeerrCompany | undefined) => void
 }) {
-  const networks = useSeerrNetworks()
+  // The Companion's curated list changes only with the plugin.
+  const networks = useQuery({
+    queryKey: queryKeys.seerrNetworks,
+    queryFn: ({ signal }) => api.seerr.networks(signal),
+    staleTime: Infinity,
+    retry: false,
+  })
   const listed = networks.data?.networks ?? []
   // A detail-page link can name a network outside the curated list.
   const options = value && !listed.some((network) => network.id === value.id) ? [value, ...listed] : listed

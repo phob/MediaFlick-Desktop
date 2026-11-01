@@ -742,17 +742,6 @@ export function useSeerrGenres(mediaType: SeerrMediaType, enabled = true) {
   })
 }
 
-/** The Companion's curated TV networks; they change only with the plugin. */
-export function useSeerrNetworks(enabled = true) {
-  return useQuery({
-    queryKey: queryKeys.seerrNetworks,
-    queryFn: ({ signal }) => api.seerr.networks(signal),
-    enabled,
-    staleTime: Infinity,
-    retry: false,
-  })
-}
-
 export function useSeerrMedia(
   mediaType: SeerrMediaType | undefined,
   tmdbId: number | null | undefined,
