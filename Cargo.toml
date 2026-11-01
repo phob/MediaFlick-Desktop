@@ -15,7 +15,11 @@ getrandom = "0.4"
 libloading = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ts-rs = "12.0.1"
+# ts-rs prints an unsilenceable "failed to parse serde attribute" note for
+# every serde key it skips. `generated_typescript_follows_serde` in
+# src/shell/cef/api/wire/guards.rs fails the tests on each skipped key that
+# would change the TypeScript, so the notes only repeat accepted cases.
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
 roxmltree = "0.21.1"
 tracing = "0.1"
 tracing-appender = "0.2"
