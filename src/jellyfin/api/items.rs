@@ -633,7 +633,7 @@ pub fn fetch_similar_items(
     client: &JellyfinClient,
     user_id: &str,
     item_id: &str,
-    limit: i64,
+    limit: usize,
 ) -> Result<ItemsResponse, ApiError> {
     let path = format!("/Items/{}/Similar", encode_path_segment(item_id));
     client.get_json(

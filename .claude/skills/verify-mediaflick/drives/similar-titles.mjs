@@ -18,9 +18,8 @@ const CANDIDATES = 40
 const railNames = (ctx) => ctx.app.evaluate(`(() => {
   const heading = [...document.querySelectorAll("h2")].find((node) => node.textContent === ${JSON.stringify(RAIL)})
   if (!heading) return null
-  const names = [...heading.closest("section").querySelectorAll('a[aria-label^="Open details for "]')]
+  return [...heading.closest("section").querySelectorAll('a[aria-label^="Open details for "]')]
     .map((link) => link.getAttribute("aria-label").slice("Open details for ".length))
-  return names.filter((name, index) => names.indexOf(name) === index)
 })()`)
 
 // The page's own similar requests, as the fetch wrapper installed below saw them.
@@ -51,8 +50,9 @@ export default async function similarTitles(ctx) {
     fail: (url) => broken !== null && url.pathname.toLowerCase() === `/items/${broken}/similar`,
   })
   const oracle = async (id) => {
-    const { Items } = await ctx.jellyfin(`/Items/${id}/Similar?userId=${report.userId}&Limit=20`)
-    return Items.filter((item) => TITLE_KINDS.has(item.Type)).map((item) => ({ id: item.Id, name: item.Name, type: item.Type }))
+    // The app asks for 40 and keeps the first 20 movies and series.
+    const { Items } = await ctx.jellyfin(`/Items/${id}/Similar?userId=${report.userId}&Limit=40`)
+    return Items.filter((item) => TITLE_KINDS.has(item.Type)).slice(0, 20).map((item) => ({ id: item.Id, name: item.Name, type: item.Type }))
   }
   // The first title by name whose name is unique and whose similar answer
   // holds at least two titles; else the first unique one, to prove the empty case.

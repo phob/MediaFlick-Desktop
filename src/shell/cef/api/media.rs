@@ -24,8 +24,10 @@ routes! {
 
 const TECHNICAL_BATCH_SIZE: usize = 40;
 
-/// How many titles the detail page's "More like this" rail asks for.
-const SIMILAR_LIMIT: i64 = 20;
+/// How many titles the detail page's "More like this" rail shows. Jellyfin is
+/// asked for twice as many, so trailers and Live TV programs it may mix in do
+/// not take the places of titles further down its answer.
+const SIMILAR_LIMIT: usize = 20;
 
 #[derive(Deserialize, ts_rs::TS)]
 #[ts(rename = "TechnicalBatchBody")]
@@ -615,7 +617,7 @@ fn next_up(services: &Arc<Services>, item_id: &str) -> Result<NextUpResponse, Ap
 fn similar_items(services: &Arc<Services>, item_id: &str) -> Result<SimilarItems, ApiResponse> {
     let scope = session_scope(services)?;
     let response = fetch_current(services, &scope, |client, user_id| {
-        items::fetch_similar_items(client, user_id, item_id, SIMILAR_LIMIT)
+        items::fetch_similar_items(client, user_id, item_id, 2 * SIMILAR_LIMIT)
     })?;
     let items = response
         .items
@@ -626,6 +628,7 @@ fn similar_items(services: &Arc<Services>, item_id: &str) -> Result<SimilarItems
                 .and_then(CatalogKind::parse)
                 .is_some_and(|kind| CatalogKind::TOP_LEVEL.contains(&kind))
         })
+        .take(SIMILAR_LIMIT)
         .map(ItemSummary::from_dto)
         .collect();
     Ok(SimilarItems { items })
