@@ -92,9 +92,9 @@ fn last_key<'a>(keys: &'a [AttrKey], name: &str) -> Option<&'a AttrKey> {
 }
 
 /// The serde keys ts-rs 12 reads for each kind of item
-/// (`ts-rs-macros/src/attr`). It skips any other key with a warning that
-/// no build fails on, and it drops the whole `#[serde(...)]` attribute
-/// when a key it knows is written as `key(...)`.
+/// (`ts-rs-macros/src/attr`). It skips any other key (silently, with the
+/// `no-serde-warnings` feature this crate enables), and it drops the whole
+/// `#[serde(...)]` attribute when a key it knows is written as `key(...)`.
 const STRUCT_SERDE: &[&str] = &[
     "rename",
     "rename_all",
