@@ -624,6 +624,28 @@ pub fn fetch_remote_trailers(
         .unwrap_or_default())
 }
 
+/// Titles Jellyfin rates as similar to one film or series, best match first.
+///
+/// The server picks the kinds from the source item, but with
+/// `EnableExternalContentInSuggestions` it can mix trailers and Live TV
+/// programs into a film's answer, so callers keep only the kinds they draw.
+pub fn fetch_similar_items(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+    limit: usize,
+) -> Result<ItemsResponse, ApiError> {
+    let path = format!("/Items/{}/Similar", encode_path_segment(item_id));
+    client.get_json(
+        &path,
+        &[
+            user_query(user_id),
+            ("Limit", limit.clamp(1, 50).to_string()),
+            ("Fields", CATALOG_FIELDS.to_string()),
+        ],
+    )
+}
+
 fn next_up_query(
     user_id: &str,
     series_id: Option<&str>,

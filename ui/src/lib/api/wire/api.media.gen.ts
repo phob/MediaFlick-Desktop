@@ -87,6 +87,10 @@ export type PlayedState = {
   played: boolean,
 };
 
+export type SimilarItems = {
+  items: Array<ItemSummary>,
+};
+
 export type TechnicalBatch = {
   items: Array<ItemTechnical>,
 };
@@ -111,6 +115,7 @@ export type ApiMediaRoutes = {
   "PATCH /api/item/{id}/playback-preference": { params: { id: string | number }, body: PlaybackTrackPreferenceWrite, kind: "json", response: PlaybackPreferenceSaved },
   "GET /api/item/{id}/trailer": { params: { id: string | number }, body: null, kind: "json", response: TrailerResponse },
   "GET /api/item/{id}/nextup": { params: { id: string | number }, body: null, kind: "json", response: NextUpResponse },
+  "GET /api/item/{id}/similar": { params: { id: string | number }, body: null, kind: "json", response: SimilarItems },
   "POST /api/item/{id}/external": { params: { id: string | number }, body: ExternalLinkBody, kind: "json", response: ExternalLinkOpened },
   "POST /api/item/{id}/played": { params: { id: string | number }, body: PlayedBody, kind: "json", response: PlayedState },
   "POST /api/item/{id}/favorite": { params: { id: string | number }, body: FavoriteBody, kind: "json", response: FavoriteState },

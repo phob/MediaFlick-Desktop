@@ -212,6 +212,7 @@ export const api = {
   trailer: (id: string) => request("GET /api/item/{id}/trailer", { params: { id } }),
   trailerStreamUrl: (id: string) => link("GET /api/trailer/{id}/stream", { params: { id } }),
   nextUp: (id: string) => request("GET /api/item/{id}/nextup", { params: { id } }),
+  similar: (id: string) => request("GET /api/item/{id}/similar", { params: { id } }),
   openExternal: (id: string, provider: ExternalProvider) =>
     request("POST /api/item/{id}/external", { params: { id }, body: { provider } }),
   setPlayed: (id: string, played: boolean) => request("POST /api/item/{id}/played", { params: { id }, body: { played } }),

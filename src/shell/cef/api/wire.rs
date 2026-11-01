@@ -49,7 +49,7 @@ use super::libraries::{LibrariesResponse, LibraryLatest};
 use super::media::{
     ExternalBody, ExternalLinkOpened, FavoriteBody, FavoriteState, IdsBody, MediaInfoResponse,
     NextUpResponse, PlaybackPreferenceBody, PlaybackPreferenceSaved, PlayedBody, PlayedState,
-    TechnicalBatch, TrailerResponse,
+    SimilarItems, TechnicalBatch, TrailerResponse,
 };
 use super::playback::{
     ItemBody, PlayBody, PlayStarted, PlaybackNeighbors, PlayerCommandAccepted, PlayerCommandBody,
@@ -184,6 +184,7 @@ wire_types! {
     ShellQueued,
     ShellRequestBody,
     ShellRequestQueued,
+    SimilarItems,
     StartupResponse,
     SyncRequested,
     TechnicalBatch,
