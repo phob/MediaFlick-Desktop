@@ -57,15 +57,19 @@ const ANY = "__any__"
 
 const WATCHED = [{ id: ANY, label: "Any watch status" }, ...WATCH_FILTERS]
 
+/** A studio or tag list as its query stands: no values yet while it loads. */
+interface FacetList {
+  values: readonly string[] | undefined
+  error: Error | null
+}
+
 interface FilterOptions {
   genres: string[]
   genresLoading: boolean
-  studios: string[]
-  studiosLoading: boolean
+  studios: FacetList
   /** "Network" in TV libraries, where Jellyfin keeps a series' networks as its studios. */
   studioLabel: string
-  tags: string[]
-  tagsLoading: boolean
+  tags: FacetList
   ratings: string[]
   ratingsLoading: boolean
   offered: (filter: LibraryFilterId) => boolean
@@ -92,6 +96,8 @@ function currentValue(value: string, fallback: string) {
   return value || fallback
 }
 
+const NO_VALUES: readonly string[] = []
+
 /** Studio and tag lists run into the thousands; past this many matches the picker asks for a narrower search. */
 const FACET_MATCH_LIMIT = 100
 
@@ -102,19 +108,18 @@ const FACET_MATCH_LIMIT = 100
  */
 function FacetPicker({
   noun,
-  values,
-  loading,
+  list,
   value,
   onChange,
 }: {
   noun: string
-  values: readonly string[]
-  loading: boolean
+  list: FacetList
   value: string
   onChange: (value: string) => void
 }) {
   const [term, setTerm] = useState("")
   const needle = term.trim().toLocaleLowerCase()
+  const values = list.values ?? NO_VALUES
   const matches = needle ? values.filter((option) => option.toLocaleLowerCase().includes(needle)) : values
   const shown = matches.slice(0, FACET_MATCH_LIMIT)
   const choice = (option: string, label: string) => (
@@ -135,7 +140,9 @@ function FacetPicker({
           {!needle && choice("", `Any ${noun}`)}
           {shown.map((option) => choice(option, option))}
         </CommandGroup>
-        {loading ? (
+        {list.error && !list.values ? (
+          <p className="px-3 py-2 text-sm text-destructive">Could not load {noun}s.</p>
+        ) : !list.values ? (
           <p className="px-3 py-2 text-sm text-muted-foreground">Loading {noun}s…</p>
         ) : needle && !matches.length ? (
           <p className="px-3 py-2 text-sm text-muted-foreground">No {noun}s found.</p>
@@ -194,10 +201,8 @@ function DesktopFilters({
     genres,
     genresLoading,
     studios,
-    studiosLoading,
     studioLabel,
     tags,
-    tagsLoading,
     ratings,
     ratingsLoading,
     offered,
@@ -266,8 +271,7 @@ function DesktopFilters({
             <DropdownMenuSubContent className="w-64 p-0" onFocus={focusSearch}>
               <FacetPicker
                 noun={studioLabel.toLowerCase()}
-                values={studios}
-                loading={studiosLoading}
+                list={studios}
                 value={value.studio}
                 onChange={(studio) => pick({ studio })}
               />
@@ -286,8 +290,7 @@ function DesktopFilters({
             <DropdownMenuSubContent className="w-64 p-0" onFocus={focusSearch}>
               <FacetPicker
                 noun="tag"
-                values={tags}
-                loading={tagsLoading}
+                list={tags}
                 value={value.tag}
                 onChange={(tag) => pick({ tag })}
               />
@@ -500,10 +503,8 @@ function TouchFilters({
     genres,
     genresLoading,
     studios,
-    studiosLoading,
     studioLabel,
     tags,
-    tagsLoading,
     ratings,
     ratingsLoading,
     offered,
@@ -548,8 +549,7 @@ function TouchFilters({
             <TouchFacet label={studioLabel}>
               <FacetPicker
                 noun={studioLabel.toLowerCase()}
-                values={studios}
-                loading={studiosLoading}
+                list={studios}
                 value={value.studio}
                 onChange={(studio) => onChange({ studio })}
               />
@@ -560,8 +560,7 @@ function TouchFilters({
             <TouchFacet label="Tag">
               <FacetPicker
                 noun="tag"
-                values={tags}
-                loading={tagsLoading}
+                list={tags}
                 value={value.tag}
                 onChange={(tag) => onChange({ tag })}
               />
@@ -738,11 +737,9 @@ export function LibraryFilters({
     ? {
         genres: genres.data?.genres ?? [],
         genresLoading: genres.isPending,
-        studios: studios.data?.studios ?? [],
-        studiosLoading: studios.isPending,
+        studios: { values: studios.data?.studios, error: studios.error },
         studioLabel,
-        tags: tags.data?.tags ?? [],
-        tagsLoading: tags.isPending,
+        tags: { values: tags.data?.tags, error: tags.error },
         ratings: ratings.data?.officialRatings ?? [],
         ratingsLoading: ratings.isPending,
         offered,
@@ -750,11 +747,9 @@ export function LibraryFilters({
     : {
         genres: libraryOptions.data?.genres ?? [],
         genresLoading: libraryOptions.isPending,
-        studios: libraryOptions.data?.studios ?? [],
-        studiosLoading: libraryOptions.isPending,
+        studios: { values: libraryOptions.data?.studios, error: libraryOptions.error },
         studioLabel,
-        tags: libraryOptions.data?.tags ?? [],
-        tagsLoading: libraryOptions.isPending,
+        tags: { values: libraryOptions.data?.tags, error: libraryOptions.error },
         ratings: libraryOptions.data?.officialRatings ?? [],
         ratingsLoading: libraryOptions.isPending,
         offered,
