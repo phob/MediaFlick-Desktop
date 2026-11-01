@@ -25,7 +25,7 @@ export function StudioCombobox({ value, onValueChange }: {
     staleTime: 10 * 60_000,
     retry: false,
   })
-  const studios = settled ? results.data?.results ?? [] : []
+  const page = settled ? results.data : undefined
   const message = search.trim().length < 2 ? "Type at least two characters to search."
     : !settled || results.isFetching ? "Searching…"
     : results.error ? "Could not search studios."
@@ -51,21 +51,23 @@ export function StudioCombobox({ value, onValueChange }: {
           <CommandInput aria-label="Search studios" placeholder="Search studios" value={search} onValueChange={setSearch} />
           <CommandList label="Studios" aria-busy={results.isFetching}>
             <CommandEmpty>{message}</CommandEmpty>
-            <CommandGroup>
-              {studios.map((studio) => (
-                <CommandItem
-                  key={studio.id}
-                  value={String(studio.id)}
-                  onSelect={() => {
-                    onValueChange(studio)
-                    setOpen(false)
-                  }}
-                >
-                  <Check aria-hidden className={cn("size-4", value?.id === studio.id ? "opacity-100" : "opacity-0")} />
-                  <span className="min-w-0 break-words">{studio.name}</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
+            {page && (
+              <CommandGroup>
+                {page.results.map((studio) => (
+                  <CommandItem
+                    key={studio.id}
+                    value={String(studio.id)}
+                    onSelect={() => {
+                      onValueChange(studio)
+                      setOpen(false)
+                    }}
+                  >
+                    <Check aria-hidden className={cn("size-4", value?.id === studio.id ? "opacity-100" : "opacity-0")} />
+                    <span className="min-w-0 break-words">{studio.name}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
           </CommandList>
           {results.error && settled && (
             <Button type="button" variant="ghost" disabled={results.isFetching} onClick={() => void results.refetch()}>

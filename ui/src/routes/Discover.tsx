@@ -257,9 +257,16 @@ function NetworkSelect({
     staleTime: Infinity,
     retry: false,
   })
-  const listed = networks.data?.networks ?? []
-  // A detail-page link can name a network outside the curated list.
-  const options = value && !listed.some((network) => network.id === value.id) ? [value, ...listed] : listed
+  if (networks.error) {
+    return <p className="flex h-10 items-center text-sm text-destructive">Could not load networks.</p>
+  }
+  const listed = networks.data?.networks
+  // A detail-page link can name a network outside the curated list, and is
+  // the only option while the list loads.
+  const options = [
+    ...(value && !listed?.some((network) => network.id === value.id) ? [value] : []),
+    ...(listed ?? []),
+  ]
   return (
     <Select
       value={value ? String(value.id) : "all"}
