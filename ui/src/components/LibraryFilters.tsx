@@ -49,7 +49,8 @@ import {
   WATCH_FILTERS,
   type LibraryFilterState,
 } from "@/lib/library-filters"
-import { useGenres, useLibraryOptions, useOfficialRatings, useStudios, useTags } from "@/lib/queries"
+import { useGenres, useStudios, useTags } from "@/lib/facet-queries"
+import { useLibraryOptions, useOfficialRatings } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 const ANY = "__any__"
