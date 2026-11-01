@@ -11,6 +11,7 @@ import { LetterboxdReviews } from "@/components/detail/LetterboxdReviews"
 import { DetailPageSkeleton, DetailBackdrop } from "@/components/detail/DetailPrimitives"
 import { GenericItemPage } from "@/components/detail/GenericItemPage"
 import { SeasonBrowser } from "@/components/detail/SeasonBrowser"
+import { SimilarTitles } from "@/components/detail/SimilarTitles"
 import { PageErrorState } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import { backdropUrl, type ItemAbout, type ItemDetail as Item, type ItemSummary } from "@/lib/api"
@@ -223,6 +224,8 @@ function TitleItemPage({
           isPending={!isContainer && media.isPending}
         />
       </div>
+
+      <SimilarTitles item={item} />
     </div>
   )
 }

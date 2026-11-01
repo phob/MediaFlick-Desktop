@@ -62,6 +62,7 @@ type QueryRoot =
   | typeof BROWSE_ROOT
   | typeof LIBRARY_LATEST_ROOT
   | "person-items"
+  | "similar"
   | "viewing"
   | "letterboxd"
   | "collections"
@@ -108,6 +109,9 @@ export const queryKeys = {
   media: (id: string) => key("item", id, "media"),
   trailer: (id: string) => key("item", id, "trailer"),
   nextUp: (id: string) => key("item", id, "nextup"),
+  // Live Jellyfin answers like person items, under their own root so a
+  // watched change can refresh the cards without naming the page's item.
+  similar: (id: string) => key("similar", id),
   playbackNeighbors: (id: string) => key("player", "neighbors", id),
   playerState: key("player", "state"),
   seerrStatus: key("seerr", "status"),
@@ -186,6 +190,7 @@ const ACCOUNT_QUERY_ROOTS = new Set([
   "player",
   "ratings",
   "seerr",
+  "similar",
 ])
 
 export function removeAccountQueryData(client: QueryClient) {
@@ -241,6 +246,7 @@ export function invalidateMediaSurfaces(
   // the active title instead of merely updating it.
   void client.invalidateQueries({ queryKey: queryKeys.root(ITEMS_ROOT), ...active })
   void client.invalidateQueries({ queryKey: queryKeys.root("person-items"), ...active })
+  void client.invalidateQueries({ queryKey: queryKeys.root("similar"), ...active })
   void client.invalidateQueries({ queryKey: queryKeys.root(BROWSE_ROOT), ...active })
   void client.invalidateQueries({ queryKey: queryKeys.root(LIBRARY_LATEST_ROOT), ...active })
   for (const itemId of itemIds) {

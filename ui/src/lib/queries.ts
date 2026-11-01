@@ -427,6 +427,14 @@ export function useTrailer(id: string | undefined, enabled = true) {
   })
 }
 
+export function useSimilarItems(id: string | undefined, enabled = true) {
+  return useQuery({
+    ...optionalIdQuery(id, queryKeys.similar(id ?? ""), (id) => api.similar(id), enabled),
+    staleTime: 30 * 60_000,
+    retry: false,
+  })
+}
+
 export function useNextUp(id: string | undefined, enabled = true) {
   return useQuery(optionalIdQuery(id, queryKeys.nextUp(id ?? ""), (id) => api.nextUp(id), enabled))
 }

@@ -12,6 +12,7 @@ routes! {
         PlaybackPreferenceSaved = set_item_playback_preference(services, id, body),
     GET ["item", id, "trailer"] -> TrailerResponse = trailer_info(services, id),
     GET ["item", id, "nextup"] -> NextUpResponse = next_up(services, id),
+    GET ["item", id, "similar"] -> SimilarItems = similar_items(services, id),
     POST ["item", id, "external"] (body: ExternalBody) -> ExternalLinkOpened =
         open_external(services, id, body),
     POST ["item", id, "played"] (body: PlayedBody) -> PlayedState = set_played(services, id, body),
@@ -22,6 +23,9 @@ routes! {
 }
 
 const TECHNICAL_BATCH_SIZE: usize = 40;
+
+/// How many titles the detail page's "More like this" rail asks for.
+const SIMILAR_LIMIT: i64 = 20;
 
 #[derive(Deserialize, ts_rs::TS)]
 #[ts(rename = "TechnicalBatchBody")]
@@ -136,6 +140,11 @@ struct TrailerSummary {
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct NextUpResponse {
     item: Option<ItemSummary>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct SimilarItems {
+    items: Vec<ItemSummary>,
 }
 
 #[derive(Serialize, ts_rs::TS)]
@@ -599,6 +608,27 @@ fn next_up(services: &Arc<Services>, item_id: &str) -> Result<NextUpResponse, Ap
         None => services.library.first_episode(item_id).unwrap_or_default(),
     };
     Ok(NextUpResponse { item })
+}
+
+/// Live from Jellyfin and never cached: similarity is the server's judgement
+/// over the whole library, not something the local index can reproduce.
+fn similar_items(services: &Arc<Services>, item_id: &str) -> Result<SimilarItems, ApiResponse> {
+    let scope = session_scope(services)?;
+    let response = fetch_current(services, &scope, |client, user_id| {
+        items::fetch_similar_items(client, user_id, item_id, SIMILAR_LIMIT)
+    })?;
+    let items = response
+        .items
+        .iter()
+        .filter(|dto| {
+            dto.item_type
+                .as_deref()
+                .and_then(CatalogKind::parse)
+                .is_some_and(|kind| CatalogKind::TOP_LEVEL.contains(&kind))
+        })
+        .map(ItemSummary::from_dto)
+        .collect();
+    Ok(SimilarItems { items })
 }
 
 #[derive(Clone, Copy)]
