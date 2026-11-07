@@ -294,8 +294,10 @@ wrap_resource_handler! {
 /// `mediaflick-desktop:` scheme is allowed to connect because the native
 /// remaining native dialogs call the shell on other hosts of it
 /// (`update-download`, `app-about`, …), and only our own handlers can answer
-/// those.
-const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data:; \
+/// those. Images may also load `mediaflick-desktop://window-ready`, the beacon
+/// the page falls back to when the shell's API is down, so the hidden main
+/// window is still shown.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data: mediaflick-desktop://window-ready; \
 style-src 'self' 'unsafe-inline'; script-src 'self'; \
 connect-src 'self' mediaflick-desktop:; \
 frame-src mediaflick-desktop: https://www.youtube-nocookie.com; \

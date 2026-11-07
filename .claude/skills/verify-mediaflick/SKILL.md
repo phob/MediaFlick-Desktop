@@ -39,6 +39,7 @@ Arguments after the drive go to `session.mjs`:
 - `--log-level FILTER`: the app's `--log-level`, an `EnvFilter`, default `debug`. Playback drives use `debug,jellyfin.playstate=trace,playback=trace` for the playstate reports.
 - `--seed DIR`: copied into the empty config dir before launch, for example a prepared `settings.json`.
 - `--keep-profile`: leaves the profile on disk for inspection. Remove it later with `just verify-cleanup`.
+- `--services-down`: the in-session doctor expects `/api/status` to answer 503 instead of 200, for a drive whose seed makes the app's services fail to open.
 
 `MEDIAFLICK_VERIFY_HARD_TIMEOUT` (seconds, default 900) bounds the whole wrapper run.
 
@@ -174,6 +175,7 @@ To find handles for a page you have not driven yet, take a `snapshot` there and 
 Shipped drives. All are proven on Linux, `segments` only in part: its `Ask me` and `Never` cases on a file with chapters pass, and its other cases wait for the `Don't show` build or a marker fix (see [Playback](features/playback.md)). On Windows 11 (2026-10-13) all but `close-minimize`, `close-guard` and `segments` pass, `playback` on both backends; the close drives use `wmClose` and run on Linux only, and `segments` has not run there yet. The last nine need your own server (`--account`; see [Your own server](#your-own-server)):
 
 - `smoke`: fresh profile, signed-out sign-in screen.
+- `startup-failure` (`--services-down --seed .claude/skills/verify-mediaflick/seeds/newer-accounts`): an `accounts.json` from a newer build makes the app's services refuse to open, so `/api/status` answers 503 (`--services-down` makes the in-session doctor expect that). The main window must still be shown, through the page's window-ready beacon, and the seeded file must stay as it was. Evidence: `startup-failure.json`, `services-down.png`. Before the fix (2026-11-07) the window stayed hidden: the page's CSP blocked the beacon, and the shell rejected its normalized URL `mediaflick-desktop://window-ready/`.
 - `login`: only through `just verify-login SERVER`. Quick Connect sign-in, approved by the user, then `saveAccount()`.
 - `application-settings`: Settings → Application, draft, Discard, Save, `settings.json`, read-back.
 - `browse`: sign-in, Home, Movies, search, movie and series detail, sign-out. Read-only against the demo server.

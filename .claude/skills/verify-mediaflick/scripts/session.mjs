@@ -3,7 +3,7 @@
 // cleanup. Start it through `just verify <drive>`, never directly: the
 // isolation wrapper is what keeps the app off the user's screen.
 //
-//   just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--keep-profile]
+//   just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--keep-profile] [--services-down]
 //
 // <drive> is a file path or the name of a file in ../drives (without .mjs).
 // Evidence goes to build/verify/<run-id>/ and survives cleanup.
@@ -47,10 +47,11 @@ const { values: options, positionals } = parseArgs({
     "log-level": { type: "string", default: "debug" },
     seed: { type: "string" },
     "keep-profile": { type: "boolean", default: false },
+    "services-down": { type: "boolean", default: false },
   },
 })
 const [driveArg] = positionals
-if (!driveArg) throw new Error("usage: just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--keep-profile]")
+if (!driveArg) throw new Error("usage: just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--keep-profile] [--services-down]")
 const drivePath = /[\\/]|\.mjs$/.test(driveArg) ? path.resolve(driveArg) : path.join(import.meta.dirname, "..", "drives", `${driveArg}.mjs`)
 if (!existsSync(drivePath)) throw new Error(`no drive at ${drivePath}`)
 const driveName = path.basename(drivePath, ".mjs")
@@ -251,7 +252,9 @@ async function doctor(port, file = "doctor.json") {
   writeJson(file, report)
   const problems = []
   if (!href.startsWith("mediaflick-desktop://app")) problems.push(`CDP page is ${href}, not the app`)
-  if (status.status !== 200) problems.push(`/api/status answered ${status.status}`)
+  // --services-down: the drive seeds a profile the app's services refuse to open, so /api/status must answer 503.
+  const expectedStatus = options["services-down"] ? 503 : 200
+  if (status.status !== expectedStatus) problems.push(`/api/status answered ${status.status}, expected ${expectedStatus}`)
   if (!existsSync(path.join(configDir, "instance.json"))) problems.push("the app did not create instance.json in the disposable config dir")
   if (!processes.some((row) => row.pid === child.pid) && !listProcesses().some((row) => row.pid === child.pid && isAppProcess(row))) problems.push(`pid ${child.pid} is not a running app process`)
   if (problems.length) throw new Error(`doctor: ${problems.join("; ")}`)
