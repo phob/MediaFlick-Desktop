@@ -15,7 +15,7 @@ use super::{
 };
 
 impl ControllerState {
-    pub(super) fn should_suppress_stop_during_next_playback_handoff(&mut self) -> bool {
+    fn should_suppress_stop_during_next_playback_handoff(&mut self) -> bool {
         if self.phase.pending().is_none() {
             return false;
         }
@@ -255,6 +255,11 @@ impl ControllerState {
             tracing::debug!(target: "playback", "ignored mark-watched-next because playback is idle");
             return;
         }
+        if self.phase.pending().is_some() {
+            // The next item is still loading; it has not been watched.
+            tracing::debug!(target: "playback", "ignored mark-watched-next while a load is pending");
+            return;
+        }
 
         let duration_ticks = self
             .last_state
@@ -284,6 +289,10 @@ impl ControllerState {
         );
         self.finish_active(Some(StopReason::WatchedNext));
         self.arm_next_playback_handoff(StopReason::WatchedNext);
+        // mpv would otherwise keep playing the file nobody reports any more.
+        // The next item, if the UI finds one, loads into an idle mpv as after
+        // an EOF.
+        self.stop_mpv("marked watched");
     }
 
     pub(super) fn finish_active(&mut self, reason: Option<StopReason>) {
@@ -306,6 +315,7 @@ impl ControllerState {
         }
         self.pending_external_subtitle_url = None;
         self.replacement_end_file_pending = false;
+        self.tracked_entry = None;
         self.clear_skip_segment_state();
         if let Some(pending) = self.phase.take_pending() {
             self.next_playback_handoff_until = None;

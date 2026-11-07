@@ -162,9 +162,9 @@ impl ControllerState {
         mpv_path: &str,
         fullscreen: FullscreenBehavior,
         launch: &PlaybackRequest,
-    ) -> Result<(), IpcCommandFailure> {
-        match self.send_mpv_command(loadfile_command(launch)) {
-            Ok(()) => Ok(()),
+    ) -> Result<Option<i64>, IpcCommandFailure> {
+        match self.send_loadfile(launch) {
+            Ok(entry) => Ok(entry),
             Err(first_error @ IpcCommandFailure::Rejected(_)) => Err(first_error),
             Err(first_error @ IpcCommandFailure::Transport(_)) => {
                 tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command; restarting session and retrying once: {first_error}");
@@ -173,13 +173,21 @@ impl ControllerState {
                     return Err(first_error);
                 }
                 self.apply_external_default_fullscreen(fullscreen);
-                self.send_mpv_command(loadfile_command(launch))
-                    .map_err(|retry_error| {
-                        retry_error
-                            .with_context(format!("initial failure: {first_error}; retry failure"))
-                    })
+                self.send_loadfile(launch).map_err(|retry_error| {
+                    retry_error
+                        .with_context(format!("initial failure: {first_error}; retry failure"))
+                })
             }
         }
+    }
+
+    /// Sends `loadfile` and returns the new playlist entry's id from its reply.
+    fn send_loadfile(&self, launch: &PlaybackRequest) -> Result<Option<i64>, IpcCommandFailure> {
+        let reply =
+            self.send_mpv_command_with_timeout(loadfile_command(launch), IPC_COMMAND_TIMEOUT)?;
+        Ok(reply
+            .get("playlist_entry_id")
+            .and_then(serde_json::Value::as_i64))
     }
 
     pub(super) fn ensure_mpv(&mut self, mpv_path: &str, fullscreen: FullscreenBehavior) -> bool {
@@ -588,6 +596,7 @@ impl ControllerState {
             );
             self.finish_active(Some(StopReason::Error));
             self.phase.take_pending();
+            self.stop_mpv("abandoned a load that never reached file-loaded");
         }
     }
 
@@ -629,6 +638,8 @@ impl ControllerState {
         self.pending_raise_pulse_reset_at = None;
         self.playback_tracks.clear();
         self.replacement_end_file_pending = false;
+        self.tracked_entry = None;
+        self.started_entry = None;
         self.clear_skip_segment_state();
         if self.phase.is_idle() {
             self.playback_runtime_ticks = None;
@@ -649,6 +660,15 @@ impl ControllerState {
         }
         self.last_position_log_bucket = None;
         self.publish_snapshot();
+    }
+
+    /// Stops mpv's current file when the controller stops tracking it without
+    /// a replacement, so it never keeps playing unreported.
+    pub(super) fn stop_mpv(&self, why: &str) {
+        tracing::info!(target: "playback", "stopping mpv: {why}");
+        if let Err(error) = self.send_mpv_command(json!({ "command": ["stop"] })) {
+            tracing::warn!(target: "mpv.ipc", "could not stop mpv: {error}");
+        }
     }
 
     pub(super) fn send_mpv_command(&self, command: Value) -> Result<(), IpcCommandFailure> {

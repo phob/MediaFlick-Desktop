@@ -48,7 +48,11 @@ pub(super) fn bridge_request_is_trusted(
 }
 
 fn window_ready_request_is_trusted(request_url: &str, source_url: &str) -> bool {
-    request_url == "mediaflick-desktop://window-ready" && app_scheme::is_app_url(source_url)
+    // Chromium normalizes the beacon's URL to an empty path, `…/window-ready/`.
+    matches!(
+        request_url,
+        "mediaflick-desktop://window-ready" | "mediaflick-desktop://window-ready/"
+    ) && app_scheme::is_app_url(source_url)
 }
 
 fn bridge_token_is_valid(request_url: &str) -> bool {

@@ -65,9 +65,31 @@ impl ControllerState {
             "received raw mpv event"
         );
         match event.name.as_str() {
-            "file-loaded" => self.activate_pending(),
+            "start-file" => self.started_entry = event.playlist_entry_id,
+            "file-loaded" => {
+                if let (Some(tracked), Some(started)) = (self.tracked_entry, self.started_entry)
+                    && tracked != started
+                {
+                    tracing::debug!(target: "playback", tracked, started, "ignored file-loaded of a replaced mpv entry");
+                    return;
+                }
+                self.activate_pending();
+            }
             "end-file" => {
-                self.finish_active(event.reason.as_deref().and_then(StopReason::parse));
+                let reason = event.reason.as_deref().and_then(StopReason::parse);
+                match (self.tracked_entry, event.playlist_entry_id) {
+                    (Some(tracked), Some(ended)) if tracked != ended => {
+                        tracing::debug!(target: "playback", tracked, ended, "ignored end-file of a replaced mpv entry");
+                    }
+                    (Some(_), Some(_)) => {
+                        // This load's own end, so no guess about a replaced
+                        // file's late end-file may suppress it.
+                        self.replacement_end_file_pending = false;
+                        self.next_playback_handoff_until = None;
+                        self.finish_active(reason);
+                    }
+                    _ => self.finish_active(reason),
+                }
             }
             "shutdown" => {
                 self.finish_active(Some(StopReason::Quit));

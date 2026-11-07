@@ -63,7 +63,11 @@ export default function ApplicationSettings() {
       void cache.resetQueries({ queryKey: queryKeys.settings })
       toast.success("Local account data deleted")
     },
-    onError: (error: Error) => toastFailure(error),
+    onError: (error: Error) => {
+      // A failed deletion leaves the account half deleted and signed out.
+      void cache.invalidateQueries({ queryKey: queryKeys.status })
+      toastFailure(error)
+    },
   })
   if (settingsQuery.error && !settings) {
     return (

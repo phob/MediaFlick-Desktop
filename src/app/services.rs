@@ -273,7 +273,7 @@ pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Service
         playback: RwLock::new(None),
     });
     connect_app_hooks(&services);
-    resume_pending_deletions(&services);
+    let _ = finish_pending_deletions(&services);
     Ok(services)
 }
 
@@ -313,7 +313,10 @@ fn connect_app_hooks(services: &Arc<Services>) {
     }));
 }
 
-fn resume_pending_deletions(services: &Arc<Services>) {
+/// Completes every journaled account deletion, at launch and before a sign-in,
+/// so an account signed into again is never deleted at the next launch.
+pub fn finish_pending_deletions(services: &Arc<Services>) -> Result<(), String> {
+    let mut first_error = None;
     for deletion in services.pending_deletions.pending() {
         let _ = services.session.begin_account_deletion(&deletion.account);
         if let Err(error) = complete_pending_deletion(services, &deletion) {
@@ -323,8 +326,10 @@ fn resume_pending_deletions(services: &Arc<Services>) {
                 user_id = deletion.account.user_id(),
                 "could not resume local account deletion: {error}"
             );
+            first_error.get_or_insert(error);
         }
     }
+    first_error.map_or(Ok(()), Err)
 }
 
 fn open_configuration<T>(
