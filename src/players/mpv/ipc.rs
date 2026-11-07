@@ -56,6 +56,8 @@ pub(super) struct MpvEvent {
     pub(super) property: Option<String>,
     pub(super) data: Option<Value>,
     pub(super) args: Vec<String>,
+    /// The playlist entry `start-file` and `end-file` belong to (mpv 0.33+).
+    pub(super) playlist_entry_id: Option<i64>,
     pub(super) raw: Value,
 }
 
@@ -71,9 +73,11 @@ impl MpvEvent {
                     .unwrap_or_else(|| "null".to_string())
             ),
             "end-file" => format!(
-                "end-file reason={}",
-                self.reason.as_deref().unwrap_or("unknown")
+                "end-file reason={} entry={:?}",
+                self.reason.as_deref().unwrap_or("unknown"),
+                self.playlist_entry_id
             ),
+            "start-file" => format!("start-file entry={:?}", self.playlist_entry_id),
             "client-message" => format!("client-message args={:?}", self.args),
             name => name.to_string(),
         }
@@ -476,6 +480,7 @@ fn read_events(stream: &IpcConnection, tx: &Sender<MpvEvent>) {
                                 .collect()
                         })
                         .unwrap_or_default(),
+                    playlist_entry_id: value.get("playlist_entry_id").and_then(Value::as_i64),
                     raw: value,
                 };
                 if tx.send(event).is_err() {

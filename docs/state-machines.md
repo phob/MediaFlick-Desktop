@@ -10,6 +10,8 @@ This audit came from reading the code only. Nothing was run against a real mpv, 
 
 Line numbers refer to `772a6ff`.
 
+**Fixed since the audit** on `docs/state-machine-audit`: P1, P2, P3, P5, P6, P21 and the Stop-after-replacement and old-file-`end-file` races in PB-8. Each fix has a verify drive: `startup-failure`, `account-deletion-retry` and `playback-handoff`. Their rows below are marked *fixed*. The rest of the document still describes `772a6ff`.
+
 ## Contents
 
 1. [Prioritized bugs](#1-prioritized-bugs)
@@ -33,12 +35,12 @@ Ranked by user impact, then by how easily a user reaches the bug. Severities:
 
 | ID | Sev | Status | Summary | Detail |
 |---|---|---|---|---|
-| P1 | S1 | Confirmed | Mark watched with no next item leaves mpv playing with no way to stop it from the app; plays started while that file is still loaded go unreported | [§3 PB-1](#pb-1-mark-watched-with-no-next-item-leaves-a-zombie-player) |
-| P2 | S1 | Confirmed (code) | If services fail to start, the window-ready fallback is blocked by the app's own CSP and the window stays hidden forever | [§5 SH-1](#sh-1-window-ready-fallback-is-blocked-by-the-apps-own-csp) |
-| P3 | S1 | Confirmed | A failed "Delete local account data" leaves a tombstone; after the user signs back in, the next launch deletes the account again | [§2 SE-1](#se-1-failed-account-deletion-is-replayed-after-the-user-signs-back-in) |
+| P1 | S1 | Confirmed · *fixed* | Mark watched with no next item leaves mpv playing with no way to stop it from the app; plays started while that file is still loaded go unreported | [§3 PB-1](#pb-1-mark-watched-with-no-next-item-leaves-a-zombie-player) |
+| P2 | S1 | Confirmed (code) · *fixed* | If services fail to start, the window-ready fallback is blocked by the app's own CSP and the window stays hidden forever | [§5 SH-1](#sh-1-window-ready-fallback-is-blocked-by-the-apps-own-csp) |
+| P3 | S1 | Confirmed · *fixed* | A failed "Delete local account data" leaves a tombstone; after the user signs back in, the next launch deletes the account again | [§2 SE-1](#se-1-failed-account-deletion-is-replayed-after-the-user-signs-back-in) |
 | P4 | S2 | Confirmed (code) | Signing out during playback revokes the token the reporter uses; final position and watched state are lost | [§3 PB-2](#pb-2-sign-out-during-playback-loses-the-final-report) |
-| P5 | S2 | Confirmed (code) | Pressing mark watched twice reports the loading episode stopped at full runtime, without it playing | [§3 PB-6](#pb-6-double-mark-watched-marks-the-loading-episode-watched) |
-| P6 | S2 | Confirmed | A second Play during a pending load is dropped, but the API answers `started: true` | [§3 PB-5](#pb-5-play-during-a-pending-load-is-dropped-but-reported-as-started) |
+| P5 | S2 | Confirmed (code) · *fixed* | Pressing mark watched twice reports the loading episode stopped at full runtime, without it playing | [§3 PB-6](#pb-6-double-mark-watched-marks-the-loading-episode-watched) |
+| P6 | S2 | Confirmed · *fixed* | A second Play during a pending load is dropped, but the API answers `started: true` | [§3 PB-5](#pb-5-play-during-a-pending-load-is-dropped-but-reported-as-started) |
 | P7 | S2 | Confirmed (code) | Context menu → Settings with an unsaved draft, then "Discard and leave", quits the app | [§5 SH-2](#sh-2-a-navigation-beforeunload-is-treated-as-a-window-close) |
 | P8 | S2 | Confirmed | Refreshing a Letterboxd profile brings back a profile removed or disabled while the refresh ran | [§4 LS-1](#ls-1-letterboxd-refresh-resurrects-a-removed-or-disabled-profile) |
 | P9 | S2 | Confirmed | A collection edit still saving brings back a collection deleted meanwhile | [§6 UI-2](#ui-2-in-flight-collection-edit-resurrects-a-deleted-collection) |
@@ -53,7 +55,7 @@ Ranked by user impact, then by how easily a user reaches the bug. Severities:
 | P18 | S2 | Plausible | A late sign-in-page server probe repoints a signed-in session at another host and sends the token there | [§2 SE-2](#se-2-a-late-server-probe-repoints-the-live-session) |
 | P19 | S2 | Plausible | libmpv runtime reset (IPC timeout) destroys the host window and the app closes | [§3 PB-7](#pb-7-libmpv-runtime-reset-closes-the-app) |
 | P20 | S3 | Confirmed (code) | In Prompt mode (the default), resuming inside an intro skips the rest of the intro once | [§3 PB-3](#pb-3-non-user-seeks-count-as-seek-to-skip) |
-| P21 | S3 | Confirmed | Stop is ignored while the next episode loads (until `file-loaded`, at worst 60 s) | [§3 PB-4](#pb-4-stop-is-ignored-while-the-next-item-loads) |
+| P21 | S3 | Confirmed · *fixed* | Stop is ignored while the next episode loads (until `file-loaded`, at worst 60 s) | [§3 PB-4](#pb-4-stop-is-ignored-while-the-next-item-loads) |
 | P22 | S3 | Plausible | A render-time exception before the cover lifts would leave the window hidden; no concrete trigger traced | [§5 SH-3](#sh-3-renderer-crash-and-render-errors-are-not-recovered) |
 | P23 | S3 | Confirmed | Home settings Save keeps failing with 409 after a sync changes the shelf elements | [§6 UI-6](#ui-6-smaller-ui-findings) |
 | P24 | S3 | Confirmed | Manual-cadence collection detail pages stay on "Updating results" after their cache is wiped | [§4 LS-5](#ls-5-smaller-sync-and-collections-findings) |
@@ -521,6 +523,7 @@ State: `force_close_requested` (only ever goes false → true), the `browsers` l
 2. SignIn renders and the cover lifts. `api.shell.windowReady()` fails, so the page inserts `<img src="mediaflick-desktop://window-ready">` (`LoadingScreen.tsx:45-55`).
 3. Every app response carries `img-src 'self' data:` (`app_scheme.rs:298-302`). `'self'` is `mediaflick-desktop://app`, so the `window-ready` host does not match. The scheme is not registered CSP-bypassing (`runtime.rs:92-95`).
 4. The image is refused, `reveal_main_window` never runs, and the hidden window stays hidden. On Windows, relaunching then only says "already running" (`instance.rs:67-91`).
+5. Even with the CSP allowing it, the shell would reject the beacon: Chromium normalizes its URL to `mediaflick-desktop://window-ready/`, and `window_ready_request_is_trusted` accepted only the form without the trailing slash (`bridge.rs:50-52`). Found by the `startup-failure` drive while fixing this.
 
 `connect-src` and `frame-src` already allow `mediaflick-desktop:`, but `img-src` does not.
 

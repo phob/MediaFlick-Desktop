@@ -33,7 +33,7 @@ fn watched_next_command_reports_the_runtime_as_final_position() {
         .expect("pending playback")
         .launch
         .runtime_ticks = Some(300_000_000);
-    state.mpv_playback_active = true;
+    state.activate_pending();
 
     state.control(&PlayerCommand::MarkWatchedAndPlayNext);
 
@@ -49,7 +49,7 @@ fn external_watched_next_message_uses_the_completion_handoff() {
         .expect("pending playback")
         .launch
         .runtime_ticks = Some(300_000_000);
-    state.mpv_playback_active = true;
+    state.activate_pending();
     state.ipc.active_id = Some(1);
     let event = MpvEvent {
         name: "client-message".to_string(),
@@ -60,14 +60,15 @@ fn external_watched_next_message_uses_the_completion_handoff() {
             "mediaflick-desktop".to_string(),
             "mark-watched-next".to_string(),
         ],
+        playlist_entry_id: None,
         raw: json!({"event": "client-message"}),
     };
 
     state.handle_session_event(2, &event);
-    assert!(state.phase.pending().is_some());
+    assert!(state.mpv_playback_active);
     state.handle_session_event(1, &event);
 
-    assert!(state.phase.pending().is_none());
+    assert!(!state.mpv_playback_active);
     assert_eq!(
         state
             .snapshot
@@ -198,6 +199,7 @@ fn an_end_file_error_ends_a_pending_replacement_load() {
         property: None,
         data: None,
         args: Vec::new(),
+        playlist_entry_id: None,
         raw: json!({ "event": "end-file", "reason": "error" }),
     };
 

@@ -67,6 +67,7 @@ fn mpv_event(name: &str, property: Option<&str>, data: Option<Value>) -> MpvEven
         property: property.map(str::to_string),
         data,
         args: Vec::new(),
+        playlist_entry_id: None,
         raw: json!({ "event": name }),
     }
 }
