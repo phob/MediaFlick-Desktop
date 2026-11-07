@@ -55,6 +55,7 @@ fn auth_login(
     body: Body<'_, LoginBody>,
 ) -> Result<AppStatus, ApiResponse> {
     let body = body.decode()?;
+    finish_pending_deletions(services)?;
     let result = services
         .session
         .login(&body.server, &body.username, &body.password);
@@ -79,6 +80,7 @@ fn quick_connect_start(
     body: Body<'_, ServerBody>,
 ) -> Result<QuickConnectStart, ApiResponse> {
     let body = body.decode()?;
+    finish_pending_deletions(services)?;
     match services.session.quick_connect_start(&body.server) {
         Ok(start) => Ok(start),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
@@ -129,6 +131,17 @@ fn auth_logout(
     }
     services.companion.clear();
     Ok(app_status(services))
+}
+
+/// A deletion left pending by a failure is finished before anyone signs in,
+/// or it would delete the new session's account data at the next launch.
+fn finish_pending_deletions(services: &Arc<Services>) -> Result<(), ApiResponse> {
+    crate::app::services::finish_pending_deletions(services).map_err(|error| {
+        ApiResponse::error(
+            500,
+            format!("could not finish deleting local account data: {error}"),
+        )
+    })
 }
 
 fn remember_server_url(services: &Services) {
