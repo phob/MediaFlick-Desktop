@@ -141,8 +141,8 @@ struct ControllerState {
     replacement_end_file_pending: bool,
     /// The mpv playlist entry of the load being handled, from `loadfile`'s
     /// reply. `end-file` and `file-loaded` events of any other entry belong
-    /// to a file that was replaced. `None` when mpv reports no entry ids
-    /// (before 0.38), or once that load is finished.
+    /// to a file that was replaced. `None` when the reply carried no entry
+    /// id, or once that load is finished.
     tracked_entry: Option<i64>,
     /// The entry of mpv's latest `start-file`; `file-loaded` follows it.
     started_entry: Option<i64>,
@@ -643,7 +643,9 @@ impl ControllerState {
         if matches!(command, PlayerCommand::Stop) && self.phase.pending().is_some() {
             // mpv emits no event for a load stopped before it started, so
             // finish it here; a late `end-file` then finds nothing to end.
+            // The user's Stop overrides any hand-off still waiting for it.
             self.replacement_end_file_pending = false;
+            self.next_playback_handoff_until = None;
             self.finish_active(Some(StopReason::Stop));
         }
     }

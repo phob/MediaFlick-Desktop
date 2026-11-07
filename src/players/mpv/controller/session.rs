@@ -181,8 +181,7 @@ impl ControllerState {
         }
     }
 
-    /// Sends `loadfile` and returns the new playlist entry's id, which mpv
-    /// 0.38+ puts in its reply.
+    /// Sends `loadfile` and returns the new playlist entry's id from its reply.
     fn send_loadfile(&self, launch: &PlaybackRequest) -> Result<Option<i64>, IpcCommandFailure> {
         let reply =
             self.send_mpv_command_with_timeout(loadfile_command(launch), IPC_COMMAND_TIMEOUT)?;
