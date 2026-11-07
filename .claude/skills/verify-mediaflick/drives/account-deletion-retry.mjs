@@ -35,14 +35,15 @@ export default async function accountDeletionRetry(ctx) {
     await ctx.fill({ role: "textbox", name: "Type DELETE to confirm local account deletion" }, "DELETE")
     await ctx.press({ role: "button", name: "Delete local account data" })
     await ctx.press({ role: "button", name: "Delete local account data", within: { role: "alertdialog", name: "Delete local account data?" } })
-    await ctx.until(() => /could not remove account settings/.test(ctx.appLog()) || pendingFor(ctx, userId).length > 0, "the deletion to fail after its journal entry", 20000)
+    // The journal entry is written before the deletion fails; the UI leaves the
+    // shell only once the delete request has answered with its failure.
+    await ctx.find({ role: "link", name: "Back to sign in" }, { timeout: 20000 })
+    ctx.step("the UI shows the app signed out after the failed deletion")
     report.pendingAfterFailure = pendingFor(ctx, userId).length
     ctx.check(report.pendingAfterFailure === 1, "the failed deletion left its journal entry")
     const status = (await ctx.api("/api/status")).body
     report.statusAfterFailure = { authenticated: status.authenticated }
     ctx.check(status.authenticated === false, "/api/status reports the half-deleted account as signed out")
-    await ctx.find({ role: "link", name: "Back to sign in" }, { timeout: 15000 })
-    ctx.step("the UI shows the app signed out after the failed deletion")
     await ctx.screenshot("01-after-failed-delete")
   } finally {
     rmSync(plant, { recursive: true, force: true })

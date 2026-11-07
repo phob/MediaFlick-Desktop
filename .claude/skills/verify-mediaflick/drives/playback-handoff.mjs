@@ -103,10 +103,10 @@ async function replacePendingLoad(ctx, { gate, proxy, a, b, report }) {
   await ctx.press({ role: "button", name: "Play" })
   await ctx.sleep(1500)
   gate.release()
-  await playing(ctx, b.Id, "B playing").catch(() => ctx.step("B never played"))
+  const bPlayed = await playing(ctx, b.Id, "B playing").then(() => true, () => false)
   await ctx.sleep(3000)
-  report.replace = { finalItem: (await ctx.player())?.itemId, aStarts: starts(ctx, a.Id).length, bStarts: starts(ctx, b.Id).length }
-  expect(report.replace.finalItem === b.Id, "B plays after Play during A's pending load")
+  report.replace = { bPlayed, finalItem: (await ctx.player())?.itemId, aStarts: starts(ctx, a.Id).length, bStarts: starts(ctx, b.Id).length }
+  expect(bPlayed && report.replace.finalItem === b.Id, "B plays after Play during A's pending load")
   expect(report.replace.aStarts === 0, "A was never reported as started")
   ctx.displayCapture("02-b-playing")
   await stopFromBar(ctx)
@@ -146,14 +146,21 @@ export default async function playbackHandoff(ctx) {
       const now = (await ctx.api("/api/status")).body
       return now?.bootstrap?.state === "ready" && now.syncProgress?.active === false
     }, "the first sync to finish", 300000)
-    const [movie, a, b] = await pickMovies(ctx, 3)
-    const show = await pickEpisodes(ctx)
-    for (const id of [movie.Id, a.Id, b.Id, ...show.episodes.map((episode) => episode.id)]) ctx.restoreItemAfterRun(id)
-    report.titles = { movie: movie.Name, a: a.Name, b: b.Name, series: show.series, episodes: show.episodes.map((episode) => episode.name) }
-    ctx.step(`titles ${JSON.stringify(report.titles)}`)
-
-    if (builtIn) await builtInPhases(ctx, { gate, proxy, movie, show, report })
-    else await replacePendingLoad(ctx, { gate, proxy, a, b, report })
+    // Each backend picks only the titles its phases play.
+    if (builtIn) {
+      const [movie] = await pickMovies(ctx, 1)
+      const show = await pickEpisodes(ctx)
+      for (const id of [movie.Id, ...show.episodes.map((episode) => episode.id)]) ctx.restoreItemAfterRun(id)
+      report.titles = { movie: movie.Name, series: show.series, episodes: show.episodes.map((episode) => episode.name) }
+      ctx.step(`titles ${JSON.stringify(report.titles)}`)
+      await builtInPhases(ctx, { gate, proxy, movie, show, report })
+    } else {
+      const [a, b] = await pickMovies(ctx, 2)
+      for (const id of [a.Id, b.Id]) ctx.restoreItemAfterRun(id)
+      report.titles = { a: a.Name, b: b.Name }
+      ctx.step(`titles ${JSON.stringify(report.titles)}`)
+      await replacePendingLoad(ctx, { gate, proxy, a, b, report })
+    }
   } finally {
     gate.release()
     report.held = proxy.stats.held

@@ -145,7 +145,7 @@ The steps run in this order (`services.rs:396-450`): Idle → journal entry (`de
 4. The user signs in again as the same account. `commit_credentials` sets `deleting=false` (`session.rs:480`). The journal entry stays.
 5. At the next launch, `resume_pending_deletions` deletes the account again, along with any settings the user saved meanwhile, then signs the user out (`services.rs:316-328`, 435-444).
 
-**Fix:** have `commit_credentials` (or the login handler) finish or drop a pending deletion for the account it signs in, before accepting. On failure, send `SessionExpired` (or have the delete `onError` invalidate `queryKeys.status`) so the UI leaves the dead shell.
+**Fix:** have the login handler finish a pending deletion before it accepts credentials. Dropping the entry instead would leave the requested data on disk with no retry record. On failure, send `SessionExpired` (or have the delete `onError` invalidate `queryKeys.status`) so the UI leaves the dead shell.
 
 ### SE-2. A late server probe repoints the live session
 
@@ -253,7 +253,7 @@ The hold also undoes a user seek backwards during the first second or two (S4, C
 
 The same happens when `playNext` fails, and after the 60 s pending timeout if mpv later finishes loading.
 
-**Fix:** when the controller drops a load or playback with no replacement, send mpv `stop`. Concretely, in `mark_watched_and_play_next` when the handoff expires unused, and in the pending timeout. A simpler fix is for the UI to send `stop` when `playNext` returns `started:false` or fails, but that does not cover the mpv key binding when the UI is not listening.
+**Fix:** when the controller drops a load or playback with no replacement, send mpv `stop`. Concretely, in `mark_watched_and_play_next` right away (waiting for the 60 s handoff to expire would leave mpv playing that long with no PlayerBar), and in the pending timeout. A simpler fix is for the UI to send `stop` when `playNext` returns `started:false` or fails, but that does not cover the mpv key binding when the UI is not listening.
 
 ### PB-2. Sign-out during playback loses the final report
 
