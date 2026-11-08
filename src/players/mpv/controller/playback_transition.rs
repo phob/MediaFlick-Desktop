@@ -153,7 +153,8 @@ impl ControllerState {
             .and_then(seconds_to_ticks)
             .unwrap_or_default();
         self.last_state.duration_ticks = pending.launch.runtime_ticks.filter(|ticks| *ticks > 0);
-        self.last_state.pause = false;
+        // mpv keeps `pause` across files, and its property events keep this
+        // state current; a guess here would hide a pause sent during the load.
         self.last_state.eof_reached = false;
         self.playback_tracks.clear();
         self.playback_diagnostics = Default::default();
@@ -215,7 +216,6 @@ impl ControllerState {
             .and_then(seconds_to_ticks)
             .unwrap_or_default();
         self.last_state.duration_ticks = None;
-        self.last_state.pause = false;
         self.last_state.eof_reached = false;
         self.last_position_log_bucket = None;
         let launch = pending.launch.clone();
