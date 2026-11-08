@@ -8,12 +8,15 @@ import { defineConfig, type Plugin } from "vite"
 const require = createRequire(import.meta.url)
 const foliate = path.dirname(require.resolve("foliate-js/view.js"))
 const libarchive = path.dirname(require.resolve("libarchive.js/dist/libarchive.js"))
+const libarchiveWasm = path.resolve(import.meta.dirname, "../distribution/libarchive-wasm/bundle")
 
 /**
  * What the reader loads at run time, copied verbatim to `dist/reader/`.
  * foliate runs as unbundled ES modules that find their vendor files by
  * `import.meta.url`, and pdf.js and libarchive.js each need a worker script,
- * so none of this can go into `app.js`. `build.rs` embeds exactly what lands
+ * so none of this can go into `app.js`. libarchive.js's worker and wasm come
+ * from `distribution/libarchive-wasm/`, a rebuild without OpenSSL; only its
+ * main-thread API comes from the package. `build.rs` embeds exactly what lands
  * here; source maps and license files stay out (the notices are in
  * THIRD-PARTY-NOTICES.md).
  */
@@ -29,7 +32,8 @@ const READER_FILES: { from: string; to: string; files: readonly string[] }[] = [
       "vendor/pdfjs/text_layer_builder.css", "vendor/pdfjs/annotation_layer_builder.css",
     ],
   },
-  { from: libarchive, to: "libarchive", files: ["libarchive.js", "worker-bundle.js", "libarchive.wasm"] },
+  { from: libarchive, to: "libarchive", files: ["libarchive.js"] },
+  { from: libarchiveWasm, to: "libarchive", files: ["worker-bundle.js", "libarchive.wasm"] },
 ]
 const READER_DIRECTORIES: { from: string; to: string; extensions: readonly string[] }[] = [
   { from: path.join(foliate, "vendor/pdfjs/cmaps"), to: "foliate/vendor/pdfjs/cmaps", extensions: [".bcmap"] },

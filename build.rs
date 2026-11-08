@@ -78,10 +78,12 @@ fn build_ui(repo_root: &Path) -> Result<(), BuildError> {
     ] {
         println!("cargo:rerun-if-changed={}", ui_dir.join(path).display());
     }
-    println!(
-        "cargo:rerun-if-changed={}",
-        repo_root.join("distribution/app-icon.png").display()
-    );
+    for path in [
+        "distribution/app-icon.png",
+        "distribution/libarchive-wasm/bundle",
+    ] {
+        println!("cargo:rerun-if-changed={}", repo_root.join(path).display());
+    }
     println!("cargo:rerun-if-env-changed=MEDIAFLICK_DESKTOP_SKIP_UI_BUILD");
 
     if std::env::var("MEDIAFLICK_DESKTOP_SKIP_UI_BUILD").as_deref() == Ok("1") {
