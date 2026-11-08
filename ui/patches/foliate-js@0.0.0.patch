@@ -64,10 +64,43 @@ index 7980c20297049e38b5e5a1d44a9eee11b1fbd68e..b103701a2048c7b7cd19b562ae5b758b
      }
      get element() {
 diff --git a/pdf.js b/pdf.js
-index c998bf49ea5b62f74cd78ae0e991de373a7902f4..76885bed5ea1ff250262f1185eacf7dce92698e4 100644
+index c998bf49ea5b62f74cd78ae0e991de373a7902f4..fde5ff77502c103c4250ec0fc7872c55b7789224 100644
 --- a/pdf.js
 +++ b/pdf.js
-@@ -26,7 +26,14 @@ const render = async (page, doc, zoom) => {
+@@ -12,7 +12,31 @@ const textLayerBuilderCSS = await fetchText(pdfjsPath('text_layer_builder.css'))
+ // https://raw.githubusercontent.com/mozilla/pdf.js/refs/tags/v5.5.207/web/annotation_layer_builder.css
+ const annotationLayerBuilderCSS = await fetchText(pdfjsPath('annotation_layer_builder.css'))
+ 
+-const render = async (page, doc, zoom) => {
++// MediaFlick: a page's images live until it unloads, since an image's own
++// load never fires once a turn has removed its frame.
++const pageImages = () => {
++    const urls = new Set()
++    let unloaded = false
++    const revoke = url => {
++        URL.revokeObjectURL(url)
++        urls.delete(url)
++    }
++    return {
++        show(img, blob) {
++            const url = URL.createObjectURL(blob)
++            urls.add(url)
++            img.addEventListener('load', () => revoke(url), { once: true })
++            img.src = url
++            if (unloaded) revoke(url)
++        },
++        unload() {
++            unloaded = true
++            for (const url of urls) revoke(url)
++        },
++    }
++}
++
++const render = async (page, doc, zoom, images) => {
+     const scale = zoom * devicePixelRatio
+     doc.documentElement.style.transform = `scale(${1 / devicePixelRatio})`
+     doc.documentElement.style.transformOrigin = 'top left'
+@@ -26,7 +50,13 @@ const render = async (page, doc, zoom) => {
      canvas.width = viewport.width
      const canvasContext = canvas.getContext('2d')
      await page.render({ canvasContext, viewport }).promise
@@ -77,13 +110,12 @@ index c998bf49ea5b62f74cd78ae0e991de373a7902f4..76885bed5ea1ff250262f1185eacf7dc
 +    const blob = await new Promise(resolve => canvas.toBlob(resolve))
 +    const img = doc.createElement('img')
 +    img.style.display = 'block'
-+    img.addEventListener('load', () => URL.revokeObjectURL(img.src), { once: true })
-+    img.src = URL.createObjectURL(blob)
++    images.show(img, blob)
 +    doc.querySelector('#canvas').replaceChildren(img)
  
      const container = doc.querySelector('.textLayer')
      const textLayer = new pdfjsLib.TextLayer({
-@@ -64,6 +71,9 @@ const render = async (page, doc, zoom) => {
+@@ -64,6 +94,9 @@ const render = async (page, doc, zoom) => {
      }
      await new pdfjsLib.AnnotationLayer({ page, viewport, div, linkService })
          .render({ annotations: await page.getAnnotations() })
@@ -93,14 +125,29 @@ index c998bf49ea5b62f74cd78ae0e991de373a7902f4..76885bed5ea1ff250262f1185eacf7dc
  }
  
  const renderPage = async (page, getImageBlob) => {
-@@ -156,6 +166,12 @@ export const makePDF = async file => {
+@@ -102,8 +135,9 @@ const renderPage = async (page, getImageBlob) => {
+         <div class="textLayer"></div>
+         <div class="annotationLayer"></div>
+     `], { type: 'text/html' }))
+-    const onZoom = ({ doc, scale }) => render(page, doc, scale)
+-    return { src, onZoom }
++    const images = pageImages()
++    const onZoom = ({ doc, scale }) => render(page, doc, scale, images)
++    return { src, onZoom, images }
+ }
+ 
+ const makeTOCItem = item => ({
+@@ -156,6 +190,15 @@ export const makePDF = async file => {
              cache.set(i, url)
              return url
          },
 +        // MediaFlick: the renderer unloads the pages it leaves.
 +        unload: () => {
 +            const cached = cache.get(i)
-+            if (cached) URL.revokeObjectURL(cached.src)
++            if (cached) {
++                URL.revokeObjectURL(cached.src)
++                cached.images.unload()
++            }
 +            cache.delete(i)
 +        },
          size: 1000,
