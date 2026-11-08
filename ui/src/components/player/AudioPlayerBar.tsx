@@ -52,7 +52,7 @@ export function AudioPlayerBar({ player, audio }: { player: PlayerState; audio: 
   return (
     <footer
       aria-label="Now playing"
-      className="player-bar relative z-20 flex shrink-0 items-center gap-2 border-t border-white/8 bg-card/92 px-3 py-2.5 shadow-[0_-16px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl sm:gap-3 sm:px-4"
+      className="player-bar relative z-20 flex shrink-0 items-center gap-2 border-t border-edge bg-card/92 px-3 py-2.5 shadow-[0_-16px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl sm:gap-3 sm:px-4"
     >
       <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded bg-muted">
         {artwork ? (

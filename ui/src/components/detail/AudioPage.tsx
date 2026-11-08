@@ -181,7 +181,7 @@ function TrackRow({
       disabled={disabled}
       onClick={onPlay}
       className={cn(
-        "group flex w-full items-center gap-4 rounded-md px-3 py-2.5 text-left transition hover:bg-white/6 focus-visible:bg-white/6 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60",
+        "group flex w-full items-center gap-4 rounded-md px-3 py-2.5 text-left transition hover:bg-hairline focus-visible:bg-hairline focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60",
         current && "bg-primary/10 text-primary",
       )}
     >
