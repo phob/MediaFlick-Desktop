@@ -86,7 +86,7 @@ index 7980c20297049e38b5e5a1d44a9eee11b1fbd68e..b103701a2048c7b7cd19b562ae5b758b
      }
      get element() {
 diff --git a/pdf.js b/pdf.js
-index c998bf49ea5b62f74cd78ae0e991de373a7902f4..314e4b8aeddb66511c0034cdf11d84b17e85c15b 100644
+index c998bf49ea5b62f74cd78ae0e991de373a7902f4..d2c5abdffc08ea7f2a5405d311e73cef947984b8 100644
 --- a/pdf.js
 +++ b/pdf.js
 @@ -12,7 +12,31 @@ const textLayerBuilderCSS = await fetchText(pdfjsPath('text_layer_builder.css'))
@@ -159,20 +159,29 @@ index c998bf49ea5b62f74cd78ae0e991de373a7902f4..314e4b8aeddb66511c0034cdf11d84b1
  }
  
  const makeTOCItem = item => ({
-@@ -113,18 +147,24 @@ const makeTOCItem = item => ({
+@@ -113,18 +147,33 @@ const makeTOCItem = item => ({
  })
  
  export const makePDF = async file => {
 +    // MediaFlick: pdf.js cannot be told that a range read failed and would
 +    // wait for its bytes forever, worker and all; closing the reader aborts
 +    // its reads. The first read that fails ends the worker and the load.
-+    const failed = Promise.withResolvers()
++    const failed = new AbortController()
++    // MediaFlick: `promise`, failing as well once a read fails. Its listener
++    // goes when it settles; racing one shared pending promise left a reaction
++    // on it for every page loaded, kept until the book closed.
++    const unlessFailed = promise => new Promise((resolve, reject) => {
++        const fail = () => reject(failed.signal.reason)
++        if (failed.signal.aborted) fail()
++        else failed.signal.addEventListener('abort', fail, { once: true })
++        promise.then(resolve, reject).then(() => failed.signal.removeEventListener('abort', fail))
++    })
      const transport = new pdfjsLib.PDFDataRangeTransport(file.size, [])
      transport.requestDataRange = (begin, end) => {
          file.slice(begin, end).arrayBuffer().then(chunk => {
              transport.onDataRange(begin, chunk)
 -        })
-+        }, failed.reject)
++        }, error => failed.abort(error))
      }
 -    const pdf = await pdfjsLib.getDocument({
 +    const loading = pdfjsLib.getDocument({
@@ -182,19 +191,19 @@ index c998bf49ea5b62f74cd78ae0e991de373a7902f4..314e4b8aeddb66511c0034cdf11d84b1
          isEvalSupported: false,
 -    }).promise
 +    })
-+    failed.promise.catch(() => loading.destroy())
-+    const pdf = await Promise.race([loading.promise, failed.promise])
++    failed.signal.addEventListener('abort', () => loading.destroy(), { once: true })
++    const pdf = await unlessFailed(loading.promise)
  
      const book = { rendition: { layout: 'pre-paginated' } }
  
-@@ -152,10 +192,21 @@ export const makePDF = async file => {
+@@ -152,10 +201,21 @@ export const makePDF = async file => {
          load: async () => {
              const cached = cache.get(i)
              if (cached) return cached
 -            const url = await renderPage(await pdf.getPage(i + 1))
 +            // MediaFlick: the renderer shows one page at a time, so a page
 +            // left waiting on a failed read would hold up every turn after it.
-+            const url = await Promise.race([pdf.getPage(i + 1).then(page => renderPage(page)), failed.promise])
++            const url = await unlessFailed(pdf.getPage(i + 1).then(page => renderPage(page)))
              cache.set(i, url)
              return url
          },
