@@ -1,15 +1,34 @@
 // Memory while reading fixed pages (`--account`, Linux): turns 250 pages
 // of the 85-page PDF (bouncing between its ends, so pages are read again)
-// and 100 of the 271-page CBZ, and every 10 turns records the renderer processes' resident memory (from
-// /proc), the JS heap and the document and frame counts. A curve that keeps rising with pages read,
+// and 540 of the 271-page CBZ (to its end and back), and every 10 turns records the renderer processes' resident memory (from
+// /proc), the JS heap, the document and frame counts, and the page's live blob URLs and workers. A curve that keeps rising with pages read,
 // rather than levelling off, means pages are kept after they leave the
-// screen. Writes books-residency.json.
+// screen. Then it opens and closes each book three more times: what the reader
+// leaves alive after it closed must not grow with opens. Writes books-residency.json.
 import { readdirSync, readFileSync } from "node:fs"
 
 const BOOKS = [
   { key: "pdf", name: "The Constitution of the United States - US Congress", pages: 85, turns: 250 },
-  { key: "cbz", name: "Shen of the Sea - Arthur Bowie Chrisman", pages: 271 },
+  { key: "cbz", name: "Shen of the Sea - Arthur Bowie Chrisman", pages: 271, turns: 540 },
 ]
+const REOPENS = 3
+/** Counts the page's live blob URLs and workers: the reader's engines run in the page itself. */
+const INSTRUMENT = `(() => {
+  if (window.__residency) return
+  const blobs = new Set()
+  const workers = new Set()
+  const create = URL.createObjectURL.bind(URL)
+  const revoke = URL.revokeObjectURL.bind(URL)
+  URL.createObjectURL = (object) => { const url = create(object); blobs.add(url); return url }
+  URL.revokeObjectURL = (url) => { blobs.delete(url); revoke(url) }
+  const NativeWorker = window.Worker
+  window.Worker = class extends NativeWorker {
+    constructor(...args) { super(...args); workers.add(this) }
+    terminate() { workers.delete(this); super.terminate() }
+  }
+  window.__residency = { blobs, workers }
+})()`
+const LIVE = `({ blobUrls: window.__residency.blobs.size, workers: window.__residency.workers.size })`
 const PAGES = 100
 const SAMPLE_EVERY = 10
 
@@ -76,12 +95,14 @@ async function sample(ctx, profile, turns) {
     documents: metric("Documents"),
     frames: metric("Frames"),
     nodes: metric("Nodes"),
+    ...(await ctx.app.evaluate(LIVE)),
   }
 }
 
 export default async function (ctx) {
   await ctx.signIn({})
   await ctx.app.send("Performance.enable")
+  await ctx.app.evaluate(INSTRUMENT)
   const profile = ctx.configFile("").split("/config/")[0]
   const answer = await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&Recursive=true&IncludeItemTypes=Book`)
   const report = { profile: profile.split("/").pop(), books: {} }
@@ -96,8 +117,18 @@ async function traverse(ctx, profile, answer, book, report) {
   const id = answer.Items.find((item) => item.Name === book.name)?.Id
   ctx.check(Boolean(id), `the Books library has "${book.name}"`)
   ctx.restoreItemAfterRun(id)
-  await ctx.app.evaluate(`history.pushState(null, "", "/read/${id}?from=start"); dispatchEvent(new PopStateEvent("popstate"))`)
-  await ctx.until(`document.querySelector('[data-reader-book="${id}"]')?.dataset.readerPhase === "ready"`, `${book.key}: the reader opened`, 120000)
+  const open = async (label) => {
+    await ctx.app.evaluate(`history.pushState(null, "", "/read/${id}?from=start"); dispatchEvent(new PopStateEvent("popstate"))`)
+    await ctx.until(`document.querySelector('[data-reader-book="${id}"]')?.dataset.readerPhase === "ready"`, `${book.key}: the reader opened${label}`, 120000)
+  }
+  const close = async (label) => {
+    await ctx.key("Escape", { keyCode: 27 })
+    await ctx.until(`!document.querySelector('[data-reader-book="${id}"]')`, `${book.key}: the reader closed${label}`, 20000)
+    await ctx.app.send("HeapProfiler.collectGarbage")
+    return ctx.app.evaluate(LIVE)
+  }
+  const before = await ctx.app.evaluate(LIVE)
+  await open("")
   const samples = (report.books[book.key] = [await sample(ctx, profile, 0)])
   let page = 0
   let forward = true
@@ -116,6 +147,12 @@ async function traverse(ctx, profile, answer, book, report) {
   const settle = Date.now() + 3000
   await ctx.until(async () => Date.now() > settle, `${book.key}: 3 s after memory pressure`, 5000, { quiet: true })
   report.afterPressure = { ...report.afterPressure, [book.key]: await sample(ctx, profile, "after pressure") }
-  ctx.step(`${book.key}: ${samples.map((entry) => `${entry.turns}:${Math.round(entry.rssKiB / 1024)}MiB`).join(" ")}, after pressure ${Math.round(report.afterPressure[book.key].rssKiB / 1024)}MiB`)
-  await ctx.key("Escape", { keyCode: 27 })
+  ctx.step(`${book.key}: ${samples.map((entry) => `${entry.turns}:${Math.round(entry.rssKiB / 1024)}MiB/${entry.blobUrls}blobs`).join(" ")}, after pressure ${Math.round(report.afterPressure[book.key].rssKiB / 1024)}MiB`)
+  const closes = [await close("")]
+  for (let round = 1; round <= REOPENS; round += 1) {
+    await open(` again (${round})`)
+    closes.push(await close(` again (${round})`))
+  }
+  report.afterClose = { ...report.afterClose, [book.key]: { before, closes } }
+  ctx.step(`${book.key}: live before opening ${JSON.stringify(before)}, after each close ${JSON.stringify(closes)}`)
 }
