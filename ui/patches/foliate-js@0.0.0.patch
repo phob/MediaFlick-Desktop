@@ -1,17 +1,19 @@
 diff --git a/fixed-layout.js b/fixed-layout.js
-index c582abad1496874a9265cad1ab69e12a475c684d..2b62c7df25c2b971fa0aec13343da68f73299802 100644
+index c582abad1496874a9265cad1ab69e12a475c684d..b21a2f49186902c2939d9a069435a13932bc22ae 100644
 --- a/fixed-layout.js
 +++ b/fixed-layout.js
-@@ -43,6 +43,8 @@ export class FixedLayout extends HTMLElement {
+@@ -43,6 +43,10 @@ export class FixedLayout extends HTMLElement {
      #center
      #side
      #zoom
 +    // MediaFlick: the sections this renderer loaded and has not unloaded.
 +    #loaded = new Set()
++    // MediaFlick: the spread being shown; the next one waits for it.
++    #showing = Promise.resolve()
      constructor() {
          super()
  
-@@ -81,9 +83,8 @@ export class FixedLayout extends HTMLElement {
+@@ -81,9 +85,8 @@ export class FixedLayout extends HTMLElement {
              display: 'none',
              overflow: 'hidden',
          })
@@ -23,10 +25,29 @@ index c582abad1496874a9265cad1ab69e12a475c684d..2b62c7df25c2b971fa0aec13343da68f
          iframe.setAttribute('scrolling', 'no')
          iframe.setAttribute('part', 'filter')
          this.#root.append(element)
-@@ -283,6 +284,14 @@ export class FixedLayout extends HTMLElement {
+@@ -269,6 +272,17 @@ export class FixedLayout extends HTMLElement {
+             return
+         }
+         this.#index = index
++        // MediaFlick: one spread at a time. A turn that started while another
++        // page loaded replaced that page's frame, so the page never finished
++        // and was never unloaded, and a slower first page could cover the
++        // second. A turn now waits for the one before it and is skipped once
++        // a newer turn moved the target on, so a held key lands where it stops.
++        const shown = this.#showing.then(() => this.#showSpreadAt(index, side, reason))
++        this.#showing = shown.catch(() => {})
++        return shown
++    }
++    async #showSpreadAt(index, side, reason) {
++        if (index !== this.#index) return
+         const spread = this.#spreads[index]
+         if (spread.center) {
+             const index = this.book.sections.indexOf(spread.center)
+@@ -283,7 +297,15 @@ export class FixedLayout extends HTMLElement {
              const right = { index: indexR, src: srcR }
              await this.#showSpread({ left, right, side })
          }
+-        this.#reportLocation(reason)
 +        // MediaFlick: a spread left behind gives its pages back, as the
 +        // paginator does; foliate kept every page read until the book closed.
 +        const shown = [spread.left, spread.right, spread.center].filter(Boolean)
@@ -35,10 +56,11 @@ index c582abad1496874a9265cad1ab69e12a475c684d..2b62c7df25c2b971fa0aec13343da68f
 +            this.#loaded.delete(section)
 +        }
 +        for (const section of shown) this.#loaded.add(section)
-         this.#reportLocation(reason)
++        if (index === this.#index) this.#reportLocation(reason)
      }
      async select(target) {
-@@ -313,6 +322,8 @@ export class FixedLayout extends HTMLElement {
+         await this.goTo(target)
+@@ -313,6 +335,8 @@ export class FixedLayout extends HTMLElement {
      }
      destroy() {
          this.#observer.unobserve(this)
@@ -64,7 +86,7 @@ index 7980c20297049e38b5e5a1d44a9eee11b1fbd68e..b103701a2048c7b7cd19b562ae5b758b
      }
      get element() {
 diff --git a/pdf.js b/pdf.js
-index c998bf49ea5b62f74cd78ae0e991de373a7902f4..382d9c1c3399b4bfd6d4931b26f1979404f6f70c 100644
+index c998bf49ea5b62f74cd78ae0e991de373a7902f4..314e4b8aeddb66511c0034cdf11d84b17e85c15b 100644
 --- a/pdf.js
 +++ b/pdf.js
 @@ -12,7 +12,31 @@ const textLayerBuilderCSS = await fetchText(pdfjsPath('text_layer_builder.css'))
@@ -165,7 +187,14 @@ index c998bf49ea5b62f74cd78ae0e991de373a7902f4..382d9c1c3399b4bfd6d4931b26f19794
  
      const book = { rendition: { layout: 'pre-paginated' } }
  
-@@ -156,6 +196,15 @@ export const makePDF = async file => {
+@@ -152,10 +192,21 @@ export const makePDF = async file => {
+         load: async () => {
+             const cached = cache.get(i)
+             if (cached) return cached
+-            const url = await renderPage(await pdf.getPage(i + 1))
++            // MediaFlick: the renderer shows one page at a time, so a page
++            // left waiting on a failed read would hold up every turn after it.
++            const url = await Promise.race([pdf.getPage(i + 1).then(page => renderPage(page)), failed.promise])
              cache.set(i, url)
              return url
          },
