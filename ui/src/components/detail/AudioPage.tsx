@@ -1,28 +1,21 @@
 import { AudioLines, Play, RotateCcw, Shuffle } from "lucide-react"
-import { DetailHeroLayout, type HeroArtworkAspect } from "@/components/detail/DetailHeroLayout"
+import { DetailHeroLayout } from "@/components/detail/DetailHeroLayout"
+import { detailPoster } from "@/components/detail/detail-poster"
 import { DetailBackdrop } from "@/components/detail/DetailPrimitives"
 import { formatClock } from "@/components/player/format"
 import { Button } from "@/components/ui/button"
 import { Pressable } from "@/components/ui/pressable"
 import {
   backdropUrl,
-  DETAIL_POSTER_WIDTH,
-  imageUrl,
   TICKS_PER_MS,
   type AudioDisplay,
   type AudioItemDetail,
 } from "@/lib/api"
-import { artworkShape, type ArtworkShape } from "@/lib/artwork"
 import { formatRuntime, formatYearOnly } from "@/lib/format"
 import type { DetailNavigationState } from "@/lib/navigation"
 import { usePlay, usePlayerState, usePlayQueue } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
-const HERO_FRAME: Record<ArtworkShape, HeroArtworkAspect> = {
-  portrait: "poster",
-  square: "square",
-  landscape: "still",
-}
 
 /** An album, audiobook or track: Play and Shuffle, or Continue and From start, over its tracks by disc. */
 export function AudioPage({
@@ -57,14 +50,7 @@ export function AudioPage({
       <DetailHeroLayout
         compact
         back={{ to: navigationState.from, label: navigationState.label }}
-        poster={item.primaryImageTag
-          ? {
-              src: imageUrl(item, "Primary", DETAIL_POSTER_WIDTH),
-              aspect: HERO_FRAME[artworkShape(item.primaryAspect)],
-              fit: "contain",
-              progress: resumable && item.runtimeTicks ? item.positionTicks / item.runtimeTicks : undefined,
-            }
-          : null}
+        poster={detailPoster(item, resumable && item.runtimeTicks ? item.positionTicks / item.runtimeTicks : undefined)}
         title={item.name}
         subtitle={albumArtists.length > 0
           ? <p className="text-lg text-muted-foreground">{albumArtists.join(", ")}</p>

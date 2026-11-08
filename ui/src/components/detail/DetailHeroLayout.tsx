@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 
 export type HeroArtworkAspect = "poster" | "square" | "still"
 
-interface HeroArtwork {
+export interface HeroArtwork {
   src: string
   aspect?: HeroArtworkAspect
   fit?: "cover" | "contain"

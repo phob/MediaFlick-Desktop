@@ -1,28 +1,21 @@
 import { CastRow, CrewRow } from "@/components/detail/CastRow"
 import { DetailFacts } from "@/components/detail/DetailFacts"
-import { DetailHeroLayout, type HeroArtworkAspect } from "@/components/detail/DetailHeroLayout"
+import { DetailHeroLayout } from "@/components/detail/DetailHeroLayout"
+import { detailPoster } from "@/components/detail/detail-poster"
 import { DetailBackdrop } from "@/components/detail/DetailPrimitives"
 import { ItemGrid } from "@/components/ItemGrid"
 import type { ReactNode } from "react"
 import {
   backdropUrl,
-  DETAIL_POSTER_WIDTH,
-  imageUrl,
   logoUrl,
   type BookItemDetail,
   type GenericItemDetail,
   type ItemAbout,
 } from "@/lib/api"
-import { artworkShape, type ArtworkShape } from "@/lib/artwork"
 import { formatRuntime, formatYearOnly } from "@/lib/format"
 import type { DetailNavigationState } from "@/lib/navigation"
 import { useRouteScroller } from "@/lib/route-scroll"
 
-const HERO_FRAME: Record<ArtworkShape, HeroArtworkAspect> = {
-  portrait: "poster",
-  square: "square",
-  landscape: "still",
-}
 
 /** A detail page without a title's playback: folders, music, books. `facts` and `children` add to the hero. */
 export function GenericItemPage({
@@ -53,13 +46,7 @@ export function GenericItemPage({
       <DetailHeroLayout
         compact
         back={{ to: navigationState.from, label: navigationState.label }}
-        poster={item.primaryImageTag
-          ? {
-              src: imageUrl(item, "Primary", DETAIL_POSTER_WIDTH),
-              aspect: HERO_FRAME[artworkShape(item.primaryAspect)],
-              fit: "contain",
-            }
-          : null}
+        poster={detailPoster(item)}
         logo={logoUrl(item)}
         title={item.name}
         facts={facts}

@@ -31,7 +31,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Slider } from "@/components/ui/slider"
 import {
   STREAMING_QUALITIES,
   TICKS_PER_MS,
@@ -64,7 +63,7 @@ import {
 import { SUBTITLES_OFF, TrackMenu, TrackSubmenu, type TrackChoices } from "@/components/player/TrackMenu"
 import { TuningMenu, type PlaybackTuning } from "@/components/player/TuningMenu"
 import { AudioPlayerBar } from "@/components/player/AudioPlayerBar"
-import { MuteButton } from "@/components/player/MuteButton"
+import { VolumeControl } from "@/components/player/VolumeControl"
 import { Timeline } from "@/components/player/Timeline"
 import { currentChapter, formatClock, trackLabel } from "@/components/player/format"
 
@@ -467,20 +466,13 @@ function ActivePlayerBar({
       </Button>
 
       <div className="hidden w-32 shrink-0 items-center gap-2 xl:flex">
-        <MuteButton
+        <VolumeControl
           muted={muted}
           volume={volume}
-          title={withShortcuts(muted ? "Unmute" : "Mute", [], [comfort.muteKey])}
-          onToggle={toggleMute}
-        />
-        <Slider
-          value={[muted ? 0 : volume]}
-          max={100}
-          step={1}
-          aria-label={`Volume ${Math.round(volume)}%`}
-          onValueChange={([value]) => setVolumeDraft(value)}
-          onValueCommit={([value]) => setVolume(value)}
-          className="h-8 flex-1 cursor-pointer"
+          muteTitle={withShortcuts(muted ? "Unmute" : "Mute", [], [comfort.muteKey])}
+          onToggleMute={toggleMute}
+          onVolumeDraft={setVolumeDraft}
+          onVolumeCommit={setVolume}
         />
       </div>
 
@@ -621,14 +613,12 @@ function ActivePlayerBar({
             <DropdownMenuSubTrigger>Volume</DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="w-56 p-3">
               <div className="flex items-center gap-3">
-                <MuteButton muted={muted} volume={volume} onToggle={toggleMute} className="shrink-0" />
-                <Slider
-                  value={[muted ? 0 : volume]}
-                  max={100}
-                  step={1}
-                  aria-label={`Volume ${Math.round(volume)}%`}
-                  onValueChange={([value]) => setVolumeDraft(value)}
-                  onValueCommit={([value]) => setVolume(value)}
+                <VolumeControl
+                  muted={muted}
+                  volume={volume}
+                  onToggleMute={toggleMute}
+                  onVolumeDraft={setVolumeDraft}
+                  onVolumeCommit={setVolume}
                 />
                 <span className="w-8 text-right text-xs tabular-nums">{Math.round(volume)}</span>
               </div>

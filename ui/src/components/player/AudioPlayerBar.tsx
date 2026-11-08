@@ -1,11 +1,10 @@
 import { LoaderCircle, Music, Pause, Play, SkipBack, SkipForward, Square } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router-dom"
-import { MuteButton } from "@/components/player/MuteButton"
+import { VolumeControl } from "@/components/player/VolumeControl"
 import { Timeline } from "@/components/player/Timeline"
 import { formatClock } from "@/components/player/format"
 import { Button } from "@/components/ui/button"
-import { Slider } from "@/components/ui/slider"
 import { imageUrl, TICKS_PER_MS, type AudioNowPlaying, type PlayerState } from "@/lib/api"
 import { usePatchPlayerState, usePlayerCommand } from "@/lib/queries"
 
@@ -104,15 +103,12 @@ export function AudioPlayerBar({ player, audio }: { player: PlayerState; audio: 
       </span>
 
       <div className="hidden w-32 shrink-0 items-center gap-2 lg:flex">
-        <MuteButton muted={muted} volume={volume} onToggle={toggleMute} />
-        <Slider
-          value={[muted ? 0 : volume]}
-          max={100}
-          step={1}
-          aria-label={`Volume ${Math.round(volume)}%`}
-          onValueChange={([value]) => setVolumeDraft(value)}
-          onValueCommit={([value]) => setVolume(value)}
-          className="h-8 flex-1 cursor-pointer"
+        <VolumeControl
+          muted={muted}
+          volume={volume}
+          onToggleMute={toggleMute}
+          onVolumeDraft={setVolumeDraft}
+          onVolumeCommit={setVolume}
         />
       </div>
     </footer>
