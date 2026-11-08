@@ -5,15 +5,18 @@
 
 pub mod coordinator;
 pub mod model;
+mod queue;
 pub mod segments;
 
-pub use coordinator::PlaybackCoordinator;
+pub use coordinator::{AudioPlan, PlaybackCoordinator};
 pub use model::{
-    HttpHeader, PlaybackDiagnostics, PlaybackEvent, PlaybackRequest, PlayerChapter, PlayerCommand,
-    PlayerSnapshot, PlayerTrack, PlayerTrackKind, ReportingState, StopReason,
+    ArtworkRef, AudioDisplay, AudioKind, BackendEvent, HttpHeader, NowPlaying, PlaybackContent,
+    PlaybackDiagnostics, PlaybackEvent, PlaybackRequest, PlayerChapter, PlayerCommand,
+    PlayerSnapshot, PlayerTrack, PlayerTrackKind, QueueReport, ReportingState, StopReason,
     TICKS_PER_MILLISECOND, TICKS_PER_SECOND, TOKEN_QUERY_KEYS, ToneMapping, VideoAspect, VideoFit,
     non_empty, query_auth_token, seconds_to_ticks, ticks_to_milliseconds,
 };
+pub use queue::{AudioTrack, MAX_QUEUE_LENGTH};
 
 use crate::preferences::{FullscreenBehavior, PlayerPreferences};
 use std::time::Duration;
@@ -80,6 +83,34 @@ impl NativeWindowHandle {
     pub fn content(self) -> usize {
         self.content
     }
+}
+
+/// Where an audio queue entry starts playing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioStart {
+    /// Music from 0; an audiobook from its saved position, less the resume
+    /// rewind.
+    Default,
+    Beginning,
+    /// A remote client's position, honoured for audiobooks only.
+    At(i64),
+}
+
+pub struct PreparedAudio {
+    pub player_path: String,
+    pub request: PlaybackRequest,
+}
+
+/// The media server's side of an audio queue, bound to the account that
+/// built it. Implemented in `jellyfin::play`.
+pub trait AudioSource: Send + Sync {
+    /// Negotiates one entry. Blocking; the coordinator calls it on its
+    /// preparation worker, holding no lock. The error is shown to the user.
+    fn prepare(&self, track: &AudioTrack, start: AudioStart) -> Result<PreparedAudio, String>;
+    /// Runs `dispatch` while the account that built the queue is still the
+    /// signed-in one, and says whether it ran.
+    fn dispatch_if_current(&self, dispatch: &mut dyn FnMut()) -> bool;
+    fn is_current(&self) -> bool;
 }
 
 /// Port implemented by each player adapter.

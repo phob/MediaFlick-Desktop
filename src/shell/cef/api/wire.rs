@@ -52,8 +52,8 @@ use super::media::{
     SimilarItems, TechnicalBatch, TrailerResponse,
 };
 use super::playback::{
-    ItemBody, PlayBody, PlayStarted, PlaybackNeighbors, PlayerCommandAccepted, PlayerCommandBody,
-    SyncRequested,
+    ItemBody, PlayBody, PlayQueueBody, PlayStarted, PlaybackNeighbors, PlayerCommandAccepted,
+    PlayerCommandBody, SyncRequested,
 };
 use super::ratings::RatingsBatchBody;
 use super::seerr::{SeerrRequestBody, SeerrRequestCancelled};
@@ -148,6 +148,7 @@ wire_types! {
     OfficialRatings,
     PersonResolution,
     PlayBody,
+    PlayQueueBody,
     PlayStarted,
     PlaybackCacheRefreshed,
     PlaybackNeighbors,

@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use serde_json::json;
 
-use crate::playback::{PlaybackEvent, PlaybackRequest, PlayerCommand, StopReason};
+use crate::playback::{BackendEvent, PlaybackRequest, PlayerCommand, StopReason};
 
 use super::super::StartupSeek;
 use super::super::test_support::{controller_with_pending_load, snapshot_active};
@@ -15,10 +15,10 @@ use super::super::{
 use crate::players::mpv::ipc::MpvEvent;
 use crate::players::mpv::ipc::test_server::{COMMAND_CONNECTION, FakeMpv};
 
-fn next_terminal_event(event_rx: &mpsc::Receiver<PlaybackEvent>) -> PlaybackEvent {
+fn next_terminal_event(event_rx: &mpsc::Receiver<BackendEvent>) -> BackendEvent {
     loop {
         match event_rx.try_recv().expect("playback event") {
-            PlaybackEvent::StateChanged(_) => {}
+            BackendEvent::StateChanged(_) | BackendEvent::Started { .. } => {}
             event => return event,
         }
     }
@@ -161,7 +161,7 @@ fn finish_without_reporter_emits_stopped_event() {
     let event = next_terminal_event(&event_rx);
     assert!(matches!(
         event,
-        PlaybackEvent::Stopped(snapshot)
+        BackendEvent::Stopped(snapshot)
             if !snapshot.active
                 && snapshot.stop_reason == Some(StopReason::Quit)
                 && snapshot.playback_id == Some(1)
@@ -208,7 +208,7 @@ fn an_end_file_error_ends_a_pending_replacement_load() {
     assert!(state.phase.pending().is_none());
     assert!(matches!(
         next_terminal_event(&event_rx),
-        PlaybackEvent::Stopped(snapshot)
+        BackendEvent::Stopped(snapshot)
             if !snapshot.active && snapshot.stop_reason == Some(StopReason::Error)
     ));
 }

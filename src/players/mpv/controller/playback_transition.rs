@@ -10,8 +10,8 @@ use crate::app::logger;
 use crate::playback::{PlayerChapter, StopReason, seconds_to_ticks, ticks_to_milliseconds};
 
 use super::{
-    ActivePlayback, ControllerState, NEXT_PLAYBACK_HANDOFF_TIMEOUT, PlaybackEvent,
-    PlaybackIdentity, PlaybackPhase, PlayerSnapshot,
+    ActivePlayback, BackendEvent, ControllerState, NEXT_PLAYBACK_HANDOFF_TIMEOUT, PlaybackIdentity,
+    PlaybackPhase, PlayerSnapshot,
 };
 
 impl ControllerState {
@@ -41,7 +41,7 @@ impl ControllerState {
     pub(super) fn publish_snapshot(&self) -> PlayerSnapshot {
         let snapshot = self.publish_snapshot_with_stop_reason(None);
         if let Some(tx) = &self.event_tx {
-            let _ = tx.send(PlaybackEvent::StateChanged(snapshot.clone()));
+            let _ = tx.send(BackendEvent::StateChanged(snapshot.clone()));
         }
         snapshot
     }
@@ -59,6 +59,7 @@ impl ControllerState {
         identity: Option<&PlaybackIdentity>,
     ) -> PlayerSnapshot {
         let snapshot = PlayerSnapshot {
+            now_playing: None,
             active: self.mpv_playback_active || !self.phase.is_idle(),
             playback_id: identity.map(|identity| identity.playback_id),
             item_id: identity.and_then(|identity| identity.item_id.clone()),
@@ -112,7 +113,7 @@ impl ControllerState {
             .collect()
     }
 
-    fn current_identity(&self) -> Option<&PlaybackIdentity> {
+    pub(super) fn current_identity(&self) -> Option<&PlaybackIdentity> {
         self.phase
             .pending()
             .map(|pending| &pending.identity)
@@ -131,7 +132,7 @@ impl ControllerState {
             "notifying WebUI that mpv playback stopped"
         );
         if let Some(tx) = &self.event_tx {
-            let _ = tx.send(PlaybackEvent::Stopped(snapshot));
+            let _ = tx.send(BackendEvent::Stopped(snapshot));
         }
     }
 
@@ -219,6 +220,7 @@ impl ControllerState {
         self.last_position_log_bucket = None;
         let launch = pending.launch.clone();
         let identity = pending.identity.clone();
+        let playback_id = identity.playback_id;
         self.playback_identity = Some(identity.clone());
         self.playback_runtime_ticks = launch.runtime_ticks.filter(|ticks| *ticks > 0);
         if let Some(reporter) = pending.reporter {
@@ -239,8 +241,13 @@ impl ControllerState {
         self.mpv_playback_active = true;
         self.next_playback_handoff_until = None;
         self.replacement_end_file_pending = false;
-        self.schedule_mpv_raise("file-loaded");
-        self.apply_library_default_fullscreen();
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(BackendEvent::Started { playback_id });
+        }
+        if !launch.content.is_audio() {
+            self.schedule_mpv_raise("file-loaded");
+            self.apply_library_default_fullscreen();
+        }
         self.stage_external_subtitle(&launch);
         self.kick_start_playback(&launch);
         if self.startup_seek.is_none() {

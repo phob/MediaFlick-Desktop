@@ -8,11 +8,10 @@ use serde_json::Value;
 
 use crate::app::logger;
 use crate::jellyfin::playback_reporter::PlaybackReporter;
-use crate::playback::model::allocate_playback_id;
 use crate::playback::segments::{SegmentSkipState, SkipSegment};
 use crate::playback::{
-    NativeWindowHandle, PlaybackDiagnostics, PlaybackEvent, PlaybackRequest, PlayerCommand,
-    PlayerSnapshot, PlayerTrack, ReportingState, StopReason,
+    BackendEvent, NativeWindowHandle, PlaybackContent, PlaybackDiagnostics, PlaybackRequest,
+    PlayerCommand, PlayerSnapshot, PlayerTrack, ReportingState, StopReason,
 };
 use crate::players::mpv::ipc::{IpcCommandFailure, IpcWorker, MpvEvent};
 use crate::players::mpv::runtime::{LibmpvProfile, MpvRuntime, MpvRuntimeKind};
@@ -148,7 +147,7 @@ struct ControllerState {
     started_entry: Option<i64>,
     pending_raise_pulse_reset_at: Option<Instant>,
     last_session_poll: Instant,
-    event_tx: Option<Sender<PlaybackEvent>>,
+    event_tx: Option<Sender<BackendEvent>>,
     shutdown_requested: Arc<AtomicBool>,
 }
 
@@ -197,6 +196,7 @@ struct ConfiguredMpv {
 #[derive(Debug, Clone)]
 struct PlaybackIdentity {
     playback_id: i64,
+    content: PlaybackContent,
     item_id: Option<String>,
     media_source_id: Option<String>,
     play_session_id: Option<String>,
@@ -207,6 +207,7 @@ impl PlaybackIdentity {
     fn from_launch(playback_id: i64, launch: &PlaybackRequest) -> Self {
         Self {
             playback_id,
+            content: launch.content,
             item_id: launch.item_id.clone(),
             media_source_id: launch.media_source_id.clone(),
             play_session_id: launch.play_session_id.clone(),
@@ -312,7 +313,7 @@ struct StartupSeek {
 }
 
 impl MpvController {
-    pub fn new(event_tx: Option<Sender<PlaybackEvent>>, preferences: PlayerPreferences) -> Self {
+    pub fn new(event_tx: Option<Sender<BackendEvent>>, preferences: PlayerPreferences) -> Self {
         Self::with_runtime(
             MpvRuntimeKind::External,
             LibmpvProfile::Standard,
@@ -322,7 +323,7 @@ impl MpvController {
     }
 
     pub fn new_libmpv(
-        event_tx: Option<Sender<PlaybackEvent>>,
+        event_tx: Option<Sender<BackendEvent>>,
         preferences: PlayerPreferences,
     ) -> Self {
         Self::with_runtime(
@@ -336,7 +337,7 @@ impl MpvController {
     fn with_runtime(
         runtime_kind: MpvRuntimeKind,
         libmpv_profile: LibmpvProfile,
-        event_tx: Option<Sender<PlaybackEvent>>,
+        event_tx: Option<Sender<BackendEvent>>,
         preferences: PlayerPreferences,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
@@ -442,7 +443,7 @@ impl ControllerState {
         tx: Sender<ControllerMessage>,
         rx: Receiver<ControllerMessage>,
         snapshot: Arc<Mutex<PlayerSnapshot>>,
-        event_tx: Option<Sender<PlaybackEvent>>,
+        event_tx: Option<Sender<BackendEvent>>,
         shutdown_requested: Arc<AtomicBool>,
         preferences: PlayerPreferences,
         runtime_selection: RuntimeSelection,
@@ -726,7 +727,7 @@ impl ControllerState {
     fn load(&mut self, mpv_path: &str, fullscreen: FullscreenBehavior, launch: PlaybackRequest) {
         self.remember_configured_mpv(mpv_path, fullscreen);
         let key = launch.dedupe_key();
-        let identity = PlaybackIdentity::from_launch(allocate_playback_id(), &launch);
+        let identity = PlaybackIdentity::from_launch(launch.load_id, &launch);
         tracing::debug!(
             target: "playback",
             playback_id = identity.playback_id,
@@ -757,7 +758,12 @@ impl ControllerState {
             );
             return;
         };
-        self.apply_external_default_fullscreen(fullscreen);
+        let audio = launch.content.is_audio();
+        if audio {
+            self.leave_video_fullscreen();
+        } else {
+            self.apply_external_default_fullscreen(fullscreen);
+        }
 
         let reporter = PlaybackReporter::from_launch(&launch);
         self.startup_seek = None;
@@ -798,10 +804,14 @@ impl ControllerState {
                     requested_at: Instant::now(),
                 });
                 self.replacement_end_file_pending = replacing_active_file;
-                self.fetch_media_segments(playback_id, pending_launch);
+                if !audio {
+                    self.fetch_media_segments(playback_id, pending_launch);
+                }
                 self.prepare_pending_playback_state();
                 #[cfg(not(windows))]
-                self.schedule_mpv_raise("loadfile accepted");
+                if !audio {
+                    self.schedule_mpv_raise("loadfile accepted");
+                }
                 self.publish_snapshot();
             }
             Err(IpcCommandFailure::Rejected(error)) => {
@@ -867,7 +877,7 @@ impl ControllerState {
 
     fn report_playback_failure(&self, message: impl Into<String>) {
         if let Some(tx) = &self.event_tx {
-            let _ = tx.send(PlaybackEvent::Failed {
+            let _ = tx.send(BackendEvent::Failed {
                 message: message.into(),
             });
         }

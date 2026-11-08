@@ -15,6 +15,12 @@ export type PlayBody = {
   quality?: StreamingQuality,
 };
 
+export type PlayQueueBody = {
+  parentId: string,
+  startItemId?: string,
+  shuffle?: boolean,
+};
+
 export type PlayStarted = {
   started: boolean,
   itemId?: string,
@@ -54,7 +60,9 @@ export type PlayerCommandBody =
   | { "command": "toggle-subtitles" }
   | { "command": "toggle-fullscreen" }
   | { "command": "stop" }
-  | { "command": "mark-watched-next" };
+  | { "command": "mark-watched-next" }
+  | { "command": "next-track" }
+  | { "command": "previous-track" };
 
 export type SyncRequested = {
   requested: boolean,
@@ -80,6 +88,7 @@ export type VideoFitBody =
 
 export type ApiPlaybackRoutes = {
   "POST /api/play": { params: null, body: PlayBody, kind: "json", response: PlayStarted },
+  "POST /api/play/queue": { params: null, body: PlayQueueBody, kind: "json", response: PlayStarted },
   "POST /api/play/next": { params: null, body: PlaybackItemBody, kind: "json", response: PlayStarted },
   "POST /api/play/previous": { params: null, body: PlaybackItemBody, kind: "json", response: PlayStarted },
   "POST /api/play/neighbors": { params: null, body: PlaybackItemBody, kind: "json", response: PlaybackNeighbors },

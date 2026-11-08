@@ -190,6 +190,9 @@ fn handle_play(services: &Arc<Services>, data: &Value, scope: &SessionScope) {
                 "ignoring a remote play request from an account that is no longer signed in"
             );
         }
+        Err(play::StartError::Rejected(reason)) => {
+            tracing::warn!(target: "jellyfin.remote", "remote play was rejected: {reason}");
+        }
         Err(play::StartError::Api(error)) => {
             tracing::warn!(target: "jellyfin.remote", "remote play failed: {error}");
         }

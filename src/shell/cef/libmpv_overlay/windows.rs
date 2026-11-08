@@ -388,7 +388,10 @@ impl LibmpvOverlaySurface {
 
     fn handle_playback_right_button(&self, window: HWND, message: u32) -> bool {
         let snapshot = self.playback.snapshot();
-        if !snapshot.active {
+        if !matches!(
+            snapshot.now_playing,
+            Some(crate::playback::NowPlaying::Video)
+        ) {
             return false;
         }
         if matches!(message, WM_RBUTTONDOWN | WM_RBUTTONDBLCLK) {

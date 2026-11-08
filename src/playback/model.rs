@@ -2,7 +2,6 @@ use std::fmt;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::app::urls::percent_decode;
 
@@ -68,11 +67,66 @@ pub struct HttpHeader {
     pub value: String,
 }
 
+/// What a load presents. Only the coordinator's audio queue builds `Audio`;
+/// every other load is video, which keeps today's window and fullscreen
+/// policy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PlaybackContent {
+    #[default]
+    Video,
+    Audio(AudioKind),
+}
+
+impl PlaybackContent {
+    pub fn is_audio(self) -> bool {
+        matches!(self, Self::Audio(_))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum AudioKind {
+    Music,
+    Audiobook,
+}
+
+/// One queue occurrence, so the same track queued twice reports two entries.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, ts_rs::TS)]
+#[ts(type = "string")]
+pub struct PlaylistItemId(String);
+
+impl PlaylistItemId {
+    pub(crate) fn new(queue: u64, ordinal: usize) -> Self {
+        Self(format!("q{queue}-{ordinal}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Jellyfin's NowPlayingQueue: every entry in play order and the one playing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueReport {
+    pub entries: Vec<QueueReportEntry>,
+    pub current: PlaylistItemId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueReportEntry {
+    pub item_id: String,
+    pub playlist_item_id: PlaylistItemId,
+}
+
 /// A request to open media in the selected player. Backend-specific track
 /// translation happens in each player adapter.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+#[derive(Debug, Clone, Default)]
 pub struct PlaybackRequest {
+    /// Assigned by the coordinator for each dispatch and echoed as the
+    /// snapshot's `playback_id`, so its events can be told from a replaced
+    /// load's.
+    pub load_id: i64,
+    pub content: PlaybackContent,
     pub media_url: String,
     pub headers: Vec<HttpHeader>,
     pub item_id: Option<String>,
@@ -85,15 +139,12 @@ pub struct PlaybackRequest {
     pub title: Option<String>,
     pub audio_stream_index: Option<i64>,
     pub subtitle_stream_index: Option<i64>,
-    // These names are retained on the wire for compatibility. They represent
-    // one-based embedded track ordinals and are translated by each adapter.
+    // One-based embedded track ordinals, translated by each adapter.
     pub audio_mpv_id: Option<i64>,
     pub subtitle_mpv_id: Option<i64>,
     pub subtitle_url: Option<String>,
     pub play_method: Option<String>,
-    pub playlist_item_id: Option<String>,
-    pub queue: Option<Value>,
-    pub details: Option<Value>,
+    pub queue: Option<QueueReport>,
 }
 
 impl PlaybackRequest {
@@ -215,9 +266,67 @@ pub struct PlaybackDiagnostics {
     pub frame_rate: Option<f64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtworkRef {
+    pub item_id: String,
+    pub tag: String,
+}
+
+/// What the player bar and the queue show for one audio item.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDisplay {
+    pub item_id: String,
+    pub title: String,
+    pub artists: Vec<String>,
+    pub album: Option<String>,
+    pub album_id: Option<String>,
+    pub artwork: Option<ArtworkRef>,
+    pub disc_number: Option<i64>,
+    pub track_number: Option<i64>,
+    pub runtime_ticks: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioPhase {
+    /// Negotiating the entry with Jellyfin.
+    Preparing,
+    /// Handed to the player, which has not reported the file loaded yet.
+    Loading,
+    Playing,
+}
+
+/// The audio queue as the UI sees it: the current and next entry, never the
+/// whole queue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioNowPlaying {
+    pub media_kind: AudioKind,
+    pub current: AudioDisplay,
+    pub next: Option<AudioDisplay>,
+    pub playlist_item_id: PlaylistItemId,
+    pub index: usize,
+    pub length: usize,
+    pub can_previous: bool,
+    pub can_next: bool,
+    pub phase: AudioPhase,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum NowPlaying {
+    Video,
+    Audio(Box<AudioNowPlaying>),
+}
+
 #[derive(Debug, Clone, Default, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerSnapshot {
+    /// Set by the coordinator from what it asked to play, never from the
+    /// player's tracks: an MP3's cover art is a video track.
+    pub now_playing: Option<NowPlaying>,
     pub active: bool,
     pub playback_id: Option<i64>,
     pub item_id: Option<String>,
@@ -285,11 +394,31 @@ impl StopReason {
     }
 }
 
+/// What a player adapter reports. Only the coordinator receives these.
+#[derive(Debug, Clone)]
+pub enum BackendEvent {
+    StateChanged(PlayerSnapshot),
+    /// The player loaded the file of this load and its playstate started.
+    Started {
+        playback_id: i64,
+    },
+    Stopped(PlayerSnapshot),
+    Failed {
+        message: String,
+    },
+}
+
+/// What the coordinator tells the shell.
 #[derive(Debug, Clone)]
 pub enum PlaybackEvent {
     StateChanged(PlayerSnapshot),
+    /// One queue entry ended and the queue moves on: refresh the item's
+    /// cached state, but playback continues.
+    ItemFinished(PlayerSnapshot),
     Stopped(PlayerSnapshot),
-    Failed { message: String },
+    Failed {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -311,6 +440,8 @@ pub enum PlayerCommand {
     ToggleSubtitleVisibility,
     ToggleFullscreen,
     MarkWatchedAndPlayNext,
+    NextTrack,
+    PreviousTrack,
     Stop,
 }
 

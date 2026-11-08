@@ -7,7 +7,8 @@ use serde_json::{Map, Value, json};
 
 use crate::app::{logger, urls};
 use crate::playback::{
-    HttpHeader, PlaybackRequest, ReportingState, TICKS_PER_MILLISECOND, non_empty, query_auth_token,
+    HttpHeader, PlaybackRequest, QueueReport, ReportingState, TICKS_PER_MILLISECOND, non_empty,
+    query_auth_token,
 };
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -255,7 +256,10 @@ impl PlaybackSession {
             play_method: non_empty(launch.play_method.as_deref())
                 .unwrap_or("DirectPlay")
                 .to_string(),
-            playlist_item_id: non_empty(launch.playlist_item_id.as_deref()).map(str::to_string),
+            playlist_item_id: launch
+                .queue
+                .as_ref()
+                .map(|queue| queue.current.as_str().to_string()),
             audio_stream_index: launch.audio_stream_index,
             subtitle_stream_index: launch.subtitle_stream_index,
             start_position_ticks: launch
@@ -271,11 +275,7 @@ impl PlaybackSession {
             runtime_ticks: launch.runtime_ticks.filter(|ticks| *ticks > 0),
             playback_start_time_ticks: unix_now_ticks(),
             auth_headers,
-            queue: launch
-                .queue
-                .as_ref()
-                .filter(|value| value.is_array())
-                .cloned(),
+            queue: launch.queue.as_ref().map(now_playing_queue),
         })
     }
 
@@ -294,6 +294,17 @@ impl PlaybackSession {
     pub(crate) fn auth_headers(&self) -> &[HttpHeader] {
         &self.auth_headers
     }
+}
+
+/// Jellyfin's `NowPlayingQueue`: every entry in play order.
+fn now_playing_queue(queue: &QueueReport) -> Value {
+    Value::Array(
+        queue
+            .entries
+            .iter()
+            .map(|entry| json!({ "Id": entry.item_id, "PlaylistItemId": entry.playlist_item_id.as_str() }))
+            .collect(),
+    )
 }
 
 pub fn playback_progress_body(session: &PlaybackSession, state: &ReportingState) -> Value {

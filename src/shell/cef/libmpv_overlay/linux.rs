@@ -481,7 +481,12 @@ impl LibmpvOverlaySurface {
                 host.send_mouse_wheel_event(Some(&mouse), x, y);
             }
             1..=3 => {
-                if e.detail == 3 && self.playback.snapshot().active {
+                if e.detail == 3
+                    && matches!(
+                        self.playback.snapshot().now_playing,
+                        Some(crate::playback::NowPlaying::Video)
+                    )
+                {
                     if !up {
                         self.playback
                             .control(PlayerCommand::SetPause(!self.playback.snapshot().paused));

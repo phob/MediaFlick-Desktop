@@ -276,6 +276,34 @@ pub fn fetch_live_children(
     )
 }
 
+/// Every Audio and AudioBook item under `parent_id`, at most `limit`, in
+/// disc and track order.
+pub fn fetch_audio_tracks(
+    client: &JellyfinClient,
+    user_id: &str,
+    parent_id: &str,
+    limit: usize,
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json(
+        "/Items",
+        &[
+            user_query(user_id),
+            ("parentId", parent_id.to_string()),
+            ("Recursive", "true".to_string()),
+            ("IncludeItemTypes", "Audio,AudioBook".to_string()),
+            ("Fields", "SortName".to_string()),
+            ("EnableUserData", "true".to_string()),
+            ("EnableImages", "true".to_string()),
+            ("Limit", limit.to_string()),
+            (
+                "SortBy",
+                "ParentIndexNumber,IndexNumber,SortName".to_string(),
+            ),
+            ("SortOrder", "Ascending".to_string()),
+        ],
+    )
+}
+
 pub fn fetch_item_type(
     client: &JellyfinClient,
     user_id: &str,
