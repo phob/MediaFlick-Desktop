@@ -15,11 +15,11 @@ const REOPENS = 3
 /** Counts the page's live blob URLs and workers: the reader's engines run in the page itself. */
 const INSTRUMENT = `(() => {
   if (window.__residency) return
-  const blobs = new Set()
+  const blobs = new Map()
   const workers = new Set()
   const create = URL.createObjectURL.bind(URL)
   const revoke = URL.revokeObjectURL.bind(URL)
-  URL.createObjectURL = (object) => { const url = create(object); blobs.add(url); return url }
+  URL.createObjectURL = (object) => { const url = create(object); blobs.set(url, object.type || "untyped"); return url }
   URL.revokeObjectURL = (url) => { blobs.delete(url); revoke(url) }
   const NativeWorker = window.Worker
   window.Worker = class extends NativeWorker {
@@ -28,7 +28,11 @@ const INSTRUMENT = `(() => {
   }
   window.__residency = { blobs, workers }
 })()`
-const LIVE = `({ blobUrls: window.__residency.blobs.size, workers: window.__residency.workers.size })`
+const LIVE = `({
+  blobUrls: window.__residency.blobs.size,
+  blobTypes: [...window.__residency.blobs.values()].reduce((counts, type) => ({ ...counts, [type]: (counts[type] ?? 0) + 1 }), {}),
+  workers: window.__residency.workers.size,
+})`
 const PAGES = 100
 const SAMPLE_EVERY = 10
 
