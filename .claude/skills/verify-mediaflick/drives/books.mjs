@@ -386,6 +386,29 @@ async function remoteX11Pass(ctx, book, report) {
   await ctx.until(async () => (await ctx.pathname()) === `/item/${book.id}`, "x11: Back leaves the reader")
 }
 
+/** What the native book API answers: each file's sniffed format, bounded byte ranges, and an audiobook that is not a book. */
+async function api(ctx, report) {
+  const formats = {}
+  for (const book of [...BOOKS, ...EXTRA]) {
+    const manifest = await ctx.api(`/api/item/${book.id}/book`)
+    formats[book.key] = manifest.body?.format ?? `HTTP ${manifest.status}`
+    ctx.check(manifest.status === 200 && manifest.body.format === book.format, `api: ${book.key} sniffs as ${book.format} (${formats[book.key]})`)
+  }
+  const big = BOOKS.find((book) => book.measureBytes).id
+  const bytes = await ctx.app.evaluate(`(async () => {
+    const ranged = await fetch("/api/item/${big}/book/file?start=0&end=1023")
+    const whole = await fetch("/api/item/${big}/book/file")
+    return { ranged: [ranged.status, ranged.headers.get("Content-Range"), (await ranged.arrayBuffer()).byteLength],
+      unbounded: [whole.status, whole.headers.get("Content-Range"), (await whole.arrayBuffer()).byteLength] }
+  })()`)
+  ctx.check(bytes.ranged[0] === 206 && bytes.ranged[2] === 1024, `api: a ranged read answers 206 with 1024 bytes (${JSON.stringify(bytes.ranged)})`)
+  ctx.check(bytes.unbounded[0] === 206 && bytes.unbounded[2] === 8 * 1024 * 1024, `api: a read without a range answers one 8 MiB chunk (${JSON.stringify(bytes.unbounded)})`)
+  const all = await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&Recursive=true&IncludeItemTypes=AudioBook`)
+  const audiobook = all.Items[0] ? await ctx.api(`/api/item/${all.Items[0].Id}`) : null
+  if (audiobook) ctx.check(audiobook.body.layout === "generic", `api: an audiobook keeps the generic page (${audiobook.body.layout})`)
+  report.api = { formats, bytes, audiobookLayout: audiobook?.body.layout ?? null }
+}
+
 async function scriptTrap(ctx, report) {
   const book = { key: "trap", name: TRAP, id: report.ids[TRAP] }
   ctx.restoreItemAfterRun(book.id)
@@ -443,6 +466,7 @@ export default async function (ctx) {
       book.id = report.ids[book.name]
       ctx.check(Boolean(book.id), `the Books library has "${book.name}"`)
     }
+    await api(ctx, report)
     report.documentWasm = await ctx.app.evaluate(`WebAssembly.instantiate(${EMPTY_WASM}).then(() => "compiled", (error) => String(error))`)
     ctx.check(report.documentWasm !== "compiled", "the page refuses to compile WebAssembly")
     await scriptTrap(ctx, report)

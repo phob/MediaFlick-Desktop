@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react"
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -261,19 +261,28 @@ function settingRows(layout: "reflowable" | "fixed", appearance: ReaderAppearanc
 function Settings({ layout, appearance, changeAppearance, control }: Omit<PanelsProps, "control"> & { control: Ref<{ adjust(by: -1 | 1): void } | null> }) {
   const list = useInitialFocus(null)
   const rows = settingRows(layout, appearance, changeAppearance)
+  const changed = useRef<number | null>(null)
+  const rowElements = () => [...(list.current?.querySelectorAll<HTMLElement>(ROW) ?? [])]
+  // The changed row's newly chosen radio takes the focus, unless a key has
+  // already moved the focus to another row.
+  useLayoutEffect(() => {
+    if (changed.current === null) return
+    const row = rowElements()[changed.current]
+    if (row?.contains(document.activeElement)) focusRow(row)
+    changed.current = null
+  })
   useImperativeHandle(control, () => ({
     adjust(by) {
-      const elements = [...(list.current?.querySelectorAll<HTMLElement>(ROW) ?? [])]
-      const index = elements.findIndex((element) => element.contains(document.activeElement))
+      const index = rowElements().findIndex((element) => element.contains(document.activeElement))
       const row = rows[index]
       if (!row) return
+      changed.current = index
       if (row.kind === "slider") row.change(Math.min(row.max, Math.max(row.min, row.value + by * row.step)))
       else {
         const at = row.options.findIndex(([option]) => option === row.value)
         const next = row.options[(at + by + row.options.length) % row.options.length]
         if (next) row.change(next[0])
       }
-      requestAnimationFrame(() => focusRow(elements[index]))
     },
   }))
   return (
