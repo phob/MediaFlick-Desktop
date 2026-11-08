@@ -102,8 +102,8 @@ const heapCounts = async (ctx) => ({
 })
 /** The shown PDF page's load result. */
 const MAX_SHOWN_PAGE_RESULTS = 1
-/** Noise in the page's count of unnamed native functions; a leak per page read grows it by hundreds. */
-const MAX_FUNCTION_GROWTH = 50
+/** Noise in the page's count of unnamed native functions (one sample rose 62 above its neighbours); a leak per page read grew it by 486. */
+const MAX_FUNCTION_GROWTH = 150
 const PAGES = 100
 const SAMPLE_EVERY = 10
 
