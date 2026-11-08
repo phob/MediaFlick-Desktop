@@ -31,7 +31,7 @@ index 7980c20297049e38b5e5a1d44a9eee11b1fbd68e..b103701a2048c7b7cd19b562ae5b758b
      }
      get element() {
 diff --git a/pdf.js b/pdf.js
-index c998bf49ea5b62f74cd78ae0e991de373a7902f4..2253ab92918e07b81864683cd87dc503ff3aff37 100644
+index c998bf49ea5b62f74cd78ae0e991de373a7902f4..9f3fda3d6c00cede5fc90095807a9f3c9ace04af 100644
 --- a/pdf.js
 +++ b/pdf.js
 @@ -26,7 +26,14 @@ const render = async (page, doc, zoom) => {
@@ -50,3 +50,13 @@ index c998bf49ea5b62f74cd78ae0e991de373a7902f4..2253ab92918e07b81864683cd87dc503
  
      const container = doc.querySelector('.textLayer')
      const textLayer = new pdfjsLib.TextLayer({
+@@ -64,6 +71,9 @@ const render = async (page, doc, zoom) => {
+     }
+     await new pdfjsLib.AnnotationLayer({ page, viewport, div, linkService })
+         .render({ annotations: await page.getAnnotations() })
++    // MediaFlick: a page keeps its drawing resources until cleaned up, which
++    // grew memory by every page read; it is drawn again from the file if needed.
++    page.cleanup()
+ }
+ 
+ const renderPage = async (page, getImageBlob) => {
