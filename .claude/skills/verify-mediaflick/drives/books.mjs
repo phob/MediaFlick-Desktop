@@ -386,7 +386,7 @@ async function remoteX11Pass(ctx, book, report) {
   await ctx.until(async () => (await ctx.pathname()) === `/item/${book.id}`, "x11: Back leaves the reader")
 }
 
-/** What the native book API answers: each file's sniffed format, bounded byte ranges, and an audiobook that is not a book. */
+/** What the native book API answers: each file's sniffed format, bounded byte ranges, an audiobook that is not a book, and nothing for an item the reader did not open. */
 async function api(ctx, report) {
   const formats = {}
   for (const book of [...BOOKS, ...EXTRA]) {
@@ -403,10 +403,24 @@ async function api(ctx, report) {
   })()`)
   ctx.check(bytes.ranged[0] === 206 && bytes.ranged[2] === 1024, `api: a ranged read answers 206 with 1024 bytes (${JSON.stringify(bytes.ranged)})`)
   ctx.check(bytes.unbounded[0] === 206 && bytes.unbounded[2] === 8 * 1024 * 1024, `api: a read without a range answers one 8 MiB chunk (${JSON.stringify(bytes.unbounded)})`)
-  const all = await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&Recursive=true&IncludeItemTypes=AudioBook`)
-  const audiobook = all.Items[0] ? await ctx.api(`/api/item/${all.Items[0].Id}`) : null
-  if (audiobook) ctx.check(audiobook.body.layout === "generic", `api: an audiobook keeps the generic page (${audiobook.body.layout})`)
-  report.api = { formats, bytes, audiobookLayout: audiobook?.body.layout ?? null }
+  const audiobook = (await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&Recursive=true&IncludeItemTypes=AudioBook&Limit=1`)).Items[0]
+  const movie = (await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&Recursive=true&IncludeItemTypes=Movie&Limit=1`)).Items[0]
+  ctx.check(Boolean(audiobook && movie), "api: the server has an audiobook and a movie")
+  ctx.restoreItemAfterRun(audiobook.Id)
+  const audiobookLayout = (await ctx.api(`/api/item/${audiobook.Id}`)).body.layout
+  ctx.check(audiobookLayout === "audio", `api: an audiobook answers the audio page (${audiobookLayout})`)
+  const audiobookManifest = (await ctx.api(`/api/item/${audiobook.Id}/book`)).status
+  ctx.check(audiobookManifest === 404, `api: the reader refuses an audiobook (HTTP ${audiobookManifest})`)
+  const unopened = await ctx.app.evaluate(`(async () => {
+    const place = { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: { kind: "page", page: 0, pages: 1 }, finished: false }) }
+    return {
+      movieFile: (await fetch("/api/item/${movie.Id}/book/file?start=0&end=1023")).status,
+      audiobookFile: (await fetch("/api/item/${audiobook.Id}/book/file?start=0&end=1023")).status,
+      audiobookPlace: (await fetch("/api/item/${audiobook.Id}/book/position", place)).status,
+    }
+  })()`)
+  ctx.check(Object.values(unopened).every((status) => status === 404), `api: no bytes and no place for an item the reader has not opened (${JSON.stringify(unopened)})`)
+  report.api = { formats, bytes, audiobookLayout, audiobookManifest, unopened }
 }
 
 async function scriptTrap(ctx, report) {
