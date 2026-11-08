@@ -1,7 +1,9 @@
 // Memory while reading fixed pages (`--account`, Linux): turns 250 pages
 // of the 85-page PDF (bouncing between its ends, so pages are read again)
 // and 540 of the 271-page CBZ (to its end and back), and every 10 turns records the renderer processes' resident memory (from
-// /proc), the JS heap, the document and frame counts, and the page's live blob URLs and workers. A curve that keeps rising with pages read,
+// /proc), the JS heap, the document and frame counts, the page's live blob URLs, workers and iframes, and how many PDF page load
+// results are still reachable after garbage collection (checked: only the shown page's), and the page's unnamed native functions
+// (checked: no growth after the first 10 turns; every reaction left on a pending promise keeps two). A curve that keeps rising with pages read,
 // rather than levelling off, means pages are kept after they leave the
 // screen. Then it opens and closes each book three more times: what the reader
 // leaves alive after it closed must not grow with opens.
@@ -10,7 +12,9 @@
 // pdf.js waits on a range read of the file, which must leave no worker, and each book takes
 // 40 rapid double presses of ArrowRight (the second before the first page has
 // loaded) and one held ArrowLeft, after which only the shown page may hold blob
-// URLs. MEDIAFLICK_VERIFY_RESIDENCY=races runs only the races. Writes
+// URLs. Last, the CBZ turns ahead until a page waits on a held read of the
+// file, queues a turn back behind it and closes: no blob URL or iframe may
+// outlive that. MEDIAFLICK_VERIFY_RESIDENCY=races runs only the races. Writes
 // books-residency.json.
 import { readdirSync, readFileSync } from "node:fs"
 
@@ -43,7 +47,14 @@ const INSTRUMENT = `(() => {
     constructor(...args) { super(...args); workers.add(this) }
     terminate() { workers.delete(this); super.terminate() }
   }
-  const residency = { blobs, workers, closeAtRange: false, closedAtBytes: [] }
+  const iframes = []
+  const createElement = Document.prototype.createElement
+  Document.prototype.createElement = function (name, options) {
+    const element = createElement.call(this, name, options)
+    if (String(name).toLowerCase() === "iframe") iframes.push(new WeakRef(element))
+    return element
+  }
+  const residency = { blobs, workers, iframes, closeAtRange: false, closedAtBytes: [], holdRange: false, heldAtBytes: [] }
   const nativeFetch = window.fetch
   window.fetch = function (input, init) {
     const response = nativeFetch.call(this, input, init)
@@ -54,6 +65,12 @@ const INSTRUMENT = `(() => {
       residency.closedAtBytes.push(start)
       history.back()
     }
+    if (residency.holdRange && url.pathname.endsWith("/book/file") && start > 0 && init?.signal) {
+      residency.holdRange = false
+      residency.heldAtBytes.push(start)
+      const aborted = new Promise((resolve) => init.signal.addEventListener("abort", resolve, { once: true }))
+      return Promise.all([response, aborted]).then(([answer]) => answer)
+    }
     return response
   }
   window.__residency = residency
@@ -62,7 +79,31 @@ const LIVE = `({
   blobUrls: window.__residency.blobs.size,
   blobTypes: [...window.__residency.blobs.values()].reduce((counts, type) => ({ ...counts, [type]: (counts[type] ?? 0) + 1 }), {}),
   workers: window.__residency.workers.size,
+  iframes: window.__residency.iframes.filter((ref) => ref.deref()).length,
 })`
+/** How many heap objects with `prototype` (an expression) pass `filter` (a function's source). */
+async function countObjects(ctx, prototype, filter) {
+  const group = "residency-count"
+  const { result } = await ctx.app.send("Runtime.evaluate", { expression: prototype, objectGroup: group })
+  const { objects } = await ctx.app.send("Runtime.queryObjects", { prototypeObjectId: result.objectId, objectGroup: group })
+  const counted = await ctx.app.send("Runtime.callFunctionOn", { objectId: objects.objectId, functionDeclaration: `function () { return this.filter(${filter}).length }`, returnByValue: true })
+  await ctx.app.send("Runtime.releaseObjectGroup", { objectGroup: group })
+  if (counted.exceptionDetails) throw new Error(`counting ${prototype} objects failed: ${counted.exceptionDetails.exception?.description ?? counted.exceptionDetails.text}`)
+  return counted.result.value
+}
+/**
+ * PDF page load results (`{ src, onZoom, images }`), and the page's unnamed
+ * native functions: a promise's resolve and reject functions are those, and
+ * every reaction left on a promise that stays pending keeps a pair.
+ */
+const heapCounts = async (ctx) => ({
+  pageResults: await countObjects(ctx, "Object.prototype", `(object) => Object.hasOwn(object, "src") && Object.hasOwn(object, "onZoom") && Object.hasOwn(object, "images")`),
+  nativeUnnamedFunctions: await countObjects(ctx, "Function.prototype", `(fn) => { try { return fn.name === "" && Function.prototype.toString.call(fn).includes("[native code]") } catch { return false } }`),
+})
+/** The shown PDF page's load result. */
+const MAX_SHOWN_PAGE_RESULTS = 1
+/** Noise in the page's count of unnamed native functions; a leak per page read grows it by hundreds. */
+const MAX_FUNCTION_GROWTH = 50
 const PAGES = 100
 const SAMPLE_EVERY = 10
 
@@ -129,6 +170,7 @@ async function sample(ctx, profile, turns) {
     documents: metric("Documents"),
     frames: metric("Frames"),
     nodes: metric("Nodes"),
+    ...(await heapCounts(ctx)),
     ...(await ctx.app.evaluate(LIVE)),
   }
 }
@@ -151,8 +193,9 @@ export default async function (ctx) {
     return { ...book, id }
   })
   try {
-    if (process.env.MEDIAFLICK_VERIFY_RESIDENCY !== "races") for (const book of books) await traverse(ctx, profile, book, report)
+    if (process.env.MEDIAFLICK_VERIFY_RESIDENCY !== "races") for (const book of books) await traverse(ctx, profile, book, report, check)
     await closeWhileOpening(ctx, books[0], report, check)
+    await closeWithTurnQueued(ctx, books[1], report, check)
     for (const book of books) await race(ctx, book, report, check)
   } finally {
     ctx.writeEvidence("books-residency.json", JSON.stringify(report, null, 2))
@@ -194,6 +237,30 @@ async function closeWhileOpening(ctx, book, report, check) {
   report.races.closeWhileOpening = { book: book.key, before, rounds }
   check(rounds.every((entry) => entry.workers === before.workers), `${book.key}: no worker outlives a reader closed during its range read`, { before: before.workers, after: rounds.map((entry) => entry.workers) })
   check(rounds.every((entry) => entry.blobUrls === before.blobUrls), `${book.key}: no blob URL outlives a reader closed during its range read`, { before: before.blobUrls, after: rounds.map((entry) => entry.blobUrls) })
+}
+
+/**
+ * Turns ahead until a turn's page needs a read of the file, holds that read,
+ * queues a turn back behind it, and leaves the reader: the held read fails
+ * when the reader leaves, and the queued turn must not load a page then.
+ */
+async function closeWithTurnQueued(ctx, book, report, check) {
+  const before = await settledLive(ctx)
+  await open(ctx, book, " to leave with a turn queued")
+  await ctx.app.evaluate(`window.__residency.holdRange = true`)
+  let turns = 0
+  while (await ctx.app.evaluate(`window.__residency.holdRange`)) {
+    const shown = await ctx.app.evaluate(footer)
+    await ctx.key("ArrowRight", { keyCode: 39 })
+    turns += 1
+    await ctx.until(async () => !(await ctx.app.evaluate(`window.__residency.holdRange`)) || (await ctx.app.evaluate(footer)) !== shown, `${book.key}: turn ${turns} to show or to wait on a read`, 20000, { quiet: true })
+  }
+  await ctx.key("ArrowLeft", { keyCode: 37 })
+  const queued = await ctx.app.evaluate(LIVE)
+  await close(ctx, book, " with a turn queued")
+  const after = await settledLive(ctx)
+  report.races.closeWithTurnQueued = { book: book.key, turns, heldAtByte: await ctx.app.evaluate(`window.__residency.heldAtBytes.at(-1)`), before, queued, after }
+  check(after.blobUrls === before.blobUrls && after.iframes <= before.iframes, `${book.key}: a turn queued behind a pending page leaves nothing once the reader left`, { before, after })
 }
 
 /**
@@ -241,7 +308,7 @@ async function race(ctx, book, report, check) {
   check(closed.blobUrls === before.blobUrls && closed.workers === before.workers, `${book.key}: closing after the races gives everything back`, { before, closed })
 }
 
-async function traverse(ctx, profile, book, report) {
+async function traverse(ctx, profile, book, report, check) {
   const before = await ctx.app.evaluate(LIVE)
   await open(ctx, book, "")
   const samples = (report.books[book.key] = [await sample(ctx, profile, 0)])
@@ -262,6 +329,9 @@ async function traverse(ctx, profile, book, report) {
   const settle = Date.now() + 3000
   await ctx.until(async () => Date.now() > settle, `${book.key}: 3 s after memory pressure`, 5000, { quiet: true })
   report.afterPressure = { ...report.afterPressure, [book.key]: await sample(ctx, profile, "after pressure") }
+  check(report.afterPressure[book.key].pageResults <= MAX_SHOWN_PAGE_RESULTS, `${book.key}: after ${book.turns} turns only the shown page's load result is reachable`, samples.map((entry) => entry.pageResults))
+  const functionGrowth = report.afterPressure[book.key].nativeUnnamedFunctions - samples[1].nativeUnnamedFunctions
+  check(functionGrowth <= MAX_FUNCTION_GROWTH, `${book.key}: turns ${SAMPLE_EVERY} to ${book.turns} leave no promise functions behind`, { growth: functionGrowth, samples: samples.map((entry) => entry.nativeUnnamedFunctions) })
   ctx.step(`${book.key}: ${samples.map((entry) => `${entry.turns}:${Math.round(entry.rssKiB / 1024)}MiB/${entry.blobUrls}blobs`).join(" ")}, after pressure ${Math.round(report.afterPressure[book.key].rssKiB / 1024)}MiB`)
   const closes = [await close(ctx, book, "")]
   for (let round = 1; round <= REOPENS; round += 1) {
