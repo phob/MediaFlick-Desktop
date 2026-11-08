@@ -59,6 +59,9 @@ export default async function music(ctx) {
 
   await ctx.press({ role: "button", name: "Play" })
   await playingIndex(0, "the album's first track to play")
+  await ctx.until(() => reports().length > 0, "app.log to hold Jellyfin playstate reports", 10000, { quiet: true }).catch(() => {
+    throw new Error('app.log has no playstate reports; run this drive with --log-level "debug,jellyfin.playstate=trace,playback=trace"')
+  })
   const first = await audio()
   report.firstStartMs = first.positionMs
   check(first.length === 5 && first.current.itemId === ids[0] && first.next?.itemId === ids[1], "Play queued the album from its first track", { length: first.length, current: first.current.title, next: first.next?.title })
