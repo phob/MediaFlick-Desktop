@@ -21,6 +21,8 @@ export type ItemDetail = Extract<Wire.DetailView, { layout: "title" }>
 
 export type GenericItemDetail = Extract<Wire.DetailView, { layout: "generic" }>
 
+export type AudioItemDetail = Extract<Wire.DetailView, { layout: "audio" }>
+
 export type AnyItemDetail = Wire.DetailView
 
 export type ItemAbout = Wire.ItemAbout

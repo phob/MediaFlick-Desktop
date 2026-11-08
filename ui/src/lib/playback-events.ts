@@ -57,6 +57,7 @@ export function usePlaybackEventsBridge() {
       queryClient.setQueryData<PlayerState>(queryKeys.playerState, { ...payload, active: false })
 
       if (!payload?.itemId) invalidateMediaSurfaces(queryClient)
+      if (payload.nowPlaying?.kind === "audio") { manualPlay(); return }
 
       const finished = payload?.stopReason === "eof" || payload?.stopReason === "watched-next"
       if (!finished || !payload?.itemId) { manualPlay(); return }

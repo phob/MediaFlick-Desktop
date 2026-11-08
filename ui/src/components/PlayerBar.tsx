@@ -14,8 +14,6 @@ import {
   Rewind,
   Settings,
   Square,
-  Volume2,
-  VolumeX,
 } from "lucide-react"
 import { useEffect, useEffectEvent, useRef, useState } from "react"
 import { Link } from "react-router-dom"
@@ -34,7 +32,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Slider } from "@/components/ui/slider"
-import { cn } from "@/lib/utils"
 import {
   STREAMING_QUALITIES,
   TICKS_PER_MS,
@@ -66,6 +63,8 @@ import {
 } from "@/lib/queries"
 import { SUBTITLES_OFF, TrackMenu, TrackSubmenu, type TrackChoices } from "@/components/player/TrackMenu"
 import { TuningMenu, type PlaybackTuning } from "@/components/player/TuningMenu"
+import { AudioPlayerBar } from "@/components/player/AudioPlayerBar"
+import { MuteButton } from "@/components/player/MuteButton"
 import { Timeline } from "@/components/player/Timeline"
 import { currentChapter, formatClock, trackLabel } from "@/components/player/format"
 
@@ -116,27 +115,6 @@ function segmentLabel(segment: PlayerSkipSegment) {
     case "commercial":
       return "Commercial"
   }
-}
-
-function MuteButton({ muted, volume, title, onToggle, className }: {
-  muted: boolean
-  volume: number
-  title?: string
-  onToggle: () => void
-  className?: string
-}) {
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
-      title={title}
-      aria-label={muted ? "Unmute" : "Mute"}
-      onClick={onToggle}
-      className={cn("size-8", className)}
-    >
-      {muted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-    </Button>
-  )
 }
 
 const DEFAULT_TUNING: PlaybackTuning = {
@@ -671,5 +649,6 @@ function ActivePlayerBar({
 export function PlayerBar({ onMenuOpenChange }: { onMenuOpenChange?: (open: boolean) => void }) {
   const { data: player } = usePlayerState()
   if (!player?.active) return null
+  if (player.nowPlaying?.kind === "audio") return <AudioPlayerBar player={player} audio={player.nowPlaying} />
   return <ActivePlayerBar key={player.playbackId ?? player.itemId} player={player} onMenuOpenChange={onMenuOpenChange} />
 }

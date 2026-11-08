@@ -1,10 +1,64 @@
 // Generated from src/shell/cef/api/wire.rs by `just wire-types`. Do not edit.
 
 import type { LibraryId } from "./library.libraries.gen.ts"
+import type { AudioDisplay, AudioKind } from "./playback.model.gen.ts"
+
+export type AudioDetail = {
+  genres: Array<string>,
+  mediaKind: AudioKind,
+  albumArtists: Array<string>,
+  discs: Array<Disc>,
+  id: string,
+  kind: string,
+  name: string,
+  year: number | null,
+  runtimeTicks: number | null,
+  communityRating: number | null,
+  officialRating: string | null,
+  seriesId: string | null,
+  seriesName: string | null,
+  indexNumber: number | null,
+  parentIndexNumber: number | null,
+  primaryImageTag: string | null,
+  thumbImageTag: string | null,
+  logoImageTag: string | null,
+  backdropImageTag: string | null,
+  childCount: number | null,
+  premiereDate: string | null,
+  seasonId: string | null,
+  played: boolean,
+  playCount: number,
+  positionTicks: number,
+  favorite: boolean,
+  unplayedCount: number | null,
+  /**
+   * Width over height of the primary image. Null for cached movies and
+   * shows, whose art is a 2:3 poster.
+   */
+  primaryAspect: number | null,
+  /**
+   * `/api/item/{id}/children` carries this for a season's episodes, from
+   * its live server reconcile, and a generic item's details carry their
+   * own. The grid queries do not, and offline rows have none.
+   */
+  overview?: string,
+  /**
+   * The slot this item fills among a playlist's children, counted from
+   * zero. Jellyfin's PlaylistItemId is the item's own id, so it cannot tell
+   * two slots of one item apart.
+   */
+  playlistIndex?: number,
+};
 
 export type DetailView =
   | { "layout": "title" } & TitleDetail
-  | { "layout": "generic" } & GenericItemDetail;
+  | { "layout": "generic" } & GenericItemDetail
+  | { "layout": "audio" } & AudioDetail;
+
+export type Disc = {
+  number: number,
+  tracks: Array<AudioDisplay>,
+};
 
 export type GenericItemDetail = {
   genres: Array<string>,

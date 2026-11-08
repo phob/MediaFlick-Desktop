@@ -9,6 +9,7 @@ import { DetailHero } from "@/components/detail/DetailHero"
 import { MediaInfo } from "@/components/detail/MediaInfo"
 import { LetterboxdReviews } from "@/components/detail/LetterboxdReviews"
 import { DetailPageSkeleton, DetailBackdrop } from "@/components/detail/DetailPrimitives"
+import { AudioPage } from "@/components/detail/AudioPage"
 import { GenericItemPage } from "@/components/detail/GenericItemPage"
 import { SeasonBrowser } from "@/components/detail/SeasonBrowser"
 import { SimilarTitles } from "@/components/detail/SimilarTitles"
@@ -85,6 +86,8 @@ export default function ItemDetail() {
   switch (item.layout) {
     case "generic":
       return <GenericItemPage key={item.id} item={item} about={about.data} navigationState={navigationState} />
+    case "audio":
+      return <AudioPage key={item.id} item={item} navigationState={navigationState} />
     case "title":
       return (
         <TitleItemPage

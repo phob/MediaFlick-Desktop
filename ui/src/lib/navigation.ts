@@ -27,7 +27,7 @@ export function defaultDetailNavigationState(
   item: AnyItemDetail,
   libraries: readonly Library[],
 ): DetailNavigationState {
-  if (item.layout === "generic" || !item.libraryId) return HOME_STATE
+  if (item.layout !== "title" || !item.libraryId) return HOME_STATE
   return { from: libraryPath(item.libraryId), label: backToLibrary(item.libraryId, libraries) }
 }
 

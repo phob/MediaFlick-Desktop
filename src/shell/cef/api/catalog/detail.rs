@@ -1,5 +1,5 @@
 use crate::library::browse::{self, ChildPage, ChildrenSource, DetailError, LiveDetail};
-use crate::library::{DetailView, ItemPage};
+use crate::library::{AudioDetail, DetailView, ItemPage};
 
 use super::*;
 
@@ -55,6 +55,15 @@ pub(super) fn item_detail(
     let Some(dto) = confirmed(services, fetched)? else {
         return Err(server_lacks_item(services, &scope, item_id));
     };
+    if matches!(
+        dto.item_type.as_deref(),
+        Some("MusicAlbum" | "Audio" | "AudioBook")
+    ) {
+        let tracks = fetch_current(services, &scope, |client, user_id| {
+            play::audio_tracks(client, user_id, &dto)
+        })?;
+        return Ok(DetailView::Audio(AudioDetail::new(&dto, tracks)));
+    }
     let title = match browse::live_detail(&dto) {
         LiveDetail::Generic(generic) => return Ok(DetailView::Generic(*generic)),
         LiveDetail::Title(title) => services.session.commit_if_current(

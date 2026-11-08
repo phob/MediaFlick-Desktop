@@ -601,6 +601,58 @@ impl ItemDetail {
 pub enum DetailView {
     Title(TitleDetail),
     Generic(GenericItemDetail),
+    Audio(AudioDetail),
+}
+
+/// An album, audiobook or track: the tracks its Play button queues, grouped
+/// by disc in play order.
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDetail {
+    #[serde(flatten)]
+    pub summary: ItemSummary,
+    pub genres: Vec<String>,
+    pub media_kind: crate::playback::AudioKind,
+    pub album_artists: Vec<String>,
+    pub discs: Vec<Disc>,
+}
+
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Disc {
+    pub number: i64,
+    pub tracks: Vec<crate::playback::AudioDisplay>,
+}
+
+impl AudioDetail {
+    /// `tracks` in play order, as the audio queue would hold them.
+    pub fn new(dto: &BaseItemDto, tracks: Vec<crate::playback::AudioTrack>) -> Self {
+        let media_kind = tracks
+            .first()
+            .map_or(crate::playback::AudioKind::Music, |track| track.kind);
+        let mut discs: Vec<Disc> = Vec::new();
+        for track in tracks {
+            let number = track.display.disc_number.unwrap_or(1);
+            match discs.last_mut() {
+                Some(disc) if disc.number == number => disc.tracks.push(track.display),
+                _ => discs.push(Disc {
+                    number,
+                    tracks: vec![track.display],
+                }),
+            }
+        }
+        let album_artists = dto.album_artist.iter().cloned().collect();
+        Self {
+            summary: ItemSummary {
+                overview: non_empty(dto.overview.as_deref()).map(str::to_string),
+                ..ItemSummary::from_dto(dto)
+            },
+            genres: dto.genres.clone(),
+            media_kind,
+            album_artists,
+            discs,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]

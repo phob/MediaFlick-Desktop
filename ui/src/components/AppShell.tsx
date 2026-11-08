@@ -7,6 +7,7 @@ import { PreviewProvider } from "@/components/PreviewCard"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { usePlaybackEventsBridge } from "@/lib/playback-events"
+import { usePlaybackKeys } from "@/lib/playback-keys"
 import { usePlayerState, useSettings } from "@/lib/queries"
 import { RouteScrollContext } from "@/lib/route-scroll"
 import { sidebarShouldBeOpen, sidebarShouldOverlayContent } from "@/lib/sidebar-state"
@@ -180,9 +181,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const cardPreviews = settings.data?.appearance.cardPreviews !== false
   const integratedPlayback = Boolean(
     settings.data?.capabilities.integratedLibmpvOverlay &&
-      player.data?.active,
+      player.data?.active &&
+      player.data.nowPlaying?.kind === "video",
   )
   usePlaybackEventsBridge()
+  usePlaybackKeys()
 
   useLayoutEffect(() => {
     document.documentElement.toggleAttribute("data-libmpv-playback", integratedPlayback)

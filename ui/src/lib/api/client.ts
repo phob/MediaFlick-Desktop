@@ -7,7 +7,7 @@ import type { CollectionProfileDraft, PublicCollectionList } from "./types/colle
 import type { HomeSettingsWrite } from "./types/home.ts"
 import type { BrowsingPage, LibraryQuery } from "./types/libraries.ts"
 import type { PlaybackTrackPreferenceWrite } from "./types/media.ts"
-import type { PlayerCommand } from "./types/playback.ts"
+import type { PlayerCommand, PlayQueueBody } from "./types/playback.ts"
 import type {
   SeerrDiscoverFilters,
   SeerrDiscoverRow,
@@ -228,6 +228,11 @@ export const api = {
   },
   changePlaybackQuality: (itemId: string, startTicks: number, quality: StreamingQualityId) =>
     request("POST /api/play", { body: { itemId, startTicks, quality } }),
+  /** An album, audiobook or track as an audio queue. */
+  playQueue: (body: PlayQueueBody) => {
+    window.dispatchEvent(new Event("mediaflick-manual-play"))
+    return request("POST /api/play/queue", { body })
+  },
   playNext: (itemId: string) => request("POST /api/play/next", { body: { itemId } }),
   playPrevious: (itemId: string) => request("POST /api/play/previous", { body: { itemId } }),
   playbackNeighbors: (itemId: string) => request("POST /api/play/neighbors", { body: { itemId } }),

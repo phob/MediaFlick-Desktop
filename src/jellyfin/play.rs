@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 mod audio;
 
-pub use audio::{QueueAsk, audio_kind, start_queue};
+pub use audio::{QueueAsk, audio_kind, audio_tracks, start_queue};
 
 use crate::app::services::Services;
 use crate::app::urls::{build_query, encode_path_segment, join_url, remove_query_params};
