@@ -1,5 +1,12 @@
 pub const INPUT_SECTION_NAME: &str = "mediaflick_desktop_input";
 pub const MARK_WATCHED_NEXT_COMMAND: &str = "mark-watched-next";
+pub const NEXT_TRACK_COMMAND: &str = "next-track";
+pub const PREVIOUS_TRACK_COMMAND: &str = "previous-track";
+/// The media keys skip through the app's audio queue, not mpv's playlist.
+const TRACK_BINDINGS: &[(&str, &str)] = &[
+    ("NEXT", NEXT_TRACK_COMMAND),
+    ("PREV", PREVIOUS_TRACK_COMMAND),
+];
 const STOP_PLAYBACK_KEYS: &[&str] = &["q", "Q", "CLOSE_WIN", "STOP"];
 const SEEK_PLAYBACK_BINDINGS: &[(&str, i32)] =
     &[("LEFT", -10), ("RIGHT", 10), ("DOWN", -30), ("UP", 30)];
@@ -13,6 +20,11 @@ pub fn section_contents(mark_watched_next: Option<&str>) -> String {
         SEEK_PLAYBACK_BINDINGS
             .iter()
             .map(|(key, seconds)| format!("{key} seek {seconds} relative+exact")),
+    );
+    lines.extend(
+        TRACK_BINDINGS
+            .iter()
+            .map(|(key, command)| format!("{key} script-message mediaflick-desktop {command}")),
     );
 
     if let Some(key) = mark_watched_next.and_then(sanitize_mpv_key) {

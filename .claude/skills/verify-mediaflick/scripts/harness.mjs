@@ -8,7 +8,7 @@ import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeF
 import net from "node:net"
 import path from "node:path"
 import { sleep } from "../../../../scripts/website/cdp.mjs"
-import { approveQuickConnect, cancelSeerrRequest, jellyfinGet, playlistWrite, readStoredSession, resetUserData, revokeToken, saveAccount as cacheAccount, publicAccount, tokenStatus } from "./account.mjs"
+import { approveQuickConnect, cancelSeerrRequest, jellyfinGet, playlistWrite, readStoredSession, resetUserData, revokeToken, saveAccount as cacheAccount, publicAccount, sessionCommand, tokenStatus } from "./account.mjs"
 import { isFavorite, journalFavorite, journalFile, settleFavorite } from "./favorites.mjs"
 import { isLinux, isWindows, listProcesses, sendWindowClose } from "./platform.mjs"
 import { startAudioSink } from "./audio-sink.mjs"
@@ -648,6 +648,22 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return started
   }
 
+  // `--account` only: "Play On" from another client. `command` is the path
+  // after `/Sessions/<the app's session>/`, such as `Playing` (with
+  // `{ playCommand: "PlayNow", itemIds, startIndex }`) or `Playing/NextTrack`.
+  async function remoteCommand(command, query = {}) {
+    if (!cachedAccount) throw new Error("remoteCommand needs --account SERVER")
+    const { deviceId } = (await api("/api/status")).body
+    // The harness reads with the app's token, so the device can list a second
+    // session; the app's own is the one that announced media control.
+    const sessions = await jellyfin(`/Sessions?deviceId=${encodeURIComponent(deviceId)}`)
+    const target = sessions.find((entry) => entry.SupportsMediaControl)
+    if (!target) throw new Error(`Jellyfin lists no session for the app's device that takes remote control (${sessions.length} sessions)`)
+    await sessionCommand(cachedAccount, target.Id, command, query)
+    log(`remote ${command} ${JSON.stringify(query)} sent to session ${target.Id}`)
+    return target
+  }
+
   async function audioSink() {
     if (!isLinux) throw new Error("audioSink runs a private PipeWire and needs Linux")
     sink ??= await startAudioSink({ evidence, log })
@@ -713,6 +729,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     relaunch,
     windowShown,
     proxy,
+    remoteCommand,
     audioSink,
     dispose,
     sleep,

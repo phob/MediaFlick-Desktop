@@ -1,8 +1,11 @@
 use serde_json::Value;
 
 use crate::app::logger;
+use crate::playback::BackendEvent;
 use crate::playback::{PlayerCommand, PlayerTrack, PlayerTrackKind, StopReason, seconds_to_ticks};
-use crate::players::mpv::input::MARK_WATCHED_NEXT_COMMAND;
+use crate::players::mpv::input::{
+    MARK_WATCHED_NEXT_COMMAND, NEXT_TRACK_COMMAND, PREVIOUS_TRACK_COMMAND,
+};
 use crate::players::mpv::ipc::MpvEvent;
 
 use super::super::{ControllerMessage, ControllerState};
@@ -121,6 +124,11 @@ impl ControllerState {
             }
             "client-message" if is_mark_watched_next_message(&event.args) => {
                 self.control(&PlayerCommand::MarkWatchedAndPlayNext);
+            }
+            "client-message" if track_message(&event.args).is_some() => {
+                if let (Some(next), Some(tx)) = (track_message(&event.args), &self.event_tx) {
+                    let _ = tx.send(BackendEvent::TrackRequested { next });
+                }
             }
             _ => tracing::trace!(target: "mpv.ipc", name = %event.name, "ignored mpv event"),
         }
@@ -362,5 +370,17 @@ fn is_mark_watched_next_message(args: &[String]) -> bool {
             target == "mediaflick-desktop" && command == MARK_WATCHED_NEXT_COMMAND
         }
         _ => false,
+    }
+}
+
+/// `Some(true)` for the Next key's message, `Some(false)` for Previous.
+fn track_message(args: &[String]) -> Option<bool> {
+    match args {
+        [target, command, ..] if target == "mediaflick-desktop" => match command.as_str() {
+            NEXT_TRACK_COMMAND => Some(true),
+            PREVIOUS_TRACK_COMMAND => Some(false),
+            _ => None,
+        },
+        _ => None,
     }
 }

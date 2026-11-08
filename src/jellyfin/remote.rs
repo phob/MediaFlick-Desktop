@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::app::services::Services;
 use crate::library::CatalogKind;
-use crate::playback::{PlayerCommand, TICKS_PER_MILLISECOND};
+use crate::playback::{AudioStart, NowPlaying, PlayerCommand, TICKS_PER_MILLISECOND};
 
 use super::api::items;
 use super::play::{self, PlayOptions};
@@ -73,6 +73,7 @@ pub(crate) enum PlaystateAction {
     PlayPause,
     Seek { position_ms: f64 },
     NextTrack,
+    PreviousTrack,
     Unsupported(String),
 }
 
@@ -87,6 +88,7 @@ pub(crate) fn parse_playstate(data: &Value) -> PlaystateAction {
                 / TICKS_PER_MILLISECOND,
         },
         "NextTrack" => PlaystateAction::NextTrack,
+        "PreviousTrack" => PlaystateAction::PreviousTrack,
         other => PlaystateAction::Unsupported(other.to_string()),
     }
 }
@@ -143,6 +145,17 @@ fn handle_play(services: &Arc<Services>, data: &Value, scope: &SessionScope) {
             "ignoring an unsupported remote play command"
         );
         return;
+    }
+    let start = ask
+        .start_ticks
+        .map_or(AudioStart::Beginning, AudioStart::At);
+    match play::start_item_queue(services, scope, &ask.item_ids, ask.start_index, start) {
+        Ok(Some(_)) => return,
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(target: "jellyfin.remote", "remote audio play failed: {error:?}");
+            return;
+        }
     }
     let Some(item_id) = ask
         .item_ids
@@ -261,33 +274,8 @@ fn handle_playstate(services: &Arc<Services>, data: &Value, scope: &SessionScope
         PlaystateAction::Seek { position_ms } => {
             playback.control(PlayerCommand::SeekMilliseconds(position_ms));
         }
-        PlaystateAction::NextTrack => {
-            let Some(current) = playback.snapshot().item_id else {
-                return;
-            };
-            let next = services
-                .library
-                .next_episode(&current)
-                .ok()
-                .flatten()
-                .map(|episode| episode.id);
-            let Some(next_id) = next else {
-                tracing::debug!(
-                    target: "jellyfin.remote",
-                    item_id = %current,
-                    "remote next-track has no following episode"
-                );
-                return;
-            };
-            let options = PlayOptions {
-                item_id: next_id,
-                resume: true,
-                ..Default::default()
-            };
-            if let Err(error) = play::start(services, scope, &options, "remote next") {
-                tracing::warn!(target: "jellyfin.remote", "remote next-track failed: {error:?}");
-            }
-        }
+        PlaystateAction::NextTrack => skip(services, scope, true),
+        PlaystateAction::PreviousTrack => skip(services, scope, false),
         PlaystateAction::Unsupported(command) => {
             tracing::debug!(
                 target: "jellyfin.remote",
@@ -295,6 +283,48 @@ fn handle_playstate(services: &Arc<Services>, data: &Value, scope: &SessionScope
                 "ignoring an unsupported remote playstate command"
             );
         }
+    }
+}
+
+/// Next or Previous: through the audio queue while one plays, else the
+/// neighbouring episode of the one playing.
+fn skip(services: &Arc<Services>, scope: &SessionScope, next: bool) {
+    let Some(playback) = services.playback() else {
+        return;
+    };
+    let snapshot = playback.snapshot();
+    if matches!(snapshot.now_playing, Some(NowPlaying::Audio(_))) {
+        playback.control(if next {
+            PlayerCommand::NextTrack
+        } else {
+            PlayerCommand::PreviousTrack
+        });
+        return;
+    }
+    let Some(current) = snapshot.item_id else {
+        return;
+    };
+    let neighbor = if next {
+        services.library.next_episode(&current)
+    } else {
+        services.library.previous_episode(&current)
+    };
+    let Some(target) = neighbor.ok().flatten().map(|episode| episode.id) else {
+        tracing::debug!(
+            target: "jellyfin.remote",
+            item_id = %current,
+            next,
+            "remote track skip has no neighbouring episode"
+        );
+        return;
+    };
+    let options = PlayOptions {
+        item_id: target,
+        resume: true,
+        ..Default::default()
+    };
+    if let Err(error) = play::start(services, scope, &options, "remote skip") {
+        tracing::warn!(target: "jellyfin.remote", "remote track skip failed: {error:?}");
     }
 }
 

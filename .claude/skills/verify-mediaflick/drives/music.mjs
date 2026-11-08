@@ -179,6 +179,29 @@ export default async function music(ctx) {
   check(await ctx.mpv("idle-active") === true, "Stop left mpv idle")
   check(String(await ctx.mpv("vid")) !== "false", "mpv selects video again for the next file after audio", await ctx.mpv("vid"))
 
+  // "Play On" from another client: an item list in the sender's order, and an album.
+  const target = await ctx.remoteCommand("Playing", { playCommand: "PlayNow", itemIds: [ids[1], ids[4]].join(","), startIndex: 1 })
+  report.remote = { playableMediaTypes: target.PlayableMediaTypes, supportsMediaControl: target.SupportsMediaControl }
+  check(target.PlayableMediaTypes?.includes("Audio") && target.PlayableMediaTypes.includes("Video"), "the app's session advertises Audio and Video", target.PlayableMediaTypes)
+  await ctx.until(async () => { const now = await audio(); return now?.phase === "playing" && now.length === 2 && now.index === 1 }, "the remote two-item queue to play at StartIndex 1")
+  check((await audio()).current.itemId === ids[4], "remote PlayNow played ItemIds[StartIndex] of an out-of-order list")
+  await ctx.remoteCommand("Playing/PreviousTrack")
+  await ctx.until(async () => { const now = await audio(); return now?.index === 0 && now.current.itemId === ids[1] && now.phase === "playing" }, "remote PreviousTrack to reach the list's first item")
+  await ctx.remoteCommand("Playing/NextTrack")
+  await ctx.until(async () => { const now = await audio(); return now?.index === 1 && now.phase === "playing" }, "remote NextTrack to move on")
+  check(true, "remote PreviousTrack and NextTrack moved through the remote queue")
+  await ctx.remoteCommand("Playing", { playCommand: "PlayNow", itemIds: album.Id })
+  await ctx.until(async () => { const now = await audio(); return now?.phase === "playing" && now.length === 5 && now.current.itemId === ids[0] }, "a remote album to play as its five tracks")
+  check(true, "remote PlayNow of an album queued its tracks in order")
+  if (!builtIn) {
+    const bindings = await ctx.mpv("input-bindings")
+    const winner = (key) => bindings.filter((binding) => binding.key === key).sort((a, b) => b.priority - a.priority)[0]?.cmd
+    report.mpvBindings = { NEXT: winner("NEXT"), PREV: winner("PREV") }
+    check(report.mpvBindings.NEXT === "script-message mediaflick-desktop next-track" && report.mpvBindings.PREV === "script-message mediaflick-desktop previous-track", "External mpv's own Next and Previous keys go to the app's queue", report.mpvBindings)
+  }
+  await ctx.remoteCommand("Playing/Stop")
+  await ctx.until(async () => (await ctx.player()).active === false, "remote Stop to end the queue")
+
   // An audiobook continues from its saved position.
   const books = await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&IncludeItemTypes=AudioBook&Recursive=true&SearchTerm=${encodeURIComponent(AUDIOBOOK)}`)
   const book = books.Items.find((item) => item.Name === AUDIOBOOK)

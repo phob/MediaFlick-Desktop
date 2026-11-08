@@ -406,6 +406,10 @@ pub enum BackendEvent {
     Failed {
         message: String,
     },
+    /// The player's own Next or Previous key, for the coordinator's queue.
+    TrackRequested {
+        next: bool,
+    },
 }
 
 /// What the coordinator tells the shell.

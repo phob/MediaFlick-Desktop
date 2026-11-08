@@ -588,6 +588,11 @@ impl Actor {
                 }
             }
             BackendEvent::Stopped(snapshot) => self.stopped(snapshot),
+            BackendEvent::TrackRequested { next } => self.control(if next {
+                PlayerCommand::NextTrack
+            } else {
+                PlayerCommand::PreviousTrack
+            }),
             BackendEvent::Failed { message } => {
                 let _ = self.shell.send(PlaybackEvent::Failed { message });
                 // The player refused the file it was handed; nothing else

@@ -175,6 +175,102 @@ pub fn start_queue(
     Ok(first)
 }
 
+/// Remote PlayNow: `item_ids` in the sender's order, repeats kept, an album
+/// or other folder expanded in place into its tracks, starting at the
+/// entry `item_ids[start_index]` begins. `None` when that item is no audio,
+/// so the caller plays it as video. A list mixing audio with other media
+/// is rejected rather than played in part.
+pub fn start_item_queue(
+    services: &Arc<Services>,
+    scope: &SessionScope,
+    item_ids: &[String],
+    start_index: usize,
+    start: AudioStart,
+) -> Result<Option<String>, StartError> {
+    if item_ids.len() > MAX_QUEUE_LENGTH {
+        return Err(StartError::Rejected(
+            "the remote asked for more items than one queue can hold",
+        ));
+    }
+    let Some(start_id) = item_ids.get(start_index) else {
+        return Err(StartError::Rejected(
+            "StartIndex is past the end of ItemIds",
+        ));
+    };
+    let mut unique: Vec<String> = Vec::new();
+    for id in item_ids {
+        if !unique.contains(id) {
+            unique.push(id.clone());
+        }
+    }
+    let mut fetched = Vec::with_capacity(unique.len());
+    for batch in unique.chunks(100) {
+        fetched.extend(
+            services
+                .session
+                .fetch_current(scope, |client, user_id| {
+                    items::fetch_items(client, user_id, batch)
+                })
+                .map_err(opened)?
+                .items,
+        );
+    }
+    let item = |id: &str| fetched.iter().find(|item| item.id == id);
+    let listenable = |item: &BaseItemDto| {
+        audio_kind(item.item_type.as_deref()).is_some()
+            || matches!(item.item_type.as_deref(), Some("MusicAlbum"))
+    };
+    if !item(start_id).is_some_and(listenable) {
+        return Ok(None);
+    }
+    let mut tracks = Vec::new();
+    let mut start_entry = 0;
+    for (index, id) in item_ids.iter().enumerate() {
+        let entry = item(id).ok_or(StartError::Api(ApiError::Status { status: 404 }))?;
+        if !listenable(entry) {
+            return Err(StartError::Rejected(
+                "the remote mixed audio with other media in one play",
+            ));
+        }
+        if index == start_index {
+            start_entry = tracks.len();
+        }
+        tracks.extend(
+            services
+                .session
+                .fetch_current(scope, |client, user_id| {
+                    audio_tracks(client, user_id, entry)
+                })
+                .map_err(opened)?,
+        );
+        if tracks.len() > MAX_QUEUE_LENGTH {
+            return Err(StartError::Rejected(
+                "the remote asked for more tracks than one queue can hold",
+            ));
+        }
+    }
+    let plan = AudioPlan::new(tracks, start_entry, start).ok_or(StartError::Rejected(
+        "the remote play has nothing to listen to",
+    ))?;
+    let first = plan.first_item_id().to_string();
+    let playback = services.playback().ok_or(StartError::NotReady)?;
+    if crate::players::configured_player_path(&services.preferences.snapshot()).is_none() {
+        return Err(StartError::NoPlayer);
+    }
+    if !services.session.scope_is_current(scope) {
+        return Err(StartError::AccountChanged);
+    }
+    tracing::info!(target: "playback", items = item_ids.len(), start_index, first, "queued audio from a remote client");
+    playback.play_audio(
+        plan,
+        Arc::new(JellyfinAudioSource {
+            services: Arc::downgrade(services),
+            scope: scope.clone(),
+        }),
+    );
+    Ok(Some(first))
+}
+
 fn opened(error: ApiError) -> StartError {
     match error {
         ApiError::AccountChanged => StartError::AccountChanged,

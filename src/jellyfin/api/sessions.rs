@@ -11,12 +11,13 @@ use serde_json::{Value, json};
 use super::client::{ApiError, JellyfinClient};
 
 /// GeneralCommand names this client actually executes. Playstate commands
-/// (pause, stop, seek, next) are covered by `SupportsMediaControl` instead.
+/// (pause, stop, seek, next, previous) are covered by `SupportsMediaControl`
+/// instead.
 const SUPPORTED_COMMANDS: [&str; 4] = ["SetVolume", "Mute", "Unmute", "ToggleMute"];
 
 pub fn capabilities_body() -> Value {
     json!({
-        "PlayableMediaTypes": ["Video"],
+        "PlayableMediaTypes": ["Video", "Audio"],
         "SupportedCommands": SUPPORTED_COMMANDS,
         "SupportsMediaControl": true,
         // The session should stop being a cast target once this device
