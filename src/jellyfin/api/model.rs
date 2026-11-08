@@ -151,7 +151,6 @@ pub struct BaseItemDto {
     pub is_folder: bool,
     pub date_created: Option<String>,
     pub date_last_saved: Option<String>,
-    /// The item's file on the server, asked for only where its name matters.
     pub path: Option<String>,
     /// A series' airing state. Jellyfin sends it for every series whatever
     /// `Fields` asks for.

@@ -284,8 +284,6 @@ fn handle_playstate(services: &Arc<Services>, data: &Value, scope: &SessionScope
     }
 }
 
-/// Next or Previous: through the audio queue while one plays, else the
-/// neighbouring episode of the one playing.
 fn skip(services: &Arc<Services>, scope: &SessionScope, next: bool) {
     let Some(playback) = services.playback() else {
         return;

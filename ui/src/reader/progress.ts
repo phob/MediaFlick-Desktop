@@ -7,23 +7,13 @@ import type { ReadingPosition } from "./open-book"
 
 const SAVE_INTERVAL_MS = 1000
 
-/**
- * The one writer of a book's place for an account, shared by every reader of
- * that book, closed ones included. The newest position waits up to a second,
- * one save runs at a time, reaching the end saves at once, and what is left
- * is written as soon as the reader closes or the page is hidden. A reader's
- * reports stop counting once it closes or a newer reader of the book opens.
- */
 interface Writer {
   itemId: string
-  /** The newest reader's session; only its reports count. */
   session: number
-  /** The newest reader is still mounted. */
   open: boolean
   pending: ReadingPosition | null
   timer: ReturnType<typeof setTimeout> | undefined
   saving: Promise<void> | null
-  /** The account changed or its session expired: nothing more is written. */
   stopped: boolean
   saved(): void
 }
@@ -64,7 +54,6 @@ export async function settled(account: string, itemId: string): Promise<void> {
   }
 }
 
-/** Starts a reader's session with the book's writer and returns how it reports positions. */
 export function useProgress(account: string, itemId: string): (position: ReadingPosition) => void {
   const queryClient = useQueryClient()
   const session = useRef(0)

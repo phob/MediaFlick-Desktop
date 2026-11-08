@@ -85,7 +85,6 @@ impl NativeWindowHandle {
     }
 }
 
-/// Where an audio queue entry starts playing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioStart {
     /// Music from 0; an audiobook from its saved position, less the resume
@@ -102,7 +101,7 @@ pub struct PreparedAudio {
 }
 
 /// The media server's side of an audio queue, bound to the account that
-/// built it. Implemented in `jellyfin::play`.
+/// built it.
 pub trait AudioSource: Send + Sync {
     /// Negotiates one entry. Blocking; the coordinator calls it on its
     /// preparation worker, holding no lock. The error is shown to the user.

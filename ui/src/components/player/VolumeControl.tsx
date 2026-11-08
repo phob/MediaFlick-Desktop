@@ -24,7 +24,6 @@ function MuteButton({ muted, volume, title, onToggle, className }: {
   )
 }
 
-/** The mute toggle and volume slider both player bars show. */
 export function VolumeControl({ muted, volume, muteTitle, onToggleMute, onVolumeDraft, onVolumeCommit }: {
   muted: boolean
   volume: number

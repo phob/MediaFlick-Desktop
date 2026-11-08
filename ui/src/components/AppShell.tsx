@@ -197,8 +197,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     return <IntegratedPlayerOverlay paused={Boolean(player.data?.paused)} />
   }
 
-  // The reader fills the window: no sidebar, and no player bar, whose window
-  // keys would take the reader's arrows and Space.
   if (matchPath(READER_ROUTE, location.pathname)) {
     return <main className="h-full min-h-0 bg-background">{children}</main>
   }

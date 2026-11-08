@@ -64,7 +64,6 @@ pub struct ReaderStore {
 
 struct StoreState {
     file: ReaderFile,
-    /// Set when opening had to set a damaged file aside; read once by Settings.
     recovery: Option<RecoveryNotice>,
 }
 
@@ -166,8 +165,6 @@ impl ReaderStore {
             .map(read)
     }
 
-    /// Changes one account's entry and saves the file before the change is
-    /// visible, so a failed save leaves both as they were.
     fn write(&self, key: &AccountKey, change: impl FnOnce(&mut ReaderAccount)) -> io::Result<()> {
         let mut state = self.lock();
         let mut next = state.file.clone();

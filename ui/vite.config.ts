@@ -12,14 +12,10 @@ const libarchiveWasm = path.resolve(import.meta.dirname, "../distribution/libarc
 const libarchiveWasmRecipe = path.resolve(import.meta.dirname, "../distribution/libarchive-wasm/build.sh")
 
 /**
- * What the reader loads at run time, copied verbatim to `dist/reader/`.
  * foliate runs as unbundled ES modules that find their vendor files by
  * `import.meta.url`, and pdf.js and libarchive.js each need a worker script,
- * so none of this can go into `app.js`. libarchive.js's worker and wasm come
- * from `distribution/libarchive-wasm/`, a rebuild without OpenSSL; only its
- * main-thread API comes from the package. `build.rs` embeds exactly what lands
- * here; source maps and license files stay out (the notices are in
- * THIRD-PARTY-NOTICES.md).
+ * so none of this can go into `app.js`. License files stay out: the notices
+ * are in THIRD-PARTY-NOTICES.md.
  */
 const READER_FILES: { from: string; to: string; files: readonly string[] }[] = [
   {
@@ -77,8 +73,7 @@ function readerAssets(): Plugin {
 // `mediaflick-desktop://app/` scheme, so there is no network between the bundle
 // and the renderer: code splitting and content hashing buy nothing. Emitting
 // fixed `app.js` / `app.css` names keeps `static_asset` in
-// `src/shell/cef/api/assets.rs` a small match; the reader's own files under
-// `/reader/` come from the table `build.rs` generates.
+// `src/shell/cef/api/assets.rs` a small match.
 export default defineConfig({
   plugins: [react(), tailwindcss(), readerAssets()],
   resolve: {

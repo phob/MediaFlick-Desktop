@@ -1,6 +1,3 @@
-//! Audio queues: what an album, audiobook or track plays, and each entry's
-//! negotiation once the coordinator reaches it.
-
 use std::sync::{Arc, Weak};
 
 use crate::app::services::Services;
@@ -15,7 +12,6 @@ use super::super::api::{ApiError, JellyfinClient};
 use super::super::session::SessionScope;
 use super::{PlayOptions, StartError, build, resume_start_ticks};
 
-/// What the user asked to hear.
 pub struct QueueAsk {
     /// An album, an audiobook or one track.
     pub parent_id: String,
@@ -299,7 +295,6 @@ fn shuffle<T>(items: &mut [T]) {
     }
 }
 
-/// The Jellyfin side of one queue, bound to the account that started it.
 struct JellyfinAudioSource {
     services: Weak<Services>,
     scope: SessionScope,

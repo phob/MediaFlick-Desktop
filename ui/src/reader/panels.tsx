@@ -13,7 +13,6 @@ import type { JumpTarget, ReadingPosition, TocEntry } from "./open-book"
 
 type Move = Extract<ReaderCommand, { kind: "move" }>["to"]
 
-/** What the reader's keys ask of the open panel. */
 export interface PanelControl {
   move(to: Move): void
   confirm(): void
@@ -22,7 +21,6 @@ export interface PanelControl {
 
 const ROW = "[data-reader-row]"
 
-/** Focuses a row of `container`: the next or previous one, ten on, or an end. */
 function moveFocus(container: HTMLElement | null, to: Move) {
   const rows = [...(container?.querySelectorAll<HTMLElement>(ROW) ?? [])]
   if (!rows.length) return
@@ -32,7 +30,6 @@ function moveFocus(container: HTMLElement | null, to: Move) {
   focusRow(rows[index])
 }
 
-/** A row's own control takes the focus: a slider's thumb, the chosen radio, or the row itself. */
 function focusRow(row: HTMLElement | undefined) {
   const target =
     row?.querySelector<HTMLElement>('[role="slider"], [role="radio"][data-state="checked"], [role="radio"]') ?? row
@@ -62,13 +59,6 @@ const TITLES: Record<Exclude<ReaderLayer["kind"], "reading">, string> = {
   keys: "Keys",
 }
 
-/**
- * The reader's panels, in one sheet whose content follows the layer, so
- * moving from the menu to a panel never closes one dialog while another
- * opens. The reader's key table owns Back and the moves between rows; a
- * row's own control keeps Enter, and the sliders and radio groups keep
- * Left and Right, so Back always closes exactly one panel.
- */
 export function ReaderPanels(props: PanelsProps) {
   const { layer } = props
   const body = useRef<HTMLDivElement>(null)
@@ -110,7 +100,6 @@ export function ReaderPanels(props: PanelsProps) {
   )
 }
 
-/** Focuses the row `data-reader-entry` names, or the first, once the panel shows. */
 function useInitialFocus<T extends HTMLElement = HTMLDivElement>(entry: string | null) {
   const list = useRef<T>(null)
   useEffect(() => {
@@ -217,7 +206,6 @@ type Setting =
   | { kind: "slider"; label: string; text: string; value: number; min: number; max: number; step: number; change(value: number): void }
   | { kind: "choice"; label: string; value: string; options: readonly (readonly [string, string])[]; change(value: string): void }
 
-/** The rows Appearance offers for this book, each with how to show and change it. */
 function settingRows(layout: "reflowable" | "fixed", appearance: ReaderAppearance, change: (next: ReaderAppearance) => void): Setting[] {
   const choice = <K extends "theme" | "fit" | "lineSpacing" | "margins" | "flow">(
     key: K,
@@ -253,18 +241,11 @@ function settingRows(layout: "reflowable" | "fixed", appearance: ReaderAppearanc
   ]
 }
 
-/**
- * Appearance applies each change at once. The reader's keys own Up, Down,
- * Left and Right here, so a slider or radio group never takes Up and Down,
- * and Left and Right change exactly the focused row.
- */
 function Settings({ layout, appearance, changeAppearance, control }: Omit<PanelsProps, "control"> & { control: Ref<{ adjust(by: -1 | 1): void } | null> }) {
   const list = useInitialFocus(null)
   const rows = settingRows(layout, appearance, changeAppearance)
   const changed = useRef<number | null>(null)
   const rowElements = () => [...(list.current?.querySelectorAll<HTMLElement>(ROW) ?? [])]
-  // The changed row's newly chosen radio takes the focus, unless a key has
-  // already moved the focus to another row.
   useLayoutEffect(() => {
     if (changed.current === null) return
     const row = rowElements()[changed.current]

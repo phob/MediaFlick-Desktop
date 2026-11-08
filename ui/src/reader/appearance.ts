@@ -11,7 +11,6 @@ const TOKENS: Readonly<Record<Theme, { paper: string; ink: string; link: string;
 
 const LINE_HEIGHT: Readonly<Record<ReaderAppearance["lineSpacing"], number>> = { compact: 1.25, normal: 1.5, relaxed: 1.8 }
 
-/** The paginator's layout attributes per margin choice: the gap between columns and the widest column. */
 const MARGINS: Readonly<Record<ReaderAppearance["margins"], { gap: string; maxInlineSize: string }>> = {
   narrow: { gap: "4%", maxInlineSize: "960px" },
   normal: { gap: "6%", maxInlineSize: "720px" },
@@ -20,7 +19,6 @@ const MARGINS: Readonly<Record<ReaderAppearance["margins"], { gap: string; maxIn
 
 export const FONT_SIZE = { min: 80, max: 200, step: 10 } as const
 
-/** The colours of a reader theme, read from the app's tokens in `app.css`. */
 export function themeColors(theme: Theme) {
   const style = getComputedStyle(document.documentElement)
   const tokens = TOKENS[theme]
@@ -32,11 +30,6 @@ export function themeColors(theme: Theme) {
   }
 }
 
-/**
- * The stylesheet foliate puts into each section of a reflowable book. Every
- * theme sets the page's colours over the book's own, so a book that prints
- * black text stays readable on the dark themes.
- */
 export function bookStyles(appearance: ReaderAppearance) {
   const { paper, ink, link, scheme } = themeColors(appearance.theme)
   return `

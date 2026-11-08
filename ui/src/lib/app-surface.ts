@@ -11,7 +11,6 @@ function isEditableTarget(target: EventTarget | null): boolean {
 // discards the session view, and zoom rescales chrome the OS already sizes.
 const BROWSER_SHORTCUTS = new Set(["p", "s", "u", "r", "-", "=", "+", "0"])
 
-/** Guards `target`: the app's own document, or a book's section document in the reader. */
 export function installAppSurfaceGuard(target: Document = document): () => void {
   const onKeyDown = (event: KeyboardEvent) => {
     // F7 toggles Chromium caret browsing, which would open keyboard-driven

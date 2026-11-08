@@ -20,7 +20,6 @@ const BOOKS = [
 const EXTRA = [
   // Chapter 5 is the fifth spine item, so its CFI starts /6/10!.
   { key: "nested", name: "MediaFlick Nested Contents", format: "epub", tocEntry: "Section 5.1", tocCfi: "epubcfi(/6/10!" },
-  // Eight pages: Contents moves one entry, so the flow stops short of the last page.
   { key: "fxl", name: "MediaFlick Fixed Layout", format: "epub", contentsDowns: 1 },
 ]
 const TRAP = "MediaFlick Script Trap"
@@ -54,7 +53,6 @@ function expectedTicks(location) {
   return location.kind === "text" ? Math.round(location.fraction * 1e7) : location.page * 1e4
 }
 
-/** Waits until the reader saved a place other than `previous`, synced to Jellyfin. */
 async function moved(ctx, book, previous, description) {
   const saved = await ctx.until(() => {
     const current = place(ctx, book.id)
@@ -167,7 +165,6 @@ async function readFormat(ctx, book, report) {
   await ctx.until(async () => (await ctx.pathname()) === `/item/${book.id}`, `${book.key}: Escape leaves the reader`)
 }
 
-/** End shows the last page, which marks the book played; the page then offers Read again, which opens at the start. */
 async function finish(ctx, book, row) {
   await ctx.key("End")
   await ctx.until(async () => (await ctx.jellyfin(`/Items/${book.id}?userId=${ctx.account.userId}`)).UserData.Played, `${book.key}: the last page marks the book played in Jellyfin`, 15000)
@@ -187,14 +184,12 @@ async function inLayer(ctx, book, name, how) {
   await ctx.until(`${layer} === "${name}" && ${focused}`, `${book.key}: ${how}`)
 }
 
-/** Moves the menu's focus down to `entry` and chooses it, with Down and Enter only. */
 async function chooseFromMenu(ctx, book, entry) {
   for (let step = 0; step < 10 && (await ctx.app.evaluate(focusedEntry)) !== entry; step += 1) await press(ctx, "down")
   ctx.check((await ctx.app.evaluate(focusedEntry)) === entry, `${book.key}: the menu focuses ${entry}`)
   await enter(ctx)
 }
 
-/** With Page width a page outgrows the window: Down scrolls it, and turns the page only at its end. */
 async function widthScroll(ctx, book) {
   const page = async () => Number(/Page (\d+) of/.exec(await footer(ctx))?.[1])
   const start = await page()
@@ -211,10 +206,6 @@ async function widthScroll(ctx, book) {
   return { start, downs, end: now }
 }
 
-/**
- * The menu, Contents, Go to and Appearance by remote keys alone: Menu,
- * arrows, Page Up/Down, Enter and Back.
- */
 async function panels(ctx, book, row) {
   const steps = (row.panels = {})
   await press(ctx, "menu")
@@ -298,7 +289,6 @@ async function panels(ctx, book, row) {
   await ctx.screenshot(`${book.key}-07-reading-after`)
 }
 
-/** Letters, Escape and Backspace on the keyboard: every panel opens by its key and closes by one. */
 async function keyboardPass(ctx, book, report) {
   const row = (report.keyboard = { book: book.key, steps: [] })
   await openDetail(ctx, book)
@@ -386,7 +376,6 @@ async function remoteX11Pass(ctx, book, report) {
   await ctx.until(async () => (await ctx.pathname()) === `/item/${book.id}`, "x11: Back leaves the reader")
 }
 
-/** What the native book API answers: each file's sniffed format, bounded byte ranges, an audiobook that is not a book, and nothing for an item the reader did not open. */
 async function api(ctx, report) {
   const formats = {}
   for (const book of [...BOOKS, ...EXTRA]) {

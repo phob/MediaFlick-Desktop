@@ -17,7 +17,6 @@ import { usePlay, usePlayerState, usePlayQueue } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 
-/** An album, audiobook or track: Play and Shuffle, or Continue and From start, over its tracks by disc. */
 export function AudioPage({
   item,
   navigationState,

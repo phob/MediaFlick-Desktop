@@ -8,7 +8,6 @@ const ALBUM = "Test Tones"
 const ALBUM_ARTIST = "MediaFlick Fixtures"
 const MISSING_MPV = "/nonexistent/mpv"
 const FAILED = "player backend reported a playback failure"
-/** Well under the bar's 10 s state poll. */
 const BAR_LEAVES_WITHIN_MS = 3000
 const WATCH_MS = 15000
 

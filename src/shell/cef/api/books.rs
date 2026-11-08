@@ -8,11 +8,8 @@ use crate::library::model::{BookDetail, GenericItemDetail};
 
 use super::*;
 
-/// The most one answer of a book's bytes carries. The reader reads a book by
-/// ranges, so a 300 MB comic never sits whole in this process.
 const BOOK_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
 const NOT_OPEN: &str = "the reader has not opened that book";
-/// How much of each end of a file format sniffing reads.
 const SNIFF_WINDOW: u64 = 64 * 1024;
 
 routes! {
@@ -25,8 +22,6 @@ routes! {
         save_appearance(services, body),
 }
 
-/// What the reader needs to open a book: the format its bytes are, where to
-/// open it, and how to show it.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct BookManifest {
@@ -103,8 +98,6 @@ fn book_manifest(
         })
 }
 
-/// A book's detail answer: how far this account has read it, from the same
-/// merge the reader opens with, in the units the file's name gives.
 pub(super) fn book_detail(
     services: &Arc<Services>,
     scope: &SessionScope,
@@ -199,11 +192,6 @@ fn book_bytes(
     ))
 }
 
-/// Keeps the exact place of a book the reader opened locally first, noting
-/// as synced what Jellyfin holds as far as this app knows, then writes
-/// Jellyfin's position in jellyfin-web's units; once Jellyfin has it, the
-/// local record notes that as synced. A failed Jellyfin write keeps the
-/// place and answers `synced: false`; the reader's next save writes it again.
 fn save_position(
     services: &Arc<Services>,
     item_id: &str,

@@ -12,7 +12,6 @@ const TEXT_FORMATS: ReadonlySet<BookFormat> = new Set(["epub", "mobi", "azw", "a
 const COMIC_FORMATS: ReadonlySet<BookFormat> = new Set(["cbz", "cbr", "cb7", "cbt"])
 /** Keys playback owns. A section document keeps them from the app, so they are passed on. */
 const PLAYBACK_KEYS: ReadonlySet<string> = new Set(["MediaPlayPause", "MediaPlay", "MediaPause", "MediaStop"])
-/** How far a chapter key moves a book without contents. */
 const PAGE_STEP = 10
 
 export interface TocEntry {
@@ -23,7 +22,6 @@ export interface TocEntry {
 
 export interface ReadingPosition {
   location: ReadingLocation
-  /** The book's last content is on screen. */
   finished: boolean
   fraction: number
   /** Zero-based page and page count of a book with fixed pages: a PDF, a comic or a fixed-layout EPUB. */
@@ -40,7 +38,6 @@ export type JumpTarget = { kind: "toc"; target: string | number } | { kind: "fra
 
 type SessionCommand = Extract<ReaderCommand, { kind: "turn" | "scroll" | "section" | "edge" | "return" }>
 
-/** An open book. Callers never see foliate, its iframes, the loaders or Jellyfin's units. */
 export interface BookSession {
   readonly layout: "reflowable" | "fixed"
   readonly toc: readonly TocEntry[]
@@ -77,7 +74,6 @@ function pageEntries(count: number): TocEntry[] {
   return Array.from({ length: count }, (_, index) => ({ label: `Page ${index + 1}`, target: index, depth: 0 }))
 }
 
-/** Opens a book from the server into `host` at the place `manifest` names. */
 export async function openBook(host: HTMLElement, itemId: string, manifest: BookManifest, options: OpenOptions): Promise<BookSession> {
   const { View } = await foliateView()
   // foliate tells a CBZ from an EPUB by the name, so the name carries the format the bytes were sniffed as.
@@ -178,8 +174,6 @@ export async function openBook(host: HTMLElement, itemId: string, manifest: Book
       await view.goTo(Math.min(sections - 1, Math.max(0, page + direction * PAGE_STEP)))
     }
 
-    // A page fitted to the width can be taller than the window: next and
-    // previous scroll it first, and turn the page at its end.
     const scrollOrTurn = async (to: "next" | "prev") => {
       const page = view.renderer
       const step = page.clientHeight * 0.85

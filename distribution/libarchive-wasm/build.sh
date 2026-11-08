@@ -85,8 +85,7 @@ emcmake cmake -S "$src/xz" -B "$build/xz" "${cmake_common[@]}" \
 cmake --build "$build/xz" -j "$jobs" >/dev/null
 cmake --install "$build/xz" >/dev/null
 
-# Every crypto and optional library is switched off by name. RAR5's BLAKE2sp
-# is libarchive's own (CC0) implementation.
+# RAR5's BLAKE2sp is libarchive's own (CC0) implementation.
 emcmake cmake -S "$src/libarchive" -B "$build/libarchive" "${cmake_common[@]}" \
   -DENABLE_OPENSSL=OFF -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_CNG=OFF \
   -DENABLE_MD=OFF -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF -DENABLE_LZO=OFF -DENABLE_ZSTD=OFF \

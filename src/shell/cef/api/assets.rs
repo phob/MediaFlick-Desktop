@@ -22,9 +22,6 @@ pub(super) fn static_asset(path: &str) -> Option<ApiResponse> {
     }
 }
 
-/// The reader's verbatim tree (foliate-js, pdf.js, libarchive.js), from the
-/// table `build.rs` generates. An unknown path under `/reader/` is a 404, never
-/// the app shell, so a missing module fails loudly in the page.
 const READER_ASSETS: &[(&str, &str, &[u8])] =
     include!(concat!(env!("OUT_DIR"), "/reader_assets.rs"));
 

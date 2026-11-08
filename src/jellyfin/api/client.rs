@@ -12,7 +12,6 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(120);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_ATTEMPTS: u32 = 3;
 const RETRY_BUDGET: Duration = HTTP_TIMEOUT;
-/// The most a whole-body byte read (artwork, a trailer chunk) buffers.
 pub const BYTE_RESPONSE_LIMIT: u64 = 64 * 1024 * 1024;
 
 pub const CLIENT_NAME: &str = build_info::APP_NAME;

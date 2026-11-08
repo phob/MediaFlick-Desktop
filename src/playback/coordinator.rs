@@ -15,15 +15,11 @@ use super::{
     StopReason,
 };
 
-/// Previous within this much of a track's start goes to the previous entry;
-/// later it restarts the track.
 const PREVIOUS_RESTARTS_AFTER_MS: f64 = 3000.0;
-/// How often an idle actor checks that the queue's account is still signed in.
 const ACCOUNT_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 static NEXT_QUEUE_ID: AtomicU64 = AtomicU64::new(1);
 
-/// A validated audio queue waiting to replace whatever plays.
 pub struct AudioPlan {
     queue: AudioQueue,
     start: AudioStart,
@@ -55,7 +51,6 @@ impl AudioPlan {
 pub struct PlaybackCoordinator {
     shared: Arc<Shared>,
     commands: Sender<Command>,
-    /// The installation of the newest adapter; its relay tags every event with it.
     installed: AtomicU64,
 }
 
@@ -96,14 +91,9 @@ impl Shared {
     }
 }
 
-/// What snapshots read about the session.
 #[derive(Clone)]
 enum Published {
-    /// Whatever plays is video.
     Video,
-    /// The audio queue's view. `load` is the dispatched load of its current
-    /// entry; until the player reports that load, snapshots describe the
-    /// entry rather than the file still playing.
     Audio {
         view: Box<AudioNowPlaying>,
         load: Option<i64>,
@@ -151,8 +141,6 @@ enum Command {
         installation: u64,
         event: Box<BackendEvent>,
     },
-    /// Sent before the adapter of `installation` exists, so its events all
-    /// arrive after this.
     BackendReplaced {
         installation: u64,
     },
@@ -285,8 +273,6 @@ impl PlaybackCoordinator {
     }
 }
 
-/// Each adapter gets its own sender, whose events carry the adapter's
-/// installation; the relay ends once the adapter is gone.
 fn relay_backend_events(commands: Sender<Command>, installation: u64) -> Sender<BackendEvent> {
     let (events, received) = mpsc::channel();
     spawn_named("playback-backend-relay", move || {
@@ -310,8 +296,6 @@ struct Job {
     source: Arc<dyn AudioSource>,
 }
 
-/// One worker prepares the most recent selection only, so a run of Next
-/// presses negotiates the entry the user stopped on, not every one passed.
 fn spawn_preparation_worker(commands: Sender<Command>) -> Sender<Job> {
     let (jobs, received) = mpsc::channel::<Job>();
     spawn_named("playback-prepare", move || {
@@ -343,8 +327,6 @@ enum Session {
     Audio {
         queue: Box<AudioQueue>,
         source: Arc<dyn AudioSource>,
-        /// Where the current entry starts; only the queue's first entry can
-        /// carry anything but the default.
         start: AudioStart,
         phase: Phase,
     },
@@ -374,8 +356,6 @@ impl Phase {
     }
 }
 
-/// An audio load stopped by the user or an account change: its final
-/// Stopped event still describes the audio that ended.
 struct Ending {
     load_id: i64,
     view: AudioNowPlaying,
@@ -385,10 +365,8 @@ struct Actor {
     shared: Arc<Shared>,
     shell: Sender<PlaybackEvent>,
     worker: Sender<Job>,
-    /// The installed adapter's; events of a retired one are dropped.
     installation: u64,
     session: Session,
-    /// The load the player was handed last and has not reported stopped.
     live: Option<i64>,
     ending: Option<Ending>,
     ticket: u64,
@@ -646,8 +624,7 @@ impl Actor {
             }),
             BackendEvent::Failed { load_id, message } => {
                 let _ = self.shell.send(PlaybackEvent::Failed { message });
-                // A refused load never plays, so the player never reports it
-                // stopped; it ends here as that report would end it.
+                // The player never reports a refused load stopped, so end it here.
                 if self.live == Some(load_id) {
                     self.stopped(PlayerSnapshot {
                         playback_id: Some(load_id),
@@ -704,8 +681,6 @@ impl Actor {
         }
     }
 
-    /// Ends the audio queue and stops what the player plays for it. The
-    /// final Stopped event describes the entry that was current.
     fn stop_audio(&mut self, reason: StopReason) {
         let Session::Audio { queue, phase, .. } = &self.session else {
             return;
@@ -721,8 +696,6 @@ impl Actor {
         }
     }
 
-    /// Drops the audio queue without stopping the player, for a load that
-    /// replaces it.
     fn abandon_audio(&mut self) {
         if matches!(self.session, Session::Audio { .. }) {
             self.end_session();
@@ -746,7 +719,6 @@ impl Actor {
     }
 }
 
-/// The Stopped event for an audio entry the player never loaded.
 fn synthetic_stop(view: AudioNowPlaying, reason: StopReason) -> PlayerSnapshot {
     PlayerSnapshot {
         item_id: Some(view.current.item_id.clone()),

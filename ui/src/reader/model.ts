@@ -1,4 +1,3 @@
-/** What the reader can be asked to do, by a key or by a panel. */
 export type ReaderCommand =
   | { kind: "turn"; to: "left" | "right" | "next" | "prev" }
   | { kind: "scroll"; by: -1 | 1 }
@@ -8,20 +7,12 @@ export type ReaderCommand =
   | { kind: "font"; step: -1 | 1 }
   | { kind: "open"; layer: Panel | "menu" }
   | { kind: "back" }
-  /** Takes the panel's choice, such as Go to's position. */
   | { kind: "confirm" }
-  /** Changes the focused Appearance setting: a smaller or larger size, the previous or next choice. */
   | { kind: "adjust"; by: -1 | 1 }
-  /** Moves the focus inside a panel: a row, ten rows, or to an end. */
   | { kind: "move"; to: "previous" | "next" | "previousTen" | "nextTen" | "first" | "last" }
 
 export type Panel = "toc" | "goto" | "settings" | "keys"
 
-/**
- * What has the keyboard. A panel remembers whether it was opened from the
- * menu, so Back returns there with the panel's own entry focused, or from
- * reading, so Back returns to the book.
- */
 export type ReaderLayer =
   | { kind: "reading" }
   | { kind: "menu"; focus: MenuEntry }
@@ -31,7 +22,6 @@ export type MenuEntry = Panel | "close"
 
 export type LayerKind = ReaderLayer["kind"]
 
-/** The next layer, or `"leave"` when Back leaves the reader. */
 export function nextLayer(
   layer: ReaderLayer,
   change: { kind: "open"; layer: Panel | "menu" } | { kind: "back" } | { kind: "jumped" },

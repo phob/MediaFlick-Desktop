@@ -1,6 +1,3 @@
-//! The audio play queue: a fixed order with a current entry. Pure data; the
-//! coordinator's actor owns the one live queue and does all I/O.
-
 use std::collections::VecDeque;
 
 use super::model::{
@@ -12,7 +9,6 @@ use super::model::{
 /// is resolved rather than silently truncated.
 pub const MAX_QUEUE_LENGTH: usize = 10_000;
 
-/// An audio item ready to queue, built from Jellyfin metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioTrack {
     pub kind: AudioKind,
@@ -31,8 +27,6 @@ pub(super) struct QueueEntry {
     pub(super) track: AudioTrack,
 }
 
-/// Past entries, the current one and those still to come. The current entry
-/// always exists, so no index can point past the end.
 #[derive(Debug, Clone)]
 pub(super) struct AudioQueue {
     past: Vec<QueueEntry>,

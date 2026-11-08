@@ -13,7 +13,6 @@ pub struct ReaderAppearance {
     pub fit: PageFit,
 }
 
-/// Text size in percent of the book's own, from 80 to 200 in steps of 10.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(try_from = "u16")]
 #[ts(type = "number")]

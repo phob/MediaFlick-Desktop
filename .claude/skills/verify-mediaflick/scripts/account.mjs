@@ -172,8 +172,6 @@ export async function playlistWrite(account, method, apiPath, body) {
   return text ? JSON.parse(text) : null
 }
 
-// Remote control as another client of the same account: the app's session
-// is the target, so this writes nothing but the playback it starts.
 export async function sessionCommand(account, sessionId, command, query = {}) {
   const search = new URLSearchParams(query).toString()
   const apiPath = `/Sessions/${encodeURIComponent(sessionId)}/${command}${search ? `?${search}` : ""}`

@@ -605,7 +605,6 @@ pub enum DetailView {
     Book(BookDetail),
 }
 
-/// A book the reader opens, with how far this account has read it.
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BookDetail {

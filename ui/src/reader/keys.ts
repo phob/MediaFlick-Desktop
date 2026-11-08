@@ -9,13 +9,9 @@ type Chord = string
 interface Binding {
   chords: readonly Chord[]
   command: ReaderCommand
-  /** What the Keys sheet says the binding does. */
   label: string
-  /** Held keys repeat this binding; any other binding ignores repeats. */
   repeat?: true
-  /** Only in this flow of a reflowable book. */
   flow?: "paginated" | "scrolled"
-  /** Only for reflowable books, whose text the reader lays out. */
   reflowable?: true
 }
 
@@ -35,10 +31,8 @@ const LIST: readonly Binding[] = [
 ]
 
 /**
- * The reader's only key table, one list per layer. Input and the Keys sheet
- * both read it, so the sheet cannot drift from what the keys do. A key the
- * table leaves out belongs to the focused control (a button's Enter, a
- * slider's arrows), and Play/Pause and Stop always belong to playback.
+ * A key the table leaves out belongs to the focused control (a button's
+ * Enter, a slider's arrows), and Play/Pause and Stop always belong to playback.
  */
 const KEYMAP: Readonly<Record<LayerKind, readonly Binding[]>> = {
   reading: [
@@ -99,7 +93,6 @@ function applies(binding: Binding, context: KeyContext) {
   )
 }
 
-/** The command a key press asks of `layer`, or `null` when the key is not the reader's. */
 export function commandFor(layer: LayerKind, event: KeyboardEvent, context: KeyContext): ReaderCommand | null {
   if (event.isComposing) return null
   const chord = chordOf(event)
@@ -108,7 +101,6 @@ export function commandFor(layer: LayerKind, event: KeyboardEvent, context: KeyC
   return binding.command
 }
 
-/** The bindings the Keys sheet lists for `layer` in this book. */
 export function bindingsFor(layer: LayerKind, context: KeyContext) {
   return KEYMAP[layer].filter((binding) => applies(binding, context))
 }

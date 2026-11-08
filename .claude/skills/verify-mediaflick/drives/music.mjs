@@ -45,7 +45,6 @@ export default async function music(ctx) {
   for (const id of ids) ctx.restoreItemAfterRun(id)
   if (ids.length !== 5) throw new Error(`"${ALBUM}" should have 5 tracks, has ${ids.length}`)
 
-  // Music always starts at the beginning, whatever the server stored.
   await ctx.setResumeOnServer(ids[0], 70_000_000)
 
   await ctx.press({ role: "link", name: "Music" })
@@ -80,7 +79,6 @@ export default async function music(ctx) {
   await ctx.find({ role: "button", name: "Next track" })
   await capture("02-playing-album")
 
-  // Natural EOF through all five tracks, crossing from disc 1 to disc 2.
   for (let index = 0; index < ids.length; index++) {
     await playingIndex(index, `track ${index + 1} to play`, 40000)
     const now = await audio()
@@ -97,7 +95,6 @@ export default async function music(ctx) {
       const resumed = await ctx.until(async () => (await audio())?.paused === false, "Space again to resume", 5000).then(() => true, () => false)
       check(paused && resumed, "Space pauses and resumes audio while the page has focus")
     }
-    // Track 1 plays to its end untouched; ArrowRight (+30 s) takes the others there.
     if (index > 0) {
       await ctx.app.evaluate("document.activeElement?.blur()")
       await ctx.key("ArrowRight", { code: "ArrowRight", keyCode: 39 })
@@ -123,13 +120,11 @@ export default async function music(ctx) {
   check(bodies.every(({ body }) => body.NowPlayingQueue?.map((entry) => entry.Id).join() === ids.join() && body.PlaylistItemId), "every report carried NowPlayingQueue and PlaylistItemId", bodies.length)
   check(!(await ctx.exists({ role: "button", name: "Next track" })), "the bar left once the queue ended")
 
-  // Play from a track on disc 2.
   await ctx.press({ role: "button", name: `Play ${oracle[3].Name}` })
   await playingIndex(3, "the queue to start at track 4")
   const fromTrack = await audio()
   check(fromTrack.current.itemId === ids[3] && fromTrack.canPrevious && fromTrack.next?.itemId === ids[4], "choosing a track plays the album from it, earlier tracks still reachable")
 
-  // Bar Next and Previous, then the media keys.
   await ctx.press({ role: "button", name: "Previous track" })
   await playingIndex(2, "Previous from the bar to go back to track 3")
   await ctx.press({ role: "button", name: "Next track" })
@@ -155,7 +150,6 @@ export default async function music(ctx) {
     await key("XF86AudioPlay", async () => (await audio())?.paused === false, "XF86AudioPlay resumed")
   }
 
-  // Browse while it plays.
   const before = (await audio()).positionMs
   await ctx.press({ role: "link", name: "Movies" })
   await ctx.until(async () => (await ctx.pathname()).startsWith("/library/"), "the Movies library while music plays")
@@ -167,7 +161,6 @@ export default async function music(ctx) {
   check(during?.index === 3 && during.positionMs > before, "playback ran on while browsing other pages", { before, after: during?.positionMs })
   check(await ctx.exists({ role: "button", name: "Next track" }), "the now-playing bar stayed on other pages")
 
-  // Shuffle replaces the queue with an order of the whole album.
   await ctx.press({ role: "link", name: "Music" })
   await ctx.press({ role: "link", name: `Open details for ${ALBUM}` }, { nth: 0 })
   await ctx.press({ role: "button", name: "Shuffle" })
@@ -182,7 +175,6 @@ export default async function music(ctx) {
   check(await ctx.mpv("idle-active") === true, "Stop left mpv idle")
   check(String(await ctx.mpv("vid")) !== "false", "mpv selects video again for the next file after audio", await ctx.mpv("vid"))
 
-  // "Play On" from another client: an item list in the sender's order, and an album.
   const target = await ctx.remoteCommand("Playing", { playCommand: "PlayNow", itemIds: [ids[1], ids[4]].join(","), startIndex: 1 })
   report.remote = { playableMediaTypes: target.PlayableMediaTypes, supportsMediaControl: target.SupportsMediaControl }
   check(target.PlayableMediaTypes?.includes("Audio") && target.PlayableMediaTypes.includes("Video"), "the app's session advertises Audio and Video", target.PlayableMediaTypes)
@@ -205,7 +197,6 @@ export default async function music(ctx) {
   await ctx.remoteCommand("Playing/Stop")
   await ctx.until(async () => (await ctx.player()).active === false, "remote Stop to end the queue")
 
-  // An audiobook continues from its saved position.
   const books = await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&IncludeItemTypes=AudioBook&Recursive=true&SearchTerm=${encodeURIComponent(AUDIOBOOK)}`)
   const book = books.Items.find((item) => item.Name === AUDIOBOOK)
   if (!book) throw new Error(`the server has no audiobook "${AUDIOBOOK}"`)

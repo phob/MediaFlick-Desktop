@@ -17,7 +17,6 @@ import type { DetailNavigationState } from "@/lib/navigation"
 import { useRouteScroller } from "@/lib/route-scroll"
 
 
-/** A detail page without a title's playback: folders, music, books. `facts` and `children` add to the hero. */
 export function GenericItemPage({
   item,
   about,

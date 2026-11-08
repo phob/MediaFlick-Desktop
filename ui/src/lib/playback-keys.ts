@@ -74,7 +74,6 @@ export function usePlaybackKeys() {
   }, [])
 }
 
-/** Focus on the page itself, or on the player bar's background. */
 function keysAreFree(target: EventTarget | null) {
   if (target === document.body || target === document.documentElement || target === null) return true
   return target instanceof Element

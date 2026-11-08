@@ -40,7 +40,6 @@ export function BookItemPage({
 }) {
   const primary = primaryAction(item.reading)
   const primaryLink = useRef<HTMLAnchorElement>(null)
-  // A remote or keyboard user lands on the read action, so Enter opens the book.
   useEffect(() => primaryLink.current?.focus({ preventScroll: true }), [])
   return (
     <GenericItemPage item={item} about={about} navigationState={navigationState} facts={[readingFact(item.reading)]}>

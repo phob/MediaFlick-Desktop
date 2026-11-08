@@ -3,18 +3,9 @@ import { ApiError, responseError } from "@/lib/api/client"
 import { link } from "@/lib/api/routes"
 
 const BLOCK = 1024 * 1024
-/** The native route answers at most 8 MiB, so one request covers at most this many blocks. */
 const BLOCKS_PER_REQUEST = 8
 const CACHED_BLOCKS = 48
 
-/**
- * A book's file on the server, shaped like the `Blob` foliate, pdf.js and
- * zip.js read from. Reads go to the native `/api/item/{id}/book/file` route
- * in 1 MiB blocks, so opening a 24 MB EPUB fetches its central directory and
- * the chapters shown, not the whole file. Adjacent missing blocks share one
- * request, a block being fetched is shared by every read that needs it, and
- * the most recently used 48 blocks stay cached.
- */
 export class RemoteFile implements BookFile {
   readonly type = ""
   readonly name: string
@@ -30,7 +21,6 @@ export class RemoteFile implements BookFile {
     this.#signal = signal
   }
 
-  /** Opens the file, learning its size from the first block's `Content-Range`. */
   static async open(itemId: string, name: string, signal: AbortSignal): Promise<RemoteFile> {
     const first = await fetchRange(itemId, 0, BLOCK - 1, signal)
     const file = new RemoteFile(itemId, name, first.total, signal)
@@ -48,7 +38,6 @@ export class RemoteFile implements BookFile {
     return this.#read(0, this.size)
   }
 
-  /** The whole file, fetched in sequence, for decoders that need all of it at once. */
   async download(onProgress: (fraction: number) => void): Promise<File> {
     const parts: Uint8Array<ArrayBuffer>[] = []
     const step = BLOCK * BLOCKS_PER_REQUEST

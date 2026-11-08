@@ -373,7 +373,6 @@ fn is_mark_watched_next_message(args: &[String]) -> bool {
     }
 }
 
-/// `Some(true)` for the Next key's message, `Some(false)` for Previous.
 fn track_message(args: &[String]) -> Option<bool> {
     match args {
         [target, command, ..] if target == "mediaflick-desktop" => match command.as_str() {

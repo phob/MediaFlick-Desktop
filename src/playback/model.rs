@@ -67,9 +67,6 @@ pub struct HttpHeader {
     pub value: String,
 }
 
-/// What a load presents. Only the coordinator's audio queue builds `Audio`;
-/// every other load is video, which keeps today's window and fullscreen
-/// policy.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PlaybackContent {
     #[default]
@@ -273,7 +270,6 @@ pub struct ArtworkRef {
     pub tag: String,
 }
 
-/// What the player bar and the queue show for one audio item.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioDisplay {
@@ -394,7 +390,6 @@ impl StopReason {
     }
 }
 
-/// What a player adapter reports. Only the coordinator receives these.
 #[derive(Debug, Clone)]
 pub enum BackendEvent {
     StateChanged(PlayerSnapshot),
@@ -414,7 +409,6 @@ pub enum BackendEvent {
     },
 }
 
-/// What the coordinator tells the shell.
 #[derive(Debug, Clone)]
 pub enum PlaybackEvent {
     StateChanged(PlayerSnapshot),

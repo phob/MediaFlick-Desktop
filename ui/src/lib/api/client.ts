@@ -102,7 +102,6 @@ async function readJson(response: Response): Promise<JsonValue> {
   }
 }
 
-/** The error a failed answer of the native API stands for. */
 export async function responseError(response: Response): Promise<ApiError> {
   const envelope = readApiErrorEnvelope(await readJson(response))
   return new ApiError(
@@ -240,7 +239,6 @@ export const api = {
   },
   changePlaybackQuality: (itemId: string, startTicks: number, quality: StreamingQualityId) =>
     request("POST /api/play", { body: { itemId, startTicks, quality } }),
-  /** An album, audiobook or track as an audio queue. */
   playQueue: (body: PlayQueueBody) => {
     window.dispatchEvent(new Event("mediaflick-manual-play"))
     return request("POST /api/play/queue", { body })

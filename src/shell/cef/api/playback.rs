@@ -169,8 +169,6 @@ fn play_queue(
     start_audio(services, &scope, &body.parent_id, &ask)
 }
 
-/// Audio and AudioBook items play through the audio queue, which every
-/// other kind, cached or not, never reaches.
 fn is_audio_item(
     services: &Services,
     scope: &SessionScope,

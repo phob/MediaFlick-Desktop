@@ -35,7 +35,6 @@ export default function Reader() {
   const account = accountKey(status)
   const manifest = useQuery({
     queryKey: queryKeys.book(id, entry),
-    // A reader of this book that just closed may still be saving its place.
     queryFn: async ({ signal }) => {
       await settled(account, id)
       return api.book(id, entry, signal)

@@ -58,8 +58,6 @@ impl ControllerState {
         self.set_fullscreen(fullscreen);
     }
 
-    /// An audio load ends the fullscreen a video playing before it imposed,
-    /// and any fullscreen still waiting for that video.
     pub(super) fn leave_video_fullscreen(&mut self) {
         #[cfg(target_os = "linux")]
         {

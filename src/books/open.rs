@@ -3,7 +3,6 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use super::{ReadingLocation, SavedPosition};
 
-/// How many opened books are remembered; the least recently used goes first.
 const REMEMBERED_BOOKS: usize = 32;
 
 /// The books the reader opened under a session generation, least recently
@@ -20,7 +19,6 @@ struct OpenBook {
 }
 
 impl OpenBooks {
-    /// The reader opened a book Jellyfin held at `server_ticks`.
     pub fn open(&self, generation: u64, item_id: &str, server_ticks: i64) {
         let mut books = self.books();
         books.retain(|book| book.generation == generation && book.item_id != item_id);
@@ -52,7 +50,6 @@ impl OpenBooks {
         })
     }
 
-    /// Jellyfin confirmed it holds `ticks` for the book.
     pub fn synced(&self, generation: u64, item_id: &str, ticks: i64) {
         if let Some(book) = self
             .books()
@@ -63,7 +60,6 @@ impl OpenBooks {
         }
     }
 
-    /// Marks the book used and returns the ticks it remembers.
     fn touch(&self, generation: u64, item_id: &str) -> Option<i64> {
         let mut books = self.books();
         let index = books

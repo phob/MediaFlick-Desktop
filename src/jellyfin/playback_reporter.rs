@@ -296,7 +296,6 @@ impl PlaybackSession {
     }
 }
 
-/// Jellyfin's `NowPlayingQueue`: every entry in play order.
 fn now_playing_queue(queue: &QueueReport) -> Value {
     Value::Array(
         queue

@@ -8,10 +8,6 @@ import { Button } from "@/components/ui/button"
 import { imageUrl, TICKS_PER_MS, type AudioNowPlaying, type PlayerState } from "@/lib/api"
 import { usePatchPlayerState, usePlayerCommand } from "@/lib/queries"
 
-/**
- * The bar while an audio queue plays. It never hides and never covers the
- * page, so browsing goes on; it stays mounted across tracks.
- */
 export function AudioPlayerBar({ player, audio }: { player: PlayerState; audio: AudioNowPlaying }) {
   const command = usePlayerCommand()
   const patchPlayerState = usePatchPlayerState()

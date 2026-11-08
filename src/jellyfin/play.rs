@@ -50,7 +50,6 @@ pub enum StartError {
     NoPlayer,
     NotReady,
     AccountChanged,
-    /// The request names nothing that can play this way; the reason is shown.
     Rejected(&'static str),
     Api(ApiError),
 }

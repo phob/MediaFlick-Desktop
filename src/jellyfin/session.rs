@@ -147,8 +147,6 @@ pub struct Live {
 }
 
 impl Live {
-    /// The account this proof was minted for, so a store that keeps data per
-    /// account files a write under the account that was signed in for it.
     pub fn account(&self) -> &AccountKey {
         &self.account
     }

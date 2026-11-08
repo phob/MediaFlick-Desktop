@@ -57,7 +57,6 @@ function imageExtension(name: string): string | null {
   return extension in IMAGE_TYPES ? extension : null
 }
 
-/** A CBZ, read lazily through zip.js: its central directory, then each page as it is shown. */
 export async function zipComic(file: RemoteFile): Promise<ComicLoader> {
   const { configure, ZipReader, BlobReader, BlobWriter } = await foliateZip()
   configure({ useWebWorkers: false })

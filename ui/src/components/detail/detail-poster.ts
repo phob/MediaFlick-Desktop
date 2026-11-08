@@ -8,7 +8,6 @@ const HERO_FRAME: Record<ArtworkShape, HeroArtworkAspect> = {
   landscape: "still",
 }
 
-/** A library item's own artwork as the hero poster, framed by its shape, or none without one. */
 export function detailPoster(
   item: Pick<ItemSummary, "id" | "primaryImageTag" | "primaryAspect">,
   progress?: number,

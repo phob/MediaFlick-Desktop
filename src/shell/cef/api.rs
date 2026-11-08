@@ -124,9 +124,6 @@ fn stale_account_response() -> ApiResponse {
     ApiResponse::from_api_error(&ApiError::AccountChanged)
 }
 
-/// The `Range` a proxied stream asks its source for: the client's own range,
-/// cut to at most `chunk` bytes, or the first chunk when the client sent none
-/// or a malformed one.
 fn bounded_byte_range(value: Option<&str>, chunk: u64) -> String {
     let fallback = format!("bytes=0-{}", chunk - 1);
     let Some(spec) = value

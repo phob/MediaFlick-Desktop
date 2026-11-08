@@ -125,11 +125,6 @@ fn stage_bundle(dist: &Path) -> Result<(), BuildError> {
     stage_reader(&dist.join("reader"), &out_dir)
 }
 
-/// Stages the reader's static tree (`ui/dist/reader/`, copied there by the
-/// Vite config from an explicit allowlist) and writes `reader_assets.rs`: a
-/// table of `(url path, content type, bytes)` sorted by path for a binary
-/// search. The content type comes from a closed list, so a file nobody
-/// classified fails the build instead of shipping with a guessed type.
 fn stage_reader(reader: &Path, out_dir: &Path) -> Result<(), BuildError> {
     let mut files = Vec::new();
     collect_files(reader, &mut files)?;

@@ -1,8 +1,3 @@
-//! Books in a Jellyfin Books library: which format a file is, where a reader
-//! stands in it, and the units Jellyfin keeps that position in. Pure but for
-//! [`OpenBooks`], the session's record of the books the reader opened; the
-//! reader's routes and its store call into it.
-
 use serde::{Deserialize, Serialize};
 
 mod appearance;
@@ -44,8 +39,6 @@ const PDF_SEARCH: usize = 1024;
 const EPUB_CONTAINER: &[u8] = b"META-INF/container.xml";
 
 impl BookFormat {
-    /// The format a file's name claims. Only the detail page uses it, to
-    /// read Jellyfin's position in the right units without opening the file.
     pub fn from_name(name: &str) -> Option<Self> {
         let extension = name.rsplit_once('.')?.1.to_ascii_lowercase();
         Some(match extension.as_str() {
@@ -173,7 +166,6 @@ fn tar_checksum_holds(head: &[u8]) -> bool {
     sum == stored
 }
 
-/// How far through a book, from 0 to 1.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(try_from = "f64")]
 #[ts(type = "number")]
@@ -197,7 +189,6 @@ impl TryFrom<f64> for Fraction {
     }
 }
 
-/// An EPUB canonical fragment identifier, as foliate writes one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(try_from = "String")]
 #[ts(type = "string")]
@@ -220,8 +211,6 @@ impl TryFrom<String> for Cfi {
     }
 }
 
-/// Where a reader stands in a book: in a text book its CFI and fraction, in
-/// a PDF or comic its zero-based page. The variant is the unit system.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ReadingLocation {
@@ -230,7 +219,6 @@ pub enum ReadingLocation {
 }
 
 impl ReadingLocation {
-    /// The location as jellyfin-web keeps it in `PlaybackPositionTicks`.
     pub fn jellyfin_ticks(&self) -> i64 {
         match self {
             Self::Text { fraction, .. } => (fraction.get() * FRACTION_TICKS).round() as i64,
@@ -255,7 +243,6 @@ pub struct SavedPosition {
     pub synced_ticks: i64,
 }
 
-/// Where the reader opens a book.
 #[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum BookResume {
@@ -301,7 +288,6 @@ pub fn resume(
     }
 }
 
-/// How far a book is read, for its detail page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum ReadingState {
