@@ -403,7 +403,9 @@ pub enum BackendEvent {
         playback_id: i64,
     },
     Stopped(PlayerSnapshot),
+    /// The player refused this load.
     Failed {
+        load_id: i64,
         message: String,
     },
     /// The player's own Next or Previous key, for the coordinator's queue.

@@ -39,6 +39,7 @@ const MPV_RAISE_PULSE_DELAY: Duration = Duration::from_millis(1200);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(10);
 const DUPLICATE_DEBOUNCE: Duration = Duration::from_secs(2);
 const MPV_SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const REJECTED_LOAD: &str = "mpv did not accept the video. Try playing again.";
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
 const CONTROLLER_SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(60);
 const PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(11);
@@ -743,7 +744,7 @@ impl ControllerState {
             );
             return;
         }
-        if !self.make_way_for_load(&key) {
+        if !self.make_way_for_load(&key, launch.load_id) {
             return;
         }
 
@@ -754,6 +755,7 @@ impl ControllerState {
                 "cannot load playback because mpv is unavailable"
             );
             self.report_playback_failure(
+                launch.load_id,
                 "Could not start mpv. Check that the mpv path in Settings is correct.",
             );
             return;
@@ -821,7 +823,7 @@ impl ControllerState {
             Err(error) => {
                 tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command after reconnect attempt: {error}");
                 self.mpv_playback_active = false;
-                self.report_playback_failure("mpv did not accept the video. Try playing again.");
+                self.report_playback_failure(launch.load_id, REJECTED_LOAD);
                 self.handle_mpv_session_lost("loadfile transport failed");
             }
         }
@@ -829,7 +831,7 @@ impl ControllerState {
 
     /// A load that arrives while another is pending replaces it when mpv
     /// reports entry ids. Returns false when the load must be refused.
-    fn make_way_for_load(&mut self, key: &str) -> bool {
+    fn make_way_for_load(&mut self, key: &str, load_id: i64) -> bool {
         let Some(pending) = self.phase.pending() else {
             return true;
         };
@@ -842,7 +844,10 @@ impl ControllerState {
                 incoming_dedupe_key = %key,
                 "refused playback load while another load is pending"
             );
-            self.report_playback_failure("Another title is still starting. Try again in a moment.");
+            self.report_playback_failure(
+                load_id,
+                "Another title is still starting. Try again in a moment.",
+            );
             return false;
         }
         tracing::info!(
@@ -862,6 +867,7 @@ impl ControllerState {
         identity: PlaybackIdentity,
     ) {
         self.mpv_playback_active = false;
+        let load_id = identity.playback_id;
         if replacing_active_file {
             tracing::warn!(
                 target: "mpv.ipc",
@@ -872,12 +878,13 @@ impl ControllerState {
             let snapshot = self.publish_snapshot_with_stop_reason(Some(StopReason::Error));
             self.notify_playback_stopped(snapshot);
         }
-        self.report_playback_failure("mpv did not accept the video. Try playing again.");
+        self.report_playback_failure(load_id, REJECTED_LOAD);
     }
 
-    fn report_playback_failure(&self, message: impl Into<String>) {
+    fn report_playback_failure(&self, load_id: i64, message: impl Into<String>) {
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(BackendEvent::Failed {
+                load_id,
                 message: message.into(),
             });
         }

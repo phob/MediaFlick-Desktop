@@ -55,6 +55,8 @@ impl AudioPlan {
 pub struct PlaybackCoordinator {
     shared: Arc<Shared>,
     commands: Sender<Command>,
+    /// The installation of the newest adapter; its relay tags every event with it.
+    installed: AtomicU64,
 }
 
 struct Shared {
@@ -145,8 +147,15 @@ enum Command {
         ticket: u64,
         result: Result<Box<PreparedAudio>, String>,
     },
-    Backend(Box<BackendEvent>),
-    BackendReplaced,
+    Backend {
+        installation: u64,
+        event: Box<BackendEvent>,
+    },
+    /// Sent before the adapter of `installation` exists, so its events all
+    /// arrive after this.
+    BackendReplaced {
+        installation: u64,
+    },
 }
 
 impl PlaybackCoordinator {
@@ -157,7 +166,7 @@ impl PlaybackCoordinator {
         make_backend: impl FnOnce(Sender<BackendEvent>) -> Box<dyn PlayerBackend>,
     ) -> Self {
         let (commands, inbox) = mpsc::channel();
-        let backend = make_backend(relay_backend_events(commands.clone()));
+        let backend = make_backend(relay_backend_events(commands.clone(), 0));
         let shared = Arc::new(Shared {
             backend: Mutex::new(Arc::from(backend)),
             player_path: Mutex::new(None),
@@ -167,17 +176,23 @@ impl PlaybackCoordinator {
             shared: shared.clone(),
             shell,
             worker: spawn_preparation_worker(commands.clone()),
+            installation: 0,
             session: Session::Idle,
             live: None,
             ending: None,
             ticket: 0,
         };
         spawn_named("playback-coordinator", move || actor.run(&inbox));
-        Self { shared, commands }
+        Self {
+            shared,
+            commands,
+            installed: AtomicU64::new(0),
+        }
     }
 
-    /// Publish a new adapter and retire the previous one. A running audio
-    /// queue ends with it.
+    /// Publish a new adapter and retire the previous one. Whatever plays ends
+    /// with it; the retired adapter's own events, its shutdown's Stopped
+    /// included, never reach the shell.
     ///
     /// The retired backend's bounded teardown runs on a detached thread so the
     /// calling thread (usually CEF's UI thread) never waits on player shutdown.
@@ -185,8 +200,11 @@ impl PlaybackCoordinator {
         &self,
         make_backend: impl FnOnce(Sender<BackendEvent>) -> Box<dyn PlayerBackend>,
     ) {
-        let _ = self.commands.send(Command::BackendReplaced);
-        let backend = make_backend(relay_backend_events(self.commands.clone()));
+        let installation = self.installed.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = self
+            .commands
+            .send(Command::BackendReplaced { installation });
+        let backend = make_backend(relay_backend_events(self.commands.clone(), installation));
         let retired = std::mem::replace(
             &mut *self
                 .shared
@@ -267,12 +285,17 @@ impl PlaybackCoordinator {
     }
 }
 
-/// Each adapter gets its own sender; the relay ends once the adapter is gone.
-fn relay_backend_events(commands: Sender<Command>) -> Sender<BackendEvent> {
+/// Each adapter gets its own sender, whose events carry the adapter's
+/// installation; the relay ends once the adapter is gone.
+fn relay_backend_events(commands: Sender<Command>, installation: u64) -> Sender<BackendEvent> {
     let (events, received) = mpsc::channel();
     spawn_named("playback-backend-relay", move || {
         while let Ok(event) = received.recv() {
-            if commands.send(Command::Backend(Box::new(event))).is_err() {
+            let command = Command::Backend {
+                installation,
+                event: Box::new(event),
+            };
+            if commands.send(command).is_err() {
                 return;
             }
         }
@@ -315,6 +338,7 @@ enum Session {
     Idle,
     Video {
         load_id: i64,
+        item_id: Option<String>,
     },
     Audio {
         queue: Box<AudioQueue>,
@@ -361,6 +385,8 @@ struct Actor {
     shared: Arc<Shared>,
     shell: Sender<PlaybackEvent>,
     worker: Sender<Job>,
+    /// The installed adapter's; events of a retired one are dropped.
+    installation: u64,
     session: Session,
     /// The load the player was handed last and has not reported stopped.
     live: Option<i64>,
@@ -397,7 +423,10 @@ impl Actor {
                 request.load_id = load_id;
                 request.content = PlaybackContent::Video;
                 request.queue = None;
-                self.session = Session::Video { load_id };
+                self.session = Session::Video {
+                    load_id,
+                    item_id: request.item_id.clone(),
+                };
                 self.live = Some(load_id);
                 self.shared.publish(Published::Video);
                 let path = self.shared.player_path(path);
@@ -422,16 +451,38 @@ impl Actor {
             }
             Command::Control(command) => self.control(command),
             Command::Prepared { ticket, result } => self.prepared(ticket, result),
-            Command::Backend(event) => self.backend_event(*event),
-            Command::BackendReplaced => {
-                self.live = None;
-                self.ending = None;
-                if let Session::Audio { queue, phase, .. } = &self.session {
-                    let view = queue.view(phase.view());
-                    self.end_session();
-                    self.emit_stopped(synthetic_stop(view, StopReason::Quit));
+            Command::Backend {
+                installation,
+                event,
+            } => {
+                if installation == self.installation {
+                    self.backend_event(*event);
                 } else {
-                    self.end_session();
+                    tracing::debug!(target: "playback", installation, ?event, "dropped an event of a retired player");
+                }
+            }
+            Command::BackendReplaced { installation } => {
+                self.installation = installation;
+                self.live = None;
+                let ending = self.ending.take();
+                let ended = match &self.session {
+                    Session::Audio { queue, phase, .. } => {
+                        Some(synthetic_stop(queue.view(phase.view()), StopReason::Quit))
+                    }
+                    Session::Video { load_id, item_id } => Some(PlayerSnapshot {
+                        playback_id: Some(*load_id),
+                        item_id: item_id.clone(),
+                        stop_reason: Some(StopReason::Quit),
+                        now_playing: Some(NowPlaying::Video),
+                        ..PlayerSnapshot::default()
+                    }),
+                    Session::Idle => {
+                        ending.map(|ending| synthetic_stop(ending.view, StopReason::Quit))
+                    }
+                };
+                self.end_session();
+                if let Some(ended) = ended {
+                    self.emit_stopped(ended);
                 }
             }
         }
@@ -593,14 +644,15 @@ impl Actor {
             } else {
                 PlayerCommand::PreviousTrack
             }),
-            BackendEvent::Failed { message } => {
+            BackendEvent::Failed { load_id, message } => {
                 let _ = self.shell.send(PlaybackEvent::Failed { message });
                 // The player refused the file it was handed; nothing else
                 // will end the entry.
                 if let Session::Audio {
-                    phase: Phase::Loading { .. },
+                    phase: Phase::Loading { load_id: loading },
                     ..
                 } = self.session
+                    && loading == load_id
                 {
                     self.stop_audio(StopReason::Error);
                 }
@@ -639,7 +691,7 @@ impl Actor {
             Session::Audio { .. } => {
                 tracing::debug!(target: "playback", ?load, "ignored the stop of an audio load the queue moved past");
             }
-            Session::Video { load_id } => {
+            Session::Video { load_id, .. } => {
                 if load == Some(*load_id) {
                     self.session = Session::Idle;
                 }
