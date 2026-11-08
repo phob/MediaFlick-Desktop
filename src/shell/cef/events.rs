@@ -119,6 +119,7 @@ fn playback_event_needs_log(
             && previous.skip_segments == snapshot.skip_segments
             && previous.diagnostics.buffering == snapshot.diagnostics.buffering
             && previous.stop_reason == snapshot.stop_reason
+            && previous.now_playing == snapshot.now_playing
     }) {
         return false;
     }
@@ -350,14 +351,14 @@ fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent, log_even
         return;
     }
 
-    if let PlaybackEvent::Stopped(snapshot) = &event {
+    if let PlaybackEvent::Stopped(snapshot) | PlaybackEvent::ItemFinished(snapshot) = &event {
         mirror_playback_progress(state, snapshot);
     }
 
     let frame_count = match event {
         PlaybackEvent::StateChanged(snapshot) => PLAYBACK_STATE_CHANGED.broadcast(state, snapshot),
         PlaybackEvent::Stopped(snapshot) => PLAYBACK_STOPPED.broadcast(state, snapshot),
-        PlaybackEvent::Failed { .. } => 0,
+        PlaybackEvent::ItemFinished(_) | PlaybackEvent::Failed { .. } => 0,
     };
     if log_event {
         tracing::debug!(
@@ -605,17 +606,13 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
 }
 
 fn apply_preference_change(state: &BrowserState, change: &SettingsChange) {
-    let (playback, event_tx, browsers) = match state.lock() {
+    let (playback, browsers) = match state.lock() {
         Ok(mut state) => {
             apply_settings_snapshot_preserving_live_window(
                 &mut state.settings,
                 change.settings.clone(),
             );
-            (
-                state.playback.clone(),
-                state.playback_event_tx.clone(),
-                state.browsers.clone(),
-            )
+            (state.playback.clone(), state.browsers.clone())
         }
         Err(error) => {
             tracing::warn!(target: "config", "failed to apply settings to browser state: {error}");
@@ -629,7 +626,7 @@ fn apply_preference_change(state: &BrowserState, change: &SettingsChange) {
             backend = change.settings.effective_backend().as_str(),
             "rebuilding player backend after settings change"
         );
-        playback.replace(build_backend(&change.settings, event_tx));
+        playback.replace(|events| build_backend(&change.settings, events));
         warm_configured_player(&playback, &change.settings);
     } else if change.plan.update_player_preferences {
         playback.configure(change.settings.player_preferences());

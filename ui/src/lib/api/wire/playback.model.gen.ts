@@ -2,6 +2,48 @@
 
 import type { SkipSegment } from "./playback.segments.gen.ts"
 
+export type ArtworkRef = {
+  itemId: string,
+  tag: string,
+};
+
+export type AudioDisplay = {
+  itemId: string,
+  title: string,
+  artists: Array<string>,
+  album: string | null,
+  albumId: string | null,
+  artwork: ArtworkRef | null,
+  discNumber: number | null,
+  trackNumber: number | null,
+  runtimeTicks: number | null,
+};
+
+export type AudioKind =
+  | "music"
+  | "audiobook";
+
+export type AudioNowPlaying = {
+  mediaKind: AudioKind,
+  current: AudioDisplay,
+  next: AudioDisplay | null,
+  playlistItemId: PlaylistItemId,
+  index: number,
+  length: number,
+  canPrevious: boolean,
+  canNext: boolean,
+  phase: AudioPhase,
+};
+
+export type AudioPhase =
+  | "preparing"
+  | "loading"
+  | "playing";
+
+export type NowPlaying =
+  | { "kind": "video" }
+  | { "kind": "audio" } & AudioNowPlaying;
+
 export type PlaybackDiagnostics = {
   bufferedUntilMs: number | null,
   buffering: boolean,
@@ -15,6 +57,11 @@ export type PlayerChapter = {
 };
 
 export type PlayerSnapshot = {
+  /**
+   * Set by the coordinator from what it asked to play, never from the
+   * player's tracks: an MP3's cover art is a video track.
+   */
+  nowPlaying: NowPlaying | null,
   active: boolean,
   playbackId: number | null,
   itemId: string | null,
@@ -46,6 +93,8 @@ export type PlayerTrack = {
 export type PlayerTrackKind =
   | "audio"
   | "subtitle";
+
+export type PlaylistItemId = string;
 
 export type StopReason =
   | "eof"

@@ -70,6 +70,9 @@ unset WAYLAND_DISPLAY WAYLAND_SOCKET XAUTHORITY DBUS_SESSION_BUS_ADDRESS PULSE_S
 # Unix sockets Chromium and mpv create there (107-byte limit).
 mkdir -m 700 "$work/runtime"
 export XDG_RUNTIME_DIR="$work/runtime"
+# The private session bus can start gvfsd, whose FUSE mount under the runtime
+# dir would make the final rm -rf fail with "Is a directory".
+export GVFS_DISABLE_FUSE=1
 
 runner=()
 if command -v dbus-run-session >/dev/null; then runner=(dbus-run-session --); fi

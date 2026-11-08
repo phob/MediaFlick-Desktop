@@ -11,6 +11,7 @@ use ts_rs::TS;
 
 use crate::jellyfin::api::ApiError;
 
+use crate::books::ReaderAppearance;
 use crate::collections::{CollectionProfile, ProviderResult};
 use crate::companion::{CompanionStatus, SeerrCompanyPage, SeerrNetworkList};
 use crate::integrations::letterboxd::ReviewLookup;
@@ -30,6 +31,7 @@ use super::super::ui_events::{
     AboutInfo, ErrorToast, PlaybackCacheRefreshed, ShellEvent, UpdateProgress,
 };
 use super::auth::{LoginBody, LogoutBody, QuickConnectPollBody, ServerBody};
+use super::books::{BookManifest, BookPositionSaved, BookPositionWrite};
 use super::catalog::{
     Billboard, Genres, HomeResponse, HomeResumeResponse, HomeSettingsResponse, ItemAbout,
     ItemLetters, ItemSynopsis, OfficialRatings, PersonResolution, Studios, Tags,
@@ -52,8 +54,8 @@ use super::media::{
     SimilarItems, TechnicalBatch, TrailerResponse,
 };
 use super::playback::{
-    ItemBody, PlayBody, PlayStarted, PlaybackNeighbors, PlayerCommandAccepted, PlayerCommandBody,
-    SyncRequested,
+    ItemBody, PlayBody, PlayQueueBody, PlayStarted, PlaybackNeighbors, PlayerCommandAccepted,
+    PlayerCommandBody, SyncRequested,
 };
 use super::ratings::RatingsBatchBody;
 use super::seerr::{SeerrRequestBody, SeerrRequestCancelled};
@@ -98,6 +100,9 @@ wire_types! {
     AppearanceSettingsPatch,
     ApplicationSettingsPatch,
     Billboard,
+    BookManifest,
+    BookPositionSaved,
+    BookPositionWrite,
     BrowsingBody,
     BrowsingRoutes,
     BrowsingSaved,
@@ -148,6 +153,7 @@ wire_types! {
     OfficialRatings,
     PersonResolution,
     PlayBody,
+    PlayQueueBody,
     PlayStarted,
     PlaybackCacheRefreshed,
     PlaybackNeighbors,
@@ -172,6 +178,7 @@ wire_types! {
     RatingsBatchBody,
     RatingsBatchResponse,
     RatingsIntegrationStatus,
+    ReaderAppearance,
     ReorderBody,
     ReviewLookup,
     SeerrCompanyPage,

@@ -6,6 +6,10 @@
 
 use std::sync::Arc;
 
+mod audio;
+
+pub use audio::{QueueAsk, audio_kind, audio_tracks, start_item_queue, start_queue};
+
 use crate::app::services::Services;
 use crate::app::urls::{build_query, encode_path_segment, join_url, remove_query_params};
 use crate::library::model::ResolvedPlaybackPreference;
@@ -46,6 +50,7 @@ pub enum StartError {
     NoPlayer,
     NotReady,
     AccountChanged,
+    Rejected(&'static str),
     Api(ApiError),
 }
 

@@ -8,13 +8,13 @@ pub mod mpv;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
-use crate::playback::{PlaybackEvent, PlayerBackend};
+use crate::playback::{BackendEvent, PlayerBackend};
 use crate::players::mpv::MpvController;
 use crate::preferences::{AppSettings, PlayerBackend as PlayerBackendKind};
 
 pub fn build_backend(
     settings: &AppSettings,
-    event_tx: Sender<PlaybackEvent>,
+    event_tx: Sender<BackendEvent>,
 ) -> Box<dyn PlayerBackend> {
     match settings.effective_backend() {
         PlayerBackendKind::Libmpv => Box::new(MpvController::new_libmpv(

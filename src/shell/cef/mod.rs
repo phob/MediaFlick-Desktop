@@ -325,7 +325,6 @@ struct BrowserStateInner {
     main_window_reveal_requested: bool,
     main_window_revealed: bool,
     playback: Arc<PlaybackCoordinator>,
-    playback_event_tx: mpsc::Sender<PlaybackEvent>,
     update_available: Option<UpdateRelease>,
     update_download_started: bool,
     mpv_setup_started: bool,
@@ -395,10 +394,9 @@ fn new_browser_state(
     initial_show_state: ShowState,
 ) -> BrowserState {
     let (playback_event_tx, playback_event_rx) = mpsc::channel();
-    let playback = Arc::new(PlaybackCoordinator::new(build_backend(
-        &settings,
-        playback_event_tx.clone(),
-    )));
+    let playback = Arc::new(PlaybackCoordinator::new(playback_event_tx, |events| {
+        build_backend(&settings, events)
+    }));
     if let Some(services) = locator::services() {
         services.attach_playback(playback.clone());
     }
@@ -411,7 +409,6 @@ fn new_browser_state(
         main_window_reveal_requested: false,
         main_window_revealed: false,
         playback,
-        playback_event_tx,
         update_available: None,
         update_download_started: false,
         mpv_setup_started: false,

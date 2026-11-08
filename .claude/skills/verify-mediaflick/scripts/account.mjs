@@ -172,6 +172,17 @@ export async function playlistWrite(account, method, apiPath, body) {
   return text ? JSON.parse(text) : null
 }
 
+export async function sessionCommand(account, sessionId, command, query = {}) {
+  const search = new URLSearchParams(query).toString()
+  const apiPath = `/Sessions/${encodeURIComponent(sessionId)}/${command}${search ? `?${search}` : ""}`
+  const response = await fetch(`${account.serverUrl}${apiPath}`, {
+    method: "POST",
+    headers: { Authorization: `MediaBrowser Token="${account.token}"` },
+    signal: AbortSignal.timeout(20000),
+  })
+  if (!response.ok) throw new Error(`POST ${apiPath} answered HTTP ${response.status}`)
+}
+
 export async function removeFavorite(account, itemId) {
   const response = await fetch(`${account.serverUrl}/UserFavoriteItems/${encodeURIComponent(itemId)}?userId=${account.userId}`, {
     method: "DELETE",

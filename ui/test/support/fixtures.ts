@@ -98,6 +98,7 @@ export function companionWithSeerr(): CompanionStatus {
 
 export function playerSnapshot(overrides: Partial<PlayerState> = {}): PlayerState {
   return {
+    nowPlaying: overrides.active ? { kind: "video" } : null,
     active: false,
     playbackId: null,
     itemId: null,

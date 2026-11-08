@@ -297,10 +297,17 @@ wrap_resource_handler! {
 /// those. Images may also load `mediaflick-desktop://window-ready`, the beacon
 /// the page falls back to when the shell's API is down, so the hidden main
 /// window is still shown.
-const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data: mediaflick-desktop://window-ready; \
-style-src 'self' 'unsafe-inline'; script-src 'self'; \
+///
+/// The book reader renders each section, and each of its images, styles,
+/// fonts and media, from `blob:` URLs, so those sources allow `blob:`.
+/// `script-src` never does: a blob document inherits this policy, and the
+/// reader's iframes are sandboxed without `allow-scripts` on top of it.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
+img-src 'self' data: blob: mediaflick-desktop://window-ready; \
+style-src 'self' 'unsafe-inline' blob:; font-src 'self' data: blob:; media-src 'self' blob:; \
+script-src 'self'; \
 connect-src 'self' mediaflick-desktop:; \
-frame-src mediaflick-desktop: https://www.youtube-nocookie.com; \
+frame-src mediaflick-desktop: blob: https://www.youtube-nocookie.com; \
 object-src 'none'; base-uri 'none'; form-action 'none'";
 
 fn split_content_type(content_type: &str) -> (&str, Option<&str>) {

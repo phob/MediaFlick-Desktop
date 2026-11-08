@@ -8,6 +8,7 @@
 export * from "./api/client.ts"
 export * from "./api/ticks.ts"
 export * from "./api/types/auth.ts"
+export * from "./api/types/books.ts"
 export * from "./api/types/calendar.ts"
 export * from "./api/types/catalog.ts"
 export * from "./api/types/collections.ts"

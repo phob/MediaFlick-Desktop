@@ -18,6 +18,7 @@ import {
   type ItemQuery,
   type ItemSummary,
   type PlayerCommand,
+  type PlayQueueBody,
   type PlayerState,
   type MediaInfoResponse,
   type PlaybackTrackPreferenceWrite,
@@ -518,6 +519,17 @@ export function usePlay() {
     }) => api.play(id, resume, quality),
     onSuccess: (started) => {
       toast.success(started.playMethod ? `Playing (${started.playMethod})` : "Playing")
+      void client.invalidateQueries({ queryKey: queryKeys.playerState })
+    },
+    onError: reportError(client),
+  })
+}
+
+export function usePlayQueue() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (body: PlayQueueBody) => api.playQueue(body),
+    onSuccess: () => {
       void client.invalidateQueries({ queryKey: queryKeys.playerState })
     },
     onError: reportError(client),

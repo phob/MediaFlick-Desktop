@@ -20,6 +20,13 @@ pub fn loadfile_command(launch: &PlaybackRequest) -> Value {
             json!(sanitize_option(title)),
         );
     }
+    if launch.content.is_audio() {
+        // File-local, so the next video load selects its picture again. The
+        // player window keeps hosting the app; it shows no cover art, and
+        // external mpv opens no window at all.
+        options.insert("vid".to_string(), json!("no"));
+        options.insert("audio-display".to_string(), json!("no"));
+    }
     if let Some(audio_id) = launch.audio_mpv_id.filter(|id| *id > 0) {
         options.insert("aid".to_string(), json!(audio_id.to_string()));
     }
@@ -59,6 +66,7 @@ pub fn control_command(command: &PlayerCommand) -> Option<Value> {
         PlayerCommand::SetPause(pause) => {
             json!(["set_property", "pause", pause])
         }
+        PlayerCommand::TogglePause => json!(["cycle", "pause"]),
         PlayerCommand::SeekMilliseconds(position_ms) => {
             if !position_ms.is_finite() {
                 return None;
@@ -142,7 +150,9 @@ pub fn control_command(command: &PlayerCommand) -> Option<Value> {
         }
         PlayerCommand::ToggleSubtitleVisibility => json!(["cycle", "sub-visibility"]),
         PlayerCommand::ToggleFullscreen => json!(["cycle", "fullscreen"]),
-        PlayerCommand::MarkWatchedAndPlayNext => return None,
+        PlayerCommand::MarkWatchedAndPlayNext
+        | PlayerCommand::NextTrack
+        | PlayerCommand::PreviousTrack => return None,
         PlayerCommand::Stop => json!(["stop"]),
     };
 

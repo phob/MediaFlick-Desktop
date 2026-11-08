@@ -8,11 +8,10 @@ use serde_json::Value;
 
 use crate::app::logger;
 use crate::jellyfin::playback_reporter::PlaybackReporter;
-use crate::playback::model::allocate_playback_id;
 use crate::playback::segments::{SegmentSkipState, SkipSegment};
 use crate::playback::{
-    NativeWindowHandle, PlaybackDiagnostics, PlaybackEvent, PlaybackRequest, PlayerCommand,
-    PlayerSnapshot, PlayerTrack, ReportingState, StopReason,
+    BackendEvent, NativeWindowHandle, PlaybackContent, PlaybackDiagnostics, PlaybackRequest,
+    PlayerCommand, PlayerSnapshot, PlayerTrack, ReportingState, StopReason,
 };
 use crate::players::mpv::ipc::{IpcCommandFailure, IpcWorker, MpvEvent};
 use crate::players::mpv::runtime::{LibmpvProfile, MpvRuntime, MpvRuntimeKind};
@@ -40,6 +39,7 @@ const MPV_RAISE_PULSE_DELAY: Duration = Duration::from_millis(1200);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(10);
 const DUPLICATE_DEBOUNCE: Duration = Duration::from_secs(2);
 const MPV_SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const REJECTED_LOAD: &str = "mpv did not accept the video. Try playing again.";
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
 const CONTROLLER_SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(60);
 const PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(11);
@@ -148,7 +148,7 @@ struct ControllerState {
     started_entry: Option<i64>,
     pending_raise_pulse_reset_at: Option<Instant>,
     last_session_poll: Instant,
-    event_tx: Option<Sender<PlaybackEvent>>,
+    event_tx: Option<Sender<BackendEvent>>,
     shutdown_requested: Arc<AtomicBool>,
 }
 
@@ -197,6 +197,7 @@ struct ConfiguredMpv {
 #[derive(Debug, Clone)]
 struct PlaybackIdentity {
     playback_id: i64,
+    content: PlaybackContent,
     item_id: Option<String>,
     media_source_id: Option<String>,
     play_session_id: Option<String>,
@@ -207,6 +208,7 @@ impl PlaybackIdentity {
     fn from_launch(playback_id: i64, launch: &PlaybackRequest) -> Self {
         Self {
             playback_id,
+            content: launch.content,
             item_id: launch.item_id.clone(),
             media_source_id: launch.media_source_id.clone(),
             play_session_id: launch.play_session_id.clone(),
@@ -312,7 +314,7 @@ struct StartupSeek {
 }
 
 impl MpvController {
-    pub fn new(event_tx: Option<Sender<PlaybackEvent>>, preferences: PlayerPreferences) -> Self {
+    pub fn new(event_tx: Option<Sender<BackendEvent>>, preferences: PlayerPreferences) -> Self {
         Self::with_runtime(
             MpvRuntimeKind::External,
             LibmpvProfile::Standard,
@@ -322,7 +324,7 @@ impl MpvController {
     }
 
     pub fn new_libmpv(
-        event_tx: Option<Sender<PlaybackEvent>>,
+        event_tx: Option<Sender<BackendEvent>>,
         preferences: PlayerPreferences,
     ) -> Self {
         Self::with_runtime(
@@ -336,7 +338,7 @@ impl MpvController {
     fn with_runtime(
         runtime_kind: MpvRuntimeKind,
         libmpv_profile: LibmpvProfile,
-        event_tx: Option<Sender<PlaybackEvent>>,
+        event_tx: Option<Sender<BackendEvent>>,
         preferences: PlayerPreferences,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
@@ -442,7 +444,7 @@ impl ControllerState {
         tx: Sender<ControllerMessage>,
         rx: Receiver<ControllerMessage>,
         snapshot: Arc<Mutex<PlayerSnapshot>>,
-        event_tx: Option<Sender<PlaybackEvent>>,
+        event_tx: Option<Sender<BackendEvent>>,
         shutdown_requested: Arc<AtomicBool>,
         preferences: PlayerPreferences,
         runtime_selection: RuntimeSelection,
@@ -726,7 +728,7 @@ impl ControllerState {
     fn load(&mut self, mpv_path: &str, fullscreen: FullscreenBehavior, launch: PlaybackRequest) {
         self.remember_configured_mpv(mpv_path, fullscreen);
         let key = launch.dedupe_key();
-        let identity = PlaybackIdentity::from_launch(allocate_playback_id(), &launch);
+        let identity = PlaybackIdentity::from_launch(launch.load_id, &launch);
         tracing::debug!(
             target: "playback",
             playback_id = identity.playback_id,
@@ -742,7 +744,7 @@ impl ControllerState {
             );
             return;
         }
-        if !self.make_way_for_load(&key) {
+        if !self.make_way_for_load(&key, launch.load_id) {
             return;
         }
 
@@ -753,11 +755,17 @@ impl ControllerState {
                 "cannot load playback because mpv is unavailable"
             );
             self.report_playback_failure(
+                launch.load_id,
                 "Could not start mpv. Check that the mpv path in Settings is correct.",
             );
             return;
         };
-        self.apply_external_default_fullscreen(fullscreen);
+        let audio = launch.content.is_audio();
+        if audio {
+            self.leave_video_fullscreen();
+        } else {
+            self.apply_external_default_fullscreen(fullscreen);
+        }
 
         let reporter = PlaybackReporter::from_launch(&launch);
         self.startup_seek = None;
@@ -798,10 +806,14 @@ impl ControllerState {
                     requested_at: Instant::now(),
                 });
                 self.replacement_end_file_pending = replacing_active_file;
-                self.fetch_media_segments(playback_id, pending_launch);
+                if !audio {
+                    self.fetch_media_segments(playback_id, pending_launch);
+                }
                 self.prepare_pending_playback_state();
                 #[cfg(not(windows))]
-                self.schedule_mpv_raise("loadfile accepted");
+                if !audio {
+                    self.schedule_mpv_raise("loadfile accepted");
+                }
                 self.publish_snapshot();
             }
             Err(IpcCommandFailure::Rejected(error)) => {
@@ -811,7 +823,7 @@ impl ControllerState {
             Err(error) => {
                 tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command after reconnect attempt: {error}");
                 self.mpv_playback_active = false;
-                self.report_playback_failure("mpv did not accept the video. Try playing again.");
+                self.report_playback_failure(launch.load_id, REJECTED_LOAD);
                 self.handle_mpv_session_lost("loadfile transport failed");
             }
         }
@@ -819,7 +831,7 @@ impl ControllerState {
 
     /// A load that arrives while another is pending replaces it when mpv
     /// reports entry ids. Returns false when the load must be refused.
-    fn make_way_for_load(&mut self, key: &str) -> bool {
+    fn make_way_for_load(&mut self, key: &str, load_id: i64) -> bool {
         let Some(pending) = self.phase.pending() else {
             return true;
         };
@@ -832,7 +844,10 @@ impl ControllerState {
                 incoming_dedupe_key = %key,
                 "refused playback load while another load is pending"
             );
-            self.report_playback_failure("Another title is still starting. Try again in a moment.");
+            self.report_playback_failure(
+                load_id,
+                "Another title is still starting. Try again in a moment.",
+            );
             return false;
         }
         tracing::info!(
@@ -852,6 +867,7 @@ impl ControllerState {
         identity: PlaybackIdentity,
     ) {
         self.mpv_playback_active = false;
+        let load_id = identity.playback_id;
         if replacing_active_file {
             tracing::warn!(
                 target: "mpv.ipc",
@@ -862,12 +878,13 @@ impl ControllerState {
             let snapshot = self.publish_snapshot_with_stop_reason(Some(StopReason::Error));
             self.notify_playback_stopped(snapshot);
         }
-        self.report_playback_failure("mpv did not accept the video. Try playing again.");
+        self.report_playback_failure(load_id, REJECTED_LOAD);
     }
 
-    fn report_playback_failure(&self, message: impl Into<String>) {
+    fn report_playback_failure(&self, load_id: i64, message: impl Into<String>) {
         if let Some(tx) = &self.event_tx {
-            let _ = tx.send(PlaybackEvent::Failed {
+            let _ = tx.send(BackendEvent::Failed {
+                load_id,
                 message: message.into(),
             });
         }

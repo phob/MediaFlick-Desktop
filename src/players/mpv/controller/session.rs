@@ -58,6 +58,27 @@ impl ControllerState {
         self.set_fullscreen(fullscreen);
     }
 
+    pub(super) fn leave_video_fullscreen(&mut self) {
+        #[cfg(target_os = "linux")]
+        {
+            self.fullscreen_gate.pending = false;
+        }
+        let video_playing = self
+            .phase
+            .pending()
+            .map(|pending| pending.identity.content)
+            .or_else(|| self.phase.active().map(|active| active.identity.content))
+            .is_some_and(|content| !content.is_audio());
+        if video_playing && self.runtime_kind == super::MpvRuntimeKind::Library {
+            self.set_fullscreen(FullscreenBehavior::Windowed);
+        }
+    }
+
+    fn playing_audio(&self) -> bool {
+        self.current_identity()
+            .is_some_and(|identity| identity.content.is_audio())
+    }
+
     pub(super) fn apply_library_default_fullscreen(&mut self) {
         if self.runtime_kind != super::MpvRuntimeKind::Library {
             return;
@@ -172,7 +193,9 @@ impl ControllerState {
                 if !self.ensure_mpv(mpv_path, fullscreen) {
                     return Err(first_error);
                 }
-                self.apply_external_default_fullscreen(fullscreen);
+                if !launch.content.is_audio() {
+                    self.apply_external_default_fullscreen(fullscreen);
+                }
                 self.send_loadfile(launch).map_err(|retry_error| {
                     retry_error
                         .with_context(format!("initial failure: {first_error}; retry failure"))
@@ -437,7 +460,9 @@ impl ControllerState {
             "ensuring configured mpv session is running"
         );
         if self.ensure_mpv(&config.mpv_path, config.fullscreen) {
-            self.apply_external_default_fullscreen(config.fullscreen);
+            if !self.playing_audio() {
+                self.apply_external_default_fullscreen(config.fullscreen);
+            }
             true
         } else {
             false
@@ -475,7 +500,7 @@ impl ControllerState {
             mpv_path = %config.mpv_path,
             "restarting idle mpv process"
         );
-        if self.ensure_mpv(&config.mpv_path, config.fullscreen) {
+        if self.ensure_mpv(&config.mpv_path, config.fullscreen) && !self.playing_audio() {
             self.apply_external_default_fullscreen(config.fullscreen);
         }
     }

@@ -1,10 +1,11 @@
-use crate::playback::PlayerSnapshot;
+use crate::playback::{AudioStart, PlayerSnapshot};
 
 use super::*;
 
 routes! {
     |services, request|
     POST ["play"] (body: PlayBody) -> PlayStarted = play_item(services, body),
+    POST ["play", "queue"] (body: PlayQueueBody) -> PlayStarted = play_queue(services, body),
     POST ["play", "next"] (body: ItemBody) -> PlayStarted = play_next(services, body),
     POST ["play", "previous"] (body: ItemBody) -> PlayStarted = play_previous(services, body),
     POST ["play", "neighbors"] (body: ItemBody) -> PlaybackNeighbors =
@@ -85,6 +86,19 @@ pub(super) struct PlayBody {
     quality: Option<StreamingQuality>,
 }
 
+/// `/api/play/queue`: play an album, audiobook or track as an audio queue,
+/// from `startItemId` (one of its tracks) or its first track.
+#[derive(Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub(super) struct PlayQueueBody {
+    parent_id: String,
+    start_item_id: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    shuffle: bool,
+}
+
 #[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename = "PlaybackItemBody")]
@@ -108,6 +122,21 @@ fn play_item(
     if body.item_id.is_empty() {
         return Err(ApiResponse::error(400, "itemId is required"));
     }
+    let scope = session_scope(services)?;
+    if is_audio_item(services, &scope, &body.item_id)? {
+        let start = match (body.start_ticks, body.resume) {
+            (Some(ticks), _) => AudioStart::At(ticks),
+            (None, true) => AudioStart::Default,
+            (None, false) => AudioStart::Beginning,
+        };
+        let ask = play::QueueAsk {
+            parent_id: body.item_id.clone(),
+            start_item_id: None,
+            shuffle: false,
+            start,
+        };
+        return start_audio(services, &scope, &body.item_id, &ask);
+    }
     let options = PlayOptions {
         item_id: body.item_id,
         resume: body.resume,
@@ -120,6 +149,65 @@ fn play_item(
         ..Default::default()
     };
     start_playback(services, &options)
+}
+
+fn play_queue(
+    services: &Arc<Services>,
+    body: Body<'_, PlayQueueBody>,
+) -> Result<PlayStarted, ApiResponse> {
+    let body = body.decode()?;
+    if body.parent_id.is_empty() || body.start_item_id.as_deref() == Some("") {
+        return Err(ApiResponse::error(400, "parentId is required"));
+    }
+    let scope = session_scope(services)?;
+    let ask = play::QueueAsk {
+        parent_id: body.parent_id.clone(),
+        start_item_id: body.start_item_id,
+        shuffle: body.shuffle,
+        start: AudioStart::Default,
+    };
+    start_audio(services, &scope, &body.parent_id, &ask)
+}
+
+fn is_audio_item(
+    services: &Services,
+    scope: &SessionScope,
+    item_id: &str,
+) -> Result<bool, ApiResponse> {
+    if services
+        .library
+        .catalog_kind(item_id)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return Ok(false);
+    }
+    let item_type = services
+        .session
+        .fetch_current(scope, |client, user_id| {
+            items::fetch_item_type(client, user_id, item_id)
+        })
+        .map_err(|error| ApiResponse::from_api_error(&error))?;
+    Ok(play::audio_kind(item_type.as_deref()).is_some())
+}
+
+fn start_audio(
+    services: &Arc<Services>,
+    scope: &SessionScope,
+    item_id: &str,
+    ask: &play::QueueAsk,
+) -> Result<PlayStarted, ApiResponse> {
+    match play::start_queue(services, scope, ask) {
+        Ok(first) => Ok(PlayStarted {
+            started: true,
+            item_id: Some(first),
+            play_method: None,
+            media_source: None,
+            start_ticks: None,
+        }),
+        Err(error) => Err(start_failure(services, scope, item_id, error)),
+    }
 }
 
 fn play_next(
@@ -191,20 +279,31 @@ fn start_playback(
             media_source: Some(prepared.media_source_name),
             start_ticks: Some(prepared.request.start_time_ticks.unwrap_or(0)),
         }),
-        Err(play::StartError::NoPlayer) => Err(ApiResponse::error(
+        Err(error) => Err(start_failure(services, &scope, &options.item_id, error)),
+    }
+}
+
+fn start_failure(
+    services: &Arc<Services>,
+    scope: &SessionScope,
+    item_id: &str,
+    error: play::StartError,
+) -> ApiResponse {
+    match error {
+        play::StartError::NoPlayer => ApiResponse::error(
             409,
             "No media player is configured. Open Settings to set up the built-in player or mpv.",
-        )),
-        Err(play::StartError::NotReady) => Err(ApiResponse::error(
-            503,
-            "the playback coordinator is not ready yet",
-        )),
-        Err(play::StartError::AccountChanged) => Err(stale_account_response()),
-        Err(play::StartError::Api(error)) => {
+        ),
+        play::StartError::NotReady => {
+            ApiResponse::error(503, "the playback coordinator is not ready yet")
+        }
+        play::StartError::AccountChanged => stale_account_response(),
+        play::StartError::Rejected(reason) => ApiResponse::error(400, reason),
+        play::StartError::Api(error) => {
             if matches!(error, ApiError::Status { status: 404 }) {
-                forget_item(services, &scope, &options.item_id);
+                forget_item(services, scope, item_id);
             }
-            Err(ApiResponse::from_api_error(&error))
+            ApiResponse::from_api_error(&error)
         }
     }
 }
@@ -225,6 +324,7 @@ fn player_state(services: &Arc<Services>) -> PlayerSnapshot {
 pub(super) enum PlayerCommandBody {
     Pause,
     Resume,
+    TogglePause,
     Seek {
         position_ms: f64,
     },
@@ -266,6 +366,11 @@ pub(super) enum PlayerCommandBody {
     ToggleFullscreen,
     Stop,
     MarkWatchedNext,
+    /// The audio queue's next entry; nothing while no queue plays.
+    NextTrack,
+    /// Restarts the audio entry after its first 3 seconds, else the previous
+    /// entry; nothing while no queue plays.
+    PreviousTrack,
 }
 
 #[derive(Deserialize, ts_rs::TS)]
@@ -308,6 +413,7 @@ impl PlayerCommandBody {
         Some(match self {
             Self::Pause => PlayerCommand::SetPause(true),
             Self::Resume => PlayerCommand::SetPause(false),
+            Self::TogglePause => PlayerCommand::TogglePause,
             Self::Seek { position_ms } => PlayerCommand::SeekMilliseconds(position_ms),
             Self::SetVolume { volume } => PlayerCommand::SetVolume(volume),
             Self::SetMute { mute } => PlayerCommand::SetMute(mute),
@@ -349,6 +455,8 @@ impl PlayerCommandBody {
             Self::ToggleFullscreen => PlayerCommand::ToggleFullscreen,
             Self::Stop => PlayerCommand::Stop,
             Self::MarkWatchedNext => PlayerCommand::MarkWatchedAndPlayNext,
+            Self::NextTrack => PlayerCommand::NextTrack,
+            Self::PreviousTrack => PlayerCommand::PreviousTrack,
         })
     }
 }

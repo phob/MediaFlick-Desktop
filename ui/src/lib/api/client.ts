@@ -1,5 +1,6 @@
 import { isJsonObject, jsonBoolean, jsonString, type JsonValue } from "../json.ts"
 import type * as Wire from "./wire.gen.ts"
+import type { BookPositionWrite, ReaderAppearance } from "./types/books.ts"
 import type { ReleaseCalendar } from "./types/calendar.ts"
 import type { ItemQuery, PersonResolveQuery } from "./types/catalog.ts"
 import type { TitleKind } from "../kinds.ts"
@@ -7,7 +8,7 @@ import type { CollectionProfileDraft, PublicCollectionList } from "./types/colle
 import type { HomeSettingsWrite } from "./types/home.ts"
 import type { BrowsingPage, LibraryQuery } from "./types/libraries.ts"
 import type { PlaybackTrackPreferenceWrite } from "./types/media.ts"
-import type { PlayerCommand } from "./types/playback.ts"
+import type { PlayerCommand, PlayQueueBody } from "./types/playback.ts"
 import type {
   SeerrDiscoverFilters,
   SeerrDiscoverRow,
@@ -93,6 +94,24 @@ function readApiErrorEnvelope(value: JsonValue): ApiErrorEnvelope | null {
   }
 }
 
+async function readJson(response: Response): Promise<JsonValue> {
+  try {
+    return await response.json()
+  } catch {
+    return null
+  }
+}
+
+export async function responseError(response: Response): Promise<ApiError> {
+  const envelope = readApiErrorEnvelope(await readJson(response))
+  return new ApiError(
+    envelope?.error ?? `request failed (${response.status})`,
+    response.status,
+    Boolean(envelope?.expired),
+    Boolean(envelope?.accountChanged),
+  )
+}
+
 /** Sends a call to a JSON or relay route and reads its answer. */
 async function request<K extends JsonRoute>(route: K, ...[call]: CallArgs<K>): Promise<Answers[K]> {
   const { method, url } = target(route, call ?? {})
@@ -105,21 +124,8 @@ async function request<K extends JsonRoute>(route: K, ...[call]: CallArgs<K>): P
     init.body = JSON.stringify(body)
   }
   const response = await fetch(url, init)
-  let payload: JsonValue = null
-  try {
-    payload = await response.json()
-  } catch {
-    payload = null
-  }
-  if (!response.ok) {
-    const envelope = readApiErrorEnvelope(payload)
-    throw new ApiError(
-      envelope?.error ?? `request failed (${response.status})`,
-      response.status,
-      Boolean(envelope?.expired),
-      Boolean(envelope?.accountChanged),
-    )
-  }
+  if (!response.ok) throw await responseError(response)
+  const payload = await readJson(response)
   // SAFETY: The UI bundle ships inside the binary built from the same commit
   // as `wire.gen.ts`, whose route map is generated from the Rust route
   // declarations the compiler holds each handler to. A relay route's answer
@@ -201,6 +207,11 @@ export const api = {
   libraryLatest: (id: string, limit?: number) =>
     request("GET /api/libraries/{id}/latest", { params: { id }, query: { limit } }),
   item: (id: string) => request("GET /api/item/{id}", { params: { id } }),
+  book: (id: string, from: "resume" | "start", signal?: AbortSignal) =>
+    request("GET /api/item/{id}/book", { params: { id }, query: { from: from === "start" ? "start" : undefined }, signal }),
+  saveBookPosition: (id: string, position: BookPositionWrite) =>
+    request("PUT /api/item/{id}/book/position", { params: { id }, body: position }),
+  saveReaderAppearance: (appearance: ReaderAppearance) => request("PUT /api/reader/appearance", { body: appearance }),
   itemSynopsis: (id: string) => request("GET /api/item/{id}/synopsis", { params: { id } }),
   itemAbout: (id: string) => request("GET /api/item/{id}/about", { params: { id } }),
   itemLetterboxd: (id: string) => request("GET /api/item/{id}/letterboxd", { params: { id } }),
@@ -228,6 +239,10 @@ export const api = {
   },
   changePlaybackQuality: (itemId: string, startTicks: number, quality: StreamingQualityId) =>
     request("POST /api/play", { body: { itemId, startTicks, quality } }),
+  playQueue: (body: PlayQueueBody) => {
+    window.dispatchEvent(new Event("mediaflick-manual-play"))
+    return request("POST /api/play/queue", { body })
+  },
   playNext: (itemId: string) => request("POST /api/play/next", { body: { itemId } }),
   playPrevious: (itemId: string) => request("POST /api/play/previous", { body: { itemId } }),
   playbackNeighbors: (itemId: string) => request("POST /api/play/neighbors", { body: { itemId } }),

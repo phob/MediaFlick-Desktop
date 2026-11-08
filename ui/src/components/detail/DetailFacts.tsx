@@ -2,11 +2,11 @@ import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { DetailFact, DetailFactPanel } from "@/components/detail/DetailPrimitives"
 import { Badge } from "@/components/ui/badge"
-import type { AnyItemDetail, ItemAbout } from "@/lib/api"
+import type { BookItemDetail, GenericItemDetail, ItemAbout, ItemDetail } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 import { facetRoute } from "@/lib/libraries"
 
-export function DetailFacts({ item, about }: { item: AnyItemDetail; about?: ItemAbout }) {
+export function DetailFacts({ item, about }: { item: ItemDetail | GenericItemDetail | BookItemDetail; about?: ItemAbout }) {
   const title = item.layout === "title" ? item : null
   const studios = about?.studios ?? []
   const tags = title ? about?.tags ?? [] : []

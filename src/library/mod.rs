@@ -31,9 +31,9 @@ use crate::jellyfin::session::Live;
 use libraries::LibraryId;
 
 pub use model::{
-    CatalogKind, DetailView, GenericItemDetail, ItemDetail, ItemPlaybackPreference, ItemRecord,
-    ItemSummary, KindFilter, LibraryStats, ProviderIds, TitleDetail, TitleKind, UserDataRecord,
-    resolve_playback_preference,
+    AudioDetail, CatalogKind, DetailView, GenericItemDetail, ItemDetail, ItemPlaybackPreference,
+    ItemRecord, ItemSummary, KindFilter, LibraryStats, ProviderIds, TitleDetail, TitleKind,
+    UserDataRecord, resolve_playback_preference,
 };
 pub use query::Facet;
 

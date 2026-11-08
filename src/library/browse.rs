@@ -216,7 +216,13 @@ impl From<rusqlite::Error> for DetailError {
 
 pub enum LiveDetail<'a> {
     Generic(Box<GenericItemDetail>),
+    Book(&'a BaseItemDto),
     Title(LiveTitle<'a>),
+}
+
+/// A book the reader opens. An audiobook, or a folder of books, is not one.
+pub fn is_book(dto: &BaseItemDto) -> bool {
+    dto.item_type.as_deref() == Some("Book") && !dto.is_folder
 }
 
 #[derive(Clone, Copy)]
@@ -225,6 +231,8 @@ pub struct LiveTitle<'a>(&'a BaseItemDto);
 pub fn live_detail(dto: &BaseItemDto) -> LiveDetail<'_> {
     if is_synced_kind(dto.item_type.as_deref().unwrap_or_default()) {
         LiveDetail::Title(LiveTitle(dto))
+    } else if is_book(dto) {
+        LiveDetail::Book(dto)
     } else {
         LiveDetail::Generic(Box::new(GenericItemDetail::from_dto(dto)))
     }

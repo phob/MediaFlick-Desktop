@@ -391,6 +391,18 @@ const UNCHECKED_CLAIMS: &[(&str, &str)] = &[
         "`Deserialize` reads the `kind`-tagged `id` with `enabled` that the derived `Serialize` writes",
     ),
     (
+        "Cfi",
+        "a newtype over `String` decoded with `try_from = \"String\"`, so a string both ways",
+    ),
+    (
+        "FontSize",
+        "a newtype over `u16` decoded with `try_from = \"u16\"`, so a number both ways",
+    ),
+    (
+        "Fraction",
+        "a newtype over `f64` decoded with `try_from = \"f64\"`, so a number both ways",
+    ),
+    (
         "LibraryId",
         "a newtype over `String` decoded with `try_from = \"String\"`, so a string both ways",
     ),

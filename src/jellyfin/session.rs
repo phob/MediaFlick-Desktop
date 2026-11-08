@@ -147,6 +147,10 @@ pub struct Live {
 }
 
 impl Live {
+    pub fn account(&self) -> &AccountKey {
+        &self.account
+    }
+
     /// Opens an answer fetched for the account this proof was minted for.
     pub fn open<T>(&self, scoped: Scoped<T>) -> Result<T, Stale> {
         if scoped.generation == self.generation && scoped.account == self.account {

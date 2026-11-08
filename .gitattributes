@@ -1,2 +1,4 @@
 ui/src/lib/api/wire.gen.ts text eol=lf linguist-generated=true
 ui/src/lib/api/wire/*.gen.ts text eol=lf linguist-generated=true
+# A unified diff writes an empty context line as a single space.
+ui/patches/*.patch -whitespace

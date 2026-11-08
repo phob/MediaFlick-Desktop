@@ -1,13 +1,15 @@
 import { useViewing } from "@/lib/viewing"
 import { useEffect, useLayoutEffect, useState, type ReactNode } from "react"
-import { useLocation } from "react-router-dom"
+import { matchPath, useLocation } from "react-router-dom"
 import { AppSidebar } from "@/components/AppSidebar"
 import { PlayerBar } from "@/components/PlayerBar"
 import { PreviewProvider } from "@/components/PreviewCard"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { usePlaybackEventsBridge } from "@/lib/playback-events"
+import { usePlaybackKeys } from "@/lib/playback-keys"
 import { usePlayerState, useSettings } from "@/lib/queries"
+import { READER_ROUTE } from "@/reader/route"
 import { RouteScrollContext } from "@/lib/route-scroll"
 import { sidebarShouldBeOpen, sidebarShouldOverlayContent } from "@/lib/sidebar-state"
 import { useScrollRestoration } from "@/lib/scroll-restoration"
@@ -180,9 +182,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const cardPreviews = settings.data?.appearance.cardPreviews !== false
   const integratedPlayback = Boolean(
     settings.data?.capabilities.integratedLibmpvOverlay &&
-      player.data?.active,
+      player.data?.active &&
+      player.data.nowPlaying?.kind === "video",
   )
   usePlaybackEventsBridge()
+  usePlaybackKeys()
 
   useLayoutEffect(() => {
     document.documentElement.toggleAttribute("data-libmpv-playback", integratedPlayback)
@@ -191,6 +195,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   if (integratedPlayback) {
     return <IntegratedPlayerOverlay paused={Boolean(player.data?.paused)} />
+  }
+
+  if (matchPath(READER_ROUTE, location.pathname)) {
+    return <main className="h-full min-h-0 bg-background">{children}</main>
   }
 
   return (

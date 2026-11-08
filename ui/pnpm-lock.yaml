@@ -187,6 +187,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  foliate-js@0.0.0: 4fc7b4d1fc4461bc3d970c038753d6c69d803a34881c53370aff3ca695dadaf8
+
 importers:
 
   .:
@@ -206,6 +209,12 @@ importers:
       cmdk:
         specifier: ^1.1.1
         version: 1.1.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      foliate-js:
+        specifier: github:johnfactotum/foliate-js#78914aef4466eb960965702401634c2cb348e9b1
+        version: https://codeload.github.com/johnfactotum/foliate-js/tar.gz/78914aef4466eb960965702401634c2cb348e9b1(patch_hash=4fc7b4d1fc4461bc3d970c038753d6c69d803a34881c53370aff3ca695dadaf8)
+      libarchive.js:
+        specifier: 2.0.2
+        version: 2.0.2
       lucide-react:
         specifier: ^1.28.0
         version: 1.55.0(@types/react@19.3.0)(react@19.3.0)
@@ -1870,6 +1879,9 @@ packages:
       react: ^18 || ^19 || ^19.0.0-rc
       react-dom: ^18 || ^19 || ^19.0.0-rc
 
+  comlink@4.4.2:
+    resolution: {integrity: sha512-OxGdvBmJuNKSCMO4NTl1L47VRp6xn2wG4F/2hYzB6tiCb709otOxtEYCSvK80PtjODfXXZu8ds+Nw5kVCjqd2g==}
+
   cookie@1.1.1:
     resolution: {integrity: sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ==}
     engines: {node: '>=18'}
@@ -1931,6 +1943,10 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  foliate-js@https://codeload.github.com/johnfactotum/foliate-js/tar.gz/78914aef4466eb960965702401634c2cb348e9b1:
+    resolution: {gitHosted: true, integrity: sha512-YmnYMiOUgcsd+5deF7DKOUvkBBhONGKor4JP7JFCZ9QiMs10ap4xg7XbIGHkCiZNLsASlpNGgavHuYePQH1Gzg==, tarball: https://codeload.github.com/johnfactotum/foliate-js/tar.gz/78914aef4466eb960965702401634c2cb348e9b1}
+    version: 0.0.0
 
   formatly@0.11.4:
     resolution: {integrity: sha512-TeCC10lP8KCgoX+Fe5lryILIT0/Dy+nP0OSVnsuB5CwXoLuOdqxCYlPFF1inR8S/zTy1ec7TjhS2TeRKWzzImA==}
@@ -2028,6 +2044,9 @@ packages:
     resolution: {integrity: sha512-8l3cCOg/EXoILO0qcSoMra49yQM91+lEIR4fu5Ko8rrArGX8xKdKZiGI9psPiY6rhLmfLERcMfFEByF0wli5CA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
+
+  libarchive.js@2.0.2:
+    resolution: {integrity: sha512-JHb+P4suNSjvz/dMdRgOe7JAxluXJeialzSFkKHU5y0ZK+m175drPOaIYW6I9WXSDcPcQ13eCUgMnpgY0ggmoQ==}
 
   lightningcss-android-arm64@1.32.0:
     resolution: {integrity: sha512-YK7/ClTt4kAK0vo6w3X+Pnm0D2cf2vPHbhOXdoNti1Ga0al1P4TBZhwjATvjNwLEBCnKvjJc2jQgHXH0NEwlAg==}
@@ -3911,6 +3930,8 @@ snapshots:
       - '@types/react'
       - '@types/react-dom'
 
+  comlink@4.4.2: {}
+
   cookie@1.1.1: {}
 
   css-tree@3.2.1:
@@ -3959,6 +3980,8 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.7):
     optionalDependencies:
       picomatch: 4.0.7
+
+  foliate-js@https://codeload.github.com/johnfactotum/foliate-js/tar.gz/78914aef4466eb960965702401634c2cb348e9b1(patch_hash=4fc7b4d1fc4461bc3d970c038753d6c69d803a34881c53370aff3ca695dadaf8): {}
 
   formatly@0.11.4:
     dependencies:
@@ -4062,6 +4085,10 @@ snapshots:
       unbash: 6.0.1
       yaml: 2.9.1
       zod: 4.6.7
+
+  libarchive.js@2.0.2:
+    dependencies:
+      comlink: 4.4.2
 
   lightningcss-android-arm64@1.32.0:
     optional: true

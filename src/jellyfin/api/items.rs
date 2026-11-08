@@ -4,6 +4,7 @@
 //! at the modern path first and fall back to the legacy one, so the app works
 //! against both current and older servers.
 
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::app::urls::encode_path_segment;
@@ -12,7 +13,7 @@ use crate::library::libraries::{LiveShape, LiveSort};
 use crate::library::{CatalogKind, MAX_CHILD_PAGE_LIMIT, SortDirection};
 use crate::preferences::StreamingQuality;
 
-use super::client::{ApiError, JellyfinClient};
+use super::client::{ApiError, ByteResponse, JellyfinClient};
 use super::device_profile::device_profile;
 use super::model::{
     BaseItemDto, IdentityPage, ItemsResponse, MediaSourceInfo, MediaUrl, PlaybackInfoResponse,
@@ -223,7 +224,7 @@ pub fn fetch_item(
     Ok(response.items.into_iter().next())
 }
 
-const DETAIL_FIELDS: &str = "Overview,PrimaryImageAspectRatio";
+const DETAIL_FIELDS: &str = "Overview,PrimaryImageAspectRatio,Path";
 
 pub fn fetch_detailed_item(
     client: &JellyfinClient,
@@ -273,6 +274,34 @@ pub fn fetch_live_children(
     client.get_json(
         "/Items",
         &live_children_query(user_id, parent_id, start_index, limit),
+    )
+}
+
+/// Every Audio and AudioBook item under `parent_id`, at most `limit`, in
+/// disc and track order.
+pub fn fetch_audio_tracks(
+    client: &JellyfinClient,
+    user_id: &str,
+    parent_id: &str,
+    limit: usize,
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json(
+        "/Items",
+        &[
+            user_query(user_id),
+            ("parentId", parent_id.to_string()),
+            ("Recursive", "true".to_string()),
+            ("IncludeItemTypes", "Audio,AudioBook".to_string()),
+            ("Fields", "SortName".to_string()),
+            ("EnableUserData", "true".to_string()),
+            ("EnableImages", "true".to_string()),
+            ("Limit", limit.to_string()),
+            (
+                "SortBy",
+                "ParentIndexNumber,IndexNumber,SortName".to_string(),
+            ),
+            ("SortOrder", "Ascending".to_string()),
+        ],
     )
 }
 
@@ -689,6 +718,45 @@ pub fn fetch_upcoming(
     limit: i64,
 ) -> Result<ItemsResponse, ApiError> {
     client.get_json("/Shows/Upcoming", &upcoming_query(user_id, limit))
+}
+
+/// One range of a book's file (`range` is an HTTP `Range` value), read only
+/// up to `limit` bytes. `/Items/{id}/File` needs only the session, unlike
+/// `/Download`, which needs the download permission.
+pub fn fetch_book_bytes(
+    client: &JellyfinClient,
+    item_id: &str,
+    range: &str,
+    limit: u64,
+) -> Result<ByteResponse, ApiError> {
+    let path = format!("/Items/{}/File", encode_path_segment(item_id));
+    client.get_bytes_range(&path, &[], Some(range), limit)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct BookProgress {
+    playback_position_ticks: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    played: Option<bool>,
+}
+
+/// Writes a book's position the way jellyfin-web does, through the user
+/// data route. Session play reports would mark a book without a runtime
+/// played and zero its position. `played: None` leaves the played state.
+pub fn write_book_progress(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+    ticks: i64,
+    played: Option<bool>,
+) -> Result<(), ApiError> {
+    let path = format!("/UserItems/{}/UserData", encode_path_segment(item_id));
+    let body = BookProgress {
+        playback_position_ticks: ticks,
+        played,
+    };
+    client.post_empty(&path, &[user_query(user_id)], &body)
 }
 
 pub fn set_played(

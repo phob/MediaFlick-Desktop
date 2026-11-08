@@ -12,6 +12,7 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(120);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_ATTEMPTS: u32 = 3;
 const RETRY_BUDGET: Duration = HTTP_TIMEOUT;
+pub const BYTE_RESPONSE_LIMIT: u64 = 64 * 1024 * 1024;
 
 pub const CLIENT_NAME: &str = build_info::APP_NAME;
 
@@ -230,11 +231,12 @@ impl JellyfinClient {
         path: &str,
         query: &[(&str, String)],
     ) -> Result<(Vec<u8>, String), ApiError> {
-        let response = self.get_bytes_range(path, query, None)?;
+        let response = self.get_bytes_range(path, query, None, BYTE_RESPONSE_LIMIT)?;
         Ok((response.body, response.content_type))
     }
 
     /// Fetches one bounded byte range without ever placing the token in a URL.
+    /// A body longer than `limit` fails the call instead of being buffered.
     ///
     /// Video elements seek by issuing range requests. Keeping the upstream
     /// status and range headers lets the app scheme behave like the Jellyfin
@@ -244,6 +246,7 @@ impl JellyfinClient {
         path: &str,
         query: &[(&str, String)],
         range: Option<&str>,
+        limit: u64,
     ) -> Result<ByteResponse, ApiError> {
         let url = self.url(path, query);
         let mut response = self.core_send(path, || {
@@ -261,7 +264,7 @@ impl JellyfinClient {
             .unwrap_or_else(|| "application/octet-stream".to_string());
         let content_range = header(&response, "content-range");
         let accept_ranges = header(&response, "accept-ranges");
-        let body = read_bytes(&mut response, 64 * 1024 * 1024)?;
+        let body = read_bytes(&mut response, limit)?;
         Ok(ByteResponse {
             status,
             content_type,

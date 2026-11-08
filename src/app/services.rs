@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock, mpsc};
 
 use crate::app::paths;
+use crate::books::OpenBooks;
 use crate::collections::artwork::{ArtworkStore, custom_art_dir};
 use crate::companion::CompanionSession;
 use crate::integrations::letterboxd::ReviewService;
@@ -17,8 +18,8 @@ use crate::playback::PlaybackCoordinator;
 use crate::preferences::{
     AccountConfigurationService, AccountKey, AppSettings, CollectionConfigurationService,
     PendingDeletion, PendingDeletionService, PlaybackPreferenceService, PreferencesService,
-    accounts_file_path, collections_file_path, pending_deletions_file_path,
-    playback_preferences_file_path,
+    ReaderStore, accounts_file_path, collections_file_path, pending_deletions_file_path,
+    playback_preferences_file_path, reader_file_path,
 };
 use crate::shell::InitPermit;
 
@@ -33,12 +34,14 @@ pub struct Services {
     pub accounts: Arc<AccountConfigurationService>,
     pub collections: Arc<CollectionConfigurationService>,
     pub playback_preferences: Arc<PlaybackPreferenceService>,
+    pub reader: Arc<ReaderStore>,
     pub artwork: Arc<ArtworkStore>,
     pub pending_deletions: Arc<PendingDeletionService>,
     pub preferences: Arc<PreferencesService>,
     pub shell: Arc<ShellBridge>,
     pub home_watched: Mutex<HashMap<AccountKey, Option<crate::library::ItemDetail>>>,
     pub children_sources: ChildrenSources,
+    pub open_books: OpenBooks,
     playback: RwLock<Option<Arc<PlaybackCoordinator>>>,
 }
 
@@ -219,6 +222,7 @@ pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Service
     if let Err(error) = import_legacy_account_data(&library, &accounts, &playback_preferences) {
         return Err(initialization_failure(error));
     }
+    let reader = open_configuration(&reader_file_path(), ReaderStore::open)?;
     let preferences = Arc::new(PreferencesService::new(
         initial_settings,
         accounts.clone(),
@@ -264,12 +268,14 @@ pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Service
         accounts,
         collections,
         playback_preferences,
+        reader,
         artwork,
         pending_deletions,
         preferences,
         shell,
         home_watched: Mutex::new(HashMap::new()),
         children_sources: ChildrenSources::default(),
+        open_books: OpenBooks::default(),
         playback: RwLock::new(None),
     });
     connect_app_hooks(&services);
@@ -428,6 +434,10 @@ fn complete_pending_deletion(
         .playback_preferences
         .remove_account(&deletion.account)
         .map_err(|error| format!("could not remove playback preferences: {error}"))?;
+    services
+        .reader
+        .remove_account(&deletion.account)
+        .map_err(|error| format!("could not remove reading places: {error}"))?;
     crate::collections::snapshots::SnapshotRepository::new(&services.library)
         .remove_account(&deletion.account)
         .map_err(|error| format!("could not remove collection cache rows: {error}"))?;
@@ -516,6 +526,7 @@ pub(crate) mod test_support {
                     PlaybackPreferenceService::open(directory.join("playback.json"))
                         .expect("playback preferences"),
                 ),
+                reader: Arc::new(ReaderStore::open(directory.join("reader.json")).expect("reader")),
                 artwork: Arc::new(ArtworkStore::open(directory.join("art")).expect("artwork")),
                 pending_deletions: Arc::new(
                     PendingDeletionService::open(directory.join("deletions.json"))
@@ -525,6 +536,7 @@ pub(crate) mod test_support {
                 shell,
                 home_watched: Mutex::new(HashMap::new()),
                 children_sources: ChildrenSources::default(),
+                open_books: OpenBooks::default(),
                 playback: RwLock::new(None),
                 library,
                 session,

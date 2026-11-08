@@ -11,7 +11,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 // discards the session view, and zoom rescales chrome the OS already sizes.
 const BROWSER_SHORTCUTS = new Set(["p", "s", "u", "r", "-", "=", "+", "0"])
 
-export function installAppSurfaceGuard(): () => void {
+export function installAppSurfaceGuard(target: Document = document): () => void {
   const onKeyDown = (event: KeyboardEvent) => {
     // F7 toggles Chromium caret browsing, which would open keyboard-driven
     // selection; the shell has no document to place a caret in.
@@ -40,16 +40,16 @@ export function installAppSurfaceGuard(): () => void {
     event.preventDefault()
   }
 
-  document.addEventListener("keydown", onKeyDown, true)
-  document.addEventListener("wheel", onWheel, { passive: false, capture: true })
+  target.addEventListener("keydown", onKeyDown, true)
+  target.addEventListener("wheel", onWheel, { passive: false, capture: true })
   for (const type of ["dragenter", "dragover", "drop"] as const) {
-    document.addEventListener(type, onCancelDrag, true)
+    target.addEventListener(type, onCancelDrag, true)
   }
   return () => {
-    document.removeEventListener("keydown", onKeyDown, true)
-    document.removeEventListener("wheel", onWheel, { capture: true })
+    target.removeEventListener("keydown", onKeyDown, true)
+    target.removeEventListener("wheel", onWheel, { capture: true })
     for (const type of ["dragenter", "dragover", "drop"] as const) {
-      document.removeEventListener(type, onCancelDrag, true)
+      target.removeEventListener(type, onCancelDrag, true)
     }
   }
 }

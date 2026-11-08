@@ -151,6 +151,7 @@ pub struct BaseItemDto {
     pub is_folder: bool,
     pub date_created: Option<String>,
     pub date_last_saved: Option<String>,
+    pub path: Option<String>,
     /// A series' airing state. Jellyfin sends it for every series whatever
     /// `Fields` asks for.
     pub status: Option<String>,
@@ -160,6 +161,11 @@ pub struct BaseItemDto {
     pub media_streams: Vec<MediaStream>,
     pub media_sources: Vec<MediaSourceInfo>,
     pub remote_trailers: Vec<MediaUrl>,
+    pub artists: Vec<String>,
+    pub album_artist: Option<String>,
+    pub album: Option<String>,
+    pub album_id: Option<String>,
+    pub album_primary_image_tag: Option<String>,
 }
 
 impl BaseItemDto {

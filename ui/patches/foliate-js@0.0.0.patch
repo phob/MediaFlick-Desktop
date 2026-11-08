@@ -1,0 +1,240 @@
+diff --git a/fixed-layout.js b/fixed-layout.js
+index c582abad1496874a9265cad1ab69e12a475c684d..022a4f8961e1fe5c73fbb24c1edb01df4bd05f90 100644
+--- a/fixed-layout.js
++++ b/fixed-layout.js
+@@ -43,6 +43,12 @@ export class FixedLayout extends HTMLElement {
+     #center
+     #side
+     #zoom
++    // MediaFlick: the sections this renderer loaded and has not unloaded.
++    #loaded = new Set()
++    // MediaFlick: the spread being shown; the next one waits for it.
++    #showing = Promise.resolve()
++    // MediaFlick: a destroyed renderer shows nothing more.
++    #destroyed = false
+     constructor() {
+         super()
+ 
+@@ -81,9 +87,8 @@ export class FixedLayout extends HTMLElement {
+             display: 'none',
+             overflow: 'hidden',
+         })
+-        // `allow-scripts` is needed for events because of WebKit bug
+-        // https://bugs.webkit.org/show_bug.cgi?id=218086
+-        iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts')
++        // MediaFlick: book documents must never run scripts.
++        iframe.setAttribute('sandbox', 'allow-same-origin')
+         iframe.setAttribute('scrolling', 'no')
+         iframe.setAttribute('part', 'filter')
+         this.#root.append(element)
+@@ -269,21 +274,48 @@ export class FixedLayout extends HTMLElement {
+             return
+         }
+         this.#index = index
++        // MediaFlick: one spread at a time. A turn that started while another
++        // page loaded replaced that page's frame, so the page never finished
++        // and was never unloaded, and a slower first page could cover the
++        // second. A turn now waits for the one before it and is skipped once
++        // a newer turn moved the target on, so a held key lands where it stops.
++        const shown = this.#showing.then(() => this.#showSpreadAt(index, side, reason))
++        this.#showing = shown.catch(() => {})
++        return shown
++    }
++    async #showSpreadAt(index, side, reason) {
++        if (this.#destroyed || index !== this.#index) return
+         const spread = this.#spreads[index]
++        const shown = [spread.left, spread.right, spread.center].filter(Boolean)
++        // MediaFlick: pages that finished loading after the renderer was
++        // destroyed have no frame to show them in, and nothing else unloads them.
++        const destroyed = () => {
++            if (this.#destroyed) for (const section of shown) section.unload?.()
++            return this.#destroyed
++        }
+         if (spread.center) {
+             const index = this.book.sections.indexOf(spread.center)
+             const src = await spread.center?.load?.()
++            if (destroyed()) return
+             await this.#showSpread({ center: { index, src } })
+         } else {
+             const indexL = this.book.sections.indexOf(spread.left)
+             const indexR = this.book.sections.indexOf(spread.right)
+             const srcL = await spread.left?.load?.()
+             const srcR = await spread.right?.load?.()
++            if (destroyed()) return
+             const left = { index: indexL, src: srcL }
+             const right = { index: indexR, src: srcR }
+             await this.#showSpread({ left, right, side })
+         }
+-        this.#reportLocation(reason)
++        // MediaFlick: a spread left behind gives its pages back, as the
++        // paginator does; foliate kept every page read until the book closed.
++        for (const section of this.#loaded) if (!shown.includes(section)) {
++            section.unload?.()
++            this.#loaded.delete(section)
++        }
++        for (const section of shown) this.#loaded.add(section)
++        if (index === this.#index) this.#reportLocation(reason)
+     }
+     async select(target) {
+         await this.goTo(target)
+@@ -312,7 +344,10 @@ export class FixedLayout extends HTMLElement {
+         }))
+     }
+     destroy() {
++        this.#destroyed = true
+         this.#observer.unobserve(this)
++        for (const section of this.#loaded) section.unload?.()
++        this.#loaded.clear()
+     }
+ }
+ 
+diff --git a/paginator.js b/paginator.js
+index 7980c20297049e38b5e5a1d44a9eee11b1fbd68e..b103701a2048c7b7cd19b562ae5b758bbc0f0fff 100644
+--- a/paginator.js
++++ b/paginator.js
+@@ -239,9 +239,8 @@ class View {
+             display: 'none',
+             width: '100%', height: '100%',
+         })
+-        // `allow-scripts` is needed for events because of WebKit bug
+-        // https://bugs.webkit.org/show_bug.cgi?id=218086
+-        this.#iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts')
++        // MediaFlick: book documents must never run scripts.
++        this.#iframe.setAttribute('sandbox', 'allow-same-origin')
+         this.#iframe.setAttribute('scrolling', 'no')
+     }
+     get element() {
+diff --git a/pdf.js b/pdf.js
+index c998bf49ea5b62f74cd78ae0e991de373a7902f4..d2c5abdffc08ea7f2a5405d311e73cef947984b8 100644
+--- a/pdf.js
++++ b/pdf.js
+@@ -12,7 +12,31 @@ const textLayerBuilderCSS = await fetchText(pdfjsPath('text_layer_builder.css'))
+ // https://raw.githubusercontent.com/mozilla/pdf.js/refs/tags/v5.5.207/web/annotation_layer_builder.css
+ const annotationLayerBuilderCSS = await fetchText(pdfjsPath('annotation_layer_builder.css'))
+ 
+-const render = async (page, doc, zoom) => {
++// MediaFlick: a page's images live until it unloads, since an image's own
++// load never fires once a turn has removed its frame.
++const pageImages = () => {
++    const urls = new Set()
++    let unloaded = false
++    const revoke = url => {
++        URL.revokeObjectURL(url)
++        urls.delete(url)
++    }
++    return {
++        show(img, blob) {
++            const url = URL.createObjectURL(blob)
++            urls.add(url)
++            img.addEventListener('load', () => revoke(url), { once: true })
++            img.src = url
++            if (unloaded) revoke(url)
++        },
++        unload() {
++            unloaded = true
++            for (const url of urls) revoke(url)
++        },
++    }
++}
++
++const render = async (page, doc, zoom, images) => {
+     const scale = zoom * devicePixelRatio
+     doc.documentElement.style.transform = `scale(${1 / devicePixelRatio})`
+     doc.documentElement.style.transformOrigin = 'top left'
+@@ -26,7 +50,13 @@ const render = async (page, doc, zoom) => {
+     canvas.width = viewport.width
+     const canvasContext = canvas.getContext('2d')
+     await page.render({ canvasContext, viewport }).promise
+-    doc.querySelector('#canvas').replaceChildren(doc.adoptNode(canvas))
++    // MediaFlick: the page's document runs no scripts, and a canvas there
++    // shows only its fallback content, so the page shows an image of it.
++    const blob = await new Promise(resolve => canvas.toBlob(resolve))
++    const img = doc.createElement('img')
++    img.style.display = 'block'
++    images.show(img, blob)
++    doc.querySelector('#canvas').replaceChildren(img)
+ 
+     const container = doc.querySelector('.textLayer')
+     const textLayer = new pdfjsLib.TextLayer({
+@@ -64,6 +94,9 @@ const render = async (page, doc, zoom) => {
+     }
+     await new pdfjsLib.AnnotationLayer({ page, viewport, div, linkService })
+         .render({ annotations: await page.getAnnotations() })
++    // MediaFlick: a page keeps its drawing resources until cleaned up, which
++    // grew memory by every page read; it is drawn again from the file if needed.
++    page.cleanup()
+ }
+ 
+ const renderPage = async (page, getImageBlob) => {
+@@ -102,8 +135,9 @@ const renderPage = async (page, getImageBlob) => {
+         <div class="textLayer"></div>
+         <div class="annotationLayer"></div>
+     `], { type: 'text/html' }))
+-    const onZoom = ({ doc, scale }) => render(page, doc, scale)
+-    return { src, onZoom }
++    const images = pageImages()
++    const onZoom = ({ doc, scale }) => render(page, doc, scale, images)
++    return { src, onZoom, images }
+ }
+ 
+ const makeTOCItem = item => ({
+@@ -113,18 +147,33 @@ const makeTOCItem = item => ({
+ })
+ 
+ export const makePDF = async file => {
++    // MediaFlick: pdf.js cannot be told that a range read failed and would
++    // wait for its bytes forever, worker and all; closing the reader aborts
++    // its reads. The first read that fails ends the worker and the load.
++    const failed = new AbortController()
++    // MediaFlick: `promise`, failing as well once a read fails. Its listener
++    // goes when it settles; racing one shared pending promise left a reaction
++    // on it for every page loaded, kept until the book closed.
++    const unlessFailed = promise => new Promise((resolve, reject) => {
++        const fail = () => reject(failed.signal.reason)
++        if (failed.signal.aborted) fail()
++        else failed.signal.addEventListener('abort', fail, { once: true })
++        promise.then(resolve, reject).then(() => failed.signal.removeEventListener('abort', fail))
++    })
+     const transport = new pdfjsLib.PDFDataRangeTransport(file.size, [])
+     transport.requestDataRange = (begin, end) => {
+         file.slice(begin, end).arrayBuffer().then(chunk => {
+             transport.onDataRange(begin, chunk)
+-        })
++        }, error => failed.abort(error))
+     }
+-    const pdf = await pdfjsLib.getDocument({
++    const loading = pdfjsLib.getDocument({
+         range: transport,
+         cMapUrl: pdfjsPath('cmaps/'),
+         standardFontDataUrl: pdfjsPath('standard_fonts/'),
+         isEvalSupported: false,
+-    }).promise
++    })
++    failed.signal.addEventListener('abort', () => loading.destroy(), { once: true })
++    const pdf = await unlessFailed(loading.promise)
+ 
+     const book = { rendition: { layout: 'pre-paginated' } }
+ 
+@@ -152,10 +201,21 @@ export const makePDF = async file => {
+         load: async () => {
+             const cached = cache.get(i)
+             if (cached) return cached
+-            const url = await renderPage(await pdf.getPage(i + 1))
++            // MediaFlick: the renderer shows one page at a time, so a page
++            // left waiting on a failed read would hold up every turn after it.
++            const url = await unlessFailed(pdf.getPage(i + 1).then(page => renderPage(page)))
+             cache.set(i, url)
+             return url
+         },
++        // MediaFlick: the renderer unloads the pages it leaves.
++        unload: () => {
++            const cached = cache.get(i)
++            if (cached) {
++                URL.revokeObjectURL(cached.src)
++                cached.images.unload()
++            }
++            cache.delete(i)
++        },
+         size: 1000,
+     }))
+     book.isExternal = uri => /^\w+:/i.test(uri)

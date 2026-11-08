@@ -82,6 +82,19 @@
   --sidebar-ring: #2bff88;
   --artwork-intensity: 1;
   --backdrop-intensity: 1;
+
+  /* The book reader's page themes ("App" uses --background and --foreground).
+     A book's own documents cannot read these variables, so the reader copies
+     their values into each document it shows. */
+  --reader-light-paper: #fbfaf6;
+  --reader-light-ink: #1d1c1a;
+  --reader-light-link: #1f5fa8;
+  --reader-sepia-paper: #f3e9d2;
+  --reader-sepia-ink: #3a2e1f;
+  --reader-sepia-link: #7a4b12;
+  --reader-dark-paper: #000;
+  --reader-dark-ink: #c8cdca;
+  --reader-dark-link: #7fb8ff;
 }
 
 [data-accent="cobalt"] { --primary: #5da8ff; --primary-foreground: #05152a; --ring: #5da8ff; --signal-deep: #2868ba; --sidebar-primary: #5da8ff; --sidebar-primary-foreground: #05152a; --sidebar-ring: #5da8ff; }

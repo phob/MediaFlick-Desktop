@@ -1,0 +1,5 @@
+### Added
+
+- Books open in a built-in reader: EPUB, MOBI, AZW, AZW3, PDF and comic archives (CBZ, CBR including RAR 5, CB7, CBT). A book's page offers Read, Continue at the place you left, or Read again once finished. The reader fills the window and works entirely from the keyboard or a TV remote: arrows and Page Up/Down turn pages, the next/previous track keys move between chapters, Enter or the Menu key opens a menu with Contents, Go to a position, Appearance (text size, theme, line spacing, margins, pages or scrolling, or fit for PDFs and comics) and a list of the keys, and Back closes the top panel and then the book.
+- The exact place in each book and the reader's appearance are kept per account, and Jellyfin gets the position in the units jellyfin-web uses, so other clients show it too. Reaching the end marks the book played. Scripts in books never run, and the Jellyfin token never reaches the reader.
+- RAR, 7z and tar comics are decoded by libarchive 3.8.11, built for the app without OpenSSL so the reader's code stays GPL-compatible.

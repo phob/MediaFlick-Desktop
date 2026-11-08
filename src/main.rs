@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
+mod books;
 mod collections;
 mod companion;
 mod integrations;

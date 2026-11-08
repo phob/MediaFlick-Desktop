@@ -14,8 +14,6 @@ import {
   Rewind,
   Settings,
   Square,
-  Volume2,
-  VolumeX,
 } from "lucide-react"
 import { useEffect, useEffectEvent, useRef, useState } from "react"
 import { Link } from "react-router-dom"
@@ -33,8 +31,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Slider } from "@/components/ui/slider"
-import { cn } from "@/lib/utils"
 import {
   STREAMING_QUALITIES,
   TICKS_PER_MS,
@@ -66,6 +62,8 @@ import {
 } from "@/lib/queries"
 import { SUBTITLES_OFF, TrackMenu, TrackSubmenu, type TrackChoices } from "@/components/player/TrackMenu"
 import { TuningMenu, type PlaybackTuning } from "@/components/player/TuningMenu"
+import { AudioPlayerBar } from "@/components/player/AudioPlayerBar"
+import { VolumeControl } from "@/components/player/VolumeControl"
 import { Timeline } from "@/components/player/Timeline"
 import { currentChapter, formatClock, trackLabel } from "@/components/player/format"
 
@@ -116,27 +114,6 @@ function segmentLabel(segment: PlayerSkipSegment) {
     case "commercial":
       return "Commercial"
   }
-}
-
-function MuteButton({ muted, volume, title, onToggle, className }: {
-  muted: boolean
-  volume: number
-  title?: string
-  onToggle: () => void
-  className?: string
-}) {
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
-      title={title}
-      aria-label={muted ? "Unmute" : "Mute"}
-      onClick={onToggle}
-      className={cn("size-8", className)}
-    >
-      {muted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-    </Button>
-  )
 }
 
 const DEFAULT_TUNING: PlaybackTuning = {
@@ -489,20 +466,13 @@ function ActivePlayerBar({
       </Button>
 
       <div className="hidden w-32 shrink-0 items-center gap-2 xl:flex">
-        <MuteButton
+        <VolumeControl
           muted={muted}
           volume={volume}
-          title={withShortcuts(muted ? "Unmute" : "Mute", [], [comfort.muteKey])}
-          onToggle={toggleMute}
-        />
-        <Slider
-          value={[muted ? 0 : volume]}
-          max={100}
-          step={1}
-          aria-label={`Volume ${Math.round(volume)}%`}
-          onValueChange={([value]) => setVolumeDraft(value)}
-          onValueCommit={([value]) => setVolume(value)}
-          className="h-8 flex-1 cursor-pointer"
+          muteTitle={withShortcuts(muted ? "Unmute" : "Mute", [], [comfort.muteKey])}
+          onToggleMute={toggleMute}
+          onVolumeDraft={setVolumeDraft}
+          onVolumeCommit={setVolume}
         />
       </div>
 
@@ -643,14 +613,12 @@ function ActivePlayerBar({
             <DropdownMenuSubTrigger>Volume</DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="w-56 p-3">
               <div className="flex items-center gap-3">
-                <MuteButton muted={muted} volume={volume} onToggle={toggleMute} className="shrink-0" />
-                <Slider
-                  value={[muted ? 0 : volume]}
-                  max={100}
-                  step={1}
-                  aria-label={`Volume ${Math.round(volume)}%`}
-                  onValueChange={([value]) => setVolumeDraft(value)}
-                  onValueCommit={([value]) => setVolume(value)}
+                <VolumeControl
+                  muted={muted}
+                  volume={volume}
+                  onToggleMute={toggleMute}
+                  onVolumeDraft={setVolumeDraft}
+                  onVolumeCommit={setVolume}
                 />
                 <span className="w-8 text-right text-xs tabular-nums">{Math.round(volume)}</span>
               </div>
@@ -671,5 +639,6 @@ function ActivePlayerBar({
 export function PlayerBar({ onMenuOpenChange }: { onMenuOpenChange?: (open: boolean) => void }) {
   const { data: player } = usePlayerState()
   if (!player?.active) return null
+  if (player.nowPlaying?.kind === "audio") return <AudioPlayerBar player={player} audio={player.nowPlaying} />
   return <ActivePlayerBar key={player.playbackId ?? player.itemId} player={player} onMenuOpenChange={onMenuOpenChange} />
 }

@@ -173,6 +173,12 @@ libmpv:
 libmpv:
     bash distribution/libmpv/linux/build.sh
 
+# Rebuild the comic reader's libarchive.wasm and check it matches the committed copy ("update" replaces it)
+[group('build')]
+[linux]
+libarchive-wasm mode="check":
+    bash distribution/libarchive-wasm/build.sh {{mode}}
+
 # Build and stage the app into ./build
 [group('build')]
 [windows]

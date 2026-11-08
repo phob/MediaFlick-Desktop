@@ -47,6 +47,11 @@ pub(super) fn settings_snapshot(services: &Services) -> SettingsView {
     );
     push_recovery(
         &mut recoveries,
+        "Reading places and reader appearance",
+        services.reader.take_recovery_notice(),
+    );
+    push_recovery(
+        &mut recoveries,
         "Deletion journal",
         services.pending_deletions.take_recovery_notice(),
     );
