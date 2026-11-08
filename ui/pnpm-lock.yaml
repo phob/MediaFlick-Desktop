@@ -188,7 +188,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  foliate-js@0.0.0: 0f196a02664f5af8bc7e233561228d99ce4761a2a5d80dcc86827005f75f9ab2
+  foliate-js@0.0.0: 3a250fc5f57675d3930f6b4bfa0e1b7b963610cbfb23c4b7edc1f1ba622573dd
 
 importers:
 
@@ -211,7 +211,7 @@ importers:
         version: 1.1.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       foliate-js:
         specifier: github:johnfactotum/foliate-js#78914aef4466eb960965702401634c2cb348e9b1
-        version: https://codeload.github.com/johnfactotum/foliate-js/tar.gz/78914aef4466eb960965702401634c2cb348e9b1(patch_hash=0f196a02664f5af8bc7e233561228d99ce4761a2a5d80dcc86827005f75f9ab2)
+        version: https://codeload.github.com/johnfactotum/foliate-js/tar.gz/78914aef4466eb960965702401634c2cb348e9b1(patch_hash=3a250fc5f57675d3930f6b4bfa0e1b7b963610cbfb23c4b7edc1f1ba622573dd)
       libarchive.js:
         specifier: 2.0.2
         version: 2.0.2
@@ -3981,7 +3981,7 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.7
 
-  foliate-js@https://codeload.github.com/johnfactotum/foliate-js/tar.gz/78914aef4466eb960965702401634c2cb348e9b1(patch_hash=0f196a02664f5af8bc7e233561228d99ce4761a2a5d80dcc86827005f75f9ab2): {}
+  foliate-js@https://codeload.github.com/johnfactotum/foliate-js/tar.gz/78914aef4466eb960965702401634c2cb348e9b1(patch_hash=3a250fc5f57675d3930f6b4bfa0e1b7b963610cbfb23c4b7edc1f1ba622573dd): {}
 
   formatly@0.11.4:
     dependencies:

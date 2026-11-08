@@ -1,8 +1,17 @@
 diff --git a/fixed-layout.js b/fixed-layout.js
-index c582abad1496874a9265cad1ab69e12a475c684d..4ba36a56eac1a09784e3e30d32af3f6fca6edbd6 100644
+index c582abad1496874a9265cad1ab69e12a475c684d..2b62c7df25c2b971fa0aec13343da68f73299802 100644
 --- a/fixed-layout.js
 +++ b/fixed-layout.js
-@@ -81,9 +81,8 @@ export class FixedLayout extends HTMLElement {
+@@ -43,6 +43,8 @@ export class FixedLayout extends HTMLElement {
+     #center
+     #side
+     #zoom
++    // MediaFlick: the sections this renderer loaded and has not unloaded.
++    #loaded = new Set()
+     constructor() {
+         super()
+ 
+@@ -81,9 +83,8 @@ export class FixedLayout extends HTMLElement {
              display: 'none',
              overflow: 'hidden',
          })
@@ -14,6 +23,30 @@ index c582abad1496874a9265cad1ab69e12a475c684d..4ba36a56eac1a09784e3e30d32af3f6f
          iframe.setAttribute('scrolling', 'no')
          iframe.setAttribute('part', 'filter')
          this.#root.append(element)
+@@ -283,6 +284,14 @@ export class FixedLayout extends HTMLElement {
+             const right = { index: indexR, src: srcR }
+             await this.#showSpread({ left, right, side })
+         }
++        // MediaFlick: a spread left behind gives its pages back, as the
++        // paginator does; foliate kept every page read until the book closed.
++        const shown = [spread.left, spread.right, spread.center].filter(Boolean)
++        for (const section of this.#loaded) if (!shown.includes(section)) {
++            section.unload?.()
++            this.#loaded.delete(section)
++        }
++        for (const section of shown) this.#loaded.add(section)
+         this.#reportLocation(reason)
+     }
+     async select(target) {
+@@ -313,6 +322,8 @@ export class FixedLayout extends HTMLElement {
+     }
+     destroy() {
+         this.#observer.unobserve(this)
++        for (const section of this.#loaded) section.unload?.()
++        this.#loaded.clear()
+     }
+ }
+ 
 diff --git a/paginator.js b/paginator.js
 index 7980c20297049e38b5e5a1d44a9eee11b1fbd68e..b103701a2048c7b7cd19b562ae5b758bbc0f0fff 100644
 --- a/paginator.js
@@ -31,7 +64,7 @@ index 7980c20297049e38b5e5a1d44a9eee11b1fbd68e..b103701a2048c7b7cd19b562ae5b758b
      }
      get element() {
 diff --git a/pdf.js b/pdf.js
-index c998bf49ea5b62f74cd78ae0e991de373a7902f4..9f3fda3d6c00cede5fc90095807a9f3c9ace04af 100644
+index c998bf49ea5b62f74cd78ae0e991de373a7902f4..76885bed5ea1ff250262f1185eacf7dce92698e4 100644
 --- a/pdf.js
 +++ b/pdf.js
 @@ -26,7 +26,14 @@ const render = async (page, doc, zoom) => {
@@ -60,3 +93,16 @@ index c998bf49ea5b62f74cd78ae0e991de373a7902f4..9f3fda3d6c00cede5fc90095807a9f3c
  }
  
  const renderPage = async (page, getImageBlob) => {
+@@ -156,6 +166,12 @@ export const makePDF = async file => {
+             cache.set(i, url)
+             return url
+         },
++        // MediaFlick: the renderer unloads the pages it leaves.
++        unload: () => {
++            const cached = cache.get(i)
++            if (cached) URL.revokeObjectURL(cached.src)
++            cache.delete(i)
++        },
+         size: 1000,
+     }))
+     book.isExternal = uri => /^\w+:/i.test(uri)

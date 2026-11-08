@@ -83,133 +83,141 @@ export async function openBook(host: HTMLElement, itemId: string, manifest: Book
   // foliate tells a CBZ from an EPUB by the name, so the name carries the format the bytes were sniffed as.
   const file = await RemoteFile.open(itemId, `${itemId}.${manifest.format}`, options.signal)
   const book = await loadBook(file, manifest.format, options.onDownload)
-  options.signal.throwIfAborted()
-  const comic = COMIC_FORMATS.has(manifest.format)
-  if (comic || manifest.format === "pdf") book.rendition = { ...book.rendition, spread: "none" }
-
   const view: View = new View()
-  view.style.cssText = "display: block; width: 100%; height: 100%"
-  let restored = false
-  const toPosition = (detail: FoliateLocation): ReadingPosition => {
-    const section = detail.section ?? { current: 0, total: book.sections.length }
-    // foliate weighs fixed pages by their bytes, which makes a comic's percent jump; a page is a page here.
-    const fraction = view.isFixedLayout
-      ? section.current / Math.max(1, section.total - 1)
-      : Math.min(1, Math.max(0, detail.fraction ?? 0))
-    const text = TEXT_FORMATS.has(manifest.format)
-    return {
-      location: text
-        ? { kind: "text", cfi: detail.cfi, fraction }
-        : { kind: "page", page: section.current, pages: Math.max(section.total, section.current + 1) },
-      finished: view.isFixedLayout ? section.current >= section.total - 1 : Boolean(view.renderer.atEnd),
-      fraction,
-      page: text && !view.isFixedLayout ? null : { current: section.current, total: section.total },
-      textLocation: text && detail.location ? { current: detail.location.current, total: detail.location.total } : null,
-      chapter: comic ? null : (detail.tocItem?.label?.trim() ?? null),
-      tocTarget: text ? (detail.tocItem?.href ?? null) : section.current,
-      canReturn: view.history.canGoBack,
-    }
+  // Until it is destroyed a book keeps its blob URLs, and a PDF its pdf.js worker.
+  const close = () => {
+    view.close()
+    view.remove()
+    book.destroy?.()
   }
-  view.addEventListener("load", ({ detail }) => {
-    installAppSurfaceGuard(detail.doc)
-    detail.doc.addEventListener(
-      "keydown",
-      (event) => {
-        if (PLAYBACK_KEYS.has(event.key)) window.dispatchEvent(new KeyboardEvent(event.type, event))
-        else options.onKey(event)
-      },
-      { capture: true, signal: options.signal },
-    )
-  })
-  view.addEventListener("relocate", ({ detail }) => {
-    if (restored) options.onPosition(toPosition(detail))
-  })
-  view.addEventListener("external-link", (event) => event.preventDefault())
-  host.replaceChildren(view)
-  await view.open(book)
+  try {
+    options.signal.throwIfAborted()
+    const comic = COMIC_FORMATS.has(manifest.format)
+    if (comic || manifest.format === "pdf") book.rendition = { ...book.rendition, spread: "none" }
 
-  const layout = view.isFixedLayout ? "fixed" : "reflowable"
-  const sections = book.sections.length
-  const realToc = comic ? [] : flatten(book.toc ?? [])
-  const toc = realToc.length || layout === "reflowable" ? realToc : pageEntries(sections)
-  let chapterPages: Promise<number[]> | null = null
-
-  const apply = (appearance: ReaderAppearance) => {
-    host.style.background = themeColors(appearance.theme).paper
-    if (layout === "fixed") {
-      view.renderer.setAttribute("zoom", fitAttribute(appearance))
-      return
-    }
-    for (const [name, value] of Object.entries(layoutAttributes(appearance))) view.renderer.setAttribute(name, value)
-    view.renderer.setStyles?.(bookStyles(appearance))
-  }
-  apply(manifest.appearance)
-
-  const resume = manifest.resume
-  if (resume.kind === "exact") {
-    await view.init({ lastLocation: resume.location.kind === "text" ? resume.location.cfi : resume.location.page })
-  } else if (resume.kind === "page") {
-    await view.init({ lastLocation: resume.page })
-  } else {
-    await view.init({})
-    if (resume.kind === "fraction") await view.goToFraction(resume.fraction)
-  }
-  options.signal.throwIfAborted()
-  restored = true
-
-  const currentPage = () => view.lastLocation?.section?.current ?? 0
-  const sectionJump = async (direction: 1 | -1) => {
-    if (layout === "reflowable") return direction > 0 ? view.renderer.nextSection() : view.renderer.prevSection()
-    const page = currentPage()
-    if (realToc.length && book.resolveHref) {
-      const resolveHref = book.resolveHref.bind(book)
-      chapterPages ??= Promise.all(realToc.map(async (entry) => (await resolveHref(String(entry.target))).index))
-      const starts = [...new Set(await chapterPages)].sort((a, b) => a - b)
-      const target = direction > 0 ? starts.find((start) => start > page) : starts.findLast((start) => start < page)
-      if (target !== undefined) return void (await view.goTo(target))
-    }
-    await view.goTo(Math.min(sections - 1, Math.max(0, page + direction * PAGE_STEP)))
-  }
-
-  // A page fitted to the width can be taller than the window: next and
-  // previous scroll it first, and turn the page at its end.
-  const scrollOrTurn = async (to: "next" | "prev") => {
-    const page = view.renderer
-    const step = page.clientHeight * 0.85
-    const atEdge = to === "next" ? page.scrollTop + page.clientHeight >= page.scrollHeight - 1 : page.scrollTop <= 0
-    if (!atEdge) return page.scrollBy({ top: to === "next" ? step : -step })
-    await (to === "next" ? view.next() : view.prev())
-    page.scrollTop = to === "next" ? 0 : page.scrollHeight
-  }
-
-  return {
-    layout,
-    toc,
-    position: () => (view.lastLocation ? toPosition(view.lastLocation) : null),
-    async run(command) {
-      switch (command.kind) {
-        case "turn":
-          if (command.to === "left") return view.goLeft()
-          if (command.to === "right") return view.goRight()
-          return layout === "fixed" ? scrollOrTurn(command.to) : command.to === "next" ? view.next() : view.prev()
-        case "scroll":
-          return command.by > 0 ? view.next(host.clientHeight / 8) : view.prev(host.clientHeight / 8)
-        case "section":
-          return sectionJump(command.to === "next" ? 1 : -1)
-        case "edge":
-          return view.goToFraction(command.to === "start" ? 0 : 1)
-        case "return":
-          return view.history.back()
+    view.style.cssText = "display: block; width: 100%; height: 100%"
+    let restored = false
+    const toPosition = (detail: FoliateLocation): ReadingPosition => {
+      const section = detail.section ?? { current: 0, total: book.sections.length }
+      // foliate weighs fixed pages by their bytes, which makes a comic's percent jump; a page is a page here.
+      const fraction = view.isFixedLayout
+        ? section.current / Math.max(1, section.total - 1)
+        : Math.min(1, Math.max(0, detail.fraction ?? 0))
+      const text = TEXT_FORMATS.has(manifest.format)
+      return {
+        location: text
+          ? { kind: "text", cfi: detail.cfi, fraction }
+          : { kind: "page", page: section.current, pages: Math.max(section.total, section.current + 1) },
+        finished: view.isFixedLayout ? section.current >= section.total - 1 : Boolean(view.renderer.atEnd),
+        fraction,
+        page: text && !view.isFixedLayout ? null : { current: section.current, total: section.total },
+        textLocation: text && detail.location ? { current: detail.location.current, total: detail.location.total } : null,
+        chapter: comic ? null : (detail.tocItem?.label?.trim() ?? null),
+        tocTarget: text ? (detail.tocItem?.href ?? null) : section.current,
+        canReturn: view.history.canGoBack,
       }
-    },
-    async jump(target) {
-      if (target.kind === "fraction") await view.goToFraction(target.fraction)
-      else await view.goTo(target.kind === "toc" ? target.target : target.page)
-    },
-    apply,
-    close() {
-      view.close()
-      view.remove()
-    },
+    }
+    view.addEventListener("load", ({ detail }) => {
+      installAppSurfaceGuard(detail.doc)
+      detail.doc.addEventListener(
+        "keydown",
+        (event) => {
+          if (PLAYBACK_KEYS.has(event.key)) window.dispatchEvent(new KeyboardEvent(event.type, event))
+          else options.onKey(event)
+        },
+        { capture: true, signal: options.signal },
+      )
+    })
+    view.addEventListener("relocate", ({ detail }) => {
+      if (restored) options.onPosition(toPosition(detail))
+    })
+    view.addEventListener("external-link", (event) => event.preventDefault())
+    host.replaceChildren(view)
+    await view.open(book)
+
+    const layout = view.isFixedLayout ? "fixed" : "reflowable"
+    const sections = book.sections.length
+    const realToc = comic ? [] : flatten(book.toc ?? [])
+    const toc = realToc.length || layout === "reflowable" ? realToc : pageEntries(sections)
+    let chapterPages: Promise<number[]> | null = null
+
+    const apply = (appearance: ReaderAppearance) => {
+      host.style.background = themeColors(appearance.theme).paper
+      if (layout === "fixed") {
+        view.renderer.setAttribute("zoom", fitAttribute(appearance))
+        return
+      }
+      for (const [name, value] of Object.entries(layoutAttributes(appearance))) view.renderer.setAttribute(name, value)
+      view.renderer.setStyles?.(bookStyles(appearance))
+    }
+    apply(manifest.appearance)
+
+    const resume = manifest.resume
+    if (resume.kind === "exact") {
+      await view.init({ lastLocation: resume.location.kind === "text" ? resume.location.cfi : resume.location.page })
+    } else if (resume.kind === "page") {
+      await view.init({ lastLocation: resume.page })
+    } else {
+      await view.init({})
+      if (resume.kind === "fraction") await view.goToFraction(resume.fraction)
+    }
+    options.signal.throwIfAborted()
+    restored = true
+
+    const currentPage = () => view.lastLocation?.section?.current ?? 0
+    const sectionJump = async (direction: 1 | -1) => {
+      if (layout === "reflowable") return direction > 0 ? view.renderer.nextSection() : view.renderer.prevSection()
+      const page = currentPage()
+      if (realToc.length && book.resolveHref) {
+        const resolveHref = book.resolveHref.bind(book)
+        chapterPages ??= Promise.all(realToc.map(async (entry) => (await resolveHref(String(entry.target))).index))
+        const starts = [...new Set(await chapterPages)].sort((a, b) => a - b)
+        const target = direction > 0 ? starts.find((start) => start > page) : starts.findLast((start) => start < page)
+        if (target !== undefined) return void (await view.goTo(target))
+      }
+      await view.goTo(Math.min(sections - 1, Math.max(0, page + direction * PAGE_STEP)))
+    }
+
+    // A page fitted to the width can be taller than the window: next and
+    // previous scroll it first, and turn the page at its end.
+    const scrollOrTurn = async (to: "next" | "prev") => {
+      const page = view.renderer
+      const step = page.clientHeight * 0.85
+      const atEdge = to === "next" ? page.scrollTop + page.clientHeight >= page.scrollHeight - 1 : page.scrollTop <= 0
+      if (!atEdge) return page.scrollBy({ top: to === "next" ? step : -step })
+      await (to === "next" ? view.next() : view.prev())
+      page.scrollTop = to === "next" ? 0 : page.scrollHeight
+    }
+
+    return {
+      layout,
+      toc,
+      position: () => (view.lastLocation ? toPosition(view.lastLocation) : null),
+      async run(command) {
+        switch (command.kind) {
+          case "turn":
+            if (command.to === "left") return view.goLeft()
+            if (command.to === "right") return view.goRight()
+            return layout === "fixed" ? scrollOrTurn(command.to) : command.to === "next" ? view.next() : view.prev()
+          case "scroll":
+            return command.by > 0 ? view.next(host.clientHeight / 8) : view.prev(host.clientHeight / 8)
+          case "section":
+            return sectionJump(command.to === "next" ? 1 : -1)
+          case "edge":
+            return view.goToFraction(command.to === "start" ? 0 : 1)
+          case "return":
+            return view.history.back()
+        }
+      },
+      async jump(target) {
+        if (target.kind === "fraction") await view.goToFraction(target.fraction)
+        else await view.goTo(target.kind === "toc" ? target.target : target.page)
+      },
+      apply,
+      close,
+    }
+  } catch (error) {
+    close()
+    throw error
   }
 }
