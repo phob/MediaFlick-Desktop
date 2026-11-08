@@ -10,6 +10,7 @@ An album, track or audiobook (Music and Books libraries) opens the audio detail 
 - Keys, wherever focus is: MediaPlayPause, MediaTrackNext, MediaTrackPrevious, MediaStop (`xdotool key XF86AudioPlay` etc. on Linux). With focus on the page itself: Space pauses, ← 10 s back, → 30 s on. *Proven by `music`.*
 - Play On: `ctx.remoteCommand("Playing", { playCommand: "PlayNow", itemIds, startIndex })`, then `Playing/PreviousTrack`, `Playing/NextTrack`, `Playing/Stop`. ItemIds play in the sender's order from StartIndex; an album id expands into its tracks. *Proven by `music`.*
 - External mpv's NEXT and PREV keys send `script-message mediaflick-desktop next-track` / `previous-track` (read with `ctx.mpv("input-bindings")`). Audio opens no mpv window, so on Linux nothing can press them during audio; they matter where the OS hands media keys to mpv. *Bindings proven by `music`; a key press through them is unproven.*
+- A load the player refuses (External mpv at a missing executable) ends the queue: one `Playback error` toast, then one Stopped describing the queue with reason `Error`. *Proven by `audio-refused`.*
 - `ctx.player().nowPlaying`: `{ kind: "audio", mediaKind, current, next, playlistItemId, index, length, canPrevious, canNext, phase }`; `phase` is `preparing`, `loading` or `playing`. Video plays as `{ kind: "video" }`.
 
 ## Driving it
