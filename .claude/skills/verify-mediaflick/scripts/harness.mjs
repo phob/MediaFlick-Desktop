@@ -11,6 +11,7 @@ import { sleep } from "../../../../scripts/website/cdp.mjs"
 import { approveQuickConnect, cancelSeerrRequest, jellyfinGet, playlistWrite, readStoredSession, resetUserData, revokeToken, saveAccount as cacheAccount, publicAccount, tokenStatus } from "./account.mjs"
 import { isFavorite, journalFavorite, journalFile, settleFavorite } from "./favorites.mjs"
 import { isLinux, isWindows, listProcesses, sendWindowClose } from "./platform.mjs"
+import { startAudioSink } from "./audio-sink.mjs"
 import { startProxy } from "./proxy.mjs"
 
 const SKIPPED_ROLES = new Set(["InlineTextBox", "LineBreak", "none", "generic", "ignored"])
@@ -19,6 +20,7 @@ const STATE_PROPERTIES = ["focused", "disabled", "checked", "pressed", "expanded
 export function createHarness({ app: firstApp, currentChild, evidence, configDir, dataDir, log, relaunchApp, windowShown, account = null, cachedAccount = null, signOutBlocked = () => false, rememberSecret = () => {} }) {
   let app = firstApp
   const proxies = []
+  let sink = null
   const afterRunTasks = []
   const step = (text) => log(text)
 
@@ -522,15 +524,24 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
   }
 
   const changedItems = new Set()
-  async function setPlayedOnServer(itemId, played) {
-    if (!restoredItems.has(itemId)) throw new Error(`setPlayedOnServer: call ctx.restoreItemAfterRun(${itemId}) first`)
+  async function changeUserDataOnServer(helper, itemId, userData) {
+    if (!restoredItems.has(itemId)) throw new Error(`${helper}: call ctx.restoreItemAfterRun(${itemId}) first`)
     if (!changedItems.has(itemId)) {
       const { UserData: data } = await jellyfinGet(cachedAccount, `/Items/${encodeURIComponent(itemId)}?userId=${cachedAccount.userId}`)
-      if (data.Played || data.PlaybackPositionTicks) throw new Error(`setPlayedOnServer: ${itemId} is already played or has a resume point; drives may only change items that are unplayed`)
+      if (data.Played || data.PlaybackPositionTicks) throw new Error(`${helper}: ${itemId} is already played or has a resume point; drives may only change items that are unplayed`)
       changedItems.add(itemId)
     }
-    await resetUserData(cachedAccount, itemId, { played })
+    await resetUserData(cachedAccount, itemId, userData)
+  }
+
+  async function setPlayedOnServer(itemId, played) {
+    await changeUserDataOnServer("setPlayedOnServer", itemId, { played })
     log(`marked ${itemId} ${played ? "played" : "unplayed"} in Jellyfin (POST /UserItems/<id>/UserData)`)
+  }
+
+  async function setResumeOnServer(itemId, positionTicks) {
+    await changeUserDataOnServer("setResumeOnServer", itemId, { positionTicks })
+    log(`set the resume point of ${itemId} to ${positionTicks / 1e7} s in Jellyfin (POST /UserItems/<id>/UserData)`)
   }
 
   async function unfavoriteAfterRun(itemId) {
@@ -637,9 +648,16 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return started
   }
 
+  async function audioSink() {
+    if (!isLinux) throw new Error("audioSink runs a private PipeWire and needs Linux")
+    sink ??= await startAudioSink({ evidence, log })
+    return sink
+  }
+
   async function dispose() {
     mpvClient?.socket.destroy()
     await Promise.all(proxies.map((started) => started.close()))
+    sink?.stop()
   }
 
   return {
@@ -678,6 +696,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     appSession,
     restoreItemAfterRun,
     setPlayedOnServer,
+    setResumeOnServer,
     unfavoriteAfterRun,
     cancelSeerrRequestAfterRun,
     createPlaylistAfterRun,
@@ -694,6 +713,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     relaunch,
     windowShown,
     proxy,
+    audioSink,
     dispose,
     sleep,
   }
