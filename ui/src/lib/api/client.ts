@@ -93,6 +93,25 @@ function readApiErrorEnvelope(value: JsonValue): ApiErrorEnvelope | null {
   }
 }
 
+async function readJson(response: Response): Promise<JsonValue> {
+  try {
+    return await response.json()
+  } catch {
+    return null
+  }
+}
+
+/** The error a failed answer of the native API stands for. */
+export async function responseError(response: Response): Promise<ApiError> {
+  const envelope = readApiErrorEnvelope(await readJson(response))
+  return new ApiError(
+    envelope?.error ?? `request failed (${response.status})`,
+    response.status,
+    Boolean(envelope?.expired),
+    Boolean(envelope?.accountChanged),
+  )
+}
+
 /** Sends a call to a JSON or relay route and reads its answer. */
 async function request<K extends JsonRoute>(route: K, ...[call]: CallArgs<K>): Promise<Answers[K]> {
   const { method, url } = target(route, call ?? {})
@@ -105,21 +124,8 @@ async function request<K extends JsonRoute>(route: K, ...[call]: CallArgs<K>): P
     init.body = JSON.stringify(body)
   }
   const response = await fetch(url, init)
-  let payload: JsonValue = null
-  try {
-    payload = await response.json()
-  } catch {
-    payload = null
-  }
-  if (!response.ok) {
-    const envelope = readApiErrorEnvelope(payload)
-    throw new ApiError(
-      envelope?.error ?? `request failed (${response.status})`,
-      response.status,
-      Boolean(envelope?.expired),
-      Boolean(envelope?.accountChanged),
-    )
-  }
+  if (!response.ok) throw await responseError(response)
+  const payload = await readJson(response)
   // SAFETY: The UI bundle ships inside the binary built from the same commit
   // as `wire.gen.ts`, whose route map is generated from the Rust route
   // declarations the compiler holds each handler to. A relay route's answer

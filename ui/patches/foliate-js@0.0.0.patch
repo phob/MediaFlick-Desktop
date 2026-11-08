@@ -1,0 +1,52 @@
+diff --git a/fixed-layout.js b/fixed-layout.js
+index c582abad1496874a9265cad1ab69e12a475c684d..4ba36a56eac1a09784e3e30d32af3f6fca6edbd6 100644
+--- a/fixed-layout.js
++++ b/fixed-layout.js
+@@ -81,9 +81,8 @@ export class FixedLayout extends HTMLElement {
+             display: 'none',
+             overflow: 'hidden',
+         })
+-        // `allow-scripts` is needed for events because of WebKit bug
+-        // https://bugs.webkit.org/show_bug.cgi?id=218086
+-        iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts')
++        // MediaFlick: book documents must never run scripts.
++        iframe.setAttribute('sandbox', 'allow-same-origin')
+         iframe.setAttribute('scrolling', 'no')
+         iframe.setAttribute('part', 'filter')
+         this.#root.append(element)
+diff --git a/paginator.js b/paginator.js
+index 7980c20297049e38b5e5a1d44a9eee11b1fbd68e..b103701a2048c7b7cd19b562ae5b758bbc0f0fff 100644
+--- a/paginator.js
++++ b/paginator.js
+@@ -239,9 +239,8 @@ class View {
+             display: 'none',
+             width: '100%', height: '100%',
+         })
+-        // `allow-scripts` is needed for events because of WebKit bug
+-        // https://bugs.webkit.org/show_bug.cgi?id=218086
+-        this.#iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts')
++        // MediaFlick: book documents must never run scripts.
++        this.#iframe.setAttribute('sandbox', 'allow-same-origin')
+         this.#iframe.setAttribute('scrolling', 'no')
+     }
+     get element() {
+diff --git a/pdf.js b/pdf.js
+index c998bf49ea5b62f74cd78ae0e991de373a7902f4..2253ab92918e07b81864683cd87dc503ff3aff37 100644
+--- a/pdf.js
++++ b/pdf.js
+@@ -26,7 +26,14 @@ const render = async (page, doc, zoom) => {
+     canvas.width = viewport.width
+     const canvasContext = canvas.getContext('2d')
+     await page.render({ canvasContext, viewport }).promise
+-    doc.querySelector('#canvas').replaceChildren(doc.adoptNode(canvas))
++    // MediaFlick: the page's document runs no scripts, and a canvas there
++    // shows only its fallback content, so the page shows an image of it.
++    const blob = await new Promise(resolve => canvas.toBlob(resolve))
++    const img = doc.createElement('img')
++    img.style.display = 'block'
++    img.addEventListener('load', () => URL.revokeObjectURL(img.src), { once: true })
++    img.src = URL.createObjectURL(blob)
++    doc.querySelector('#canvas').replaceChildren(img)
+ 
+     const container = doc.querySelector('.textLayer')
+     const textLayer = new pdfjsLib.TextLayer({

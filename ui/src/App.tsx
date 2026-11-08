@@ -26,6 +26,7 @@ import {
 } from "@/routes/CollectionDetail"
 import Home from "@/routes/Home"
 import ItemDetail from "@/routes/ItemDetail"
+import Reader from "@/reader/Reader"
 import Library from "@/routes/Library"
 import Requests from "@/routes/Requests"
 import Calendar from "@/routes/Calendar"
@@ -92,6 +93,7 @@ export default function App() {
                 <Route path="/collections/jellyfin/:boxSetId" element={<JellyfinCollectionDetail />} />
               </Route>
               <Route path="/item/:id" element={<ItemDetail />} />
+              <Route path="/read/:id" element={<Reader />} />
               <Route path="/calendar" element={<Calendar />} />
               <Route
                 path="/discover"

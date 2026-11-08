@@ -2,6 +2,7 @@
 
 export type * from "./wire/api.gen.ts"
 export type * from "./wire/api.auth.gen.ts"
+export type * from "./wire/api.books.gen.ts"
 export type * from "./wire/api.catalog.gen.ts"
 export type * from "./wire/api.catalog.detail.gen.ts"
 export type * from "./wire/api.catalog.home.gen.ts"
@@ -59,6 +60,7 @@ import type { ApiLibrariesRoutes } from "./wire/api.libraries.gen.ts"
 import type { ApiMediaRoutes } from "./wire/api.media.gen.ts"
 import type { ApiImagesRoutes } from "./wire/api.images.gen.ts"
 import type { ApiPlaybackRoutes } from "./wire/api.playback.gen.ts"
+import type { ApiBooksRoutes } from "./wire/api.books.gen.ts"
 
 /** Every route the native app serves, by method and path. */
 export type Routes =
@@ -74,4 +76,5 @@ export type Routes =
   & ApiLibrariesRoutes
   & ApiMediaRoutes
   & ApiImagesRoutes
-  & ApiPlaybackRoutes;
+  & ApiPlaybackRoutes
+  & ApiBooksRoutes;

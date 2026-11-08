@@ -21,6 +21,8 @@
     "@tanstack/react-virtual": "^3.14.9",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "foliate-js": "github:johnfactotum/foliate-js#78914aef4466eb960965702401634c2cb348e9b1",
+    "libarchive.js": "2.0.2",
     "lucide-react": "^1.28.0",
     "radix-ui": "^1.6.7",
     "react": "^19.2.8",

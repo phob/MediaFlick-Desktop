@@ -72,6 +72,8 @@ fn build_ui(repo_root: &Path) -> Result<(), BuildError> {
         "index.html",
         "package.json",
         "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "patches",
         "vite.config.ts",
     ] {
         println!("cargo:rerun-if-changed={}", ui_dir.join(path).display());
@@ -117,7 +119,94 @@ fn stage_bundle(dist: &Path) -> Result<(), BuildError> {
             ))
         })?;
     }
+    stage_reader(&dist.join("reader"), &out_dir)
+}
+
+/// Stages the reader's static tree (`ui/dist/reader/`, copied there by the
+/// Vite config from an explicit allowlist) and writes `reader_assets.rs`: a
+/// table of `(url path, content type, bytes)` sorted by path for a binary
+/// search. The content type comes from a closed list, so a file nobody
+/// classified fails the build instead of shipping with a guessed type.
+fn stage_reader(reader: &Path, out_dir: &Path) -> Result<(), BuildError> {
+    let mut files = Vec::new();
+    collect_files(reader, &mut files)?;
+    files.sort();
+    if files.is_empty() {
+        return Err(BuildError(format!(
+            "{} holds no reader assets. Run `just ui` to rebuild the bundle.",
+            reader.display()
+        )));
+    }
+    let staged = out_dir.join("reader");
+    let mut table = String::from("&[\n");
+    for file in &files {
+        let relative = file.strip_prefix(reader).map_err(|error| {
+            BuildError(format!(
+                "{} is outside the reader tree: {error}",
+                file.display()
+            ))
+        })?;
+        let url = relative
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        let content_type = reader_content_type(&url)?;
+        let target = staged.join(relative);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                BuildError(format!("failed to create {}: {error}", parent.display()))
+            })?;
+        }
+        std::fs::copy(file, &target)
+            .map_err(|error| BuildError(format!("failed to stage {}: {error}", file.display())))?;
+        table.push_str(&format!(
+            "    ({:?}, {:?}, include_bytes!({:?})),\n",
+            format!("/reader/{url}"),
+            content_type,
+            target.display().to_string(),
+        ));
+    }
+    table.push(']');
+    std::fs::File::create(out_dir.join("reader_assets.rs"))
+        .and_then(|mut file| std::io::Write::write_all(&mut file, table.as_bytes()))
+        .map_err(|error| BuildError(format!("failed to write reader_assets.rs: {error}")))
+}
+
+fn collect_files(directory: &Path, files: &mut Vec<std::path::PathBuf>) -> Result<(), BuildError> {
+    let entries = std::fs::read_dir(directory).map_err(|error| {
+        BuildError(format!(
+            "failed to read {}: {error}. Run `just ui` to rebuild the bundle.",
+            directory.display()
+        ))
+    })?;
+    for entry in entries {
+        let path = entry
+            .map_err(|error| {
+                BuildError(format!("failed to read {}: {error}", directory.display()))
+            })?
+            .path();
+        if path.is_dir() {
+            collect_files(&path, files)?;
+        } else {
+            files.push(path);
+        }
+    }
     Ok(())
+}
+
+fn reader_content_type(url: &str) -> Result<&'static str, BuildError> {
+    let extension = url.rsplit_once('.').map(|(_, extension)| extension);
+    match extension {
+        Some("js" | "mjs") => Ok("text/javascript; charset=utf-8"),
+        Some("css") => Ok("text/css; charset=utf-8"),
+        Some("wasm") => Ok("application/wasm"),
+        Some("ttf") => Ok("font/ttf"),
+        Some("bcmap" | "pfb") => Ok("application/octet-stream"),
+        _ => Err(BuildError(format!(
+            "reader asset {url} has no known content type; add its extension to reader_content_type in build.rs"
+        ))),
+    }
 }
 
 fn run_pnpm(ui_dir: &Path, args: &[&str]) -> Result<(), BuildError> {

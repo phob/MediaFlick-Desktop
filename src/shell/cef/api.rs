@@ -17,6 +17,7 @@ use crate::app::urls::{encode_path_segment, percent_decode, query_param};
 use crate::companion::CompanionStatus;
 use crate::integrations::letterboxd as letterboxd_integration;
 use crate::integrations::letterboxd::ExternalProfile;
+use crate::jellyfin::api::client::BYTE_RESPONSE_LIMIT;
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::model::{BaseItemDto, BaseItemPerson, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
@@ -123,6 +124,41 @@ fn stale_account_response() -> ApiResponse {
     ApiResponse::from_api_error(&ApiError::AccountChanged)
 }
 
+/// The `Range` a proxied stream asks its source for: the client's own range,
+/// cut to at most `chunk` bytes, or the first chunk when the client sent none
+/// or a malformed one.
+fn bounded_byte_range(value: Option<&str>, chunk: u64) -> String {
+    let fallback = format!("bytes=0-{}", chunk - 1);
+    let Some(spec) = value
+        .and_then(|value| value.trim().strip_prefix("bytes="))
+        .filter(|value| !value.contains(','))
+    else {
+        return fallback;
+    };
+    let Some((start, end)) = spec.split_once('-') else {
+        return fallback;
+    };
+    if let Ok(start) = start.parse::<u64>() {
+        let max_end = start.saturating_add(chunk - 1);
+        let end = if end.is_empty() {
+            max_end
+        } else {
+            match end.parse::<u64>() {
+                Ok(end) if end >= start => end.min(max_end),
+                _ => return fallback,
+            }
+        };
+        return format!("bytes={start}-{end}");
+    }
+    if start.is_empty()
+        && let Ok(suffix) = end.parse::<u64>()
+        && suffix > 0
+    {
+        return format!("bytes=-{}", suffix.min(chunk));
+    }
+    fallback
+}
+
 pub fn handle(request: &ApiRequest) -> ApiResponse {
     dispatch(request, locator::init)
 }
@@ -146,6 +182,7 @@ fn dispatch(request: &ApiRequest, services: impl FnOnce() -> Option<Arc<Services
 
 mod assets;
 mod auth;
+mod books;
 mod catalog;
 mod collections;
 mod images;
@@ -181,6 +218,7 @@ const MODULES: &[&routes::Routes] = &[
     &media::ROUTES,
     &images::ROUTES,
     &playback::ROUTES,
+    &books::ROUTES,
 ];
 
 fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiResponse {

@@ -467,9 +467,14 @@ fn trailer_stream(
 ) -> Result<BinaryAnswer, ApiResponse> {
     let scope = session_scope(services)?;
     let path = format!("/Videos/{}/stream", encode_path_segment(trailer_id));
-    let range = bounded_byte_range(request.range.as_deref());
+    let range = bounded_byte_range(request.range.as_deref(), TRAILER_CHUNK_SIZE);
     let response = fetch_current(services, &scope, |client, _| {
-        client.get_bytes_range(&path, &[("static", "true".to_string())], Some(&range))
+        client.get_bytes_range(
+            &path,
+            &[("static", "true".to_string())],
+            Some(&range),
+            BYTE_RESPONSE_LIMIT,
+        )
     })?;
     Ok(BinaryAnswer::ranged_bytes(
         response.status,
@@ -478,38 +483,6 @@ fn trailer_stream(
         response.content_range,
         response.accept_ranges,
     ))
-}
-
-fn bounded_byte_range(value: Option<&str>) -> String {
-    let fallback = format!("bytes=0-{}", TRAILER_CHUNK_SIZE - 1);
-    let Some(spec) = value
-        .and_then(|value| value.trim().strip_prefix("bytes="))
-        .filter(|value| !value.contains(','))
-    else {
-        return fallback;
-    };
-    let Some((start, end)) = spec.split_once('-') else {
-        return fallback;
-    };
-    if let Ok(start) = start.parse::<u64>() {
-        let max_end = start.saturating_add(TRAILER_CHUNK_SIZE - 1);
-        let end = if end.is_empty() {
-            max_end
-        } else {
-            match end.parse::<u64>() {
-                Ok(end) if end >= start => end.min(max_end),
-                _ => return fallback,
-            }
-        };
-        return format!("bytes={start}-{end}");
-    }
-    if start.is_empty()
-        && let Ok(suffix) = end.parse::<u64>()
-        && suffix > 0
-    {
-        return format!("bytes=-{}", suffix.min(TRAILER_CHUNK_SIZE));
-    }
-    fallback
 }
 
 impl MediaSourceView {
@@ -800,15 +773,30 @@ mod tests {
 
     #[test]
     fn trailer_ranges_are_bounded_and_malformed_ranges_fall_back() {
-        assert_eq!(bounded_byte_range(None), "bytes=0-4194303");
-        assert_eq!(bounded_byte_range(Some("bytes=100-")), "bytes=100-4194403");
         assert_eq!(
-            bounded_byte_range(Some("bytes=100-9999999")),
+            bounded_byte_range(None, TRAILER_CHUNK_SIZE),
+            "bytes=0-4194303"
+        );
+        assert_eq!(
+            bounded_byte_range(Some("bytes=100-"), TRAILER_CHUNK_SIZE),
             "bytes=100-4194403"
         );
-        assert_eq!(bounded_byte_range(Some("bytes=100-200")), "bytes=100-200");
-        assert_eq!(bounded_byte_range(Some("bytes=-9999999")), "bytes=-4194304");
-        assert_eq!(bounded_byte_range(Some("not-a-range")), "bytes=0-4194303");
+        assert_eq!(
+            bounded_byte_range(Some("bytes=100-9999999"), TRAILER_CHUNK_SIZE),
+            "bytes=100-4194403"
+        );
+        assert_eq!(
+            bounded_byte_range(Some("bytes=100-200"), TRAILER_CHUNK_SIZE),
+            "bytes=100-200"
+        );
+        assert_eq!(
+            bounded_byte_range(Some("bytes=-9999999"), TRAILER_CHUNK_SIZE),
+            "bytes=-4194304"
+        );
+        assert_eq!(
+            bounded_byte_range(Some("not-a-range"), TRAILER_CHUNK_SIZE),
+            "bytes=0-4194303"
+        );
     }
 
     #[test]

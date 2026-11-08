@@ -17,8 +17,40 @@ pub(super) fn static_asset(path: &str) -> Option<ApiResponse> {
             include_bytes!(concat!(env!("OUT_DIR"), "/app.css")),
             NO_STORE,
         )),
+        _ if path.starts_with("/reader/") => reader_asset(path),
         _ => None,
     }
+}
+
+/// The reader's verbatim tree (foliate-js, pdf.js, libarchive.js), from the
+/// table `build.rs` generates. An unknown path under `/reader/` is a 404, never
+/// the app shell, so a missing module fails loudly in the page.
+const READER_ASSETS: &[(&str, &str, &[u8])] =
+    include!(concat!(env!("OUT_DIR"), "/reader_assets.rs"));
+
+/// libarchive's worker compiles its WebAssembly decoder, so its script alone
+/// is served with a policy that allows that. A dedicated worker takes the
+/// policy of its own script response, so the page keeps refusing WebAssembly.
+const LIBARCHIVE_WORKER: &str = "/reader/libarchive/worker-bundle.js";
+const LIBARCHIVE_WORKER_POLICY: &str =
+    "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'";
+
+fn reader_asset(path: &str) -> Option<ApiResponse> {
+    let Ok(index) = READER_ASSETS.binary_search_by(|(asset, _, _)| asset.cmp(&path)) else {
+        return Some(ApiResponse::error(
+            404,
+            format!("no reader asset at {path}"),
+        ));
+    };
+    let (_, content_type, body) = READER_ASSETS[index];
+    let mut response = asset(content_type, body, NO_STORE);
+    if path == LIBARCHIVE_WORKER {
+        response.headers.push((
+            "Content-Security-Policy".to_string(),
+            LIBARCHIVE_WORKER_POLICY.to_string(),
+        ));
+    }
+    Some(response)
 }
 
 pub(super) fn index_html() -> ApiResponse {
