@@ -11,6 +11,7 @@ use ts_rs::TS;
 
 use crate::jellyfin::api::ApiError;
 
+use crate::books::ReaderAppearance;
 use crate::collections::{CollectionProfile, ProviderResult};
 use crate::companion::{CompanionStatus, SeerrCompanyPage, SeerrNetworkList};
 use crate::integrations::letterboxd::ReviewLookup;
@@ -30,6 +31,7 @@ use super::super::ui_events::{
     AboutInfo, ErrorToast, PlaybackCacheRefreshed, ShellEvent, UpdateProgress,
 };
 use super::auth::{LoginBody, LogoutBody, QuickConnectPollBody, ServerBody};
+use super::books::{BookManifest, BookPositionSaved, BookPositionWrite};
 use super::catalog::{
     Billboard, Genres, HomeResponse, HomeResumeResponse, HomeSettingsResponse, ItemAbout,
     ItemLetters, ItemSynopsis, OfficialRatings, PersonResolution, Studios, Tags,
@@ -98,6 +100,9 @@ wire_types! {
     AppearanceSettingsPatch,
     ApplicationSettingsPatch,
     Billboard,
+    BookManifest,
+    BookPositionSaved,
+    BookPositionWrite,
     BrowsingBody,
     BrowsingRoutes,
     BrowsingSaved,
@@ -173,6 +178,7 @@ wire_types! {
     RatingsBatchBody,
     RatingsBatchResponse,
     RatingsIntegrationStatus,
+    ReaderAppearance,
     ReorderBody,
     ReviewLookup,
     SeerrCompanyPage,

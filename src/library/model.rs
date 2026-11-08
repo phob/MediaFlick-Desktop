@@ -602,6 +602,16 @@ pub enum DetailView {
     Title(TitleDetail),
     Generic(GenericItemDetail),
     Audio(AudioDetail),
+    Book(BookDetail),
+}
+
+/// A book the reader opens, with how far this account has read it.
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct BookDetail {
+    #[serde(flatten)]
+    pub item: GenericItemDetail,
+    pub reading: crate::books::ReadingState,
 }
 
 /// An album, audiobook or track: the tracks its Play button queues, grouped

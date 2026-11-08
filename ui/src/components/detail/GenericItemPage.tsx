@@ -3,11 +3,13 @@ import { DetailFacts } from "@/components/detail/DetailFacts"
 import { DetailHeroLayout, type HeroArtworkAspect } from "@/components/detail/DetailHeroLayout"
 import { DetailBackdrop } from "@/components/detail/DetailPrimitives"
 import { ItemGrid } from "@/components/ItemGrid"
+import type { ReactNode } from "react"
 import {
   backdropUrl,
   DETAIL_POSTER_WIDTH,
   imageUrl,
   logoUrl,
+  type BookItemDetail,
   type GenericItemDetail,
   type ItemAbout,
 } from "@/lib/api"
@@ -22,14 +24,19 @@ const HERO_FRAME: Record<ArtworkShape, HeroArtworkAspect> = {
   landscape: "still",
 }
 
+/** A detail page without a title's playback: folders, music, books. `facts` and `children` add to the hero. */
 export function GenericItemPage({
   item,
   about,
   navigationState,
+  facts: extraFacts = [],
+  children,
 }: {
-  item: GenericItemDetail
+  item: GenericItemDetail | BookItemDetail
   about: ItemAbout | undefined
   navigationState: DetailNavigationState
+  facts?: string[]
+  children?: ReactNode
 }) {
   const scroller = useRouteScroller()
   const backdrop = backdropUrl(item)
@@ -37,6 +44,7 @@ export function GenericItemPage({
     item.year != null ? String(item.year) : formatYearOnly(item.premiereDate),
     formatRuntime(item.runtimeTicks),
     item.isFolder && item.childCount ? `${item.childCount} ${item.childCount === 1 ? "item" : "items"}` : null,
+    ...extraFacts,
   ].filter((fact): fact is string => Boolean(fact))
 
   return (
@@ -59,7 +67,9 @@ export function GenericItemPage({
         overview={item.overview ? (
           <p className="max-w-3xl text-sm leading-relaxed text-foreground/90">{item.overview}</p>
         ) : undefined}
-      />
+      >
+        {children}
+      </DetailHeroLayout>
 
       {item.isFolder && (
         <section className="flex flex-col gap-4 px-6 sm:px-10 lg:px-14">

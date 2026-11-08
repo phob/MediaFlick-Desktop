@@ -147,6 +147,12 @@ pub struct Live {
 }
 
 impl Live {
+    /// The account this proof was minted for, so a store that keeps data per
+    /// account files a write under the account that was signed in for it.
+    pub fn account(&self) -> &AccountKey {
+        &self.account
+    }
+
     /// Opens an answer fetched for the account this proof was minted for.
     pub fn open<T>(&self, scoped: Scoped<T>) -> Result<T, Stale> {
         if scoped.generation == self.generation && scoped.account == self.account {

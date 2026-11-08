@@ -66,6 +66,9 @@ pub(super) fn item_detail(
     }
     let title = match browse::live_detail(&dto) {
         LiveDetail::Generic(generic) => return Ok(DetailView::Generic(*generic)),
+        LiveDetail::Book(book) => {
+            return super::super::books::book_detail(services, &scope, book).map(DetailView::Book);
+        }
         LiveDetail::Title(title) => services.session.commit_if_current(
             &scope,
             || DetailError::AccountChanged,
