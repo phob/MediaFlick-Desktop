@@ -4,7 +4,14 @@
 // /proc), the JS heap, the document and frame counts, and the page's live blob URLs and workers. A curve that keeps rising with pages read,
 // rather than levelling off, means pages are kept after they leave the
 // screen. Then it opens and closes each book three more times: what the reader
-// leaves alive after it closed must not grow with opens. Writes books-residency.json.
+// leaves alive after it closed must not grow with opens.
+//
+// Then the races, each checked: the PDF is opened and closed five times while
+// pdf.js waits on a range read of the file, which must leave no worker, and each book takes
+// 40 rapid double presses of ArrowRight (the second before the first page has
+// loaded) and one held ArrowLeft, after which only the shown page may hold blob
+// URLs. MEDIAFLICK_VERIFY_RESIDENCY=races runs only the races. Writes
+// books-residency.json.
 import { readdirSync, readFileSync } from "node:fs"
 
 const BOOKS = [
@@ -12,7 +19,17 @@ const BOOKS = [
   { key: "cbz", name: "Shen of the Sea - Arthur Bowie Chrisman", pages: 271, turns: 540 },
 ]
 const REOPENS = 3
-/** Counts the page's live blob URLs and workers: the reader's engines run in the page itself. */
+const CLOSES_WHILE_OPENING = 5
+const DOUBLE_PRESSES = 40
+const HELD_REPEATS = 20
+/** A shown page's document and image, twice over for a page whose image has not loaded yet. */
+const MAX_SHOWN_BLOBS = 4
+/**
+ * Counts the page's live blob URLs and workers: the reader's engines run in
+ * the page itself. Armed with `closeAtRange`, the next read of a book's file
+ * past its first block (pdf.js asking for a range once its worker runs)
+ * leaves the reader while that read is still in flight.
+ */
 const INSTRUMENT = `(() => {
   if (window.__residency) return
   const blobs = new Map()
@@ -26,7 +43,20 @@ const INSTRUMENT = `(() => {
     constructor(...args) { super(...args); workers.add(this) }
     terminate() { workers.delete(this); super.terminate() }
   }
-  window.__residency = { blobs, workers }
+  const residency = { blobs, workers, closeAtRange: false, closedAtBytes: [] }
+  const nativeFetch = window.fetch
+  window.fetch = function (input, init) {
+    const response = nativeFetch.call(this, input, init)
+    const url = new URL(input instanceof Request ? input.url : String(input), location.href)
+    const start = Number(url.searchParams.get("start"))
+    if (residency.closeAtRange && url.pathname.endsWith("/book/file") && start > 0) {
+      residency.closeAtRange = false
+      residency.closedAtBytes.push(start)
+      history.back()
+    }
+    return response
+  }
+  window.__residency = residency
 })()`
 const LIVE = `({
   blobUrls: window.__residency.blobs.size,
@@ -109,30 +139,111 @@ export default async function (ctx) {
   await ctx.app.evaluate(INSTRUMENT)
   const profile = ctx.configFile("").split("/config/")[0]
   const answer = await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&Recursive=true&IncludeItemTypes=Book`)
-  const report = { profile: profile.split("/").pop(), books: {} }
+  const report = { profile: profile.split("/").pop(), books: {}, races: {}, checks: [] }
+  const check = (ok, message, detail) => {
+    report.checks.push({ ok: Boolean(ok), message, detail })
+    ctx.step(`${ok ? "ok" : "FAILED"}: ${message} ${JSON.stringify(detail)}`)
+  }
+  const books = BOOKS.map((book) => {
+    const id = answer.Items.find((item) => item.Name === book.name)?.Id
+    ctx.check(Boolean(id), `the Books library has "${book.name}"`)
+    ctx.restoreItemAfterRun(id)
+    return { ...book, id }
+  })
   try {
-    for (const book of BOOKS) await traverse(ctx, profile, answer, book, report)
+    if (process.env.MEDIAFLICK_VERIFY_RESIDENCY !== "races") for (const book of books) await traverse(ctx, profile, book, report)
+    await closeWhileOpening(ctx, books[0], report, check)
+    for (const book of books) await race(ctx, book, report, check)
   } finally {
     ctx.writeEvidence("books-residency.json", JSON.stringify(report, null, 2))
   }
+  const failed = report.checks.filter((entry) => !entry.ok)
+  if (failed.length) throw new Error(`${failed.length} residency checks failed: ${failed.map((entry) => entry.message).join("; ")}`)
 }
 
-async function traverse(ctx, profile, answer, book, report) {
-  const id = answer.Items.find((item) => item.Name === book.name)?.Id
-  ctx.check(Boolean(id), `the Books library has "${book.name}"`)
-  ctx.restoreItemAfterRun(id)
-  const open = async (label) => {
-    await ctx.app.evaluate(`history.pushState(null, "", "/read/${id}?from=start"); dispatchEvent(new PopStateEvent("popstate"))`)
-    await ctx.until(`document.querySelector('[data-reader-book="${id}"]')?.dataset.readerPhase === "ready"`, `${book.key}: the reader opened${label}`, 120000)
-  }
-  const close = async (label) => {
-    await ctx.key("Escape", { keyCode: 27 })
-    await ctx.until(`!document.querySelector('[data-reader-book="${id}"]')`, `${book.key}: the reader closed${label}`, 20000)
-    await ctx.app.send("HeapProfiler.collectGarbage")
-    return ctx.app.evaluate(LIVE)
-  }
+const footer = `document.querySelector("[data-reader-footer]").innerText`
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function open(ctx, book, label) {
+  await ctx.app.evaluate(`history.pushState(null, "", "/read/${book.id}?from=start"); dispatchEvent(new PopStateEvent("popstate"))`)
+  await ctx.until(`document.querySelector('[data-reader-book="${book.id}"]')?.dataset.readerPhase === "ready"`, `${book.key}: the reader opened${label}`, 120000)
+}
+
+async function close(ctx, book, label) {
+  await ctx.key("Escape", { keyCode: 27 })
+  await ctx.until(`!document.querySelector('[data-reader-book="${book.id}"]')`, `${book.key}: the reader closed${label}`, 20000)
+  await ctx.app.send("HeapProfiler.collectGarbage")
+  return ctx.app.evaluate(LIVE)
+}
+
+/** What the page still holds 2 s after the reader left, once garbage is collected. */
+async function settledLive(ctx) {
+  await pause(2000)
+  await ctx.app.send("HeapProfiler.collectGarbage")
+  return ctx.app.evaluate(LIVE)
+}
+
+async function closeWhileOpening(ctx, book, report, check) {
   const before = await ctx.app.evaluate(LIVE)
-  await open("")
+  const rounds = []
+  for (let round = 1; round <= CLOSES_WHILE_OPENING; round += 1) {
+    await ctx.app.evaluate(`window.__residency.closeAtRange = true; history.pushState(null, "", "/read/${book.id}?from=start"); dispatchEvent(new PopStateEvent("popstate"))`)
+    await ctx.until(`window.__residency.closedAtBytes.length === ${round} && !document.querySelector('[data-reader-book="${book.id}"]')`, `${book.key}: the reader left during a range read (${round})`, 120000)
+    rounds.push({ closedAtByte: await ctx.app.evaluate(`window.__residency.closedAtBytes[${round - 1}]`), ...(await settledLive(ctx)) })
+  }
+  report.races.closeWhileOpening = { book: book.key, before, rounds }
+  check(rounds.every((entry) => entry.workers === before.workers), `${book.key}: no worker outlives a reader closed during its range read`, { before: before.workers, after: rounds.map((entry) => entry.workers) })
+  check(rounds.every((entry) => entry.blobUrls === before.blobUrls), `${book.key}: no blob URL outlives a reader closed during its range read`, { before: before.blobUrls, after: rounds.map((entry) => entry.blobUrls) })
+}
+
+/**
+ * Two presses back to back, so the second reaches the reader while the
+ * first page is still loading, then one key held for HELD_REPEATS repeats.
+ */
+async function race(ctx, book, report, check) {
+  const before = await ctx.app.evaluate(LIVE)
+  await open(ctx, book, " for the races")
+  const opened = await ctx.app.evaluate(LIVE)
+  const samples = []
+  const roundMs = []
+  let page = 0
+  for (let round = 1; round <= DOUBLE_PRESSES; round += 1) {
+    const started = Date.now()
+    await ctx.key("ArrowRight", { keyCode: 39 })
+    await ctx.key("ArrowRight", { keyCode: 39 })
+    page += 2
+    await ctx.until(async () => (await ctx.app.evaluate(footer)).includes(`Page ${page + 1} of`), `${book.key}: double press ${round} to page ${page + 1}`, 20000, { quiet: true })
+    roundMs.push(Date.now() - started)
+    if (round % SAMPLE_EVERY === 0) samples.push({ round, page: page + 1, ...(await ctx.app.evaluate(LIVE)) })
+  }
+  const afterPresses = await settledLive(ctx)
+  const held = { key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37 }
+  for (let repeat = 0; repeat < HELD_REPEATS; repeat += 1) {
+    await ctx.app.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...held, autoRepeat: repeat > 0 })
+    await pause(33)
+  }
+  await ctx.app.send("Input.dispatchKeyEvent", { type: "keyUp", ...held })
+  const released = Date.now()
+  page -= HELD_REPEATS
+  await ctx.until(async () => (await ctx.app.evaluate(footer)).includes(`Page ${page + 1} of`), `${book.key}: the held key to land on page ${page + 1}`, 20000)
+  const heldSettledMs = Date.now() - released
+  const afterHeld = await settledLive(ctx)
+  const closed = await close(ctx, book, " after the races")
+  const sorted = [...roundMs].sort((a, b) => a - b)
+  const result = {
+    before, opened, samples, afterPresses, afterHeld, closed, heldSettledMs,
+    doublePressMs: { median: sorted[Math.floor(sorted.length / 2)], max: sorted[sorted.length - 1] },
+  }
+  report.races[book.key] = result
+  ctx.step(`${book.key}: races ${JSON.stringify({ opened: opened.blobUrls, afterPresses: afterPresses.blobUrls, afterHeld: afterHeld.blobUrls, closed: closed.blobUrls, heldSettledMs, doublePressMs: result.doublePressMs })}`)
+  check(afterPresses.blobUrls <= MAX_SHOWN_BLOBS, `${book.key}: after ${DOUBLE_PRESSES} double presses only the shown page holds blob URLs`, { opened: opened.blobTypes, afterPresses: afterPresses.blobTypes })
+  check(afterHeld.blobUrls <= MAX_SHOWN_BLOBS, `${book.key}: after a held key only the shown page holds blob URLs`, afterHeld.blobTypes)
+  check(closed.blobUrls === before.blobUrls && closed.workers === before.workers, `${book.key}: closing after the races gives everything back`, { before, closed })
+}
+
+async function traverse(ctx, profile, book, report) {
+  const before = await ctx.app.evaluate(LIVE)
+  await open(ctx, book, "")
   const samples = (report.books[book.key] = [await sample(ctx, profile, 0)])
   let page = 0
   let forward = true
@@ -152,10 +263,10 @@ async function traverse(ctx, profile, answer, book, report) {
   await ctx.until(async () => Date.now() > settle, `${book.key}: 3 s after memory pressure`, 5000, { quiet: true })
   report.afterPressure = { ...report.afterPressure, [book.key]: await sample(ctx, profile, "after pressure") }
   ctx.step(`${book.key}: ${samples.map((entry) => `${entry.turns}:${Math.round(entry.rssKiB / 1024)}MiB/${entry.blobUrls}blobs`).join(" ")}, after pressure ${Math.round(report.afterPressure[book.key].rssKiB / 1024)}MiB`)
-  const closes = [await close("")]
+  const closes = [await close(ctx, book, "")]
   for (let round = 1; round <= REOPENS; round += 1) {
-    await open(` again (${round})`)
-    closes.push(await close(` again (${round})`))
+    await open(ctx, book, ` again (${round})`)
+    closes.push(await close(ctx, book, ` again (${round})`))
   }
   report.afterClose = { ...report.afterClose, [book.key]: { before, closes } }
   ctx.step(`${book.key}: live before opening ${JSON.stringify(before)}, after each close ${JSON.stringify(closes)}`)
