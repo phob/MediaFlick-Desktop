@@ -64,7 +64,7 @@ index 7980c20297049e38b5e5a1d44a9eee11b1fbd68e..b103701a2048c7b7cd19b562ae5b758b
      }
      get element() {
 diff --git a/pdf.js b/pdf.js
-index c998bf49ea5b62f74cd78ae0e991de373a7902f4..fde5ff77502c103c4250ec0fc7872c55b7789224 100644
+index c998bf49ea5b62f74cd78ae0e991de373a7902f4..382d9c1c3399b4bfd6d4931b26f1979404f6f70c 100644
 --- a/pdf.js
 +++ b/pdf.js
 @@ -12,7 +12,31 @@ const textLayerBuilderCSS = await fetchText(pdfjsPath('text_layer_builder.css'))
@@ -137,7 +137,35 @@ index c998bf49ea5b62f74cd78ae0e991de373a7902f4..fde5ff77502c103c4250ec0fc7872c55
  }
  
  const makeTOCItem = item => ({
-@@ -156,6 +190,15 @@ export const makePDF = async file => {
+@@ -113,18 +147,24 @@ const makeTOCItem = item => ({
+ })
+ 
+ export const makePDF = async file => {
++    // MediaFlick: pdf.js cannot be told that a range read failed and would
++    // wait for its bytes forever, worker and all; closing the reader aborts
++    // its reads. The first read that fails ends the worker and the load.
++    const failed = Promise.withResolvers()
+     const transport = new pdfjsLib.PDFDataRangeTransport(file.size, [])
+     transport.requestDataRange = (begin, end) => {
+         file.slice(begin, end).arrayBuffer().then(chunk => {
+             transport.onDataRange(begin, chunk)
+-        })
++        }, failed.reject)
+     }
+-    const pdf = await pdfjsLib.getDocument({
++    const loading = pdfjsLib.getDocument({
+         range: transport,
+         cMapUrl: pdfjsPath('cmaps/'),
+         standardFontDataUrl: pdfjsPath('standard_fonts/'),
+         isEvalSupported: false,
+-    }).promise
++    })
++    failed.promise.catch(() => loading.destroy())
++    const pdf = await Promise.race([loading.promise, failed.promise])
+ 
+     const book = { rendition: { layout: 'pre-paginated' } }
+ 
+@@ -156,6 +196,15 @@ export const makePDF = async file => {
              cache.set(i, url)
              return url
          },
