@@ -29,13 +29,9 @@ export function usePlaybackKeys() {
       event.preventDefault()
       command.mutate(next)
     }
-    const togglePause = () => {
-      patchPlayerState({ paused: !player.paused })
-      send({ command: player.paused ? "resume" : "pause" })
-    }
     switch (event.key) {
       case "MediaPlayPause":
-        togglePause()
+        send({ command: "toggle-pause" })
         return
       case "MediaStop":
         send({ command: "stop" })
@@ -60,7 +56,7 @@ export function usePlaybackKeys() {
     }
     switch (event.key) {
       case " ":
-        togglePause()
+        send({ command: "toggle-pause" })
         return
       case "ArrowLeft":
         seekBy(-AUDIO_SEEK_BACK_MS)

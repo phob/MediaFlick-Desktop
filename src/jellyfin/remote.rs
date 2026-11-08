@@ -268,9 +268,7 @@ fn handle_playstate(services: &Arc<Services>, data: &Value, scope: &SessionScope
         PlaystateAction::Stop => playback.control(PlayerCommand::Stop),
         PlaystateAction::Pause => playback.control(PlayerCommand::SetPause(true)),
         PlaystateAction::Unpause => playback.control(PlayerCommand::SetPause(false)),
-        PlaystateAction::PlayPause => {
-            playback.control(PlayerCommand::SetPause(!playback.snapshot().paused));
-        }
+        PlaystateAction::PlayPause => playback.control(PlayerCommand::TogglePause),
         PlaystateAction::Seek { position_ms } => {
             playback.control(PlayerCommand::SeekMilliseconds(position_ms));
         }

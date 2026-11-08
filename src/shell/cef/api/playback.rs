@@ -326,6 +326,7 @@ fn player_state(services: &Arc<Services>) -> PlayerSnapshot {
 pub(super) enum PlayerCommandBody {
     Pause,
     Resume,
+    TogglePause,
     Seek {
         position_ms: f64,
     },
@@ -414,6 +415,7 @@ impl PlayerCommandBody {
         Some(match self {
             Self::Pause => PlayerCommand::SetPause(true),
             Self::Resume => PlayerCommand::SetPause(false),
+            Self::TogglePause => PlayerCommand::TogglePause,
             Self::Seek { position_ms } => PlayerCommand::SeekMilliseconds(position_ms),
             Self::SetVolume { volume } => PlayerCommand::SetVolume(volume),
             Self::SetMute { mute } => PlayerCommand::SetMute(mute),

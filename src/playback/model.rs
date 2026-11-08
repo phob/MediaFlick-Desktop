@@ -428,6 +428,9 @@ pub enum PlaybackEvent {
 #[derive(Debug, Clone)]
 pub enum PlayerCommand {
     SetPause(bool),
+    /// Flips pause against the player's own state, so two quick presses never
+    /// both pause on a stale view of it.
+    TogglePause,
     SeekMilliseconds(f64),
     SetVolume(f64),
     SetMute(bool),

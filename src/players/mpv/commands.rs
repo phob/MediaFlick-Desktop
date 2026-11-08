@@ -66,6 +66,7 @@ pub fn control_command(command: &PlayerCommand) -> Option<Value> {
         PlayerCommand::SetPause(pause) => {
             json!(["set_property", "pause", pause])
         }
+        PlayerCommand::TogglePause => json!(["cycle", "pause"]),
         PlayerCommand::SeekMilliseconds(position_ms) => {
             if !position_ms.is_finite() {
                 return None;

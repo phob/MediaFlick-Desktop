@@ -45,6 +45,7 @@ export type PlayerCommandAccepted = {
 export type PlayerCommandBody =
   | { "command": "pause" }
   | { "command": "resume" }
+  | { "command": "toggle-pause" }
   | { "command": "seek", positionMs: number }
   | { "command": "set-volume", volume: number }
   | { "command": "set-mute", mute: boolean }
