@@ -8,7 +8,7 @@ import { api, type BookManifest, type ReaderAppearance } from "@/lib/api"
 import { accountKey, useStatus } from "@/lib/queries"
 import { queryKeys } from "@/lib/query-client"
 import { FONT_SIZE } from "./appearance"
-import { commandFor, type KeyContext } from "./keys"
+import { commandFor, commandForMouse, type KeyContext, type MouseChord } from "./keys"
 import { nextLayer, type ReaderCommand, type ReaderLayer } from "./model"
 import { openBook, type BookSession, type JumpTarget, type ReadingPosition } from "./open-book"
 import { ReaderPanels, type PanelControl } from "./panels"
@@ -116,6 +116,11 @@ function BookReader({ account, itemId, manifest, failure }: { account: string; i
     run(command)
   })
 
+  const onMouse = useEffectEvent((chord: MouseChord) => {
+    const command = session && commandForMouse(layer.kind, chord, keyContext)
+    if (command) run(command)
+  })
+
   useEffect(() => {
     const listener = (event: KeyboardEvent) => onKey(event)
     window.addEventListener("keydown", listener, true)
@@ -136,6 +141,7 @@ function BookReader({ account, itemId, manifest, failure }: { account: string; i
     openBook(element, itemId, manifest, {
       signal: controller.signal,
       onKey: (event) => onKey(event),
+      onMouse: (chord) => onMouse(chord),
       onPosition: (next) => onPosition(next),
       onDownload: (fraction) => onDownload(fraction),
     }).then(

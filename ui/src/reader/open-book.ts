@@ -1,9 +1,10 @@
 import type { FoliateBook, FoliateLocation, FoliateTocItem, View } from "foliate-js/view.js"
 import type { BookFormat, BookManifest, ReaderAppearance, ReadingLocation } from "@/lib/api"
 import { installAppSurfaceGuard } from "@/lib/app-surface"
-import { bookStyles, fitAttribute, layoutAttributes, themeColors } from "./appearance"
+import { basePx, bookStyles, fitAttribute, layoutAttributes, themeColors } from "./appearance"
 import { archiveComic, zipComic } from "./comics"
 import { foliateComics, foliateView } from "./engines"
+import type { MouseChord } from "./keys"
 import type { ReaderCommand } from "./model"
 import { RemoteFile } from "./remote-file"
 
@@ -52,6 +53,8 @@ export interface OpenOptions {
   signal: AbortSignal
   /** Every key pressed inside the book's documents, which the page's own listeners never see. */
   onKey(event: KeyboardEvent): void
+  /** A click or right click on the book, the page or its margins, that is not a link or the end of a text selection. */
+  onMouse(chord: MouseChord): void
   onPosition(position: ReadingPosition): void
   onDownload(fraction: number): void
 }
@@ -113,8 +116,33 @@ export async function openBook(host: HTMLElement, itemId: string, manifest: Book
         canReturn: view.history.canGoBack,
       }
     }
+    const listenForMouse = (target: GlobalEventHandlers, doc: Document) => {
+      target.addEventListener(
+        "click",
+        (event) => {
+          if (event.button !== 0 || event.defaultPrevented || !doc.getSelection()?.isCollapsed) return
+          // A section document is another realm, with its own Element.
+          const element = doc.defaultView?.Element ?? Element
+          if (event.target instanceof element && event.target.closest("a[href]")) return
+          options.onMouse("Click")
+        },
+        { signal: options.signal },
+      )
+      target.addEventListener(
+        "contextmenu",
+        (event) => {
+          event.preventDefault()
+          // The Menu key also raises contextmenu, with no button held; that key has its own binding.
+          if (event.button === 2) options.onMouse("RightClick")
+        },
+        { signal: options.signal },
+      )
+    }
+    // A click in foliate's margins lands in its shadow DOM and reaches the page as one on the view.
+    listenForMouse(view, document)
     view.addEventListener("load", ({ detail }) => {
       installAppSurfaceGuard(detail.doc)
+      listenForMouse(detail.doc, detail.doc)
       detail.doc.addEventListener(
         "keydown",
         (event) => {
@@ -137,14 +165,16 @@ export async function openBook(host: HTMLElement, itemId: string, manifest: Book
     const toc = realToc.length || layout === "reflowable" ? realToc : pageEntries(sections)
     let chapterPages: Promise<number[]> | null = null
 
+    let applied = { appearance: manifest.appearance, base: basePx(host.clientWidth, host.clientHeight) }
     const apply = (appearance: ReaderAppearance) => {
       host.style.background = themeColors(appearance.theme).paper
       if (layout === "fixed") {
         view.renderer.setAttribute("zoom", fitAttribute(appearance))
         return
       }
-      for (const [name, value] of Object.entries(layoutAttributes(appearance))) view.renderer.setAttribute(name, value)
-      view.renderer.setStyles?.(bookStyles(appearance))
+      applied = { appearance, base: basePx(host.clientWidth, host.clientHeight) }
+      for (const [name, value] of Object.entries(layoutAttributes(appearance, applied.base))) view.renderer.setAttribute(name, value)
+      view.renderer.setStyles?.(bookStyles(appearance, applied.base))
     }
     apply(manifest.appearance)
 
@@ -159,6 +189,10 @@ export async function openBook(host: HTMLElement, itemId: string, manifest: Book
     }
     options.signal.throwIfAborted()
     restored = true
+    const resized = new ResizeObserver(() => {
+      if (basePx(host.clientWidth, host.clientHeight) !== applied.base) apply(applied.appearance)
+    })
+    if (layout === "reflowable") resized.observe(host)
 
     const currentPage = () => view.lastLocation?.section?.current ?? 0
     const sectionJump = async (direction: 1 | -1) => {
@@ -208,7 +242,10 @@ export async function openBook(host: HTMLElement, itemId: string, manifest: Book
         else await view.goTo(target.kind === "toc" ? target.target : target.page)
       },
       apply,
-      close,
+      close() {
+        resized.disconnect()
+        close()
+      },
     }
   } catch (error) {
     close()
