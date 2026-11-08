@@ -1,148 +1,218 @@
-const FIXTURES = {
-  trap: { name: "MediaFlick Script Trap", format: "epub" },
-  epub: { name: "Alice's Adventures in Wonderland", format: "epub" },
-  pdf: { name: "The Constitution of the United States - US Congress", format: "pdf" },
-  cbr: { name: "Travels of Timmy Toodles - Johnny Gruelle", format: "cbr" },
-}
-
+// The book reader on a real server (`--account`), per format: the Books
+// library, the book's page, Read by keyboard, page turns, chapter keys, the
+// position Jellyfin keeps, Back, and Continue at the exact place. Writes
+// books.json and screenshots per format. See features/books.md.
+const BOOKS = [
+  { key: "epub", name: "Alice's Adventures in Wonderland", format: "epub", finish: true },
+  { key: "epub3", name: "Pride and Prejudice", format: "epub", measureBytes: true },
+  { key: "epub2", name: "The Adventures of Sherlock Holmes", format: "epub" },
+  { key: "mobi", name: "Dracula - Bram Stoker", format: "mobi" },
+  { key: "azw", name: "Treasure Island - Robert Louis Stevenson", format: "azw" },
+  { key: "azw3", name: "Frankenstein - Mary Shelley", format: "azw3" },
+  { key: "pdf", name: "The Constitution of the United States - US Congress", format: "pdf", worker: "/reader/foliate/vendor/pdfjs/pdf.worker.mjs" },
+  { key: "cbz", name: "Shen of the Sea - Arthur Bowie Chrisman", format: "cbz", pages: 271 },
+  { key: "cbt", name: "Shen of the Sea Part One - Arthur Bowie Chrisman", format: "cbt", pages: 30, finish: true },
+  { key: "cb7", name: "Shen of the Sea Part Two - Arthur Bowie Chrisman", format: "cb7", pages: 30 },
+  { key: "cbr", name: "Travels of Timmy Toodles - Johnny Gruelle", format: "cbr", pages: 28, worker: "/reader/libarchive/worker-bundle.js" },
+]
+const TRAP = "MediaFlick Script Trap"
+const TEXT_FORMATS = new Set(["epub", "mobi", "azw", "azw3"])
 const EMPTY_WASM = "new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])"
 
-async function bookIds(ctx) {
-  const answer = await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&Recursive=true&IncludeItemTypes=Book`)
-  const ids = {}
-  for (const [key, { name }] of Object.entries(FIXTURES)) {
-    const item = answer.Items.find((candidate) => candidate.Name === name)
-    if (!item) throw new Error(`the Books library has no "${name}"`)
-    ids[key] = item.Id
-  }
-  return ids
+const phase = (id) => `document.querySelector('[data-reader-book="${id}"]')?.dataset.readerPhase`
+const footer = (ctx) => ctx.app.evaluate(`document.querySelector("[data-reader-footer]")?.innerText ?? ""`)
+
+/** Enter as a keyboard sends it: a key-down that also types `\r`, which is what activates a focused link or button. */
+async function enter(ctx) {
+  const event = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }
+  await ctx.app.send("Input.dispatchKeyEvent", { type: "keyDown", text: "\r", unmodifiedText: "\r", ...event })
+  await ctx.app.send("Input.dispatchKeyEvent", { type: "keyUp", ...event })
 }
 
-async function frames(ctx) {
+function expectedTicks(location) {
+  return location.kind === "text" ? Math.round(location.fraction * 1e7) : location.page * 1e4
+}
+
+/** Waits until the reader saved a place other than `previous`, synced to Jellyfin. */
+async function moved(ctx, book, previous, description) {
+  const saved = await ctx.until(() => {
+    const current = place(ctx, book.id)
+    const changed = current && JSON.stringify(current.location) !== JSON.stringify(previous)
+    return changed && current.syncedTicks === expectedTicks(current.location) && current
+  }, `${book.key}: ${description}`, 15000)
+  return saved.location
+}
+
+function place(ctx, id) {
+  return ctx.readConfig("reader.json")?.accounts?.[0]?.books?.find((book) => book.itemId === id) ?? null
+}
+
+async function bookFrames(ctx) {
   const { root } = await ctx.app.send("DOM.getDocument", { depth: -1, pierce: true })
-  const found = []
+  const frames = []
   const walk = (node) => {
-    if (node.nodeName === "IFRAME") {
-      const attributes = Object.fromEntries((node.attributes ?? []).reduce((pairs, value, index, all) => (index % 2 ? pairs : [...pairs, [value, all[index + 1]]]), []))
+    if (node.nodeName === "IFRAME" && node.attributes?.includes("sandbox")) {
+      const attributes = Object.fromEntries(node.attributes.flatMap((value, index, all) => (index % 2 ? [] : [[value, all[index + 1]]])))
       const text = []
       const collect = (inner) => {
         if (inner.nodeType === 3) text.push(inner.nodeValue)
         for (const child of [...(inner.children ?? []), ...(inner.shadowRoots ?? [])]) collect(child)
       }
       if (node.contentDocument) collect(node.contentDocument)
-      found.push({ sandbox: attributes.sandbox ?? null, src: attributes.src ?? null, text: text.join(" ").replace(/\s+/g, " ").trim().slice(0, 400) })
+      frames.push({ backendNodeId: node.backendNodeId, sandbox: attributes.sandbox, text: text.join(" ").replace(/\s+/g, " ").trim() })
     }
     for (const child of [...(node.children ?? []), ...(node.shadowRoots ?? []), ...(node.contentDocument ? [node.contentDocument] : [])]) walk(child)
   }
   walk(root)
-  return found
+  return frames
 }
 
-async function shownPageImages(ctx) {
-  const { root } = await ctx.app.send("DOM.getDocument", { depth: -1, pierce: true })
-  const images = []
-  const walk = (node, inBook) => {
-    if (inBook && node.nodeName === "IMG") images.push(node.backendNodeId)
-    for (const child of [...(node.children ?? []), ...(node.shadowRoots ?? [])]) walk(child, inBook)
-    if (node.contentDocument) walk(node.contentDocument, true)
+async function openDetail(ctx, book) {
+  await ctx.press({ role: "link", name: "Books" })
+  await ctx.press({ role: "link", name: `Open details for ${book.name}` })
+  await ctx.until(async () => (await ctx.pathname()) === `/item/${book.id}`, `${book.key}: the book's page`)
+}
+
+async function readByKeyboard(ctx, book, row) {
+  row.action = await ctx.until(
+    `document.activeElement?.getAttribute("href")?.startsWith("/read/") && document.activeElement.innerText.trim()`,
+    `${book.key}: the page focuses its read action`,
+  )
+  await enter(ctx)
+  await ctx.until(`["ready", "failed"].includes(${phase(book.id)})`, `${book.key}: the reader to open`, 180000)
+  const opened = await ctx.app.evaluate(phase(book.id))
+  ctx.check(opened === "ready", `${book.key}: the reader opened (${opened} ${await ctx.app.evaluate(`document.querySelector('[role="alert"]')?.innerText ?? ""`)})`)
+}
+
+async function readFormat(ctx, book, report) {
+  const row = (report.formats[book.key] = { name: book.name, format: book.format })
+  ctx.restoreItemAfterRun(book.id)
+  await openDetail(ctx, book)
+  if (book.measureBytes) await ctx.app.evaluate(`window.__bookBytes = { total: 0, requests: 0, beforeFirstPage: null }`)
+  await readByKeyboard(ctx, book, row)
+  if (book.measureBytes) {
+    row.bytes = await ctx.app.evaluate("window.__bookBytes")
+    const range = await ctx.app.evaluate(`fetch("/api/item/${book.id}/book/file?start=0&end=0").then((r) => r.headers.get("Content-Range"))`)
+    row.bytes.fileSize = Number(range.split("/")[1])
+    ctx.check(row.bytes.beforeFirstPage < row.bytes.fileSize / 2, `${book.key}: ${row.bytes.beforeFirstPage} of ${row.bytes.fileSize} bytes fetched before the first page`)
   }
-  walk(root, false)
-  let shown = 0
-  for (const backendNodeId of images) {
-    const box = await ctx.app.send("DOM.getBoxModel", { backendNodeId }).catch(() => null)
-    if (box && box.model.width > 0 && box.model.height > 0) shown += 1
-  }
-  return shown
+  await ctx.screenshot(`${book.key}-01-reading`)
+  const opened = await moved(ctx, book, null, "the opened place saved")
+  row.opened = { footer: await footer(ctx), location: opened }
+  for (let turn = 0; turn < 3; turn += 1) await ctx.key("ArrowRight")
+  const turned = await moved(ctx, book, opened, "ArrowRight to turn pages")
+  row.turned = { footer: await footer(ctx), location: turned }
+  if (turned.kind === "page") ctx.check(turned.page === opened.page + 3, `${book.key}: three ArrowRights turn three pages (${opened.page} to ${turned.page})`)
+  await ctx.key("MediaTrackNext", { code: "MediaTrackNext", keyCode: 176 })
+  const chapter = await moved(ctx, book, turned, "the next-chapter key to move on")
+  row.chapter = { footer: await footer(ctx), location: chapter }
+  ctx.check(chapter.kind === "page" ? chapter.page > turned.page : chapter.fraction > turned.fraction, `${book.key}: the next-chapter key moves forward`)
+  const saved = place(ctx, book.id)
+  const server = await ctx.jellyfin(`/Items/${book.id}?userId=${ctx.account.userId}`)
+  row.place = saved
+  row.jellyfin = { ticks: server.UserData.PlaybackPositionTicks, played: server.UserData.Played, expected: expectedTicks(saved.location) }
+  ctx.check(row.jellyfin.ticks === row.jellyfin.expected && !row.jellyfin.played, `${book.key}: Jellyfin holds ${row.jellyfin.expected} ticks in jellyfin-web's units (${row.jellyfin.ticks})`)
+  ctx.check(TEXT_FORMATS.has(book.format) === (saved.location.kind === "text"), `${book.key}: the place is kept as a ${saved.location.kind} location`)
+  if (book.pages) ctx.check(saved.location.pages === book.pages, `${book.key}: all ${book.pages} pages (${saved.location.pages})`)
+  if (book.worker) ctx.check(report.workers.some((url) => url.endsWith(book.worker)), `${book.key}: decoded in its own worker`)
+  await ctx.key("BrowserBack", { code: "BrowserBack", keyCode: 166 })
+  await ctx.until(async () => (await ctx.pathname()) === `/item/${book.id}`, `${book.key}: Back returns to the book's page`)
+  row.continueLabel = await ctx.until(`document.activeElement?.innerText?.trim().startsWith("Continue") && document.activeElement.innerText.trim()`, `${book.key}: the page offers Continue`)
+  await ctx.screenshot(`${book.key}-02-continue`)
+  const before = ctx.configStat("reader.json").mtimeMs
+  await readByKeyboard(ctx, book, row)
+  await ctx.until(() => ctx.configStat("reader.json").mtimeMs > before, `${book.key}: the reopened place reported`, 15000)
+  row.reopened = { footer: await footer(ctx), place: place(ctx, book.id) }
+  ctx.check(JSON.stringify(row.reopened.place.location) === JSON.stringify(saved.location), `${book.key}: Continue restores the exact place (${JSON.stringify(row.reopened.place.location)})`)
+  row.resources = await ctx.app.evaluate(`performance.getEntriesByType("resource").map((entry) => entry.name).filter((name) => name.includes("/book"))`)
+  if (book.finish) await finish(ctx, book, row)
+  await ctx.key("Escape")
+  await ctx.until(async () => (await ctx.pathname()) === `/item/${book.id}`, `${book.key}: Escape leaves the reader`)
 }
 
-async function open(ctx, id, format, timeout = 120000) {
-  await ctx.app.evaluate(`history.pushState(null, "", ${JSON.stringify(`/read/${id}?format=${format}`)}); dispatchEvent(new PopStateEvent("popstate"))`)
-  const element = `document.querySelector('[data-reader-book="${id}"]')`
-  await ctx.until(`["ready", "failed"].includes(${element}?.dataset.readerPhase)`, `${format} to open or fail`, timeout)
-  const phase = await ctx.app.evaluate(`${element}.dataset.readerPhase`)
-  return { phase, status: await status(ctx) }
+/** End shows the last page, which marks the book played; the page then offers Read again, which opens at the start. */
+async function finish(ctx, book, row) {
+  await ctx.key("End")
+  await ctx.until(async () => (await ctx.jellyfin(`/Items/${book.id}?userId=${ctx.account.userId}`)).UserData.Played, `${book.key}: the last page marks the book played in Jellyfin`, 15000)
+  await ctx.screenshot(`${book.key}-03-end`)
+  await ctx.key("BrowserBack", { code: "BrowserBack", keyCode: 166 })
+  row.finished = await ctx.until(`document.activeElement?.innerText?.trim() === "Read again" && document.body.innerText.includes("Finished")`, `${book.key}: the page offers Read again`)
+  await readByKeyboard(ctx, book, row)
+  const start = await ctx.until(() => {
+    const current = place(ctx, book.id)
+    return current && (current.location.kind === "page" ? current.location.page === 0 : current.location.fraction < 0.01) && current.location
+  }, `${book.key}: Read again opens at the start`, 15000)
+  row.readAgain = start
 }
 
-async function status(ctx) {
-  return ctx.app.evaluate(`document.querySelector('main [role="status"]').textContent`)
+async function scriptTrap(ctx, report) {
+  const book = { key: "trap", name: TRAP, id: report.ids[TRAP] }
+  ctx.restoreItemAfterRun(book.id)
+  await openDetail(ctx, book)
+  await readByKeyboard(ctx, book, {})
+  const until = Date.now() + 3000
+  await ctx.until(async () => Date.now() > until, "the script trap's 3 s observation window", 5000)
+  const frames = await bookFrames(ctx)
+  const probes = ctx.appLog().split("\n").filter((line) => line.includes("book-script-trap"))
+  const messages = await ctx.app.evaluate("window.__bookMessages")
+  report.trap = { frames: frames.map(({ sandbox, text }) => ({ sandbox, text: text.slice(0, 200) })), probes, messages }
+  ctx.check(frames.some((frame) => frame.text.includes("MediaFlick's sandbox failed")), "the script trap's section rendered")
+  ctx.check(frames.every((frame) => frame.sandbox === "allow-same-origin"), "every book iframe is sandboxed without scripts")
+  ctx.check(probes.length === 0 && messages.length === 0, `no script in the book ran (${probes.length} requests, ${messages.length} messages)`)
+  await ctx.screenshot("trap-reading")
+  await ctx.key("Escape")
+  await ctx.until(async () => (await ctx.pathname()) === `/item/${book.id}`, "Escape leaves the script trap")
+}
+
+async function instrument(ctx, report) {
+  ctx.app.on("Log.entryAdded", ({ entry }) => report.console.push({ source: entry.source, level: entry.level, text: entry.text, url: entry.url }))
+  ctx.app.on("Audits.issueAdded", ({ issue }) => report.issues.push(issue))
+  ctx.app.on("Target.attachedToTarget", ({ targetInfo }) => report.workers.push(targetInfo.url))
+  await ctx.app.send("Log.enable")
+  await ctx.app.send("Audits.enable")
+  await ctx.app.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true })
+  await ctx.app.evaluate(`(() => {
+    window.__bookMessages = []
+    addEventListener("message", (event) => { if (String(event.data).startsWith("book-script-ran")) window.__bookMessages.push(String(event.data)) })
+    const original = window.fetch
+    window.fetch = async (...args) => {
+      const response = await original(...args)
+      const url = String(args[0]?.url ?? args[0])
+      const range = /bytes (\\d+)-(\\d+)/.exec(response.headers.get("Content-Range") ?? "")
+      if (window.__bookBytes && url.includes("/book/file") && range) {
+        window.__bookBytes.total += Number(range[2]) - Number(range[1]) + 1
+        window.__bookBytes.requests += 1
+      }
+      return response
+    }
+    new MutationObserver(() => {
+      if (window.__bookBytes?.beforeFirstPage === null && document.querySelector('[data-reader-phase="ready"]')) window.__bookBytes.beforeFirstPage = window.__bookBytes.total
+    }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["data-reader-phase"] })
+  })()`)
 }
 
 export default async function (ctx) {
-  const report = { console: [], issues: [], formats: {} }
+  const report = { console: [], issues: [], workers: [], formats: {} }
   try {
-    await drive(ctx, report)
+    await ctx.signIn({})
+    await instrument(ctx, report)
+    const answer = await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&Recursive=true&IncludeItemTypes=Book`)
+    report.ids = Object.fromEntries(answer.Items.map((item) => [item.Name, item.Id]))
+    for (const book of BOOKS) {
+      book.id = report.ids[book.name]
+      ctx.check(Boolean(book.id), `the Books library has "${book.name}"`)
+    }
+    report.documentWasm = await ctx.app.evaluate(`WebAssembly.instantiate(${EMPTY_WASM}).then(() => "compiled", (error) => String(error))`)
+    ctx.check(report.documentWasm !== "compiled", "the page refuses to compile WebAssembly")
+    await scriptTrap(ctx, report)
+    const only = process.env.MEDIAFLICK_VERIFY_BOOKS?.split(",")
+    for (const book of BOOKS.filter((candidate) => !only || only.includes(candidate.key))) await readFormat(ctx, book, report)
+    report.documentWasmAfter = await ctx.app.evaluate(`WebAssembly.instantiate(${EMPTY_WASM}).then(() => "compiled", (error) => String(error))`)
+    ctx.check(report.documentWasmAfter !== "compiled", "the page still refuses WebAssembly after the archive worker ran")
   } finally {
-    report.cspViolations = report.console.filter((entry) => /Content Security Policy/i.test(entry.text))
+    report.cspViolations = report.issues.filter((issue) => issue.code === "ContentSecurityPolicyIssue" && issue.details.contentSecurityPolicyIssueDetails.sourceCodeLocation?.url !== "")
+    report.page = await ctx.app.evaluate("document.documentElement.outerHTML").catch(() => null)
     ctx.writeEvidence("books.json", JSON.stringify(report, null, 2))
   }
-}
-
-async function drive(ctx, report) {
-  await ctx.signIn({})
-  ctx.app.on("Log.entryAdded", ({ entry }) => report.console.push({ source: entry.source, level: entry.level, text: entry.text, url: entry.url }))
-  ctx.app.on("Runtime.consoleAPICalled", ({ type, args }) => report.console.push({ source: "console-api", level: type, text: args.map((arg) => arg.value ?? arg.description).join(" ") }))
-  ctx.app.on("Audits.issueAdded", ({ issue }) => report.issues.push(issue))
-  report.workers = []
-  ctx.app.on("Target.attachedToTarget", ({ targetInfo }) => report.workers.push({ type: targetInfo.type, url: targetInfo.url }))
-  await ctx.app.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true })
-  await ctx.app.send("Log.enable")
-  await ctx.app.send("Runtime.enable")
-  await ctx.app.send("Audits.enable")
-  await ctx.app.evaluate(`(() => { window.__bookMessages = []; addEventListener("message", (event) => { if (String(event.data).startsWith("book-script-ran")) window.__bookMessages.push(String(event.data)) }) })()`)
-  report.origin = await ctx.app.evaluate("({ location: location.origin, url: new URL(location.href).origin, parsed: URL.parse('/reader/x.js', location.href)?.origin })")
-  const ids = await bookIds(ctx)
-  report.ids = ids
-
-  report.documentWasm = await ctx.app.evaluate(`WebAssembly.instantiate(${EMPTY_WASM}).then(() => "compiled", (error) => String(error))`)
-  ctx.check(report.documentWasm !== "compiled", `the page refuses to compile WebAssembly (${report.documentWasm})`)
-
-  const trap = await open(ctx, ids.trap, "epub")
-  ctx.check(trap.phase === "ready", `the script trap EPUB opened (${trap.status})`)
-  const settleUntil = Date.now() + 3000
-  await ctx.until(async () => Date.now() > settleUntil, "the script trap's 3 s observation window", 5000)
-  const trapFrames = await frames(ctx)
-  const trapLog = ctx.appLog().split("\n").filter((line) => line.includes("book-script-trap"))
-  const trapMessages = await ctx.app.evaluate("window.__bookMessages")
-  report.trap = { frames: trapFrames, appLog: trapLog, messages: trapMessages }
-  ctx.check(trapFrames.some((frame) => frame.text.includes("MediaFlick's sandbox failed")), "the trap's section rendered inside the reader")
-  ctx.check(trapFrames.every((frame) => frame.sandbox === "allow-same-origin" || frame.src === null), `every book iframe is sandboxed without scripts (${JSON.stringify(trapFrames.map((frame) => frame.sandbox))})`)
-  ctx.check(trapLog.length === 0, `no trap probe reached the app (${trapLog.length} log lines)`)
-  ctx.check(!trapMessages.some((message) => message.startsWith("book-script-ran")), `no trap probe posted to the page (${JSON.stringify(trapMessages)})`)
-  await ctx.screenshot("01-script-trap")
-
-  const epub = await open(ctx, ids.epub, "epub")
-  ctx.check(epub.phase === "ready", `the EPUB opened (${epub.status})`)
-  const { root } = await ctx.app.send("DOM.getDocument", { depth: -1, pierce: true })
-  const iframes = []
-  const collect = (node) => {
-    if (node.nodeName === "IFRAME" && node.attributes?.includes("sandbox")) iframes.push(node)
-    for (const child of [...(node.children ?? []), ...(node.shadowRoots ?? [])]) collect(child)
-  }
-  collect(root)
-  await ctx.app.send("DOM.focus", { backendNodeId: iframes[0].backendNodeId })
-  const focusInFrame = await ctx.app.evaluate("document.activeElement?.tagName")
-  ctx.check(focusInFrame === "FOLIATE-VIEW", `focus is inside the book's iframe (${focusInFrame})`)
-  const beforeTurn = await status(ctx)
-  for (let page = 0; page < 3; page += 1) await ctx.key("ArrowRight")
-  await ctx.until(async () => (await status(ctx)) !== beforeTurn, "ArrowRight inside the sandboxed iframe to turn the EPUB's page", 10000)
-  report.formats.epub = { opened: epub, focusAfterClick: focusInFrame, before: beforeTurn, after: await status(ctx) }
-  await ctx.screenshot("02-epub")
-
-  const pdf = await open(ctx, ids.pdf, "pdf", 30000)
-  ctx.check(pdf.phase === "ready", `the PDF opened (${pdf.status})`)
-  const workers = report.workers.map((worker) => worker.url)
-  report.formats.pdf = { opened: pdf, workers }
-  ctx.check(workers.some((url) => url.endsWith("/reader/foliate/vendor/pdfjs/pdf.worker.mjs")), `pdf.js runs its own worker (${JSON.stringify(workers)})`)
-  ctx.check(!report.console.some((entry) => /fake worker/i.test(entry.text)), "pdf.js did not fall back to a fake worker")
-  await ctx.until(async () => (await shownPageImages(ctx)) > 0, "the PDF page to show as a laid-out image inside the book's iframe", 20000)
-  await ctx.screenshot("03-pdf")
-
-  const cbr = await open(ctx, ids.cbr, "cbr")
-  ctx.check(cbr.phase === "ready" && /section 1\/28$/.test(cbr.status), `the RAR5 CBR decoded to its 28 pages (${cbr.status})`)
-  ctx.check(report.workers.some((worker) => worker.url.endsWith("/reader/libarchive/worker-bundle.js")), "libarchive decoded in its own worker")
-  report.formats.cbr = { opened: cbr }
-  await ctx.screenshot("04-cbr")
-
-  report.documentWasmAfter = await ctx.app.evaluate(`WebAssembly.instantiate(${EMPTY_WASM}).then(() => "compiled", (error) => String(error))`)
-  ctx.check(report.documentWasmAfter !== "compiled", "the page still refuses WebAssembly after the worker decoded")
+  ctx.check(report.cspViolations.length === 0, `no Content Security Policy violation outside the drive's own probes (${report.cspViolations.length})`)
 }

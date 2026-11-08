@@ -28,7 +28,7 @@ interface Page {
  * The pages of a comic, in reading order, under the names foliate's comic
  * book is given. foliate keeps only lowercase image extensions and sorts by
  * name, so an archive of `1.PNG … 30.PNG` would lose every page. The pages are
- * ordered here (macOS resource forks and dotfiles dropped, names compared
+ * ordered here (macOS resource forks and hidden files dropped, a tar's `./` kept, names compared
  * with numbers as numbers, ties broken by the raw name) and renamed
  * `00000001.png`, `00000002.png`, … so foliate keeps that order.
  */
@@ -36,7 +36,7 @@ function comicLoader(pages: Page[]): ComicLoader {
   const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
   const ordered = pages
     .filter(({ original }) => {
-      const parts = original.split("/")
+      const parts = original.split("/").filter((part) => part !== "" && part !== ".")
       return !parts.includes("__MACOSX") && !parts.some((part) => part.startsWith("."))
     })
     .sort((a, b) => collator.compare(a.original, b.original) || (a.original < b.original ? -1 : a.original > b.original ? 1 : 0))

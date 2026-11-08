@@ -1,5 +1,6 @@
 import { isJsonObject, jsonBoolean, jsonString, type JsonValue } from "../json.ts"
 import type * as Wire from "./wire.gen.ts"
+import type { BookPositionWrite, ReaderAppearance } from "./types/books.ts"
 import type { ReleaseCalendar } from "./types/calendar.ts"
 import type { ItemQuery, PersonResolveQuery } from "./types/catalog.ts"
 import type { TitleKind } from "../kinds.ts"
@@ -207,6 +208,11 @@ export const api = {
   libraryLatest: (id: string, limit?: number) =>
     request("GET /api/libraries/{id}/latest", { params: { id }, query: { limit } }),
   item: (id: string) => request("GET /api/item/{id}", { params: { id } }),
+  book: (id: string, from: "resume" | "start", signal?: AbortSignal) =>
+    request("GET /api/item/{id}/book", { params: { id }, query: { from: from === "start" ? "start" : undefined }, signal }),
+  saveBookPosition: (id: string, position: BookPositionWrite) =>
+    request("PUT /api/item/{id}/book/position", { params: { id }, body: position }),
+  saveReaderAppearance: (appearance: ReaderAppearance) => request("PUT /api/reader/appearance", { body: appearance }),
   itemSynopsis: (id: string) => request("GET /api/item/{id}/synopsis", { params: { id } }),
   itemAbout: (id: string) => request("GET /api/item/{id}/about", { params: { id } }),
   itemLetterboxd: (id: string) => request("GET /api/item/{id}/letterboxd", { params: { id } }),

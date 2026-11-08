@@ -1,6 +1,6 @@
 import { useViewing } from "@/lib/viewing"
 import { useEffect, useLayoutEffect, useState, type ReactNode } from "react"
-import { useLocation } from "react-router-dom"
+import { matchPath, useLocation } from "react-router-dom"
 import { AppSidebar } from "@/components/AppSidebar"
 import { PlayerBar } from "@/components/PlayerBar"
 import { PreviewProvider } from "@/components/PreviewCard"
@@ -9,6 +9,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { usePlaybackEventsBridge } from "@/lib/playback-events"
 import { usePlaybackKeys } from "@/lib/playback-keys"
 import { usePlayerState, useSettings } from "@/lib/queries"
+import { READER_ROUTE } from "@/reader/route"
 import { RouteScrollContext } from "@/lib/route-scroll"
 import { sidebarShouldBeOpen, sidebarShouldOverlayContent } from "@/lib/sidebar-state"
 import { useScrollRestoration } from "@/lib/scroll-restoration"
@@ -194,6 +195,12 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   if (integratedPlayback) {
     return <IntegratedPlayerOverlay paused={Boolean(player.data?.paused)} />
+  }
+
+  // The reader fills the window: no sidebar, and no player bar, whose window
+  // keys would take the reader's arrows and Space.
+  if (matchPath(READER_ROUTE, location.pathname)) {
+    return <main className="h-full min-h-0 bg-background">{children}</main>
   }
 
   return (

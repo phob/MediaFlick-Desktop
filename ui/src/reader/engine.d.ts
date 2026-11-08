@@ -28,28 +28,27 @@ declare module "foliate-js/view.js" {
     metadata?: { title?: unknown; language?: unknown }
     toc?: FoliateTocItem[]
     sections: FoliateSection[]
-    rendition?: { layout?: string }
-    dir?: string
+    rendition?: { layout?: string; spread?: string }
+    /** Where a contents entry points; a PDF's answer is asynchronous. */
+    resolveHref?(href: string): { index: number } | Promise<{ index: number }>
     destroy?(): void
   }
 
+  /** `section` and `fraction` are missing for a book foliate cannot measure. */
   export interface FoliateLocation {
-    fraction: number
-    section: { current: number; total: number }
-    location: { current: number; next: number; total: number }
+    fraction?: number
+    section?: { current: number; total: number }
+    location?: { current: number; next: number; total: number }
     tocItem?: { label?: string; href?: string; id?: number } | null
     cfi: string
   }
 
+  /** The paginator (reflowable books) or the fixed-layout renderer; members only the paginator has are optional. */
   export interface FoliateRenderer extends HTMLElement {
     setStyles?(styles: string | [string, string]): void
     prevSection(): Promise<void>
     nextSection(): Promise<void>
-    readonly atStart: boolean
-    readonly atEnd: boolean
-    readonly page: number
-    readonly pages: number
-    getContents(): { doc: Document; index: number }[]
+    readonly atEnd?: boolean
   }
 
   export interface FoliateViewEvents {

@@ -102,6 +102,7 @@ export const queryKeys = {
   personResolution: (jellyfinId: string, tmdbId: number | null, name: string) =>
     key("person", "resolve", jellyfinId, tmdbId, name),
   item: (id: string) => key("item", id),
+  book: (id: string, from: "resume" | "start") => key("book", id, from),
   itemSynopsis: (id: string) => key("item", id, "synopsis"),
   itemAbout: (id: string) => key("item", id, "about"),
   letterboxdReviews: (id: string) => key("letterboxd", "item", id),
