@@ -1,14 +1,17 @@
 //! Books in a Jellyfin Books library: which format a file is, where a reader
-//! stands in it, and the units Jellyfin keeps that position in. Pure; the
+//! stands in it, and the units Jellyfin keeps that position in. Pure but for
+//! [`OpenBooks`], the session's record of the books the reader opened; the
 //! reader's routes and its store call into it.
 
 use serde::{Deserialize, Serialize};
 
 mod appearance;
+mod open;
 #[cfg(test)]
 mod tests;
 
 pub use appearance::ReaderAppearance;
+pub use open::OpenBooks;
 
 /// The formats Jellyfin's `BookResolver` accepts, as the reader opens them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]

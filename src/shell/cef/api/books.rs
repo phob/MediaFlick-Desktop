@@ -11,6 +11,7 @@ use super::*;
 /// The most one answer of a book's bytes carries. The reader reads a book by
 /// ranges, so a 300 MB comic never sits whole in this process.
 const BOOK_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
+const NOT_OPEN: &str = "the reader has not opened that book";
 /// How much of each end of a file format sniffing reads.
 const SNIFF_WINDOW: u64 = 64 * 1024;
 
@@ -50,7 +51,8 @@ pub(super) struct BookPositionSaved {
     synced: bool,
 }
 
-/// `?from=start` opens the book at its beginning (Read again).
+/// `?from=start` opens the book at its beginning (Read again). Opening a book
+/// is what lets the reader read its bytes and keep its place.
 fn book_manifest(
     services: &Arc<Services>,
     item_id: &str,
@@ -84,6 +86,9 @@ fn book_manifest(
     services
         .session
         .commit_if_current(&scope, stale_account_response, |live| {
+            services
+                .open_books
+                .open(scope.generation(), item_id, server_ticks);
             let saved = services.reader.position(live.account(), item_id);
             Ok(BookManifest {
                 title: item.display_name().to_string(),
@@ -162,7 +167,7 @@ fn file_size(response: &ByteResponse) -> Result<u64, ApiResponse> {
         .ok_or_else(|| ApiResponse::error(502, "Jellyfin did not say how long the book's file is"))
 }
 
-/// Bytes `start..=end` of a book's file. A request without both, or a
+/// Bytes `start..=end` of a book the reader opened. A request without both, or a
 /// longer one, gets at most `BOOK_CHUNK_SIZE` bytes from where it starts, as
 /// a 206 whose `Content-Range` names the file's size.
 ///
@@ -176,6 +181,9 @@ fn book_bytes(
     request: &ApiRequest,
 ) -> Result<BinaryAnswer, ApiResponse> {
     let scope = session_scope(services)?;
+    if !services.open_books.is_open(scope.generation(), item_id) {
+        return Err(ApiResponse::error(404, NOT_OPEN));
+    }
     let requested = request
         .param("start")
         .zip(request.param("end"))
@@ -191,10 +199,11 @@ fn book_bytes(
     ))
 }
 
-/// Keeps the exact place locally first, then writes Jellyfin's position in
-/// jellyfin-web's units; once Jellyfin has it, the local record notes it as
-/// synced. A failed Jellyfin write keeps the place and answers
-/// `synced: false`; the reader's next save writes it again.
+/// Keeps the exact place of a book the reader opened locally first, noting
+/// as synced what Jellyfin holds as far as this app knows, then writes
+/// Jellyfin's position in jellyfin-web's units; once Jellyfin has it, the
+/// local record notes that as synced. A failed Jellyfin write keeps the
+/// place and answers `synced: false`; the reader's next save writes it again.
 fn save_position(
     services: &Arc<Services>,
     item_id: &str,
@@ -205,23 +214,16 @@ fn save_position(
         return Err(ApiResponse::error(400, "the page is not inside the book"));
     }
     let scope = session_scope(services)?;
+    let generation = scope.generation();
+    let unsynced = services
+        .open_books
+        .unsynced(generation, item_id, body.location.clone())
+        .ok_or_else(|| ApiResponse::error(404, NOT_OPEN))?;
     let ticks = body.location.jellyfin_ticks();
-    let keep = |synced_ticks: Option<i64>| {
+    let keep = |position: SavedPosition| {
         services
             .session
             .commit_if_current(&scope, stale_account_response, |live| {
-                let synced_ticks = synced_ticks
-                    .or_else(|| {
-                        services
-                            .reader
-                            .position(live.account(), item_id)
-                            .map(|previous| previous.synced_ticks)
-                    })
-                    .unwrap_or(0);
-                let position = SavedPosition {
-                    location: body.location.clone(),
-                    synced_ticks,
-                };
                 services
                     .reader
                     .save_position(live, item_id, position)
@@ -233,7 +235,7 @@ fn save_position(
                     })
             })
     };
-    keep(None)?;
+    keep(unsynced)?;
     let played = body.finished.then_some(true);
     let written = scope.fetch(|client, user_id| {
         items::write_book_progress(client, user_id, item_id, ticks, played)
@@ -241,7 +243,11 @@ fn save_position(
     match written {
         Ok(written) => {
             confirmed(services, written)?;
-            keep(Some(ticks))?;
+            services.open_books.synced(generation, item_id, ticks);
+            keep(SavedPosition {
+                location: body.location,
+                synced_ticks: ticks,
+            })?;
             Ok(BookPositionSaved { synced: true })
         }
         Err(error) => {

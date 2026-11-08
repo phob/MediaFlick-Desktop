@@ -52,6 +52,23 @@
 //! 20. A text location writes anything but `round(fraction × 10^7)`, a page
 //!     location anything but `page × 10^4`.
 //! 21. A fraction outside 0..=1, NaN or infinity is accepted.
+//!
+//! How the record of opened books can go wrong (`OpenBooks`: the reader
+//! opens a book, then saves its place and reads its bytes under the same
+//! session generation):
+//!
+//! 22. A place Jellyfin refused, of a book Jellyfin held a position for when
+//!     the reader opened it, loses on reopen to that unchanged position,
+//!     because the kept place calls something else synced (0, or what an
+//!     older session wrote).
+//! 23. After Jellyfin confirmed a write, a later refused one still calls the
+//!     position seen at opening synced, so its place loses to the confirmed
+//!     one Jellyfin now holds.
+//! 24. A book the reader did not open under the current session generation
+//!     (another account or sign-in, or never) counts as open, so the byte
+//!     and position routes serve any item.
+//! 25. The record grows with every book opened, or forgets the book being
+//!     read because others were opened after it.
 
 use super::*;
 
@@ -361,4 +378,64 @@ fn fractions_outside_the_book_are_refused() {
     assert!(Fraction::new(f64::NAN).is_none());
     assert!(Fraction::new(f64::INFINITY).is_none());
     assert!(Fraction::new(0.5).is_some());
+}
+
+#[test]
+fn a_refused_place_wins_while_jellyfin_holds_what_it_held_at_opening() {
+    let books = OpenBooks::default();
+    books.open(1, "book", 30_000);
+    let kept = books.unsynced(1, "book", page(5, 271)).expect("open");
+    assert_eq!(
+        resume(Some(&kept), 30_000, ProgressUnits::Page),
+        BookResume::Exact {
+            location: page(5, 271)
+        }
+    );
+    assert_eq!(
+        resume(Some(&kept), 70_000, ProgressUnits::Page),
+        BookResume::Page { page: 7 }
+    );
+}
+
+#[test]
+fn a_confirmed_write_is_what_jellyfin_holds_from_then_on() {
+    let books = OpenBooks::default();
+    books.open(1, "book", 30_000);
+    books.synced(1, "book", 50_000);
+    let kept = books.unsynced(1, "book", page(6, 271)).expect("open");
+    assert_eq!(
+        resume(Some(&kept), 50_000, ProgressUnits::Page),
+        BookResume::Exact {
+            location: page(6, 271)
+        }
+    );
+}
+
+#[test]
+fn only_a_book_opened_under_this_session_is_open() {
+    let books = OpenBooks::default();
+    assert!(!books.is_open(1, "book"));
+    books.open(1, "book", 0);
+    assert!(books.is_open(1, "book"));
+    assert!(!books.is_open(1, "another"));
+    assert!(!books.is_open(2, "book"));
+    assert!(books.unsynced(2, "book", page(0, 1)).is_none());
+    books.open(2, "another", 0);
+    assert!(
+        !books.is_open(1, "book"),
+        "a new session forgets the old one's books"
+    );
+}
+
+#[test]
+fn the_record_is_bounded_and_keeps_the_book_being_read() {
+    let books = OpenBooks::default();
+    books.open(1, "reading", 0);
+    books.open(1, "left", 0);
+    for index in 0..1000 {
+        books.open(1, &format!("book {index}"), 0);
+        assert!(books.is_open(1, "reading"));
+    }
+    assert!(!books.is_open(1, "left"));
+    assert!(books.is_open(1, "book 999"));
 }

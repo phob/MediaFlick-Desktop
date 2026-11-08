@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock, mpsc};
 
 use crate::app::paths;
+use crate::books::OpenBooks;
 use crate::collections::artwork::{ArtworkStore, custom_art_dir};
 use crate::companion::CompanionSession;
 use crate::integrations::letterboxd::ReviewService;
@@ -40,6 +41,7 @@ pub struct Services {
     pub shell: Arc<ShellBridge>,
     pub home_watched: Mutex<HashMap<AccountKey, Option<crate::library::ItemDetail>>>,
     pub children_sources: ChildrenSources,
+    pub open_books: OpenBooks,
     playback: RwLock<Option<Arc<PlaybackCoordinator>>>,
 }
 
@@ -273,6 +275,7 @@ pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Service
         shell,
         home_watched: Mutex::new(HashMap::new()),
         children_sources: ChildrenSources::default(),
+        open_books: OpenBooks::default(),
         playback: RwLock::new(None),
     });
     connect_app_hooks(&services);
@@ -533,6 +536,7 @@ pub(crate) mod test_support {
                 shell,
                 home_watched: Mutex::new(HashMap::new()),
                 children_sources: ChildrenSources::default(),
+                open_books: OpenBooks::default(),
                 playback: RwLock::new(None),
                 library,
                 session,
