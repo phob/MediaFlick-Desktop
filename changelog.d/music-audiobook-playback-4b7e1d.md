@@ -11,3 +11,4 @@
 ### Fixed
 
 - Pausing while a title loads no longer leaves the player bar showing it as playing.
+- When the player cannot start a track, for example because the mpv executable in Settings is wrong, the album or audiobook now ends along with the error instead of the app waiting for a stop that never comes.

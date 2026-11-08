@@ -646,15 +646,14 @@ impl Actor {
             }),
             BackendEvent::Failed { load_id, message } => {
                 let _ = self.shell.send(PlaybackEvent::Failed { message });
-                // The player refused the file it was handed; nothing else
-                // will end the entry.
-                if let Session::Audio {
-                    phase: Phase::Loading { load_id: loading },
-                    ..
-                } = self.session
-                    && loading == load_id
-                {
-                    self.stop_audio(StopReason::Error);
+                // A refused load never plays, so the player never reports it
+                // stopped; it ends here as that report would end it.
+                if self.live == Some(load_id) {
+                    self.stopped(PlayerSnapshot {
+                        playback_id: Some(load_id),
+                        stop_reason: Some(StopReason::Error),
+                        ..PlayerSnapshot::default()
+                    });
                 }
             }
         }
