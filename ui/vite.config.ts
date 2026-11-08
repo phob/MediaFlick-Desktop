@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, readdirSync } from "node:fs"
+import { cpSync, mkdirSync, readFileSync, readdirSync } from "node:fs"
 import { createRequire } from "node:module"
 import path from "node:path"
 import tailwindcss from "@tailwindcss/vite"
@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url)
 const foliate = path.dirname(require.resolve("foliate-js/view.js"))
 const libarchive = path.dirname(require.resolve("libarchive.js/dist/libarchive.js"))
 const libarchiveWasm = path.resolve(import.meta.dirname, "../distribution/libarchive-wasm/bundle")
+const libarchiveWasmRecipe = path.resolve(import.meta.dirname, "../distribution/libarchive-wasm/build.sh")
 
 /**
  * What the reader loads at run time, copied verbatim to `dist/reader/`.
@@ -44,6 +45,19 @@ function readerAssets(): Plugin {
   return {
     name: "mediaflick-reader-assets",
     apply: "build",
+    // The package's libarchive.js and the vendored worker talk one protocol,
+    // so both halves must come from the same libarchive.js release.
+    buildStart() {
+      const manifest: unknown = require("libarchive.js/package.json")
+      const npm = typeof manifest === "object" && manifest !== null && "version" in manifest ? String(manifest.version) : null
+      const vendored = /^\s*"libarchivejs\|([^|"]+)\|/m.exec(readFileSync(libarchiveWasmRecipe, "utf8"))?.[1] ?? null
+      if (npm === null || npm !== vendored) {
+        this.error(
+          `the reader's libarchive.js is ${npm ?? "unversioned"} from ui/package.json, but distribution/libarchive-wasm/build.sh built its worker from libarchive.js ${vendored ?? "(no libarchivejs pin found)"}; ` +
+            "pin the same version in both and run `just libarchive-wasm update`",
+        )
+      }
+    },
     writeBundle({ dir }) {
       const out = path.join(dir ?? "dist", "reader")
       const copy = (source: string, target: string) => {

@@ -12,7 +12,9 @@ RAR, 7z and tar needs no crypto library; only encrypted archives would.
 `/reader/libarchive/` in place of the package's own copies. The package still
 supplies `libarchive.js`, the main-thread API that starts the worker and talks
 to it over Comlink. The worker is built from the same libarchive.js 2.0.2
-sources, so the two halves match.
+sources, so the two halves match: `ui/vite.config.ts` fails the build, naming
+both versions, when the package's version differs from the `libarchivejs` pin
+in `build.sh`.
 
 ## What is linked
 

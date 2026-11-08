@@ -81,6 +81,7 @@ fn build_ui(repo_root: &Path) -> Result<(), BuildError> {
     for path in [
         "distribution/app-icon.png",
         "distribution/libarchive-wasm/bundle",
+        "distribution/libarchive-wasm/build.sh",
     ] {
         println!("cargo:rerun-if-changed={}", repo_root.join(path).display());
     }
