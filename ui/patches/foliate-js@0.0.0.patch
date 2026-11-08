@@ -1,8 +1,8 @@
 diff --git a/fixed-layout.js b/fixed-layout.js
-index c582abad1496874a9265cad1ab69e12a475c684d..b21a2f49186902c2939d9a069435a13932bc22ae 100644
+index c582abad1496874a9265cad1ab69e12a475c684d..022a4f8961e1fe5c73fbb24c1edb01df4bd05f90 100644
 --- a/fixed-layout.js
 +++ b/fixed-layout.js
-@@ -43,6 +43,10 @@ export class FixedLayout extends HTMLElement {
+@@ -43,6 +43,12 @@ export class FixedLayout extends HTMLElement {
      #center
      #side
      #zoom
@@ -10,10 +10,12 @@ index c582abad1496874a9265cad1ab69e12a475c684d..b21a2f49186902c2939d9a069435a139
 +    #loaded = new Set()
 +    // MediaFlick: the spread being shown; the next one waits for it.
 +    #showing = Promise.resolve()
++    // MediaFlick: a destroyed renderer shows nothing more.
++    #destroyed = false
      constructor() {
          super()
  
-@@ -81,9 +85,8 @@ export class FixedLayout extends HTMLElement {
+@@ -81,9 +87,8 @@ export class FixedLayout extends HTMLElement {
              display: 'none',
              overflow: 'hidden',
          })
@@ -25,7 +27,7 @@ index c582abad1496874a9265cad1ab69e12a475c684d..b21a2f49186902c2939d9a069435a139
          iframe.setAttribute('scrolling', 'no')
          iframe.setAttribute('part', 'filter')
          this.#root.append(element)
-@@ -269,6 +272,17 @@ export class FixedLayout extends HTMLElement {
+@@ -269,21 +274,48 @@ export class FixedLayout extends HTMLElement {
              return
          }
          this.#index = index
@@ -39,18 +41,33 @@ index c582abad1496874a9265cad1ab69e12a475c684d..b21a2f49186902c2939d9a069435a139
 +        return shown
 +    }
 +    async #showSpreadAt(index, side, reason) {
-+        if (index !== this.#index) return
++        if (this.#destroyed || index !== this.#index) return
          const spread = this.#spreads[index]
++        const shown = [spread.left, spread.right, spread.center].filter(Boolean)
++        // MediaFlick: pages that finished loading after the renderer was
++        // destroyed have no frame to show them in, and nothing else unloads them.
++        const destroyed = () => {
++            if (this.#destroyed) for (const section of shown) section.unload?.()
++            return this.#destroyed
++        }
          if (spread.center) {
              const index = this.book.sections.indexOf(spread.center)
-@@ -283,7 +297,15 @@ export class FixedLayout extends HTMLElement {
+             const src = await spread.center?.load?.()
++            if (destroyed()) return
+             await this.#showSpread({ center: { index, src } })
+         } else {
+             const indexL = this.book.sections.indexOf(spread.left)
+             const indexR = this.book.sections.indexOf(spread.right)
+             const srcL = await spread.left?.load?.()
+             const srcR = await spread.right?.load?.()
++            if (destroyed()) return
+             const left = { index: indexL, src: srcL }
              const right = { index: indexR, src: srcR }
              await this.#showSpread({ left, right, side })
          }
 -        this.#reportLocation(reason)
 +        // MediaFlick: a spread left behind gives its pages back, as the
 +        // paginator does; foliate kept every page read until the book closed.
-+        const shown = [spread.left, spread.right, spread.center].filter(Boolean)
 +        for (const section of this.#loaded) if (!shown.includes(section)) {
 +            section.unload?.()
 +            this.#loaded.delete(section)
@@ -60,9 +77,11 @@ index c582abad1496874a9265cad1ab69e12a475c684d..b21a2f49186902c2939d9a069435a139
      }
      async select(target) {
          await this.goTo(target)
-@@ -313,6 +335,8 @@ export class FixedLayout extends HTMLElement {
+@@ -312,7 +344,10 @@ export class FixedLayout extends HTMLElement {
+         }))
      }
      destroy() {
++        this.#destroyed = true
          this.#observer.unobserve(this)
 +        for (const section of this.#loaded) section.unload?.()
 +        this.#loaded.clear()
