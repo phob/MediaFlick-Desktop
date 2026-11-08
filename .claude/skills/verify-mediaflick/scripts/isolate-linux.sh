@@ -6,6 +6,8 @@
 #   bash isolate-linux.sh node session.mjs <drive> ...
 #
 # MEDIAFLICK_VERIFY_HARD_TIMEOUT (seconds, default 900) bounds the whole run.
+# MEDIAFLICK_VERIFY_SCREEN (WIDTHxHEIGHTxDEPTH, default 1920x1080x24) sizes
+# the Xvfb screen.
 # The child learns its display from MEDIAFLICK_VERIFY_ISOLATION and checks it
 # (and MEDIAFLICK_VERIFY_XVFB_PID) before launching anything.
 set -euo pipefail
@@ -25,6 +27,12 @@ fi
 timeout_s="${MEDIAFLICK_VERIFY_HARD_TIMEOUT:-900}"
 if ! [[ "$timeout_s" =~ ^[0-9]+$ ]] || (( timeout_s < 1 || timeout_s > 3600 )); then
   echo "isolate-linux: MEDIAFLICK_VERIFY_HARD_TIMEOUT must be 1..3600." >&2
+  exit 2
+fi
+
+screen="${MEDIAFLICK_VERIFY_SCREEN:-1920x1080x24}"
+if ! [[ "$screen" =~ ^([1-9][0-9]{2,4})x([1-9][0-9]{2,4})x(8|16|24)$ ]] || (( BASH_REMATCH[1] > 8192 || BASH_REMATCH[2] > 8192 )); then
+  echo "isolate-linux: MEDIAFLICK_VERIFY_SCREEN must be WIDTHxHEIGHTxDEPTH, 100..8192 pixels a side and depth 8, 16 or 24, such as 3840x2160x24." >&2
   exit 2
 fi
 
@@ -51,7 +59,7 @@ trap 'exit 130' INT TERM
 # -displayfd picks a free display number and reports it, so parallel runs and
 # the user's own X server never collide. No TCP listener.
 mkfifo "$work/display"
-Xvfb -displayfd 3 -screen 0 1920x1080x24 -nolisten tcp -noreset 3>"$work/display" 2>"$work/xvfb.log" &
+Xvfb -displayfd 3 -screen 0 "$screen" -nolisten tcp -noreset 3>"$work/display" 2>"$work/xvfb.log" &
 xvfb_pid=$!
 if ! read -r -t 15 display_number <"$work/display"; then
   echo "isolate-linux: Xvfb did not start:" >&2
