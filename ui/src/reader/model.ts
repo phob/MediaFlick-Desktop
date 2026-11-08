@@ -8,6 +8,10 @@ export type ReaderCommand =
   | { kind: "font"; step: -1 | 1 }
   | { kind: "open"; layer: Panel | "menu" }
   | { kind: "back" }
+  /** Takes the panel's choice, such as Go to's position. */
+  | { kind: "confirm" }
+  /** Changes the focused Appearance setting: a smaller or larger size, the previous or next choice. */
+  | { kind: "adjust"; by: -1 | 1 }
   /** Moves the focus inside a panel: a row, ten rows, or to an end. */
   | { kind: "move"; to: "previous" | "next" | "previousTen" | "nextTen" | "first" | "last" }
 
@@ -23,7 +27,7 @@ export type ReaderLayer =
   | { kind: "menu"; focus: MenuEntry }
   | { kind: Panel; from: "reading" | "menu" }
 
-type MenuEntry = Panel | "close"
+export type MenuEntry = Panel | "close"
 
 export type LayerKind = ReaderLayer["kind"]
 

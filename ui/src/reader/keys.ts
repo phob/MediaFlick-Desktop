@@ -70,10 +70,12 @@ const KEYMAP: Readonly<Record<LayerKind, readonly Binding[]>> = {
     { ...BACK, chords: [...BACK.chords, "ContextMenu"], label: "Back to the book" },
   ],
   toc: [...LIST, BACK],
-  goto: [BACK],
+  goto: [{ chords: ["Enter"], command: { kind: "confirm" }, label: "Go there" }, BACK],
   settings: [
     { chords: ["ArrowUp"], command: { kind: "move", to: "previous" }, label: "Previous setting", repeat: true },
     { chords: ["ArrowDown"], command: { kind: "move", to: "next" }, label: "Next setting", repeat: true },
+    { chords: ["ArrowLeft"], command: { kind: "adjust", by: -1 }, label: "Smaller, or the previous choice", repeat: true },
+    { chords: ["ArrowRight"], command: { kind: "adjust", by: 1 }, label: "Larger, or the next choice", repeat: true },
     BACK,
   ],
   keys: [...LIST, BACK],
@@ -104,4 +106,9 @@ export function commandFor(layer: LayerKind, event: KeyboardEvent, context: KeyC
   const binding = KEYMAP[layer].find((candidate) => candidate.chords.includes(chord) && applies(candidate, context))
   if (!binding || (event.repeat && !binding.repeat)) return null
   return binding.command
+}
+
+/** The bindings the Keys sheet lists for `layer` in this book. */
+export function bindingsFor(layer: LayerKind, context: KeyContext) {
+  return KEYMAP[layer].filter((binding) => applies(binding, context))
 }

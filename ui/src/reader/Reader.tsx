@@ -1,13 +1,16 @@
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useEffectEvent, useRef, useState } from "react"
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { toast } from "sonner"
+import { Menu } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { api, type BookManifest, type ReaderAppearance } from "@/lib/api"
 import { queryKeys } from "@/lib/query-client"
 import { FONT_SIZE } from "./appearance"
-import { commandFor } from "./keys"
+import { commandFor, type KeyContext } from "./keys"
 import { nextLayer, type ReaderCommand, type ReaderLayer } from "./model"
-import { openBook, type BookSession, type ReadingPosition } from "./open-book"
+import { openBook, type BookSession, type JumpTarget, type ReadingPosition } from "./open-book"
+import { ReaderPanels, type PanelControl } from "./panels"
 import { useProgress } from "./progress"
 import type { ReaderEntry } from "./route"
 
@@ -46,13 +49,19 @@ function BookReader({ itemId, manifest, failure }: { itemId: string; manifest: B
   const [position, setPosition] = useState<ReadingPosition | null>(null)
   const [appearance, setAppearance] = useState<ReaderAppearance | null>(null)
   const saving = useRef(Promise.resolve())
+  const panel = useRef<PanelControl | null>(null)
   const session = phase.kind === "ready" ? phase.session : null
   const shownAppearance = appearance ?? manifest?.appearance ?? null
 
   const changeAppearance = (next: ReaderAppearance) => {
     setAppearance(next)
     session?.apply(next)
-    saving.current = saving.current.then(() => api.saveReaderAppearance(next).then(() => undefined, () => undefined))
+    saving.current = saving.current.then(() =>
+      api.saveReaderAppearance(next).then(
+        () => undefined,
+        () => void toast.error("Could not keep the reader's appearance", { id: "reader-appearance" }),
+      ),
+    )
   }
 
   const run = (command: ReaderCommand) => {
@@ -71,18 +80,30 @@ function BookReader({ itemId, manifest, failure }: { itemId: string; manifest: B
         return
       }
       case "move":
-        return
+        return panel.current?.move(command.to)
+      case "confirm":
+        return panel.current?.confirm()
+      case "adjust":
+        return panel.current?.adjust(command.by)
       default:
         void session?.run(command)
     }
   }
 
+  const jump = (target: JumpTarget) => {
+    setLayer({ kind: "reading" })
+    void session?.jump(target)
+  }
+
+  useEffect(() => {
+    if (layer.kind === "reading" && session) host.current?.focus()
+  }, [layer.kind, session])
+
+  const keyContext: KeyContext = { flow: shownAppearance?.flow ?? "paginated", reflowable: session?.layout !== "fixed" }
+
   const onKey = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented) return
-    const command = commandFor(layer.kind, event, {
-      flow: shownAppearance?.flow ?? "paginated",
-      reflowable: session?.layout !== "fixed",
-    })
+    const command = commandFor(layer.kind, event, keyContext)
     if (!command || (!session && command.kind !== "back")) return
     event.preventDefault()
     event.stopPropagation()
@@ -139,7 +160,22 @@ function BookReader({ itemId, manifest, failure }: { itemId: string; manifest: B
       ) : phase.kind === "opening" ? (
         <ReaderMessage title="Opening the book" detail={phase.downloaded === null ? null : `Downloaded ${Math.round(phase.downloaded * 100)}%`} />
       ) : null}
-      <ReaderFooter position={position} />
+      <ReaderFooter position={position} onMenu={session ? () => run({ kind: "open", layer: "menu" }) : undefined} />
+      {session && shownAppearance && (
+        <ReaderPanels
+          layer={layer}
+          control={panel}
+          layout={session.layout}
+          toc={session.toc}
+          position={position}
+          appearance={shownAppearance}
+          keyContext={keyContext}
+          run={run}
+          jump={jump}
+          changeAppearance={changeAppearance}
+          leave={leave}
+        />
+      )}
     </div>
   )
 }
@@ -158,17 +194,22 @@ function ReaderMessage({ title, detail, onLeave }: { title: string; detail: stri
   )
 }
 
-function ReaderFooter({ position }: { position: ReadingPosition | null }) {
-  if (!position) return <div className="h-7 shrink-0" />
-  const count = position.page
+function ReaderFooter({ position, onMenu }: { position: ReadingPosition | null; onMenu: (() => void) | undefined }) {
+  const count = position?.page
     ? `Page ${position.page.current + 1} of ${position.page.total}`
-    : position.textLocation
+    : position?.textLocation
       ? `Location ${position.textLocation.current + 1} of ${position.textLocation.total}`
       : null
   return (
-    <p className="flex h-7 shrink-0 items-center justify-between gap-4 px-4 text-xs text-muted-foreground" data-reader-footer>
-      <span className="truncate">{position.chapter}</span>
-      <span className="shrink-0">{[count, `${Math.round(position.fraction * 100)}%`].filter(Boolean).join(" · ")}</span>
-    </p>
+    <div className="flex h-8 shrink-0 items-center gap-3 px-2 text-xs text-muted-foreground" data-reader-footer>
+      {onMenu && (
+        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" tabIndex={-1} onClick={onMenu}>
+          <Menu aria-hidden />
+          Menu
+        </Button>
+      )}
+      <span className="min-w-0 flex-1 truncate">{position?.chapter}</span>
+      {position && <span className="shrink-0">{[count, `${Math.round(position.fraction * 100)}%`].filter(Boolean).join(" · ")}</span>}
+    </div>
   )
 }

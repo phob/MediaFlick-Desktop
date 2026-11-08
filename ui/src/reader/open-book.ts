@@ -15,7 +15,7 @@ const PLAYBACK_KEYS: ReadonlySet<string> = new Set(["MediaPlayPause", "MediaPlay
 /** How far a chapter key moves a book without contents. */
 const PAGE_STEP = 10
 
-interface TocEntry {
+export interface TocEntry {
   label: string
   target: string | number
   depth: number
@@ -26,15 +26,17 @@ export interface ReadingPosition {
   /** The book's last content is on screen. */
   finished: boolean
   fraction: number
-  /** Zero-based page and page count of a PDF or comic. */
+  /** Zero-based page and page count of a book with fixed pages: a PDF, a comic or a fixed-layout EPUB. */
   page: { current: number; total: number } | null
   /** Zero-based location (about a screen of text) and their count in a text book. */
   textLocation: { current: number; total: number } | null
   chapter: string | null
+  /** The contents entry the reader is in: its href, or for a page list the page. */
+  tocTarget: string | number | null
   canReturn: boolean
 }
 
-type JumpTarget = { kind: "toc"; target: string | number } | { kind: "fraction"; fraction: number } | { kind: "page"; page: number }
+export type JumpTarget = { kind: "toc"; target: string | number } | { kind: "fraction"; fraction: number } | { kind: "page"; page: number }
 
 type SessionCommand = Extract<ReaderCommand, { kind: "turn" | "scroll" | "section" | "edge" | "return" }>
 
@@ -90,7 +92,10 @@ export async function openBook(host: HTMLElement, itemId: string, manifest: Book
   let restored = false
   const toPosition = (detail: FoliateLocation): ReadingPosition => {
     const section = detail.section ?? { current: 0, total: book.sections.length }
-    const fraction = Math.min(1, Math.max(0, detail.fraction ?? 0))
+    // foliate weighs fixed pages by their bytes, which makes a comic's percent jump; a page is a page here.
+    const fraction = view.isFixedLayout
+      ? section.current / Math.max(1, section.total - 1)
+      : Math.min(1, Math.max(0, detail.fraction ?? 0))
     const text = TEXT_FORMATS.has(manifest.format)
     return {
       location: text
@@ -98,9 +103,10 @@ export async function openBook(host: HTMLElement, itemId: string, manifest: Book
         : { kind: "page", page: section.current, pages: Math.max(section.total, section.current + 1) },
       finished: view.isFixedLayout ? section.current >= section.total - 1 : Boolean(view.renderer.atEnd),
       fraction,
-      page: text ? null : { current: section.current, total: section.total },
+      page: text && !view.isFixedLayout ? null : { current: section.current, total: section.total },
       textLocation: text && detail.location ? { current: detail.location.current, total: detail.location.total } : null,
       chapter: comic ? null : (detail.tocItem?.label?.trim() ?? null),
+      tocTarget: text ? (detail.tocItem?.href ?? null) : section.current,
       canReturn: view.history.canGoBack,
     }
   }
@@ -165,6 +171,17 @@ export async function openBook(host: HTMLElement, itemId: string, manifest: Book
     await view.goTo(Math.min(sections - 1, Math.max(0, page + direction * PAGE_STEP)))
   }
 
+  // A page fitted to the width can be taller than the window: next and
+  // previous scroll it first, and turn the page at its end.
+  const scrollOrTurn = async (to: "next" | "prev") => {
+    const page = view.renderer
+    const step = page.clientHeight * 0.85
+    const atEdge = to === "next" ? page.scrollTop + page.clientHeight >= page.scrollHeight - 1 : page.scrollTop <= 0
+    if (!atEdge) return page.scrollBy({ top: to === "next" ? step : -step })
+    await (to === "next" ? view.next() : view.prev())
+    page.scrollTop = to === "next" ? 0 : page.scrollHeight
+  }
+
   return {
     layout,
     toc,
@@ -174,7 +191,7 @@ export async function openBook(host: HTMLElement, itemId: string, manifest: Book
         case "turn":
           if (command.to === "left") return view.goLeft()
           if (command.to === "right") return view.goRight()
-          return command.to === "next" ? view.next() : view.prev()
+          return layout === "fixed" ? scrollOrTurn(command.to) : command.to === "next" ? view.next() : view.prev()
         case "scroll":
           return command.by > 0 ? view.next(host.clientHeight / 8) : view.prev(host.clientHeight / 8)
         case "section":
