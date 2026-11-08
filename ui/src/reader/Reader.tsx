@@ -5,13 +5,14 @@ import { toast } from "sonner"
 import { Menu } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { api, type BookManifest, type ReaderAppearance } from "@/lib/api"
+import { accountKey, useStatus } from "@/lib/queries"
 import { queryKeys } from "@/lib/query-client"
 import { FONT_SIZE } from "./appearance"
 import { commandFor, type KeyContext } from "./keys"
 import { nextLayer, type ReaderCommand, type ReaderLayer } from "./model"
 import { openBook, type BookSession, type JumpTarget, type ReadingPosition } from "./open-book"
 import { ReaderPanels, type PanelControl } from "./panels"
-import { useProgress } from "./progress"
+import { settled, useProgress } from "./progress"
 import type { ReaderEntry } from "./route"
 
 type Phase = { kind: "opening"; downloaded: number | null } | { kind: "ready"; session: BookSession } | { kind: "failed"; message: string }
@@ -30,20 +31,26 @@ export default function Reader() {
   const { id = "" } = useParams()
   const [search] = useSearchParams()
   const entry: ReaderEntry = search.get("from") === "start" ? "start" : "resume"
+  const { data: status } = useStatus()
+  const account = accountKey(status)
   const manifest = useQuery({
     queryKey: queryKeys.book(id, entry),
-    queryFn: ({ signal }) => api.book(id, entry, signal),
+    // A reader of this book that just closed may still be saving its place.
+    queryFn: async ({ signal }) => {
+      await settled(account, id)
+      return api.book(id, entry, signal)
+    },
     staleTime: 0,
     gcTime: 0,
     retry: false,
   })
-  return <BookReader key={`${id}:${entry}`} itemId={id} manifest={manifest.data} failure={manifest.error ? errorMessage(manifest.error) : null} />
+  return <BookReader key={`${id}:${entry}`} account={account} itemId={id} manifest={manifest.data} failure={manifest.error ? errorMessage(manifest.error) : null} />
 }
 
-function BookReader({ itemId, manifest, failure }: { itemId: string; manifest: BookManifest | undefined; failure: string | null }) {
+function BookReader({ account, itemId, manifest, failure }: { account: string; itemId: string; manifest: BookManifest | undefined; failure: string | null }) {
   const host = useRef<HTMLDivElement>(null)
   const leave = useLeaveReader(itemId)
-  const report = useProgress(itemId)
+  const report = useProgress(account, itemId)
   const [phase, setPhase] = useState<Phase>({ kind: "opening", downloaded: null })
   const [layer, setLayer] = useState<ReaderLayer>({ kind: "reading" })
   const [position, setPosition] = useState<ReadingPosition | null>(null)
