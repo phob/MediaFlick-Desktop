@@ -497,7 +497,7 @@ mod tests {
             ("/api/play", br#"{"itemId":"item-1","quality":"8k"}"#),
             ("/api/auth/connect", b"{"),
             ("/api/player/command", br#"{"command":"set-mute"}"#),
-            ("/api/player/command", br#"{"command":"toggle-pause"}"#),
+            ("/api/player/command", br#"{"command":"toggle-shuffle"}"#),
             (
                 "/api/player/command",
                 br#"{"command":"set-video-aspect","aspect":"5:4"}"#,
