@@ -330,8 +330,8 @@ function appWindow() {
 
 /**
  * Real X11 key presses (XTEST), as a TV remote's keys arrive, after a real
- * click into the book: Return, Right, Next/Previous track, Menu, Down,
- * Page Up and Back. Linux only.
+ * click into the book, which also turns the page: Return, Right, Next/Previous
+ * track, Menu, Down, Page Up and Back. Linux only.
  */
 async function remoteX11Pass(ctx, book, report) {
   const row = (report.x11 = { book: book.key, steps: [] })
@@ -346,9 +346,10 @@ async function remoteX11Pass(ctx, book, report) {
   const opened = await moved(ctx, book, place(ctx, book.id)?.location ?? null, "x11: the opened place saved")
   x("mousemove", "--window", window, "640", "380", "click", "1")
   const focus = await ctx.until(`document.activeElement?.tagName === "FOLIATE-VIEW" && document.activeElement.tagName`, "x11: a click puts the focus inside the book's iframe")
-  row.steps.push({ focus })
+  const clicked = await moved(ctx, book, opened, "x11: the click on the book turns the page")
+  row.steps.push({ focus, clicked })
   x("key", "Right")
-  const turned = await moved(ctx, book, opened, "x11: Right inside the iframe turns the page")
+  const turned = await moved(ctx, book, clicked, "x11: Right inside the iframe turns the page")
   x("key", "XF86AudioNext")
   const chapter = await moved(ctx, book, turned, "x11: Next track inside the iframe moves to the next chapter")
   x("key", "XF86AudioPrev")

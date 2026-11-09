@@ -2,9 +2,12 @@ import type { LayerKind, ReaderCommand } from "./model"
 
 /**
  * A key as the table writes it: `KeyboardEvent.key` (a space is `Space`),
- * after the modifiers held, as in `Shift+Space` or `Alt+ArrowLeft`.
+ * after the modifiers held, as in `Shift+Space` or `Alt+ArrowLeft`, or a
+ * mouse button on the book.
  */
 type Chord = string
+
+export type MouseChord = "Click" | "RightClick"
 
 interface Binding {
   chords: readonly Chord[]
@@ -38,8 +41,8 @@ const KEYMAP: Readonly<Record<LayerKind, readonly Binding[]>> = {
   reading: [
     { chords: ["ArrowRight"], command: { kind: "turn", to: "right" }, label: "Page to the right", repeat: true },
     { chords: ["ArrowLeft"], command: { kind: "turn", to: "left" }, label: "Page to the left", repeat: true },
-    { chords: ["PageDown", "Space"], command: { kind: "turn", to: "next" }, label: "Next page", repeat: true },
-    { chords: ["PageUp", "Shift+Space"], command: { kind: "turn", to: "prev" }, label: "Previous page", repeat: true },
+    { chords: ["PageDown", "Space", "Click"], command: { kind: "turn", to: "next" }, label: "Next page", repeat: true },
+    { chords: ["PageUp", "Shift+Space", "RightClick"], command: { kind: "turn", to: "prev" }, label: "Previous page", repeat: true },
     { chords: ["ArrowDown"], command: { kind: "turn", to: "next" }, label: "Next page", repeat: true, flow: "paginated" },
     { chords: ["ArrowUp"], command: { kind: "turn", to: "prev" }, label: "Previous page", repeat: true, flow: "paginated" },
     { chords: ["ArrowDown"], command: { kind: "scroll", by: 1 }, label: "Scroll down", repeat: true, flow: "scrolled" },
@@ -99,6 +102,10 @@ export function commandFor(layer: LayerKind, event: KeyboardEvent, context: KeyC
   const binding = KEYMAP[layer].find((candidate) => candidate.chords.includes(chord) && applies(candidate, context))
   if (!binding || (event.repeat && !binding.repeat)) return null
   return binding.command
+}
+
+export function commandForMouse(layer: LayerKind, chord: MouseChord, context: KeyContext): ReaderCommand | null {
+  return KEYMAP[layer].find((binding) => binding.chords.includes(chord) && applies(binding, context))?.command ?? null
 }
 
 export function bindingsFor(layer: LayerKind, context: KeyContext) {

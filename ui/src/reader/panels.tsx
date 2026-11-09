@@ -301,7 +301,7 @@ const KEY_NAMES: Readonly<Record<string, string>> = {
   ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓",
   PageUp: "Page Up", PageDown: "Page Down", Escape: "Esc", Backspace: "Backspace",
   BrowserBack: "Remote Back", ContextMenu: "Menu key", Enter: "Enter / OK", Space: "Space",
-  "Shift+Space": "Shift+Space", "Alt+ArrowLeft": "Alt+←",
+  "Shift+Space": "Shift+Space", "Alt+ArrowLeft": "Alt+←", Click: "Left click", RightClick: "Right click",
   MediaTrackNext: "Next track", MediaTrackPrevious: "Previous track", MediaFastForward: "Fast forward", MediaRewind: "Rewind",
 }
 
