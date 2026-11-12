@@ -7,8 +7,7 @@ use serde_json::{Map, Value, json};
 
 use crate::app::{logger, urls};
 use crate::playback::{
-    HttpHeader, PlaybackRequest, QueueReport, ReportingState, TICKS_PER_MILLISECOND, non_empty,
-    query_auth_token,
+    HttpHeader, PlaybackRequest, QueueReport, ReportingState, non_empty, query_auth_token,
 };
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -262,16 +261,7 @@ impl PlaybackSession {
                 .map(|queue| queue.current.as_str().to_string()),
             audio_stream_index: launch.audio_stream_index,
             subtitle_stream_index: launch.subtitle_stream_index,
-            start_position_ticks: launch
-                .start_time_ticks
-                .or_else(|| {
-                    launch
-                        .start_milliseconds
-                        .filter(|value| *value > 0.0)
-                        .map(|value| (value * TICKS_PER_MILLISECOND).round() as i64)
-                })
-                .unwrap_or(0)
-                .max(0),
+            start_position_ticks: launch.start_time_ticks.unwrap_or(0).max(0),
             runtime_ticks: launch.runtime_ticks.filter(|ticks| *ticks > 0),
             playback_start_time_ticks: unix_now_ticks(),
             auth_headers,

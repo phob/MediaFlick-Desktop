@@ -321,4 +321,210 @@ mod tests {
             Some(SegmentSkipAction::Skip(0))
         );
     }
+
+    fn always_skip_intro() -> SegmentSkipConfig {
+        SegmentSkipConfig {
+            intro: SegmentSkipMode::Always,
+            ..SegmentSkipConfig::default()
+        }
+    }
+
+    fn countdown(remaining_seconds: u64) -> Option<SegmentSkipAction> {
+        Some(SegmentSkipAction::Countdown {
+            segment_index: 0,
+            remaining_seconds,
+        })
+    }
+
+    /// README: per-type auto-skip; a segment's end is exclusive. The skip is
+    /// for this segment only while the position is inside it, it is not yet
+    /// skipped and its type is still set to Always skip.
+    #[test]
+    fn a_pending_automatic_skip_never_fires_once_its_reason_is_gone() {
+        let ask_me = SegmentSkipConfig::default();
+        let cases = [
+            ("seeked before the start", 99, false, always_skip_intro()),
+            ("reached the end", 200, false, always_skip_intro()),
+            ("seeked past the end", 250, false, always_skip_intro()),
+            ("skipped by hand", 150, true, always_skip_intro()),
+            ("switched to Ask me", 150, false, ask_me),
+        ];
+        for (case, ticks, skipped, later) in cases {
+            let mut segments = vec![segment(SegmentType::Intro, 100, 200)];
+            let started = Instant::now();
+            let mut state = SegmentSkipState::default();
+            assert_eq!(
+                state.update(&segments, &always_skip_intro(), 150, started),
+                countdown(3),
+                "{case}"
+            );
+            segments[0].triggered = skipped;
+            for second in 1..=4 {
+                let now = started + Duration::from_secs(second);
+                assert_eq!(
+                    state.tick(&segments, &later, ticks, now),
+                    None,
+                    "{case} at {second} s"
+                );
+            }
+        }
+    }
+
+    /// README: auto-skip with a countdown, one step per second down to the
+    /// skip.
+    #[test]
+    fn the_automatic_skip_counts_down_once_a_second_then_skips() {
+        let segments = vec![segment(SegmentType::Intro, 100, 200)];
+        let started = Instant::now();
+        let mut state = SegmentSkipState::default();
+        assert_eq!(
+            state.update(&segments, &always_skip_intro(), 150, started),
+            countdown(3)
+        );
+        for (milliseconds, expected) in [
+            (500, None),
+            (999, None),
+            (1000, countdown(2)),
+            (1500, None),
+            (2000, countdown(1)),
+            (2999, None),
+            (3000, Some(SegmentSkipAction::Skip(0))),
+        ] {
+            let now = started + Duration::from_millis(milliseconds);
+            assert_eq!(
+                state.tick(&segments, &always_skip_intro(), 150, now),
+                expected,
+                "{milliseconds} ms"
+            );
+        }
+    }
+
+    /// Playback reports its position several times a second; that must not
+    /// restart the countdown, or the skip would never come.
+    #[test]
+    fn position_updates_inside_the_segment_keep_the_countdown_running() {
+        let segments = vec![segment(SegmentType::Intro, 100, 200)];
+        let started = Instant::now();
+        let mut state = SegmentSkipState::default();
+        assert_eq!(
+            state.update(&segments, &always_skip_intro(), 150, started),
+            countdown(3)
+        );
+        for step in 1..12_u64 {
+            let now = started + Duration::from_millis(step * 250);
+            let ticks = 150 + i64::try_from(step).expect("small");
+            assert_eq!(
+                state.update(&segments, &always_skip_intro(), ticks, now),
+                None,
+                "update {step}"
+            );
+        }
+        assert_eq!(
+            state.tick(
+                &segments,
+                &always_skip_intro(),
+                165,
+                started + Duration::from_secs(3)
+            ),
+            Some(SegmentSkipAction::Skip(0))
+        );
+    }
+
+    /// features/playback.md: "Only Ask me sends Seek to Skip Intro to the
+    /// OSD, every 3 s inside the segment", proven by the `segments` drive.
+    /// Entering another segment prompts at once.
+    #[test]
+    fn ask_me_prompts_every_three_seconds_and_at_once_in_a_new_segment() {
+        let segments = vec![
+            segment(SegmentType::Intro, 100, 200),
+            segment(SegmentType::Outro, 300, 400),
+        ];
+        let config = SegmentSkipConfig::default();
+        let started = Instant::now();
+        let at = |milliseconds| started + Duration::from_millis(milliseconds);
+        let mut state = SegmentSkipState::default();
+
+        assert_eq!(
+            state.update(&segments, &config, 150, at(0)),
+            Some(SegmentSkipAction::Prompt(0))
+        );
+        state.mark_prompt_shown(at(0));
+        assert_eq!(state.update(&segments, &config, 151, at(1000)), None);
+        assert_eq!(state.update(&segments, &config, 152, at(2999)), None);
+        assert_eq!(
+            state.update(&segments, &config, 153, at(3000)),
+            Some(SegmentSkipAction::Prompt(0))
+        );
+        state.mark_prompt_shown(at(3000));
+        assert_eq!(
+            state.update(&segments, &config, 350, at(3500)),
+            Some(SegmentSkipAction::Prompt(1))
+        );
+    }
+
+    /// Same source: the prompt belongs to an Ask me segment that is not yet
+    /// skipped, from its start up to, not including, its end.
+    #[test]
+    fn ask_me_prompts_only_inside_an_unskipped_ask_me_segment() {
+        let mut segments = vec![
+            segment(SegmentType::Intro, 100, 200),
+            segment(SegmentType::Outro, 300, 400),
+        ];
+        let config = SegmentSkipConfig {
+            credits: SegmentSkipMode::Always,
+            ..SegmentSkipConfig::default()
+        };
+        for (ticks, expected) in [
+            (99, None),
+            (100, Some(0)),
+            (199, Some(0)),
+            (200, None),
+            (350, None),
+        ] {
+            assert_eq!(
+                prompt_segment_at(&segments, &config, ticks),
+                expected,
+                "{ticks}"
+            );
+        }
+        segments[0].triggered = true;
+        assert_eq!(prompt_segment_at(&segments, &config, 150), None);
+    }
+
+    /// The mpv controller cancels a pending skip when the skip settings
+    /// change, and clears the state when it stores a new segment list, which
+    /// then prompts at once.
+    #[test]
+    fn cancel_stops_a_pending_skip_and_clear_starts_afresh() {
+        let segments = vec![segment(SegmentType::Intro, 100, 200)];
+        let started = Instant::now();
+        let mut state = SegmentSkipState::default();
+        assert_eq!(
+            state.update(&segments, &always_skip_intro(), 150, started),
+            countdown(3)
+        );
+        state.cancel_pending();
+        assert_eq!(
+            state.tick(
+                &segments,
+                &always_skip_intro(),
+                150,
+                started + Duration::from_secs(3)
+            ),
+            None
+        );
+
+        let ask_me = SegmentSkipConfig::default();
+        let mut state = SegmentSkipState::default();
+        assert_eq!(
+            state.update(&segments, &ask_me, 150, started),
+            Some(SegmentSkipAction::Prompt(0))
+        );
+        state.mark_prompt_shown(started);
+        state.clear();
+        assert_eq!(
+            state.update(&segments, &ask_me, 151, started + Duration::from_secs(1)),
+            Some(SegmentSkipAction::Prompt(0))
+        );
+    }
 }
