@@ -115,3 +115,105 @@ impl AudioQueue {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::playback::model::AudioDisplay;
+
+    const QUEUE_ID: u64 = 7;
+
+    /// Four distinct items, so longer queues hold the same item twice.
+    fn track(ordinal: usize) -> AudioTrack {
+        let item = ordinal % 4;
+        AudioTrack {
+            kind: AudioKind::Music,
+            display: AudioDisplay {
+                item_id: format!("item-{item}"),
+                title: format!("Track {item}"),
+                artists: Vec::new(),
+                album: None,
+                album_id: None,
+                artwork: None,
+                disc_number: None,
+                track_number: None,
+                runtime_ticks: None,
+            },
+        }
+    }
+
+    /// The music changelog and the now-playing bar's contract: "n of m",
+    /// Up next, Previous and Next enabled only where they lead somewhere, and
+    /// Jellyfin sees the whole queue in order with the entry that plays.
+    fn assert_queue_at(queue: &AudioQueue, tracks: &[AudioTrack], position: usize) {
+        let view = queue.view(AudioPhase::Playing);
+        let report = queue.report();
+        assert_eq!(view.current, tracks[position].display);
+        assert_eq!(
+            view.next.as_ref(),
+            tracks.get(position + 1).map(|track| &track.display)
+        );
+        assert_eq!((view.index, view.length), (position, tracks.len()));
+        assert_eq!(view.can_previous, position > 0);
+        assert_eq!(view.can_next, position + 1 < tracks.len());
+
+        let reported: Vec<&str> = report
+            .entries
+            .iter()
+            .map(|entry| entry.item_id.as_str())
+            .collect();
+        let queued: Vec<&str> = tracks
+            .iter()
+            .map(|track| track.display.item_id.as_str())
+            .collect();
+        assert_eq!(reported, queued);
+        let mut ids: Vec<&str> = report
+            .entries
+            .iter()
+            .map(|entry| entry.playlist_item_id.as_str())
+            .collect();
+        assert_eq!(report.current, report.entries[position].playlist_item_id);
+        assert_eq!(view.playlist_item_id, report.current);
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), tracks.len(), "every queue entry has its own id");
+    }
+
+    /// Checked against a plain position in the track list, for every length
+    /// up to 12, every start and generated Next/Previous sequences.
+    #[test]
+    fn next_and_previous_follow_a_plain_position_in_the_list() {
+        let mut seed: u64 = 0x5eed;
+        for length in 1..=12 {
+            let tracks: Vec<AudioTrack> = (0..length).map(track).collect();
+            for start in 0..length {
+                for _ in 0..20 {
+                    let mut queue = AudioQueue::new(QUEUE_ID, tracks.clone(), start)
+                        .expect("start inside the list");
+                    let mut position = start;
+                    assert_queue_at(&queue, &tracks, position);
+                    for _ in 0..3 * length {
+                        seed = seed
+                            .wrapping_mul(6_364_136_223_846_793_005)
+                            .wrapping_add(1_442_695_040_888_963_407);
+                        if seed >> 63 == 0 {
+                            let can_move = position + 1 < length;
+                            assert_eq!(queue.advance(), can_move, "Next at {position} of {length}");
+                            position += usize::from(can_move);
+                        } else {
+                            let can_move = position > 0;
+                            assert_eq!(
+                                queue.retreat(),
+                                can_move,
+                                "Previous at {position} of {length}"
+                            );
+                            position -= usize::from(can_move);
+                        }
+                        assert_eq!(queue.has_previous(), position > 0);
+                        assert_queue_at(&queue, &tracks, position);
+                    }
+                }
+            }
+        }
+    }
+}
