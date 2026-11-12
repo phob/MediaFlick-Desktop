@@ -55,6 +55,7 @@ A release is a commit on `main` that already carries its version and changelog
 section. In the release-notes PR, after consolidating the fragments, run:
 
 ```sh
+mkdir -p build
 python3 scripts/prepare-release.py --version 0.2.0 --notes-out build/release-notes.md
 ```
 
