@@ -6,7 +6,8 @@
 // inside the intro, reads `/api/player/state`'s skipSegments, the injected
 // markers in mpv's chapter-list, the player bar's `Skip Intro`, mpv's OSD
 // prompt (raw `show-text` commands in app.log) and the position running on
-// through the intro. With External mpv the page stays usable, so one more case
+// through the intro; after Skip Intro, Jellyfin's session must hold a position
+// past the intro. With External mpv the page stays usable, so one more case
 // switches Intro to Don't show and saves mid-playback.
 // Plays real audio and writes the test user's playstate; leaves both episodes
 // unplayed without a resume point and signs the app's own token out.
@@ -232,6 +233,14 @@ async function runCase(ctx, spec, { episode, integrated, proxy, report }) {
       return now >= INTRO.endS * 1000 - 1000 ? now : null
     }, "the position at the end of the intro", 15000)
     expect(result.skippedToMs !== null && !(await skipButtonShown(ctx)), `Skip Intro jumped to ${((result.skippedToMs ?? NaN) / 1000).toFixed(1)} s and left the bar`)
+    // What Jellyfin itself holds for this playback, not what the app shows.
+    const { deviceId } = await status(ctx)
+    result.serverAfterSkipS = await settle(ctx, async () => {
+      const live = (await ctx.jellyfin(`/Sessions?deviceId=${encodeURIComponent(deviceId)}`)).find((entry) => entry.NowPlayingItem?.Id === episode.id)
+      const positionS = ticksToS(live?.PlayState?.PositionTicks ?? 0)
+      return positionS >= INTRO.endS - 1 ? positionS : null
+    }, "Jellyfin's session past the end of the intro", 30000)
+    expect(result.serverAfterSkipS !== null, `Jellyfin's session follows the skip (${result.serverAfterSkipS?.toFixed(1) ?? "still inside the intro"} s, intro ends at ${INTRO.endS} s)`)
   }
 
   if (spec.liveSwitch) {

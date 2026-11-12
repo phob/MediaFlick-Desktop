@@ -100,16 +100,21 @@ pub struct PreparedAudio {
     pub request: PlaybackRequest,
 }
 
+/// The account a playback was started from. The coordinator stops the
+/// playback once that account is no longer the signed-in one.
+pub trait PlaybackOwner: Send + Sync {
+    fn is_current(&self) -> bool;
+}
+
 /// The media server's side of an audio queue, bound to the account that
 /// built it.
-pub trait AudioSource: Send + Sync {
+pub trait AudioSource: PlaybackOwner {
     /// Negotiates one entry. Blocking; the coordinator calls it on its
     /// preparation worker, holding no lock. The error is shown to the user.
     fn prepare(&self, track: &AudioTrack, start: AudioStart) -> Result<PreparedAudio, String>;
     /// Runs `dispatch` while the account that built the queue is still the
     /// signed-in one, and says whether it ran.
     fn dispatch_if_current(&self, dispatch: &mut dyn FnMut()) -> bool;
-    fn is_current(&self) -> bool;
 }
 
 /// Port implemented by each player adapter.
