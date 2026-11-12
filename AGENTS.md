@@ -70,13 +70,19 @@ If a backend or real Jellyfin session is unavailable, complete applicable automa
 
 Choose checks that establish the changed behavior and cover the affected boundaries.
 
-When adding tests:
+When adding tests, what matters is where the expected result comes from. A test whose expectations were read off the code it checks passes whatever that code does and proves nothing.
 
-- Prefer end-to-end tests as the only new tests. Verify complex behavior by driving the real user or caller path, such as the running app, a loopback Jellyfin or Companion server, or a real mpv runtime.
+- Verify behavior a user or caller sees end to end, by driving the real path: the running app, a loopback Jellyfin or Companion server, or a real mpv runtime. Run the drives that cover the changed behavior (`.claude/skills/verify-mediaflick/features/README.md` maps features to drives), not every drive. A change that only alters presentation, such as a label, font or spacing, needs a screenshot of each affected page, not functional drives.
 - Every end-to-end test must end by producing a verifiable, repeatable artifact that a reviewer can inspect or regenerate, such as a log, screenshot, recording, or JSON report.
-- Never write unit tests after writing the code they cover. If a system must be tested in isolation, first write down every way it could fail (in the plan or PR description), then write the isolated tests for those failures, and only then write the code.
-- If no end-to-end path exists for the changed behavior, report that gap instead of substituting unit tests written after the code.
-- Existing unit, component, and Companion tests remain part of the checks below. Keep them passing and update them for contract changes, but do not expand them as a substitute for end-to-end coverage.
+- Isolated tests (Rust unit tests, Vitest, Companion tests) are for pure domain logic with a stated contract, such as playback policy in `src/playback/`, parsers, filters, sorting and kind mappings. Isolate that logic by its inputs; do not mock modules. For each isolated test:
+  - Take the expected values from a source independent of the implementation: a rule the operator approved, a real Jellyfin, Companion or mpv log or response, a reproduced bug, or an invariant. Name the source in the test or the PR description.
+  - First write down every way the logic could fail (in the plan or PR description). For new logic, then write the tests, run them and see each fail on its assertion for the stated reason, and only then write the code. A compile error does not count: give a new function a body that returns a wrong value until its tests fail. Never write isolated tests after new code they cover, except a test that reproduces a fault found during implementation and fails before the fix.
+  - A test for existing behavior must catch the fault it names: break the code that way, for example with `cargo mutants`, and see the test fail.
+  - Where a rule holds for every input, check it as an invariant over many generated inputs instead of a few hand-picked examples.
+- A bug fix starts with a test that reproduces the bug and fails, end to end or isolated by the rules above.
+- Do not change an existing test's expectations in the same change as the code it covers unless the operator asked for that behavior change; say so in the PR description. Never weaken, delete or skip a failing test to make a change pass.
+- If neither an end-to-end path nor an isolated contract exists for the changed behavior, report that gap instead of writing tests that mirror the code.
+- Existing unit, component, and Companion tests remain part of the checks below. Keep them passing and update them for contract changes.
 
 The standard component checks are:
 
