@@ -1,16 +1,16 @@
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use crate::app::services::Services;
 use crate::playback::{
     ArtworkRef, AudioDisplay, AudioKind, AudioPlan, AudioSource, AudioStart, AudioTrack,
-    MAX_QUEUE_LENGTH, PreparedAudio,
+    MAX_QUEUE_LENGTH, PlaybackOwner, PreparedAudio,
 };
 
 use super::super::api::items::{self, PlaybackInfoRequest};
 use super::super::api::model::BaseItemDto;
 use super::super::api::{ApiError, JellyfinClient};
 use super::super::session::SessionScope;
-use super::{PlayOptions, StartError, build, resume_start_ticks};
+use super::{AccountOwner, PlayOptions, StartError, build, resume_start_ticks};
 
 pub struct QueueAsk {
     /// An album, an audiobook or one track.
@@ -164,8 +164,7 @@ pub fn start_queue(
     playback.play_audio(
         plan,
         Arc::new(JellyfinAudioSource {
-            services: Arc::downgrade(services),
-            scope: scope.clone(),
+            owner: AccountOwner::new(services, scope),
         }),
     );
     Ok(first)
@@ -260,8 +259,7 @@ pub fn start_item_queue(
     playback.play_audio(
         plan,
         Arc::new(JellyfinAudioSource {
-            services: Arc::downgrade(services),
-            scope: scope.clone(),
+            owner: AccountOwner::new(services, scope),
         }),
     );
     Ok(Some(first))
@@ -296,8 +294,7 @@ fn shuffle<T>(items: &mut [T]) {
 }
 
 struct JellyfinAudioSource {
-    services: Weak<Services>,
-    scope: SessionScope,
+    owner: AccountOwner,
 }
 
 impl JellyfinAudioSource {
@@ -316,7 +313,7 @@ impl JellyfinAudioSource {
             (AudioKind::Audiobook, AudioStart::Default) => {
                 let position = services
                     .session
-                    .fetch_current(&self.scope, |client, user_id| {
+                    .fetch_current(&self.owner.scope, |client, user_id| {
                         items::fetch_item(client, user_id, track.item_id())
                     })
                     .map_err(opened)?
@@ -324,7 +321,7 @@ impl JellyfinAudioSource {
                     .map_or(0, |data| data.playback_position_ticks);
                 let options = PlayOptions {
                     resume: true,
-                    viewing: services.accounts.viewing(self.scope.account()),
+                    viewing: services.accounts.viewing(self.owner.scope.account()),
                     ..PlayOptions::default()
                 };
                 resume_start_ticks(&options, position)
@@ -333,7 +330,7 @@ impl JellyfinAudioSource {
         let quality = settings.streaming_quality;
         let info = services
             .session
-            .fetch_current(&self.scope, |client, user_id| {
+            .fetch_current(&self.owner.scope, |client, user_id| {
                 items::playback_info(
                     client,
                     user_id,
@@ -351,7 +348,7 @@ impl JellyfinAudioSource {
             ..PlayOptions::default()
         };
         let mut request = build(
-            self.scope.client(),
+            self.owner.scope.client(),
             &info,
             quality,
             &options,
@@ -381,9 +378,16 @@ impl JellyfinAudioSource {
     }
 }
 
+impl PlaybackOwner for JellyfinAudioSource {
+    fn is_current(&self) -> bool {
+        self.owner.is_current()
+    }
+}
+
 impl AudioSource for JellyfinAudioSource {
     fn prepare(&self, track: &AudioTrack, start: AudioStart) -> Result<PreparedAudio, String> {
         let services = self
+            .owner
             .services
             .upgrade()
             .ok_or_else(|| "MediaFlick is shutting down".to_string())?;
@@ -398,13 +402,13 @@ impl AudioSource for JellyfinAudioSource {
     }
 
     fn dispatch_if_current(&self, dispatch: &mut dyn FnMut()) -> bool {
-        let Some(services) = self.services.upgrade() else {
+        let Some(services) = self.owner.services.upgrade() else {
             return false;
         };
         services
             .session
             .commit_if_current(
-                &self.scope,
+                &self.owner.scope,
                 || (),
                 |_| {
                     dispatch();
@@ -412,11 +416,5 @@ impl AudioSource for JellyfinAudioSource {
                 },
             )
             .is_ok()
-    }
-
-    fn is_current(&self) -> bool {
-        self.services
-            .upgrade()
-            .is_some_and(|services| services.session.scope_is_current(&self.scope))
     }
 }

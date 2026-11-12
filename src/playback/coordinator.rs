@@ -11,8 +11,8 @@ use super::model::{AudioNowPlaying, AudioPhase, allocate_playback_id, ticks_to_m
 use super::queue::{AudioQueue, AudioTrack};
 use super::{
     AudioSource, AudioStart, BackendEvent, NativeWindowHandle, NowPlaying, PlaybackContent,
-    PlaybackEvent, PlaybackRequest, PlayerBackend, PlayerCommand, PlayerSnapshot, PreparedAudio,
-    StopReason,
+    PlaybackEvent, PlaybackOwner, PlaybackRequest, PlayerBackend, PlayerCommand, PlayerSnapshot,
+    PreparedAudio, StopReason,
 };
 
 const PREVIOUS_RESTARTS_AFTER_MS: f64 = 3000.0;
@@ -127,6 +127,7 @@ enum Command {
         path: String,
         fullscreen: FullscreenBehavior,
         request: Box<PlaybackRequest>,
+        owner: Arc<dyn PlaybackOwner>,
     },
     Audio {
         plan: Box<AudioPlan>,
@@ -238,12 +239,20 @@ impl PlaybackCoordinator {
             .map_err(|error| format!("native UI presentation did not complete: {error}"))?
     }
 
-    /// Plays a video, replacing whatever plays, an audio queue included.
-    pub fn open(&self, path: String, fullscreen: FullscreenBehavior, request: PlaybackRequest) {
+    /// Plays a video, replacing whatever plays, an audio queue included,
+    /// until it ends or `owner` is no longer the signed-in account.
+    pub fn open(
+        &self,
+        path: String,
+        fullscreen: FullscreenBehavior,
+        request: PlaybackRequest,
+        owner: Arc<dyn PlaybackOwner>,
+    ) {
         let _ = self.commands.send(Command::Video {
             path,
             fullscreen,
             request: Box::new(request),
+            owner,
         });
     }
 
@@ -323,6 +332,7 @@ enum Session {
     Video {
         load_id: i64,
         item_id: Option<String>,
+        owner: Arc<dyn PlaybackOwner>,
     },
     Audio {
         queue: Box<AudioQueue>,
@@ -380,11 +390,19 @@ impl Actor {
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
             }
-            if let Session::Audio { source, .. } = &self.session
-                && !source.is_current()
-            {
-                tracing::info!(target: "playback", "the account that started the audio queue is no longer signed in; stopping it");
-                self.stop_audio(StopReason::Stop);
+            match &self.session {
+                Session::Audio { source, .. } if !source.is_current() => {
+                    tracing::info!(target: "playback", "the account that started the audio queue is no longer signed in; stopping it");
+                    self.stop_audio(StopReason::Stop);
+                }
+                Session::Video { owner, .. } if !owner.is_current() => {
+                    tracing::info!(target: "playback", "the account that started the video is no longer signed in; stopping it");
+                    // The Stopped event that follows finds the session idle
+                    // and reaches the UI as a video's stop.
+                    self.end_session();
+                    self.shared.backend().control(PlayerCommand::Stop);
+                }
+                _ => {}
             }
         }
     }
@@ -395,6 +413,7 @@ impl Actor {
                 path,
                 fullscreen,
                 mut request,
+                owner,
             } => {
                 self.abandon_audio();
                 let load_id = allocate_playback_id();
@@ -404,6 +423,7 @@ impl Actor {
                 self.session = Session::Video {
                     load_id,
                     item_id: request.item_id.clone(),
+                    owner,
                 };
                 self.live = Some(load_id);
                 self.shared.publish(Published::Video);
@@ -447,7 +467,9 @@ impl Actor {
                     Session::Audio { queue, phase, .. } => {
                         Some(synthetic_stop(queue.view(phase.view()), StopReason::Quit))
                     }
-                    Session::Video { load_id, item_id } => Some(PlayerSnapshot {
+                    Session::Video {
+                        load_id, item_id, ..
+                    } => Some(PlayerSnapshot {
                         playback_id: Some(*load_id),
                         item_id: item_id.clone(),
                         stop_reason: Some(StopReason::Quit),
