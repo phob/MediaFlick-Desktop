@@ -375,6 +375,14 @@ jobs:
           # of the release, so enable source indexes before installing packages.
           sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update
+          # Ubuntu lists the source of a package's newest version only, and the
+          # runner image lags behind the archive. Bring its Ubuntu packages up
+          # to date, phased updates included, so every bundled library has a
+          # source to download.
+          sudo apt-get upgrade -y \
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources \
+            -o Dir::Etc::sourceparts=- \
+            -o APT::Get::Always-Include-Phased-Updates=true
           sudo apt-get install -y \
             build-essential \
             cmake \
