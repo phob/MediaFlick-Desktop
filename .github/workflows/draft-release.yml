@@ -39,6 +39,7 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
           TEST_DRAFT: ${{ inputs.test_draft }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           python3 -m unittest discover -s scripts -p 'test_prepare_release.py'
@@ -52,22 +53,28 @@ jobs:
             exit 1
           fi
 
-          extra_args=()
           if [[ "$TEST_DRAFT" == true ]]; then
-            extra_args+=(--test-draft)
+            # A test draft stamps its version onto the build jobs only.
+            python3 scripts/prepare-release.py --version "$version" --test-draft \
+              --notes-out "$RUNNER_TEMP/release-notes.md"
+            git diff --binary -- Cargo.toml Cargo.lock > "$RUNNER_TEMP/release.patch"
+            test -s "$RUNNER_TEMP/release.patch"
+          else
+            # A release is the commit the release-notes PR merged: it already
+            # carries the version and the changelog section, and it passed the
+            # PR checks. Nothing is committed here.
+            if [[ "$GITHUB_REF" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
+              echo "A release is built from ${DEFAULT_BRANCH}. Use test_draft on other branches." >&2
+              exit 1
+            fi
+            python3 scripts/prepare-release.py --version "$version" --check \
+              --notes-out "$RUNNER_TEMP/release-notes.md"
           fi
-          python3 scripts/prepare-release.py \
-            --version "$version" \
-            --notes-out "$RUNNER_TEMP/release-notes.md" \
-            "${extra_args[@]}"
-
-          git diff --binary -- Cargo.toml Cargo.lock CHANGELOG.md > "$RUNNER_TEMP/release.patch"
-          test -s "$RUNNER_TEMP/release.patch"
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Upload prepared release patch and notes
+      - name: Upload release notes and the test-draft version patch
         uses: actions/upload-artifact@v7
         with:
           name: release-prep
@@ -90,13 +97,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Download prepared release patch
+      - name: Download test-draft version patch
+        if: ${{ inputs.test_draft }}
         uses: actions/download-artifact@v8
         with:
           name: release-prep
           path: release-prep
 
-      - name: Apply prepared release patch
+      - name: Apply test-draft version patch
+        if: ${{ inputs.test_draft }}
         shell: pwsh
         run: git apply release-prep\release.patch
 
@@ -319,13 +328,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Download prepared release patch
+      - name: Download test-draft version patch
+        if: ${{ inputs.test_draft }}
         uses: actions/download-artifact@v8
         with:
           name: release-prep
           path: release-prep
 
-      - name: Apply prepared release patch
+      - name: Apply test-draft version patch
+        if: ${{ inputs.test_draft }}
         run: git apply release-prep/release.patch
 
       - name: Install Rust toolchain
@@ -364,6 +375,14 @@ jobs:
           # of the release, so enable source indexes before installing packages.
           sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update
+          # Ubuntu lists the source of a package's newest version only, and the
+          # runner image lags behind the archive. Bring its Ubuntu packages up
+          # to date, phased updates included, so every bundled library has a
+          # source to download.
+          sudo apt-get upgrade -y \
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources \
+            -o Dir::Etc::sourceparts=- \
+            -o APT::Get::Always-Include-Phased-Updates=true
           sudo apt-get install -y \
             build-essential \
             cmake \
@@ -475,13 +494,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Download prepared release patch
+      - name: Download test-draft version patch
+        if: ${{ inputs.test_draft }}
         uses: actions/download-artifact@v8
         with:
           name: release-prep
           path: release-prep
 
-      - name: Apply prepared release patch
+      - name: Apply test-draft version patch
+        if: ${{ inputs.test_draft }}
         run: git apply release-prep/release.patch
 
       - name: Install Rust toolchain
@@ -558,7 +579,7 @@ jobs:
           path: dist/macos/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-macos-${{ matrix.arch }}.dmg
 
   publish:
-    name: Commit, tag, and create draft release
+    name: Tag and create draft release
     runs-on: ubuntu-latest
     needs:
       - prepare
@@ -572,14 +593,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download prepared release patch and notes
+      - name: Download release notes
         uses: actions/download-artifact@v8
         with:
           name: release-prep
           path: release-prep
-
-      - name: Apply prepared release patch
-        run: git apply release-prep/release.patch
 
       - name: Download release assets
         uses: actions/download-artifact@v8
@@ -588,7 +606,7 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Commit release and push tag
+      - name: Tag the release commit
         if: ${{ !inputs.test_draft }}
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
@@ -603,11 +621,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add Cargo.toml Cargo.lock CHANGELOG.md
-          git commit -m "Release ${TAG}"
           git tag -a "${TAG}" -m "Release ${TAG}"
-
-          git push origin "HEAD:${GITHUB_REF_NAME}"
           git push origin "${TAG}"
 
       - name: Create draft GitHub release
