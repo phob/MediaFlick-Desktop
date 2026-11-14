@@ -9,8 +9,19 @@ use crate::playback::{
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
 
+// FFmpeg reads forward through a gap this size instead of sending a new HTTP
+// request. Its mov demuxer seeks to every chapter title of an .m4b; one TLS
+// connection per seek kept a 285-chapter audiobook loading for 45-125 s from a
+// remote server (2-5 s with this).
+const HTTP_SHORT_SEEK_BYTES: u32 = 1 << 20;
+
 pub fn loadfile_command(launch: &PlaybackRequest) -> Value {
     let mut options = Map::new();
+    // Appended, so External mpv keeps a user's own stream-lavf-o settings.
+    options.insert(
+        "stream-lavf-o-append".to_string(),
+        json!(format!("short_seek_size={HTTP_SHORT_SEEK_BYTES}")),
+    );
     // Intentionally do not set mpv's `start` or `pause` options here. Every
     // runtime resumes with a delayed absolute seek after file-loaded; see
     // `kick_start_playback`.
