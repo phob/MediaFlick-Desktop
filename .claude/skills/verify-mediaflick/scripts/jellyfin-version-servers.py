@@ -8,8 +8,12 @@ For each version it downloads Jellyfin's official portable Linux build
 on a free 127.0.0.1 port, completes the startup wizard with the user
 `e2e-admin` / `e2e-password`, and adds a Movies and a Shows library of short
 generated videos (needs ffmpeg). It writes the servers to
-build/e2e/jellyfin-version-servers/servers.json, prints `ready`, and keeps
-them running until interrupted. Server logs stay in that directory.
+build/e2e/jellyfin-version-servers/servers.json and, for the first version
+given, the profile a MediaFlick 0.1.6 user of that server has:
+upgrade-0-1-6/config.json, as 0.1.6 wrote it (serde_json::to_vec_pretty of
+its AppSettings with only `jellyfin_url` set; every other field is skipped at
+its default). It prints `ready` and keeps the servers running until
+interrupted. Server logs stay in that directory.
 Linux x64 and arm64 only.
 """
 
@@ -164,6 +168,9 @@ def main() -> int:
             servers.append(server)
             print(f"Jellyfin {version} at {server['url']}", flush=True)
         (OUTPUT / "servers.json").write_text(json.dumps(servers, indent=2) + "\n")
+        seed = OUTPUT / "upgrade-0-1-6"
+        seed.mkdir(exist_ok=True)
+        (seed / "config.json").write_text(json.dumps({"jellyfin_url": servers[0]["url"]}, indent=2))
         print("ready", flush=True)
         while True:
             time.sleep(3600)

@@ -18,10 +18,11 @@
 //   seconds and stops, and sign-out.
 // - The demo server: sign-in, the Companion page keeps its plain "not found".
 //
-// Seeded with a settings.json whose `jellyfin_url` (the field 0.1.6 wrote)
-// is a server older than 10.11.0, the sign-in screen must show the refusal
-// before anything is typed: the upgrade scenario "a server below the floor
-// gets an explanation on the sign-in screen".
+// Seeded with the 0.1.6 profile the script writes (a config.json naming the
+// first server, older than 10.11.0), the sign-in screen must show the
+// refusal before anything is typed: the upgrade scenario "a server below the
+// floor gets an explanation on the sign-in screen".
+//   just verify server-versions --seed build/e2e/jellyfin-version-servers/upgrade-0-1-6 …
 //
 // Writes server-versions.json and a screenshot per state.
 import { existsSync, readFileSync } from "node:fs"
