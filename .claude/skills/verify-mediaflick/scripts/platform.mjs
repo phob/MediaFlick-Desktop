@@ -9,7 +9,10 @@ export const isLinux = process.platform === "linux"
 if (!isWindows && !isLinux) throw new Error(`verify-mediaflick supports Windows and Linux, not ${process.platform}`)
 
 export const buildDir = path.join(root, "build")
-export const exe = path.join(buildDir, isWindows ? "mediaflick-desktop.exe" : "mediaflick-desktop")
+const stagedExe = path.join(buildDir, isWindows ? "mediaflick-desktop.exe" : "mediaflick-desktop")
+// MEDIAFLICK_DESKTOP_EXE runs another build, such as a packaged AppImage,
+// which brings its own CEF runtime and so gets none of the staged build's.
+export const exe = process.env.MEDIAFLICK_DESKTOP_EXE ? path.resolve(process.env.MEDIAFLICK_DESKTOP_EXE) : stagedExe
 
 // Every disposable profile lives under the OS temp dir with this prefix. It is
 // also how leftovers are recognized: CEF child processes carry
@@ -53,10 +56,12 @@ export function appEnvironment(profile) {
       TMPDIR: process.env.XDG_RUNTIME_DIR,
     })
     const cef = path.join(buildDir, "libcef.so")
-    env.LD_LIBRARY_PATH = [buildDir, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":")
-    if (existsSync(cef)) {
-      env.MEDIAFLICK_DESKTOP_CEF_PRELOAD = cef
-      env.LD_PRELOAD = [cef, process.env.LD_PRELOAD].filter(Boolean).join(" ")
+    if (exe === stagedExe) {
+      env.LD_LIBRARY_PATH = [buildDir, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":")
+      if (existsSync(cef)) {
+        env.MEDIAFLICK_DESKTOP_CEF_PRELOAD = cef
+        env.LD_PRELOAD = [cef, process.env.LD_PRELOAD].filter(Boolean).join(" ")
+      }
     }
   }
   for (const name of ["MEDIAFLICK_DESKTOP_REMOTE_DEBUGGING_PORT", "MEDIAFLICK_DESKTOP_LOG_FILE", "MEDIAFLICK_DESKTOP_LOG_LEVEL", "JELLYFIN_URL"]) delete env[name]

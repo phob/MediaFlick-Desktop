@@ -430,8 +430,9 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
   // user to approve the code in Jellyfin. The server comes from the Server
   // field (`--url`, or the server `just verify-login` was given).
   // With `approve` (only under `--account … --signed-out`) the harness approves
-  // the code itself as the cached account.
-  async function quickConnect({ timeout = 600000, approve = false } = {}) {
+  // the code itself as the cached account. `signedIn` is what shows once the
+  // app is signed in, the sidebar's Settings link unless a dialog covers it.
+  async function quickConnect({ timeout = 600000, approve = false, signedIn = { role: "link", name: "Settings" } } = {}) {
     const server = await find({ role: "textbox", name: "Server" }, { timeout: 30000 })
     const useQuickConnect = { role: "button", name: "Use Quick Connect" }
     const help = () => app.evaluate(`document.getElementById("quick-connect-help")?.textContent.trim() ?? ""`)
@@ -450,7 +451,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     } else {
       log(`QUICK CONNECT CODE ${code} for ${server.properties.value}: approve it in Jellyfin (user menu → Quick Connect) within ${Math.round(timeout / 60000)} min`)
     }
-    await find({ role: "link", name: "Settings" }, { timeout })
+    await find(signedIn, { timeout })
     const status = await api("/api/status")
     if (status.body?.authenticated !== true) throw new Error(`Quick Connect finished but /api/status reports ${JSON.stringify(status.body?.authenticated)}`)
     log(`signed in with Quick Connect as ${status.body.userName}`)
