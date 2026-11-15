@@ -156,7 +156,7 @@ fn jellyfin_detail(
         primary_image_tag: set.primary_image_tag().map(str::to_string),
         backdrop_image_tag: set.backdrop_image_tags.first().cloned(),
         items: children.items.iter().map(ItemSummary::from_dto).collect(),
-        total_record_count: children.total_record_count,
+        total_record_count: children.total_or_received(),
         id: set.id,
     })
 }

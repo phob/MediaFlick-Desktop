@@ -79,7 +79,7 @@ impl CompanionSession {
             "/MediaFlick/seerr/search",
             &[("query", query.to_string()), ("page", page.to_string())],
         )?;
-        join_seerr_results(&self.library, &mut value, OtherKinds::Drop);
+        join_seerr_results(&self.library, &mut value, OtherKinds::Drop)?;
         Ok(value)
     }
 
@@ -97,7 +97,7 @@ impl CompanionSession {
             &format!("/MediaFlick/seerr/person/{tmdb_id}/credits"),
             &[],
         )?;
-        join_seerr_results(&self.library, &mut value, OtherKinds::Drop);
+        join_seerr_results(&self.library, &mut value, OtherKinds::Drop)?;
         Ok(value)
     }
 
@@ -126,7 +126,7 @@ impl CompanionSession {
             &format!("/MediaFlick/seerr/discover/{}", kind.id()),
             query.as_slice(),
         )?;
-        join_seerr_results(&self.library, &mut value, OtherKinds::Drop);
+        join_seerr_results(&self.library, &mut value, OtherKinds::Drop)?;
         Ok(value)
     }
 
@@ -179,7 +179,7 @@ impl CompanionSession {
             &format!("/MediaFlick/seerr/media/{media_type}/{tmdb_id}"),
             &[],
         )?;
-        join_seerr_item(&self.library, &mut value);
+        join_seerr_item(&self.library, &mut value)?;
         Ok(value)
     }
 
@@ -219,7 +219,7 @@ impl CompanionSession {
                 "profileId": profile.map(|selection| selection.profile_id),
             }),
         )?;
-        join_seerr_item(&self.library, &mut value);
+        join_seerr_item(&self.library, &mut value)?;
         Ok(value)
     }
 
@@ -240,7 +240,7 @@ impl CompanionSession {
                 ("filter", filter.to_string()),
             ],
         )?;
-        join_seerr_results(&self.library, &mut value, OtherKinds::Keep);
+        join_seerr_results(&self.library, &mut value, OtherKinds::Keep)?;
         Ok(value)
     }
 
@@ -270,9 +270,13 @@ enum OtherKinds {
 
 /// Joins a page of shaped Seerr rows, answered under `results`, against the
 /// local cache.
-fn join_seerr_results(library: &Library, value: &mut Value, other_kinds: OtherKinds) {
+fn join_seerr_results(
+    library: &Library,
+    value: &mut Value,
+    other_kinds: OtherKinds,
+) -> Result<(), ApiError> {
     let Some(results) = value.get_mut("results").and_then(Value::as_array_mut) else {
-        return;
+        return Ok(());
     };
     let mut kinds = Vec::with_capacity(results.len());
     let mut movies = Vec::new();
@@ -292,15 +296,9 @@ fn join_seerr_results(library: &Library, value: &mut Value, other_kinds: OtherKi
         kinds.push(kind);
         true
     });
-    let movie_ids = library
-        .ids_by_tmdb(CatalogKind::Movie, &movies)
-        .unwrap_or_default();
-    let series_ids = library
-        .ids_by_tmdb(CatalogKind::Series, &series)
-        .unwrap_or_default();
-    let movie_played = library
-        .played_by_tmdb(CatalogKind::Movie, &movies)
-        .unwrap_or_default();
+    let movie_ids = library.ids_by_tmdb(CatalogKind::Movie, &movies)?;
+    let series_ids = library.ids_by_tmdb(CatalogKind::Series, &series)?;
+    let movie_played = library.played_by_tmdb(CatalogKind::Movie, &movies)?;
     for (item, kind) in results.iter_mut().zip(kinds) {
         let Some(tmdb_id) = item["tmdbId"].as_i64().map(|id| id.to_string()) else {
             continue;
@@ -313,6 +311,7 @@ fn join_seerr_results(library: &Library, value: &mut Value, other_kinds: OtherKi
         item["libraryItemId"] = owned.map_or(Value::Null, |id| json!(id));
         item["played"] = json!(played.copied().unwrap_or(false));
     }
+    Ok(())
 }
 
 /// Seerr names movies `movie` and series `tv`; persons and anything else
@@ -325,17 +324,18 @@ fn seerr_kind(item: &Value) -> Option<TitleKind> {
     }
 }
 
-fn join_seerr_item(library: &Library, value: &mut Value) {
+fn join_seerr_item(library: &Library, value: &mut Value) -> Result<(), ApiError> {
     let Some(tmdb_id) = value["tmdbId"].as_i64() else {
-        return;
+        return Ok(());
     };
-    let library_item_id = seerr_kind(value).and_then(|kind| {
-        library
-            .ids_by_tmdb(kind.into(), &[tmdb_id.to_string()])
-            .unwrap_or_default()
-            .remove(&tmdb_id.to_string())
-    });
+    let library_item_id = match seerr_kind(value) {
+        Some(kind) => library
+            .ids_by_tmdb(kind.into(), &[tmdb_id.to_string()])?
+            .remove(&tmdb_id.to_string()),
+        None => None,
+    };
     value["libraryItemId"] = library_item_id.map_or(Value::Null, Value::String);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -386,7 +386,7 @@ mod tests {
             ]
         });
 
-        join_seerr_results(&library, &mut page, OtherKinds::Keep);
+        join_seerr_results(&library, &mut page, OtherKinds::Keep).expect("join");
 
         assert_eq!(page["results"][0]["libraryItemId"], "m1");
         assert_eq!(page["results"][0]["played"], true);

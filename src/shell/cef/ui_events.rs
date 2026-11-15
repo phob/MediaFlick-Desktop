@@ -54,8 +54,9 @@ impl<T: Serialize + Wire> Channel<T> {
     pub(super) fn broadcast(&self, state: &BrowserState, payload: &T) -> usize {
         let browsers = state
             .lock()
-            .map(|state| state.browsers.clone())
-            .unwrap_or_default();
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .browsers
+            .clone();
         let script = self.script(payload);
         let mut frame_count = 0;
         for frame in browsers.iter().filter_map(Browser::main_frame) {

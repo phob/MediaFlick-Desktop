@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -16,10 +16,7 @@ static IPC_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub fn make_ipc_path() -> String {
     let counter = IPC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
+    let timestamp = crate::app::clock::since_epoch().as_nanos();
 
     #[cfg(target_os = "windows")]
     {

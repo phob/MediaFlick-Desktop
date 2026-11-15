@@ -580,7 +580,10 @@ fn next_up(services: &Arc<Services>, item_id: &str) -> Result<NextUpResponse, Ap
     };
     let item = match from_server {
         Some(item) => Some(item),
-        None => services.library.first_episode(item_id).unwrap_or_default(),
+        None => services
+            .library
+            .first_episode(item_id)
+            .map_err(|error| storage_failure(&error))?,
     };
     Ok(NextUpResponse { item })
 }
