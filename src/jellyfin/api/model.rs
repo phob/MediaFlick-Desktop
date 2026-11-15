@@ -116,8 +116,20 @@ pub struct QuickConnectResult {
 #[serde(default, rename_all = "PascalCase")]
 pub struct ItemsResponse {
     pub items: Vec<BaseItemDto>,
-    pub total_record_count: i64,
+    /// `None` when the server left the count out, which is not a count of 0.
+    pub total_record_count: Option<i64>,
     pub start_index: i64,
+}
+
+impl ItemsResponse {
+    /// The total a page reports to the UI: the server's count, or, when the
+    /// server left it out, the items known to exist through this page.
+    pub fn total_or_received(&self) -> i64 {
+        self.total_record_count.unwrap_or_else(|| {
+            let received = i64::try_from(self.items.len()).unwrap_or(i64::MAX);
+            self.start_index.max(0).saturating_add(received)
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

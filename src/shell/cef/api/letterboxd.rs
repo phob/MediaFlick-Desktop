@@ -49,10 +49,7 @@ fn valid_profile_id(id: &str) -> bool {
 }
 
 fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
+    crate::app::clock::since_epoch().as_secs() as i64
 }
 
 fn letterboxd_profiles(services: &Arc<Services>) -> Result<LetterboxdProfiles, ApiResponse> {

@@ -20,7 +20,6 @@ mod query;
 mod session_store;
 
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{OptionalExtension, params};
 use serde::{Serialize, Serializer};
@@ -546,10 +545,7 @@ impl Library {
 }
 
 pub(crate) fn now_unix() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs() as i64)
-        .unwrap_or_default()
+    crate::app::clock::since_epoch().as_secs() as i64
 }
 
 /// The proleptic Gregorian `(year, month, day)` of a day count since the Unix

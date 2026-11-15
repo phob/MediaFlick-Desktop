@@ -8,7 +8,8 @@ use crate::library::Library;
 use crate::preferences::AccountKey;
 
 use super::{
-    CanonicalIdentity, ClassifiedSnapshot, ClassifiedTitle, LocalItem, MediaType, NormalizedTitle,
+    CanonicalIdentity, ClassifiedSnapshot, ClassifiedTitle, CollectionProfile, CollectionSource,
+    LocalItem, MediaType, NormalizedTitle,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -119,6 +120,25 @@ pub fn save_identity_mappings(
         }
         Ok(())
     })
+}
+
+/// The Companion request that builds a profile's results. A TMDB collection
+/// also carries the movies this library owns.
+pub fn provider_request(
+    library: &Library,
+    profile: &CollectionProfile,
+) -> rusqlite::Result<serde_json::Value> {
+    let owned_tmdb_ids = if matches!(profile.source, CollectionSource::TmdbCollection { .. }) {
+        owned_tmdb_ids(library, MediaType::Movie)?
+    } else {
+        Vec::new()
+    };
+    Ok(serde_json::json!({
+        "source": profile.source,
+        "mediaType": profile.media_type,
+        "limit": profile.limit,
+        "ownedTmdbIds": owned_tmdb_ids,
+    }))
 }
 
 pub fn owned_tmdb_ids(library: &Library, media_type: MediaType) -> rusqlite::Result<Vec<u64>> {

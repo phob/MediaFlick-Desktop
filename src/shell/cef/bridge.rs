@@ -218,13 +218,13 @@ pub(super) fn open_settings_page(browser: Option<&mut Browser>, frame: Option<&m
 pub(super) fn initiate_app_exit(state: &BrowserState) {
     tracing::info!(target: "app", "exit requested");
 
-    let browsers = state
-        .lock()
-        .map(|mut state| {
-            state.force_close_requested = true;
-            state.browsers.clone()
-        })
-        .unwrap_or_default();
+    let browsers = {
+        let mut state = state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.force_close_requested = true;
+        state.browsers.clone()
+    };
 
     let mut close_requests = 0usize;
     for browser in browsers {

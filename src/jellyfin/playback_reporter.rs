@@ -1,7 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::sync::{OnceLock, mpsc};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
@@ -558,11 +558,8 @@ fn server_base_url(media_url: &str) -> Option<String> {
 }
 
 fn unix_now_ticks() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        // A Jellyfin tick is 100 ns.
-        .map(|duration| i64::try_from(duration.as_nanos() / 100).unwrap_or(i64::MAX))
-        .unwrap_or_default()
+    // A Jellyfin tick is 100 ns.
+    i64::try_from(crate::app::clock::since_epoch().as_nanos() / 100).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]

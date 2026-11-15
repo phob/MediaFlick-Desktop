@@ -18,7 +18,7 @@ mod libraries;
 mod worker;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -340,7 +340,7 @@ impl SyncHandle {
     }
 
     pub fn status(&self, catalog: BootstrapProgress, generation: u64) -> SyncStatus {
-        let state = self.state.lock().map(|state| *state).unwrap_or_default();
+        let state = *self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let retry = state
             .failure
             .filter(|failure| failure.generation == generation)
@@ -441,27 +441,46 @@ pub(super) fn fetch_page<T>(
         .map_err(|_stale| ApiError::Cancelled)
 }
 
-pub(super) fn storage_error(error: &rusqlite::Error) -> ApiError {
-    ApiError::Storage(error.to_string())
+/// How an optional sync step ended. The cycle goes on after `Skipped` and
+/// `Failed` and keeps what is stored; the next cycle tries the step again.
+#[derive(Debug)]
+pub(super) enum Step<T> {
+    /// The step ran to the end and stored its answer.
+    Settled(T),
+    /// The server's answer could not be trusted as complete, so the step
+    /// stored nothing.
+    Skipped,
+    /// The server could not answer.
+    Failed,
 }
 
-pub(super) fn best_effort<T>(
+/// Runs an optional step. A failure the cycle has to stop for still ends it:
+/// a rejected session, a cancelled cycle, and a local storage failure, which
+/// no later step can work around and which the user has to see.
+pub(super) fn optional<T>(
     step: &str,
-    result: Result<T, ApiError>,
-) -> Result<Option<T>, ApiError> {
-    match result {
-        Ok(value) => Ok(Some(value)),
-        Err(error @ (ApiError::Unauthorized | ApiError::Cancelled)) => Err(error),
-        Err(error) => {
+    result: Result<Step<T>, ApiError>,
+) -> Result<Step<T>, ApiError> {
+    let error = match result {
+        Ok(outcome) => return Ok(outcome),
+        Err(error) => error,
+    };
+    match error {
+        ApiError::Unauthorized | ApiError::Cancelled | ApiError::Storage(_) => Err(error),
+        ApiError::Status { .. }
+        | ApiError::RateLimited { .. }
+        | ApiError::Remote { .. }
+        | ApiError::Transport(_)
+        | ApiError::Decode(_)
+        | ApiError::NotConfigured
+        | ApiError::AccountChanged
+        | ApiError::ServerTooOld(_) => {
             tracing::warn!(target: "library.sync", "could not sync {step}; keeping what is stored: {error}");
-            Ok(None)
+            Ok(Step::Failed)
         }
     }
 }
 
 pub(super) fn now_unix() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or_default()
+    crate::app::clock::since_epoch().as_secs()
 }

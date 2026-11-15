@@ -10,7 +10,7 @@ use crate::preferences::AccountKey;
 
 use super::franchises::{FranchiseMembership, FranchiseSnapshot};
 use super::matching::{
-    ResolvedIdentityMapping, owned_tmdb_ids, save_identity_mappings,
+    ResolvedIdentityMapping, owned_tmdb_ids, provider_request, save_identity_mappings,
     unresolved_secondary_identities,
 };
 use super::snapshots::{RefreshState, SnapshotRepository};
@@ -108,9 +108,17 @@ fn refresh_due_profiles_for_account(services: &Services, account: &AccountKey) -
         if profile.validate().is_err() {
             continue;
         }
-        let state = repository
-            .refresh_state(account, &profile.id)
-            .unwrap_or_default();
+        let state = match repository.refresh_state(account, &profile.id) {
+            Ok(state) => state,
+            Err(error) => {
+                tracing::warn!(
+                    target: "collections",
+                    profile_id = profile.id,
+                    "could not read the collection refresh state; skipping it: {error}"
+                );
+                continue;
+            }
+        };
         if !is_due(state.last_success, profile.cadence, now) {
             continue;
         }
@@ -133,7 +141,13 @@ pub fn refresh_franchises(services: &Services, account: &AccountKey) -> bool {
     if !services.session.scope_is_current(&scope) {
         return false;
     }
-    let ids = owned_tmdb_ids(&services.library, MediaType::Movie).unwrap_or_default();
+    let ids = match owned_tmdb_ids(&services.library, MediaType::Movie) {
+        Ok(ids) => ids,
+        Err(error) => {
+            tracing::warn!(target: "collections", "could not read the owned movies for franchises: {error}");
+            return false;
+        }
+    };
     let plan = match repository.franchise_resolution_plan(
         account,
         &ids,
@@ -302,24 +316,18 @@ fn refresh_profile(
         Ok(scope) if scope.account() == account => scope,
         _ => return false,
     };
-    let owned_tmdb_ids = matches!(
-        profile.source,
-        super::CollectionSource::TmdbCollection { .. }
-    )
-    .then(|| {
-        super::matching::owned_tmdb_ids(&services.library, super::MediaType::Movie)
-            .unwrap_or_default()
-    })
-    .unwrap_or_default();
-    let result = match services.companion.refresh_collection(
-        &scope,
-        &json!({
-            "source": profile.source,
-            "mediaType": profile.media_type,
-            "limit": profile.limit,
-            "ownedTmdbIds": owned_tmdb_ids,
-        }),
-    ) {
+    let request = match provider_request(&services.library, profile) {
+        Ok(request) => request,
+        Err(error) => {
+            tracing::warn!(
+                target: "collections",
+                profile_id = profile.id,
+                "could not build the automatic collection refresh: {error}"
+            );
+            return false;
+        }
+    };
+    let result = match services.companion.refresh_collection(&scope, &request) {
         Ok(result) => result,
         Err(error) => {
             tracing::debug!(
@@ -388,18 +396,30 @@ fn profile_is_current(
         .any(|profile| profile.id == expected.id && profile.revision == expected.revision)
 }
 
+/// Records a failed refresh on top of the stored state, so the last success
+/// survives. The refresh already failed for its own reason, so a failure to
+/// record it is only logged; recording over a state that could not be read
+/// would erase that last success.
 pub(crate) fn save_failed_refresh(
     repository: &SnapshotRepository<'_>,
     account: &AccountKey,
     profile_id: &str,
     attempt: i64,
 ) {
-    let mut state = repository
+    let recorded = repository
         .refresh_state(account, profile_id)
-        .unwrap_or_default();
-    state.last_attempt = Some(attempt);
-    state.latest_failure = Some("Results unavailable".to_string());
-    let _ = repository.save_refresh_state(account, profile_id, &state);
+        .and_then(|mut state| {
+            state.last_attempt = Some(attempt);
+            state.latest_failure = Some("Results unavailable".to_string());
+            repository.save_refresh_state(account, profile_id, &state)
+        });
+    if let Err(error) = recorded {
+        tracing::warn!(
+            target: "collections",
+            profile_id,
+            "could not record the failed collection refresh: {error}"
+        );
+    }
 }
 
 pub fn next_due_at(last_success: i64, cadence: RefreshCadence) -> Option<i64> {
