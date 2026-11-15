@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::json_file::{RecoveryNotice, load_with_recovery, save_with_backup};
-use super::{AppSettings, PlayerBackend};
+// Clippy 1.100 needs a separate import to resolve the AppSettings method paths in clippy.toml.
+use super::AppSettings;
+use super::PlayerBackend;
 
 static SETTINGS_TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 static DEVICE_RECOVERY: std::sync::Mutex<Option<RecoveryNotice>> = std::sync::Mutex::new(None);

@@ -103,5 +103,4 @@ export type StopReason =
   | "quit"
   | "error"
   | "redirect"
-  | "shutdown"
   | "unknown";

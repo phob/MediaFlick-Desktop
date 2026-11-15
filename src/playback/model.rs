@@ -131,7 +131,6 @@ pub struct PlaybackRequest {
     pub play_session_id: Option<String>,
     pub device_id: Option<String>,
     pub start_time_ticks: Option<i64>,
-    pub start_milliseconds: Option<f64>,
     pub runtime_ticks: Option<i64>,
     pub title: Option<String>,
     pub audio_stream_index: Option<i64>,
@@ -153,9 +152,6 @@ impl PlaybackRequest {
     }
 
     pub fn start_seconds(&self) -> Option<f64> {
-        if let Some(milliseconds) = self.start_milliseconds.filter(|value| *value > 0.0) {
-            return Some(milliseconds / 1000.0);
-        }
         self.start_time_ticks
             .filter(|ticks| *ticks > 0)
             .map(ticks_to_seconds)
@@ -350,11 +346,11 @@ pub enum StopReason {
     Quit,
     Error,
     Redirect,
-    Shutdown,
     Unknown,
 }
 
 impl StopReason {
+    /// Reads the `reason` of mpv's `end-file` event.
     pub fn parse(reason: &str) -> Option<Self> {
         let reason = reason.trim();
         if reason.is_empty() {
@@ -362,12 +358,10 @@ impl StopReason {
         }
         Some(match reason.to_ascii_lowercase().as_str() {
             "eof" => Self::Eof,
-            "watched-next" => Self::WatchedNext,
             "stop" => Self::Stop,
             "quit" => Self::Quit,
             "error" => Self::Error,
             "redirect" => Self::Redirect,
-            "shutdown" => Self::Shutdown,
             _ => Self::Unknown,
         })
     }
@@ -384,7 +378,6 @@ impl StopReason {
             Self::Quit => "quit",
             Self::Error => "error",
             Self::Redirect => "redirect",
-            Self::Shutdown => "shutdown",
             Self::Unknown => "unknown",
         }
     }
@@ -485,7 +478,7 @@ fn redact_url_query_value(url: &str, keys: &[&str]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::StopReason;
+    use super::{PlaybackRequest, StopReason, seconds_to_ticks, ticks_to_milliseconds};
 
     #[test]
     fn stop_reasons_the_ui_keys_on_keep_their_wire_names() {
@@ -494,6 +487,72 @@ mod tests {
             (StopReason::WatchedNext, "watched-next"),
         ] {
             assert_eq!(serde_json::to_value(reason).expect("serialize"), wire);
+        }
+    }
+
+    /// Jellyfin sends `StartTimeTicks` 0 or nothing for a fresh start; only a
+    /// real resume point may schedule the startup seek. Ticks are .NET ticks
+    /// of 100 ns.
+    #[test]
+    fn only_a_resume_point_schedules_a_startup_seek() {
+        for ticks in [None, Some(0), Some(-1)] {
+            let request = PlaybackRequest {
+                start_time_ticks: ticks,
+                ..PlaybackRequest::new("media")
+            };
+            assert_eq!(request.start_seconds(), None, "{ticks:?}");
+        }
+        let request = PlaybackRequest {
+            start_time_ticks: Some(12_345_000_000),
+            ..PlaybackRequest::new("media")
+        };
+        assert_eq!(request.start_seconds(), Some(1_234.5));
+    }
+
+    /// .NET `TimeSpan.TicksPerMillisecond` is 10,000.
+    #[test]
+    fn positions_convert_to_milliseconds_at_ten_thousand_ticks_each() {
+        assert_eq!(ticks_to_milliseconds(37_234_560_000), 3_723_456.0);
+        assert_eq!(ticks_to_milliseconds(5_000), 0.5);
+        for milliseconds in (0..2_000_000_i64)
+            .step_by(997)
+            .chain([86_400_000, 360_000_000])
+        {
+            let ticks = seconds_to_ticks(milliseconds as f64 / 1000.0).expect("finite");
+            assert_eq!(ticks_to_milliseconds(ticks), milliseconds as f64);
+        }
+    }
+
+    /// The `end-file` reasons in mpv's manual (input.rst).
+    #[test]
+    fn mpv_end_file_reasons_map_to_their_stop_reason() {
+        for (mpv, reason) in [
+            ("eof", StopReason::Eof),
+            ("stop", StopReason::Stop),
+            ("quit", StopReason::Quit),
+            ("error", StopReason::Error),
+            ("redirect", StopReason::Redirect),
+            ("unknown", StopReason::Unknown),
+        ] {
+            assert_eq!(StopReason::parse(mpv), Some(reason), "{mpv}");
+        }
+    }
+
+    /// A finished title is marked watched and plays the next one
+    /// (docs/state-machines.md); a stop the user caused must do neither.
+    #[test]
+    fn only_reaching_the_end_counts_as_finishing_the_title() {
+        for reason in [StopReason::Eof, StopReason::WatchedNext] {
+            assert!(reason.is_completion(), "{reason:?}");
+        }
+        for reason in [
+            StopReason::Stop,
+            StopReason::Quit,
+            StopReason::Error,
+            StopReason::Redirect,
+            StopReason::Unknown,
+        ] {
+            assert!(!reason.is_completion(), "{reason:?}");
         }
     }
 }

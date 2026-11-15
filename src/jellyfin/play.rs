@@ -4,7 +4,7 @@
 //! stream URL: negotiate `PlaybackInfo` with a device profile, pick a media
 //! source, and build the direct-stream or transcoding URL ourselves.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 mod audio;
 
@@ -14,7 +14,7 @@ use crate::app::services::Services;
 use crate::app::urls::{build_query, encode_path_segment, join_url, remove_query_params};
 use crate::library::model::ResolvedPlaybackPreference;
 use crate::library::{ItemSummary, Library, resolve_playback_preference};
-use crate::playback::{PlaybackRequest, TOKEN_QUERY_KEYS, seconds_to_ticks};
+use crate::playback::{PlaybackOwner, PlaybackRequest, TOKEN_QUERY_KEYS, seconds_to_ticks};
 use crate::preferences::StreamingQuality;
 
 use super::api::items::{self, PlaybackInfoRequest};
@@ -110,8 +110,33 @@ pub fn start(
         player_path,
         settings.default_fullscreen,
         prepared.request.clone(),
+        Arc::new(AccountOwner::new(services, scope)),
     );
     Ok(prepared)
+}
+
+/// The account a playback was started from, so the coordinator can stop it
+/// once that account signs out or another one signs in.
+struct AccountOwner {
+    services: Weak<Services>,
+    scope: SessionScope,
+}
+
+impl AccountOwner {
+    fn new(services: &Arc<Services>, scope: &SessionScope) -> Self {
+        Self {
+            services: Arc::downgrade(services),
+            scope: scope.clone(),
+        }
+    }
+}
+
+impl PlaybackOwner for AccountOwner {
+    fn is_current(&self) -> bool {
+        self.services
+            .upgrade()
+            .is_some_and(|services| services.session.scope_is_current(&self.scope))
+    }
 }
 
 pub fn prepare(

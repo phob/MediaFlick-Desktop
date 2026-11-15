@@ -10,7 +10,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Your own server covers what the demo server cannot: writes, playback, and the MediaFlick Companion (Releases, ratings, Discover, Requests, Movie Franchises, My Collections). Cache a session once with `just verify-login SERVER` (you approve a Quick Connect code), then run drives with `--account SERVER`; see SKILL.md, Your own server. The proofs below name the test server they ran against: Jellyfin 12.2.0 with a non-admin `Testuser` (684 movies, 97 series, 4,371 episodes, 85 BoxSets) and Companion 0.2.2 with Seerr, Sonarr, Radarr, MDBList and TMDB.
 - The MediaFlick Companion is not installed on the demo server.
 - `just verify-doctor` reports `ready` and no leftovers before you start.
-- Every drive except `close-minimize` and `close-guard` (Linux only: `ctx.wmClose`) and `segments` (not yet run there) has passed on Windows 11, and every drive on Linux (all but `login` re-run on 2026-10-14, `segments` with every case on both backends).
+- Every drive shipped by 2026-10-13 except `close-minimize` and `close-guard` (Linux only: `ctx.wmClose`) has passed on Windows 11, and `segments`, `playstate` and `music` passed there on both backends, and `book-progress`, on 2026-11-14; drives that [drives/README.md](../drives/README.md) marks Linux run only there. Every drive has passed on Linux, `segments` with every case on both backends.
 
 ## Driving conventions
 
@@ -41,7 +41,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Library and search](./library-search.md): Movies, Series and Favorites from the sidebar, sort and direction, filters and chips, the A–Z rail, the unwatched badge, sidebar search, the empty result. Proven by `browse`, `home-library`, `library-filters`, `library-parity` and `punctuation-search`.
 - [Library loading and the retry screen](./bootstrap-retry.md): the startup cover after sign-in, the retry screen when the first catalog page fails (reason, next attempt, Retry now, Sign out), and the window on relaunch. Proven by `bootstrap-retry` with a failing loopback proxy.
 - [Item detail](./item-detail.md): movie, series and episode pages, the Cast and Crew rails, More info, seasons, episodes, breadcrumbs, ratings, favorite and watched toggles. Read-only parts proven by `browse`, `item-detail`, `detail-crew`, `labels` and `person-discover`; watched by `playback`, favorites by `top-level-titles` and ratings by `companion` on your own server.
-- [Playback](./playback.md): Play, the player bar and keys, playstate reports, the resume point, Resume with the startup seek rules, stop, on the Built-in player and External mpv. Proven by `playback` on both backends on Linux and Windows. Segment skipping through `segments`, which adds media segments with a loopback proxy: `Ask me`, `Never` and `Don't show` proven on both backends on Linux, on files with and without embedded chapters.
+- [Playback](./playback.md): Play, the player bar and keys, playstate reports, the resume point, Resume with the startup seek rules, stop, on the Built-in player and External mpv. Proven by `playback` on both backends on Linux and Windows. Segment skipping through `segments`, which adds media segments with a loopback proxy: `Ask me`, `Never` and `Don't show` proven on both backends on Linux, on files with and without embedded chapters. What Jellyfin keeps after playing to the end, finishing an episode (Next Up), stopping early, skipping a segment and signing out while playing: proven by `playstate` and `segments` on both backends on Linux.
 - [Companion: Releases, ratings and status](./companion.md): the Companion status page, the Releases page and its toggles, MDBList ratings. Proven by `companion`.
 - [Discover and Requests](./discover-requests.md): Seerr rows, genres, search, title pages, a real request and its cancellation. Proven by `discover-requests`.
 - [Collections](./collections.md): Movie Franchises, My Collections from a template, Jellyfin mode with BoxSets and the route guard. Proven by `collections`.
@@ -50,4 +50,4 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 ## Unmapped surfaces
 
 - The update banner (GitHub release check): never press its install action; it downloads and runs an installer.
-- Media segment skipping and the next-episode countdown: mapped in [Playback](./playback.md) from source; the test server has no media segments, and no drive plays to the end of an episode yet.
+- The next-episode countdown: mapped in [Playback](./playback.md) from source; `playstate` plays to the end of an episode, but only with the default `Automatically play`.
