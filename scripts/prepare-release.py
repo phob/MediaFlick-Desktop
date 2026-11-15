@@ -17,13 +17,40 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import re
+import subprocess
+import tomllib
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 SEMVER_RE = re.compile(r"^v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$")
 UNRELEASED_HEADING_RE = re.compile(r"^## \[Unreleased\]\s*$", re.MULTILINE)
 SECOND_LEVEL_HEADING_RE = re.compile(r"^## \[", re.MULTILINE)
 PACKAGE_VERSION_RE = re.compile(r'(?m)^version\s*=\s*"([^"]+)"\s*$')
 LOCK_VERSION_RE = re.compile(r'(\[\[package\]\]\s*\nname = "mediaflick-desktop"\s*\nversion = ")([^"]+)("\s*\n)')
+
+RELEASE_FILE = "release.toml"
+RELEASE_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+Channel = Literal["prerelease", "latest"]
+Action = Literal["none", "prerelease", "latest"]
+
+
+@dataclass(frozen=True)
+class Release:
+    """What release.toml says: the version main is at and the channel it ships on."""
+
+    version: str
+    channel: Channel
+
+
+RELEASE_FILE_HEADER = """\
+# The Desktop version main is at, and the channel it is published on. Merging a
+# change to this file releases it: a new version is built, tagged and published
+# as a GitHub prerelease, which the in-app updater and flick.media do not offer.
+# A later PR that changes only `channel` to "latest" makes that release Latest.
+# `prepare-release.py --version` writes it; see BUILDING.md, "Release a version".
+"""
 
 EMPTY_UNRELEASED_SECTION = """## [Unreleased]
 
@@ -41,13 +68,17 @@ EMPTY_UNRELEASED_SECTION = """## [Unreleased]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare changelog and version files for a release.")
-    parser.add_argument("--version", required=True, help="Version to release, with or without a leading v.")
+    parser.add_argument("--version", help="Version to release, with or without a leading v.")
     parser.add_argument("--date", default=dt.date.today().isoformat(), help="Release date, defaulting to today.")
-    parser.add_argument("--notes-out", required=True, help="Path where extracted release notes should be written.")
+    parser.add_argument("--notes-out", help="Path where extracted release notes should be written.")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--test-draft", action="store_true", help="Prepare a disposable prerelease without consuming the changelog.")
     mode.add_argument("--check", action="store_true", help="Verify that the checkout already holds this release and write its notes; change no release file.")
-    return parser.parse_args()
+    mode.add_argument("--transition", metavar="BASE", help=f"Check the {RELEASE_FILE} change since BASE and print the release it asks for.")
+    args = parser.parse_args()
+    if args.transition is None and (args.version is None or args.notes_out is None):
+        parser.error("--version and --notes-out are required unless --transition is given.")
+    return args
 
 
 def normalize_version(version: str) -> str:
@@ -146,9 +177,95 @@ def update_cargo_files(version: str) -> None:
     cargo_lock_path.write_text(f"{cargo_lock[:locked.start(2)]}{version}{cargo_lock[locked.end(2):]}", encoding="utf-8")
 
 
+def git(*args: str) -> str:
+    result = subprocess.run(["git", *args], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise SystemExit(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+    return result.stdout
+
+
+def version_key(version: str) -> tuple[int, int, int]:
+    match = RELEASE_VERSION_RE.match(version)
+    if not match:
+        raise SystemExit(f"A release version looks like 1.2.3, not {version!r}. {RELEASE_FILE}'s channel marks a prerelease.")
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch)
+
+
+def parse_release(text: str, source: str) -> Release:
+    try:
+        fields = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        raise SystemExit(f"{source} is not valid TOML: {error}") from error
+    if set(fields) != {"version", "channel"}:
+        raise SystemExit(f"{source} must hold exactly `version` and `channel`, not {sorted(fields)}.")
+    version, channel = fields["version"], fields["channel"]
+    if not isinstance(version, str):
+        raise SystemExit(f"{source}: version must be a string such as \"0.2.0\".")
+    version_key(version)
+    if channel not in ("prerelease", "latest"):
+        raise SystemExit(f'{source}: channel must be "prerelease" or "latest", not {channel!r}.')
+    return Release(version=version, channel=channel)
+
+
+def current_release() -> Release:
+    path = Path(RELEASE_FILE)
+    if not path.is_file():
+        raise SystemExit(f"{RELEASE_FILE} is missing. It states the released version and its channel.")
+    return parse_release(path.read_text(encoding="utf-8"), RELEASE_FILE)
+
+
+def release_at(rev: str) -> Release | None:
+    """release.toml as committed at `rev`, or None when that commit has none."""
+    commit = git("rev-parse", "--verify", "--end-of-options", f"{rev}^{{commit}}").strip()
+    if not git("ls-tree", "--name-only", commit, "--", RELEASE_FILE).strip():
+        return None
+    return parse_release(git("show", f"{commit}:{RELEASE_FILE}"), f"{RELEASE_FILE} at {rev}")
+
+
+def write_release(release: Release) -> None:
+    Path(RELEASE_FILE).write_text(f'{RELEASE_FILE_HEADER}version = "{release.version}"\nchannel = "{release.channel}"\n', encoding="utf-8")
+
+
+def transition(before: Release | None, after: Release) -> Action:
+    """The release a merge from `before` to `after` asks for; exits on a change no merge may make.
+
+    A new version ships first as a prerelease, and only a change of the channel alone makes
+    that version Latest. Anything else, an unchanged file included, releases nothing.
+    """
+    if before is None or before == after:
+        return "none"
+    if version_key(after.version) > version_key(before.version):
+        if after.channel != "prerelease":
+            raise SystemExit(f'{after.version} is a new version: it ships first with channel = "prerelease", and a later PR makes it "latest".')
+        return "prerelease"
+    if after.version != before.version:
+        raise SystemExit(f"{RELEASE_FILE} goes back from {before.version} to {after.version}; versions only move forward.")
+    if before.channel == "latest":
+        raise SystemExit(f"{after.version} is already the Latest release; it cannot become a prerelease again.")
+    return "latest"
+
+
+def plan_release(base: str) -> tuple[Action, Release]:
+    """What merging this checkout into `base` releases; exits unless the merge is allowed."""
+    after = current_release()
+    cargo_version = package_version(Path("Cargo.toml").read_text(encoding="utf-8")).group(1)
+    if after.version != cargo_version:
+        raise SystemExit(f"{RELEASE_FILE} says {after.version} but Cargo.toml is at {cargo_version}. `prepare-release.py --version` sets both.")
+    action = transition(release_at(git("merge-base", "--end-of-options", base, "HEAD").strip()), after)
+    if action == "prerelease":
+        check_prepared(after.version)
+    return action, after
+
+
 def check_prepared(version: str) -> str:
     """The notes of a release the checkout already holds; exits when it does not hold it."""
     hint = f"Merge the release-notes PR that runs `prepare-release.py --version {version}` first."
+    if not Path(RELEASE_FILE).is_file():
+        raise SystemExit(f"{RELEASE_FILE} is missing, so it does not release {version}. {hint}")
+    release = current_release()
+    if release != Release(version=version, channel="prerelease"):
+        raise SystemExit(f'{RELEASE_FILE} says {release.version} on channel "{release.channel}", not {version} as a prerelease. {hint}')
     for name, found in (
         ("Cargo.toml", package_version(Path("Cargo.toml").read_text(encoding="utf-8")).group(1)),
         ("Cargo.lock", lock_version(Path("Cargo.lock").read_text(encoding="utf-8")).group(2)),
@@ -168,6 +285,10 @@ def check_prepared(version: str) -> str:
 
 def main() -> None:
     args = parse_args()
+    if args.transition is not None:
+        action, release = plan_release(args.transition)
+        print(f"action={action}\nversion={release.version}")
+        return
     version = normalize_version(args.version)
     if args.check:
         Path(args.notes_out).write_text(check_prepared(version), encoding="utf-8")
@@ -179,7 +300,7 @@ def main() -> None:
         release_notes = (
             f"# MediaFlick Desktop {version} — test draft\n\n"
             "Disposable build for manual testing. Keep this release as a draft; "
-            "it is not a stable release or a 1.0 release candidate.\n\n"
+            "it is not a MediaFlick Desktop release, and no version is published from it.\n\n"
             "The normal release changelog and source-branch version are unchanged. "
             "The bundled application reports the test version.\n\n"
             "## Manual checks\n\n"
@@ -195,7 +316,11 @@ def main() -> None:
             "Linux built-in playback requires X11 or XWayland.\n"
         )
     else:
+        release = Release(version=version, channel="prerelease")
+        if transition(current_release(), release) != "prerelease":
+            raise SystemExit(f"{RELEASE_FILE} is already at {version}; a release moves to a newer version.")
         release_notes = promote_changelog(version, args.date)
+        write_release(release)
     update_cargo_files(version)
     Path(args.notes_out).write_text(release_notes, encoding="utf-8")
     print(f"Prepared release v{version}")

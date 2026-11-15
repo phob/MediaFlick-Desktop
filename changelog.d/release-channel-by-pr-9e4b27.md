@@ -1,0 +1,3 @@
+### Changed
+
+- A merged pull request now decides how a Desktop release ships. `release.toml` names the released version and its channel. Merging the release-notes PR, which moves it to a new version, builds, tags, and publishes that version as a GitHub prerelease that the in-app updater and flick.media do not offer. A later PR that changes only the channel to `latest` makes it the Latest release without a rebuild. PR checks refuse a `release.toml` that disagrees with `Cargo.toml`, moves backward, starts as Latest, or returns to prerelease. The Draft Release workflow is now Build Release. Run by hand, it still retries a failed build or creates a test draft.

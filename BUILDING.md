@@ -49,33 +49,54 @@ The publish output is written to `plugin/bin/Release/publish`. Maintainers with
 access to the configured Tailscale development host can install it and restart
 Jellyfin with `just plugin-deploy`.
 
-## Build a release app
+## Release a version
 
-A release is a commit on `main` that already carries its version and changelog
-section. In the release-notes PR, after consolidating the fragments, run:
+Merging a PR is what releases a version. `release.toml` at the repository root
+names the version `main` is at and the channel it is published on, and a merged
+change to it is the release:
 
-```sh
-mkdir -p build
-python3 scripts/prepare-release.py --version 0.2.0 --notes-out build/release-notes.md
-```
+1. **Release PR: publish a prerelease.** After consolidating the fragments, run:
 
-Commit the changes it makes to `CHANGELOG.md`, `Cargo.toml`, and `Cargo.lock`,
-and merge the PR. Then run **Draft Release** in GitHub Actions on `main` with
-the same version. The workflow commits nothing. Its first job stops within a
-minute when `main` is not that release; otherwise it builds every package,
-tags the commit it built, and creates a draft release with the changelog
-section as its notes.
+   ```sh
+   mkdir -p build
+   python3 scripts/prepare-release.py --version 0.2.0 --notes-out build/release-notes.md
+   ```
 
-For a disposable packaged test build, run **Draft Release** in GitHub Actions
+   Commit its changes to `CHANGELOG.md`, `Cargo.toml`, `Cargo.lock`, and
+   `release.toml`, which now names `0.2.0` on the `prerelease` channel. When the
+   PR merges, the **Release** workflow runs **Build Release**: it builds every
+   package, then tags the merged commit and publishes a GitHub prerelease with
+   the changelog section as its notes. The in-app updater and flick.media follow
+   GitHub's Latest release, so they do not offer a prerelease.
+2. **Latest PR: make it Latest.** Change only `channel` to `"latest"` in
+   `release.toml` and merge. The **Release** workflow marks the published
+   prerelease as Latest without rebuilding it. It fails if that version has no
+   published prerelease.
+
+The PR checks run `prepare-release.py --transition origin/main` on the merged
+result. `release.toml` must name the version in `Cargo.toml`, versions only move
+forward, a new version starts on the `prerelease` channel with its changelog
+section, and a Latest version cannot become a prerelease again. A merge that
+leaves `release.toml` unchanged releases nothing.
+
+When a platform build fails, nothing is tagged or published. Rerun the failed
+jobs, or merge the fix and run **Build Release** in GitHub Actions on `main` with
+the same version. A run by hand stops within a minute unless `main` holds that
+release and `release.toml` names it as a prerelease.
+
+For a disposable packaged test build, run **Build Release** in GitHub Actions
 on the desired branch with a prerelease version such as `0.2.0-test.1` and
 `test_draft` enabled. This uses the normal platform builds and smoke tests,
 then creates a draft marked as a prerelease. It does not commit a release,
-push a version tag, or consume `CHANGELOG.md` or `changelog.d/`. The temporary
-version patch is applied only to the build jobs. Keep this test release as a
-draft; its downloads are accessible to repository maintainers after signing in.
+push a version tag, or consume `CHANGELOG.md`, `changelog.d/`, or
+`release.toml`. The temporary version patch is applied only to the build jobs.
+Keep this test release as a draft; its downloads are accessible to repository
+maintainers after signing in.
 
 Use the separate **Draft Companion Release** workflow for server packages;
 see [Companion test repository](plugin/README.md#test-repository).
+
+## Build a release app
 
 ```sh
 just release
