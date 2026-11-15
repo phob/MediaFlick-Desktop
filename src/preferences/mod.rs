@@ -6,6 +6,7 @@ pub mod model;
 mod playback;
 mod reader;
 mod shortcuts;
+mod v0_1_6;
 mod viewing;
 pub use viewing::{
     NextEpisode, PlayerComfort, StartupView, SubtitleMode, ViewingSettings, ViewingWrite,
