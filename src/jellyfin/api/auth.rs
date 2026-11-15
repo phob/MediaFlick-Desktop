@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use super::client::{ApiError, JellyfinClient};
-use super::model::{AuthenticationResult, PublicSystemInfo, QuickConnectResult};
+use super::model::{AuthenticationResult, PublicSystemInfo, QuickConnectResult, UserAccess};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Credentials {
@@ -9,7 +9,7 @@ pub struct Credentials {
     pub user_id: String,
     pub user_name: String,
     pub server_id: String,
-    pub restricted: bool,
+    pub access: UserAccess,
 }
 
 impl Credentials {
@@ -28,16 +28,13 @@ impl Credentials {
                 "authentication response had no server id".to_string(),
             ));
         }
-        let restricted = user
-            .policy
-            .as_ref()
-            .is_none_or(super::model::UserPolicy::restricts_catalog);
+        let access = UserAccess::of(user.policy.as_ref());
         Ok(Self {
             token: result.access_token,
             user_id: user.id,
             user_name: user.name,
             server_id: result.server_id,
-            restricted,
+            access,
         })
     }
 }
@@ -111,7 +108,34 @@ mod tests {
         let credentials =
             result(r#"{"AccessToken":"tok","ServerId":"srv","User":{"Id":"uid","Name":"pho"}}"#)
                 .expect("credentials");
-        assert!(credentials.restricted);
+        assert!(credentials.access.restricted);
+        assert!(!credentials.access.administrator);
+    }
+
+    /// The policies are excerpts of real `AuthenticateByName` answers from
+    /// Jellyfin 12.4.0 (2026-11-15): the administrator a fresh server's
+    /// startup wizard created, and demo.jellyfin.org's `demo` user. Only an
+    /// administrator may be offered server setup such as the Companion
+    /// install; a policy that does not say so, or no policy, offers none.
+    #[test]
+    fn the_administrator_flag_comes_from_the_policy() {
+        let administrator = result(
+            r#"{"AccessToken":"tok","ServerId":"srv","User":{"Id":"uid","Name":"wn-admin","Policy":{"IsAdministrator":true,"IsHidden":true,"IsDisabled":false,"BlockedTags":[],"EnableAllFolders":true,"EnabledFolders":[],"BlockUnratedItems":[]}}}"#,
+        )
+        .expect("credentials");
+        let demo = result(
+            r#"{"AccessToken":"tok","ServerId":"srv","User":{"Id":"uid","Name":"demo","Policy":{"IsAdministrator":false,"IsHidden":false,"IsDisabled":false,"BlockedTags":[],"EnableAllFolders":true,"EnabledFolders":[],"BlockUnratedItems":[]}}}"#,
+        )
+        .expect("credentials");
+        let unspecified = result(
+            r#"{"AccessToken":"tok","ServerId":"srv","User":{"Id":"uid","Name":"pho","Policy":{"EnableAllFolders":true}}}"#,
+        )
+        .expect("credentials");
+
+        assert!(administrator.access.administrator);
+        assert!(!demo.access.administrator);
+        assert!(!unspecified.access.administrator);
+        assert!(!administrator.access.restricted && !demo.access.restricted);
     }
 
     #[test]

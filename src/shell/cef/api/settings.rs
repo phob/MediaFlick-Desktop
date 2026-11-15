@@ -26,6 +26,29 @@ routes! {
         patch_application_settings(services, body),
     PATCH ["settings", "appearance"] (body: AppearanceSettingsPatch) -> SettingsView =
         patch_appearance_settings(services, body),
+    GET ["settings", "whats-new"] -> WhatsNew = Ok(whats_new(services)),
+    POST ["settings", "whats-new", "seen"] -> WhatsNew = close_whats_new(services),
+}
+
+/// `/api/settings/whats-new`: whether this device, updated from 0.1.6, still
+/// has the one-time What's new to show.
+#[derive(Serialize, ts_rs::TS)]
+pub(super) struct WhatsNew {
+    pending: bool,
+}
+
+fn whats_new(services: &Services) -> WhatsNew {
+    WhatsNew {
+        pending: services.preferences.whats_new_pending(),
+    }
+}
+
+fn close_whats_new(services: &Services) -> Result<WhatsNew, ApiResponse> {
+    services
+        .preferences
+        .close_whats_new()
+        .map_err(|error| ApiResponse::error(500, error.to_string()))?;
+    Ok(whats_new(services))
 }
 
 pub(super) fn settings_snapshot(services: &Services) -> SettingsView {

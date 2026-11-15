@@ -35,6 +35,14 @@ pub(super) fn import(dir: &Path) -> AppSettings {
     settings
 }
 
+/// Whether `dir` holds 0.1.6's settings: the device ran 0.1.6, so it shows
+/// the one-time What's new after sign-in. 0.1.6 saved `config.json` whenever
+/// its window closed (`save_webui_window_settings` in
+/// v0.1.6:src/shell/cef/mod.rs); later builds never write that name.
+pub fn carries_0_1_6_data(dir: &Path) -> bool {
+    dir.join("config.json").is_file()
+}
+
 fn read<T: DeserializeOwned>(path: &Path) -> Option<T> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,

@@ -31,3 +31,4 @@ pub use service::{
     PreferencesService, SettingsChange,
 };
 pub use store::*;
+pub use v0_1_6::carries_0_1_6_data;
