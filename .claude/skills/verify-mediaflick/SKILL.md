@@ -38,10 +38,14 @@ Arguments after the drive go to `session.mjs`:
 - `--signed-out` (with `--account`): starts on that server's sign-in screen instead; `ctx.signIn({})` signs in with Quick Connect, approved by the harness as the cached account, so the app gets its own token and may sign out.
 - `--log-level FILTER`: the app's `--log-level`, an `EnvFilter`, default `debug`. Playback drives use `debug,jellyfin.playstate=trace,playback=trace` for the playstate reports.
 - `--seed DIR`: copied into the empty config dir before launch, for example a prepared `settings.json`.
+- `--seed-data DIR`: copied into the empty data dir before launch, for example the `cef-cache` an older release left.
 - `--keep-profile`: leaves the profile on disk for inspection. Remove it later with `just verify-cleanup`.
 - `--services-down`: the in-session doctor expects `/api/status` to answer 503 instead of 200, for a drive whose seed makes the app's services fail to open.
+- `--negative-control NAME`: the run is a negative control of a check; see [Negative control](#negative-control).
 
 `MEDIAFLICK_VERIFY_HARD_TIMEOUT` (seconds, default 900) bounds the whole wrapper run.
+
+`MEDIAFLICK_DESKTOP_EXE` runs another build instead of the staged `build/mediaflick-desktop`, such as a packaged AppImage. Such a build brings its own CEF runtime, so the session sets none of the staged build's `LD_LIBRARY_PATH` or `LD_PRELOAD`. `just verify` still builds and stages first.
 
 `MEDIAFLICK_VERIFY_SCREEN` (Linux, `WIDTHxHEIGHTxDEPTH`, default `1920x1080x24`) sizes the private Xvfb screen, such as `3840x2160x24` for a 4K screen at 100% scaling. Each side must be 100 to 8192 pixels and the depth 8, 16 or 24. The app window still opens at 1280x720; a drive that needs the whole screen sizes it with `xdotool`, as `reader-mouse` does.
 
@@ -144,7 +148,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | `until(exprOrFn, description, timeout)` | Poll a page expression or Node function until truthy; logs `saw <description>`. Never use fixed sleeps for state. |
 | `check(condition, message)` | Fail, or log `ok: message`. |
 | `signIn({ server, username, password })` | Drive the sign-in form and wait for the sidebar. Under `--account`, only confirm that the app started signed in as the cached user; under `--account … --signed-out`, sign in with Quick Connect approved by the harness. |
-| `quickConnect({ timeout, approve })` | From the sign-in screen, press `Use Quick Connect`, log the code (`QUICK CONNECT CODE …`) and wait up to `timeout` ms (default 600000) for someone to approve it. `approve: true` (only with `--signed-out`) approves it as the cached account. |
+| `quickConnect({ timeout, approve, signedIn })` | From the sign-in screen, press `Use Quick Connect`, log the code (`QUICK CONNECT CODE …`) and wait up to `timeout` ms (default 600000) for someone to approve it. `approve: true` (only with `--signed-out`) approves it as the cached account. `signedIn` is the target that shows once signed in, default the sidebar's `Settings` link; pass the dialog when one opens over it, such as What's new. |
 | `saveAccount()` | Under `just verify-login` only: cache the signed-in session for `--account` runs and write `account.json`. |
 | `account` | `{ server, userName, userId, login: false, signedOut }` under `--account`, `{ server, login: true }` under `verify-login`, else `null`. Never holds the token. |
 | `jellyfin(path)` | GET on the server to read back server state (`/Items/<id>?userId=${ctx.account.userId}`): as the cached account under `--account`, otherwise as the session the app stored when the drive signed in (the demo account, read-only). |
@@ -216,6 +220,20 @@ just verify segments --account "$S" --signed-out --timeout 600 --log-level "debu
 just verify segments --account "$S" --signed-out --timeout 600 --log-level "debug,mpv.ipc=trace" --seed .claude/skills/verify-mediaflick/seeds/external-mpv
 ```
 
+## Negative control
+
+A drive check that also passes with its change reverted proves nothing. Every new drive, and every new check in an existing drive, ships with a recorded negative control:
+
+1. Commit the change and the drive.
+2. Revert only the product change in the working tree, for example `git revert --no-commit <sha>` and then `git checkout HEAD -- .claude changelog.d`, or `git show <sha> -- <paths> | git apply -R`. A drive of behavior that already shipped has no change to revert: break that behavior on purpose instead, in the smallest edit that would be a real regression. Outside this skill's directory the working tree must hold nothing but the revert or the break.
+3. Run `just verify <drive> --negative-control NAME` with the drive's usual arguments. `NAME` says what is reverted (letters, digits, `.`, `_` and `-`, since `just` splits arguments on spaces). The session refuses to start when `git diff HEAD` outside this skill is empty, saves that diff as `negative-control.patch`, and adds `negativeControl: { reverted, head, patch, failure, held }` to `result.json`. The control holds, and the run exits 0 with `NEGATIVE CONTROL HELD`, only when the drive failed on an otherwise clean run. `failure` is the drive's error message: the control counts only when it is the check under test (a `check` message, or a `find` or `until` that waited for the reverted behavior), never a server, network or drive error; otherwise fix the cause and run it again. A drive that passes logs `NEGATIVE CONTROL NOT HELD: the drive passed with the change reverted` and exits 1; so does a failure before the drive starts, a drive timeout, an unawaited rejection, a failed teardown or after-run task, a changed real profile or a token in evidence.
+4. Restore the change (`git checkout HEAD -- <paths>`, then `touch` them so the next build sees them) and run the drive normally. It must pass.
+5. Record the control in the drive's entry in [drives/README.md](drives/README.md) and in the PR body: the date, what was reverted, and the check that failed with its message. A check no control can reach (a server state you cannot produce) is reported as not negative-controlled, with the reason.
+
+A control writes to the server as a normal run does, so `--account` drives still need their after-run tasks. Do not edit files outside this skill between starting `just verify` and the session's first `steps.log` line: the build and the recorded patch must both see only the revert.
+
+Proven on Linux with `sidebar-stable-icons` (2026-11-15): with #282's sidebar changes reverted the control held (exit 0); on a clean tree the session refused to start; with the fix restored the drive passed; with only a `README.md` edit as the "revert" the drive passed and the control was not held (exit 1).
+
 ## Evidence
 
 Each run writes **`build/verify/<run-id>/`**, which cleanup never removes (`just clean` does):
@@ -228,6 +246,7 @@ Each run writes **`build/verify/<run-id>/`**, which cleanup never removes (`just
 - `account.json` under `--account` or `verify-login`: the cached account without its token, and the `/Users/Me` check. `result.json` then also has `tokenScan`.
 - `*.png`, `*.ax.txt`, plus `failure.png` and `failure.ax.txt` when the drive throws.
 - `app.log` (Rust log at `debug`), `cef.log`, and `profile/config/`: a copy of everything the app wrote to its config dir.
+- `negative-control.patch` under `--negative-control`: the reverted change the run was built from. `result.json` then also has `negativeControl`.
 
 Proof standards:
 

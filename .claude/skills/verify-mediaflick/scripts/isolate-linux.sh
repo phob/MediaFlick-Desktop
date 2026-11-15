@@ -50,6 +50,11 @@ cleanup() {
     kill -TERM "$xvfb_pid" 2>/dev/null || true
     wait "$xvfb_pid" 2>/dev/null || true
   fi
+  # xdg-document-portal, which the private session bus can start, mounts a FUSE
+  # file system at runtime/doc; rm -rf cannot remove a mount point.
+  if mountpoint -q "$work/runtime/doc" 2>/dev/null; then
+    fusermount3 -u -z "$work/runtime/doc" 2>/dev/null || fusermount -u -z "$work/runtime/doc" 2>/dev/null || true
+  fi
   rm -rf "$work"
   exit "$status"
 }

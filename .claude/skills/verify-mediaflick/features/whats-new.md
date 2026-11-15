@@ -1,6 +1,6 @@
 # What's new after a 0.1.6 update
 
-A device that ran MediaFlick 0.1.6 (its config dir holds 0.1.6's `config.json`) shows a one-time `What's new since MediaFlick 0.1.6` dialog after sign-in: MediaFlick's own interface, signing in again, the server dashboard in the browser, MPC-HC's removal, the Jellyfin versions, and music, audiobooks and books, with links to the matching settings pages. A Jellyfin administrator whose server has no MediaFlick Companion also gets `Add MediaFlick Companion` with a `Companion install guide` link to `https://flick.media/companion/`; a non-administrator gets one line saying their server administrator can add it. Closing the dialog in any way writes `whats_new_seen: true` to `settings.json`; a fresh profile never shows it. Settings → MediaFlick Companion shows an `Install` row with the same guide link whenever the server has no Companion.
+A device that ran MediaFlick 0.1.6 (its config dir holds 0.1.6's `config.json`) shows a one-time `What's new since MediaFlick 0.1.6` dialog after sign-in: MediaFlick's own interface, signing in again, the server dashboard in the browser, MPC-HC's removal, the Jellyfin versions, and music, audiobooks and books, with links to the matching settings pages. A Jellyfin administrator whose server runs Jellyfin 12.0.0 or newer and has no MediaFlick Companion also gets `Add MediaFlick Companion` with a `Companion install guide` link to `https://flick.media/companion/`; a non-administrator on such a server gets one line saying their server administrator can add it. Below Jellyfin 12.0.0 neither shows, since the Companion cannot be installed there. Closing the dialog in any way writes `whats_new_seen: true` to `settings.json`; a fresh profile never shows it. Settings → MediaFlick Companion shows an `Install` row with the same guide link whenever a server of Jellyfin 12.0.0 or newer has no Companion; an older one reads `MediaFlick Companion needs Jellyfin 12.0.0 or newer.` instead.
 
 ## Sub-features
 
@@ -26,4 +26,5 @@ Preconditions: a server without the Companion. The demo server's `demo` is a non
 
 - Never press `Companion install guide`: it opens the user's default browser on the visible desktop.
 - A relaunched session reads the administrator flag from Jellyfin a moment after start, so the Companion page's administrator wording can follow its first paint.
-- With the Companion installed the dialog shows neither the offer nor the line; that case is not driven yet.
+- With the Companion installed the dialog shows neither the offer nor the line. *Proven by `whats-new` against a local Jellyfin 12.4.0 administrator with the Companion (`jellyfin-version-servers.py 12.4+companion`) and the test server's non-administrator (`--account … --signed-out`).*
+- Under `--account … --signed-out` the drive signs in with Quick Connect and waits for the dialog (`ctx.quickConnect({ signedIn: DIALOG })`), since the sidebar `ctx.signIn` waits for is hidden behind it.

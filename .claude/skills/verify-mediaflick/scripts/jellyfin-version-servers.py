@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """Run real Jellyfin servers of chosen versions on loopback for the `server-versions` drive.
 
-    python3 .claude/skills/verify-mediaflick/scripts/jellyfin-version-servers.py 10.10.7 10.11.0 10.11.11
+    python3 .claude/skills/verify-mediaflick/scripts/jellyfin-version-servers.py 10.10.7 10.11.0 10.11.11 12.4 12.4+companion
 
 For each version it downloads Jellyfin's official portable Linux build
 (cached in build/e2e/jellyfin-servers), starts it with a fresh data directory
 on a free 127.0.0.1 port, completes the startup wizard with the user
 `e2e-admin` / `e2e-password`, and adds a Movies and a Shows library of short
-generated videos (needs ffmpeg). It writes the servers to
+generated videos (needs ffmpeg). A version written `X.Y+companion` (12.0
+and newer) also gets the MediaFlick Companion, built and packaged like a
+release by scripts/e2e/companion-jellyfin.py (needs dotnet) and placed in the
+server's plugins directory before its first start, as an administrator's
+manual install does; the server must then answer /MediaFlick/info. Jellyfin
+12 names its releases by minor version (12.4), and a server answers to the
+version it was asked for when its full version starts with it. It writes the servers to
 build/e2e/jellyfin-version-servers/servers.json and, for the first version
 given, the profile a MediaFlick 0.1.6 user of that server has:
 upgrade-0-1-6/config.json, as 0.1.6 wrote it (serde_json::to_vec_pretty of
@@ -19,6 +25,7 @@ Linux x64 and arm64 only.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import platform
 import shutil
@@ -32,6 +39,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -106,12 +114,33 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
-def start(version: str, executable: Path, media_root: Path) -> tuple[subprocess.Popen[bytes], dict[str, str]]:
+def companion_package() -> Path:
+    """The Companion zip, built and packaged as companion-jellyfin.py does for a release."""
+    spec = importlib.util.spec_from_file_location("companion_jellyfin", ROOT / "scripts/e2e/companion-jellyfin.py")
+    if spec is None or spec.loader is None:
+        raise SystemExit("cannot load scripts/e2e/companion-jellyfin.py")
+    module = importlib.util.module_from_spec(spec)
+    # Its dataclasses look their module up in sys.modules while it loads.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    work = OUTPUT / "companion-package"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True)
+    archive, _ = module.build_package(work)
+    return archive
+
+
+def start(spec: str, executable: Path, media_root: Path, companion: Path | None) -> tuple[subprocess.Popen[bytes], dict[str, object]]:
+    version = spec.removesuffix("+companion")
     port = free_port()
-    data = OUTPUT / version
+    data = OUTPUT / spec
     shutil.rmtree(data, ignore_errors=True)
     config = data / "config"
     config.mkdir(parents=True)
+    if companion is not None:
+        with zipfile.ZipFile(companion) as package:
+            meta = json.loads(package.read("meta.json"))
+            package.extractall(data / "data" / "plugins" / f"{meta['name']}_{meta['version']}")
     (config / "network.xml").write_text(
         f'<?xml version="1.0" encoding="utf-8"?>\n<NetworkConfiguration><InternalHttpPort>{port}</InternalHttpPort>'
         f"<PublicHttpPort>{port}</PublicHttpPort><EnableHttps>false</EnableHttps><AutoDiscovery>false</AutoDiscovery>"
@@ -121,37 +150,54 @@ def start(version: str, executable: Path, media_root: Path) -> tuple[subprocess.
     if shutil.which("ffmpeg"):
         command += ["--ffmpeg", shutil.which("ffmpeg")]
     process = subprocess.Popen(command, stdout=(data / "console.log").open("wb"), stderr=subprocess.STDOUT)
-    base = f"http://127.0.0.1:{port}"
-    deadline = time.monotonic() + 180
-    while True:
-        if process.poll() is not None or time.monotonic() > deadline:
-            raise SystemExit(f"Jellyfin {version} did not start; see {data / 'console.log'}")
-        try:
-            status, body = request(base, "GET", "/System/Info/Public")
-            # While it migrates, a stand-in answers without a version.
-            if status == 200 and json.loads(body).get("Version"):
-                break
-        except (urllib.error.URLError, ConnectionError, TimeoutError, json.JSONDecodeError):
-            pass
-        time.sleep(1)
-    info = json.loads(body)
-    if info["Version"] != version:
-        raise SystemExit(f"the {version} build reports {info['Version']}")
-    (data / "public-info.json").write_text(body)
-    ok(request(base, "POST", "/Startup/Configuration", body={"UICulture": "en-US", "MetadataCountryCode": "US", "PreferredMetadataLanguage": "en"}), "startup configuration")
-    ok(request(base, "GET", "/Startup/User"), "startup user lookup")
-    ok(request(base, "POST", "/Startup/User", body={"Name": USER, "Password": PASSWORD}), "startup user")
-    ok(request(base, "POST", "/Startup/Complete"), "startup completion")
-    token = json.loads(ok(request(base, "POST", "/Users/AuthenticateByName", body={"Username": USER, "Pw": PASSWORD}), "sign-in"))["AccessToken"]
-    for name, kind in dict.fromkeys((name, kind) for name, kind, _, _ in LIBRARIES):
-        query = urllib.parse.urlencode({"name": name, "collectionType": kind, "paths": str(media_root / name), "refreshLibrary": "true"})
-        ok(request(base, "POST", f"/Library/VirtualFolders?{query}", token, {"LibraryOptions": {}}), f"library {name}")
-    while json.loads(ok(request(base, "GET", "/Items?Recursive=true&IncludeItemTypes=Movie,Episode", token), "items"))["TotalRecordCount"] < len(LIBRARIES):
-        if time.monotonic() > deadline:
-            raise SystemExit(f"Jellyfin {version} did not scan the test libraries")
-        time.sleep(1)
-    request(base, "POST", "/Sessions/Logout", token)
-    return process, {"version": version, "url": base, "username": USER, "password": PASSWORD}
+    # A server that fails to come up must not outlive the script.
+    try:
+        base = f"http://127.0.0.1:{port}"
+        deadline = time.monotonic() + 180
+        while True:
+            if process.poll() is not None or time.monotonic() > deadline:
+                raise SystemExit(f"Jellyfin {version} did not start; see {data / 'console.log'}")
+            try:
+                status, body = request(base, "GET", "/System/Info/Public")
+                # While it migrates, a stand-in answers without a version.
+                if status == 200 and json.loads(body).get("Version"):
+                    break
+            except (urllib.error.URLError, ConnectionError, TimeoutError, json.JSONDecodeError):
+                pass
+            time.sleep(1)
+        info = json.loads(body)
+        if info["Version"] != version and not info["Version"].startswith(f"{version}."):
+            raise SystemExit(f"the {version} build reports {info['Version']}")
+        (data / "public-info.json").write_text(body)
+        ok(request(base, "POST", "/Startup/Configuration", body={"UICulture": "en-US", "MetadataCountryCode": "US", "PreferredMetadataLanguage": "en"}), "startup configuration")
+        ok(request(base, "GET", "/Startup/User"), "startup user lookup")
+        ok(request(base, "POST", "/Startup/User", body={"Name": USER, "Password": PASSWORD}), "startup user")
+        ok(request(base, "POST", "/Startup/Complete"), "startup completion")
+        token = json.loads(ok(request(base, "POST", "/Users/AuthenticateByName", body={"Username": USER, "Pw": PASSWORD}), "sign-in"))["AccessToken"]
+        for name, kind in dict.fromkeys((name, kind) for name, kind, _, _ in LIBRARIES):
+            # Jellyfin 12 no longer reads the `paths` query parameter; every version reads PathInfos.
+            query = urllib.parse.urlencode({"name": name, "collectionType": kind, "refreshLibrary": "true"})
+            options = {"LibraryOptions": {"PathInfos": [{"Path": str(media_root / name)}]}}
+            ok(request(base, "POST", f"/Library/VirtualFolders?{query}", token, options), f"library {name}")
+        # Jellyfin 12 may scan while the second library is still being added and
+        # then miss it; a scan started after both are in place finds every file.
+        rescan = 0.0
+        while json.loads(ok(request(base, "GET", "/Items?Recursive=true&IncludeItemTypes=Movie,Episode", token), "items"))["TotalRecordCount"] < len(LIBRARIES):
+            if time.monotonic() > deadline:
+                raise SystemExit(f"Jellyfin {version} did not scan the test libraries")
+            if time.monotonic() > rescan:
+                ok(request(base, "POST", "/Library/Refresh", token), "library scan")
+                rescan = time.monotonic() + 20
+            time.sleep(1)
+        if companion is not None:
+            ok(request(base, "GET", "/MediaFlick/info", token), f"the Companion on Jellyfin {info['Version']}")
+        request(base, "POST", "/Sessions/Logout", token)
+        return process, {"version": info["Version"], "requested": spec, "url": base, "username": USER, "password": PASSWORD,
+                         "companion": companion is not None}
+    except BaseException:
+        process.terminate()
+        process.wait(timeout=30)
+        raise
 
 
 def main() -> int:
@@ -162,11 +208,13 @@ def main() -> int:
     processes = []
     servers = []
     try:
-        for version in versions:
-            process, server = start(version, fetch(version), media_root)
+        package = companion_package() if any(spec.endswith("+companion") for spec in versions) else None
+        for spec in versions:
+            process, server = start(spec, fetch(spec.removesuffix("+companion")), media_root,
+                                    package if spec.endswith("+companion") else None)
             processes.append(process)
             servers.append(server)
-            print(f"Jellyfin {version} at {server['url']}", flush=True)
+            print(f"Jellyfin {server['version']} at {server['url']}{' with the Companion' if server['companion'] else ''}", flush=True)
         (OUTPUT / "servers.json").write_text(json.dumps(servers, indent=2) + "\n")
         seed = OUTPUT / "upgrade-0-1-6"
         seed.mkdir(exist_ok=True)

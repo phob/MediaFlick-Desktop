@@ -32,6 +32,8 @@ This directory is the maintained source for verifying the user-facing behavior o
 
 Each feature file starts with an H1 title and one paragraph describing the user-visible behavior, then exactly four H2 sections: `Sub-features`, `How to get to it (user POV)`, `Driving it with ctx (just verify)`, and `Gotchas`. Handles marked *proven* were exercised by a shipped drive; the rest come from the UI source and need their first live run before you rely on them.
 
+A proof claim in this map names the drive that proves it, and any evidence it cites by the file name that drive writes (`segments.json`, `02-playing.png`), never a run id. `scripts/ci/check_feature_map.py` fails a claim that names no existing drive or evidence its drive does not write (PR checks, `just check-pr`). Whether the prose matches what the drive checks is left to review: read the drive before you trust or change a claim. A new drive check also needs a recorded negative control ([SKILL.md](../SKILL.md#negative-control)).
+
 ## Features
 
 - [Sign in and sign out](./sign-in.md): server address, username and password, `--url` prefill, Quick Connect, the user menu, sign-out (which revokes the token), an expired session. Proven by `smoke`, `browse`, `sign-in`, `labels`, `sidebar-user-menu` and `library-filters` on the demo server, `account-session` on your own, and `server-versions` (the Jellyfin 10.11.0 floor) on real 10.10 and 10.11 servers; the wrong-password path is not driven (lockout).
