@@ -1,0 +1,77 @@
+name: Release
+
+# A merged change to release.toml is the release, so merging a PR is how it is
+# approved. A new version is built and published as a prerelease by Build
+# Release; a later change of the channel alone to "latest" makes that published
+# prerelease GitHub's Latest release, which the in-app updater and flick.media
+# offer. Any other merge, release.toml unchanged included, releases nothing.
+on:
+  push:
+    branches: [main]
+    paths: [release.toml]
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Read the release.toml change
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.plan.outputs.action }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The PR checks ran the same comparison before the merge.
+      - name: Compare release.toml with main before the push
+        id: plan
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare-release.py --transition "$BEFORE" | tee -a "$GITHUB_OUTPUT"
+
+  prerelease:
+    name: Build and publish the prerelease
+    needs: plan
+    if: ${{ needs.plan.outputs.action == 'prerelease' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/draft-release.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+
+  latest:
+    name: Make the prerelease Latest
+    needs: plan
+    if: ${{ needs.plan.outputs.action == 'latest' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Mark the published prerelease Latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: v${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+          gh release view "$TAG" --json isDraft,isPrerelease > "$RUNNER_TEMP/release.json" \
+            || fail "There is no release ${TAG}. Its release PR publishes it as a prerelease first."
+          jq -e '.isDraft | not' "$RUNNER_TEMP/release.json" > /dev/null \
+            || fail "${TAG} is a draft. Only a published prerelease becomes Latest."
+          jq -e '.isPrerelease' "$RUNNER_TEMP/release.json" > /dev/null \
+            || fail "${TAG} is not a prerelease, so this change does not make it Latest."
+
+          gh release edit "$TAG" --prerelease=false --latest
+          latest="$(gh api "repos/${GH_REPO}/releases/latest" --jq .tag_name)"
+          [[ "$latest" == "$TAG" ]] || fail "GitHub reports ${latest} as Latest, not ${TAG}."
+          echo "${TAG} is the Latest release."

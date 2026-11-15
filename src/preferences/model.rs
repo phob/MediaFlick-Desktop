@@ -31,7 +31,11 @@ pub struct AppSettings {
     /// `None` preserves the legacy migration rule: an existing `mpv_path`
     /// selects external mpv. Fresh Windows installs select bundled libmpv;
     /// other platforms keep using external mpv until they ship a bundle.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_player_backend"
+    )]
     pub player_backend: Option<PlayerBackend>,
     #[serde(
         default = "default_log_level_string",
@@ -341,6 +345,30 @@ impl PlayerBackend {
             name => from_serde_name(name),
         }
     }
+}
+
+/// Reads the saved backend. 0.1.6 could save MPC-HC, which 0.2.0 dropped; that
+/// user moves to the built-in player, chosen explicitly because a saved
+/// `mpv_path` alone would select external mpv. Any other unknown value is
+/// still rejected.
+fn deserialize_player_backend<'de, D>(deserializer: D) -> Result<Option<PlayerBackend>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum SavedPlayerBackend {
+        Libmpv,
+        Mpv,
+        Mpchc,
+    }
+
+    Ok(
+        Option::<SavedPlayerBackend>::deserialize(deserializer)?.map(|saved| match saved {
+            SavedPlayerBackend::Libmpv | SavedPlayerBackend::Mpchc => PlayerBackend::Libmpv,
+            SavedPlayerBackend::Mpv => PlayerBackend::Mpv,
+        }),
+    )
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
@@ -713,6 +741,42 @@ mod tests {
         assert_eq!(settings.player_backend, None);
         assert_eq!(settings.effective_backend(), PlayerBackend::Mpv);
         assert_eq!(settings.player_path(), Some("C:/mpv/mpv.exe"));
+    }
+
+    /// 0.1.6 saved MPC-HC as `"player_backend": "mpchc"` (`PlayerBackend` in
+    /// v0.1.6:src/preferences/model.rs, `rename_all = "snake_case"`). The
+    /// operator decided on 2026-11-15 that such a user moves to the built-in
+    /// player, also when an mpv path is saved, which alone would select
+    /// external mpv.
+    #[test]
+    fn a_saved_mpchc_backend_selects_the_built_in_player() {
+        for document in [
+            r#"{"player_backend":"mpchc"}"#,
+            r#"{"mpv_path":"/usr/bin/mpv","player_backend":"mpchc","mpchc_path":"C:\\mpc-hc64.exe"}"#,
+        ] {
+            let backend = serde_json::from_str::<AppSettings>(document)
+                .map(|settings| (settings.player_backend, settings.effective_backend()))
+                .map_err(|error| error.to_string());
+            assert_eq!(
+                backend,
+                Ok((Some(PlayerBackend::Libmpv), PlayerBackend::Libmpv)),
+                "{document}"
+            );
+        }
+    }
+
+    /// Only the one removed value is mapped: any other backend this build does
+    /// not know is still rejected, as the settings store requires to leave a
+    /// newer version's file untouched.
+    #[test]
+    fn an_unknown_saved_backend_is_still_rejected() {
+        for value in ["vlc", "mpc-hc", "built_in", "", "MPCHC"] {
+            let document = serde_json::json!({ "player_backend": value });
+            assert!(
+                serde_json::from_value::<AppSettings>(document).is_err(),
+                "{value:?} must be rejected"
+            );
+        }
     }
 
     #[test]
