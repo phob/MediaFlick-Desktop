@@ -107,11 +107,30 @@ class PlantedChanges(unittest.TestCase):
                 planted = self.planted(feature, number, drive, at, f"`{drive}`", before=(claim, "Proven by the test server. "))
                 self.assertIn((feature, number), lines(planted))
 
+    def test_unwritten_evidence_with_any_extension_fails(self) -> None:
+        # Review of PR #337: a `.txt` name fell outside the evidence pattern and was ignored.
+        for feature, number, drive, at in self.claims:
+            with self.subTest(feature=feature, line=number):
+                self.assertIn((feature, number), lines(self.planted(feature, number, drive, at, f"`{drive}` (`zz-never-written.txt`)")))
+
     def test_harness_evidence_and_plain_terms_pass(self) -> None:
         for feature, number, drive, at in self.claims:
             with self.subTest(feature=feature, line=number):
                 extra = f"`{drive}` (`steps.log`, `app.log`, `failure.png`, `--account`, `Skip Intro`, `/api/status`, Jellyfin `10.11.0`)"
                 self.assertEqual(self.planted(feature, number, drive, at, extra), [])
+
+
+class ScreenshotNames(unittest.TestCase):
+    """Review of PR #337: `segments.png` was accepted from a drive that writes only `segments.json`."""
+
+    def test_a_screenshot_name_does_not_match_a_longer_file_name(self) -> None:
+        found = problems({"playback": "*Proven by `segments` (`segments.png`).*\n"}, {"segments": 'ctx.writeEvidence("segments.json", {})\n'})
+        self.assertEqual(lines(found), {("playback", 1)}, found)
+
+    def test_a_screenshot_name_matches_its_capture(self) -> None:
+        source = 'await ctx.screenshot("02-playing")\nawait ctx.snapshot(`${name}-bar`)\nctx.writeEvidence("cover.png", png)\n'
+        claim = "*Proven by `playback` (`02-playing.png`, `02-playing.ax.txt`, `cover.png`).*\n"
+        self.assertEqual(problems({"playback": claim}, {"playback": source}), [])
 
 
 if __name__ == "__main__":

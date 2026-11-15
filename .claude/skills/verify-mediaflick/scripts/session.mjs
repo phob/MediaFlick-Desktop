@@ -94,6 +94,7 @@ const result = { runId, drive: path.relative(root, drivePath), passed: false, er
 if (revertPatch) writeFileSync(path.join(evidence, "negative-control.patch"), revertPatch)
 let driveStarted = false
 let driveFailed = false
+let driveFailure = null
 let driveTimedOut = false
 // A promise a drive forgot to await must fail the drive and still reach
 // teardown and the after-run tasks, not crash the process past them.
@@ -375,6 +376,7 @@ try {
     unhandled,
   ]).catch((error) => {
     driveFailed = true
+    driveFailure = error instanceof Error ? error.message : String(error)
     throw error
   })
   if (signOutBlocked) throw new Error("the drive tried to sign out of a cached Jellyfin account")
@@ -446,11 +448,12 @@ try {
     log(leaked.length ? `token scan: redacted the token from ${leaked.join(", ")}` : "token scan ok: no evidence file holds the token")
   }
   result.durationMs = Date.now() - started
-  // A control holds only when a check of the drive failed on an otherwise clean
-  // run: a timeout (a stall), an unawaited rejection, or a teardown, after-run,
-  // guard or token failure proves nothing about the check.
+  // A control holds only when the drive failed on an otherwise clean run: a
+  // timeout (a stall), an unawaited rejection, or a teardown, after-run, guard or
+  // token failure proves nothing about the check. Whether `failure` is the check
+  // under test, and not a server or network error, is for whoever records it.
   const clean = !driveTimedOut && !unhandledError && !cleanupErrors.length && !(changed.length && !running.length) && !result.leftovers && !result.tokenScan?.leaked.length
-  if (reverted) result.negativeControl = { reverted, head: gitHead(), patch: "negative-control.patch", held: driveFailed && clean }
+  if (reverted) result.negativeControl = { reverted, head: gitHead(), patch: "negative-control.patch", failure: driveFailure, held: driveFailed && clean }
   writeJson("result.json", result)
   log(`${result.passed ? "PASSED" : "FAILED"} ${path.relative(root, evidence)} (exit: ${result.exit})`)
   if (reverted) {

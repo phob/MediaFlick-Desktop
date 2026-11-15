@@ -5,7 +5,7 @@ Usage: check_feature_map.py
 A "Proven by" claim in .claude/skills/verify-mediaflick/features/*.md runs to the first `*`, `;`,
 sentence end or line end ("X is proven by Y" states a rule and is not a claim). It must name a drive
 in drives/, and every backticked name in it must be one of its drives, an evidence file one of them
-writes (a whole name in its source, `.png` and `.ax.txt` left off) or one the harness writes for every
+writes (a whole name in its source, for a capture with or without `.png` or `.ax.txt`) or one the harness writes for every
 run, or not look like either (`--account`, `Cast`). Whether the prose around a claim is true is left
 to review. Tests: test_check_feature_map.py.
 """
@@ -20,7 +20,7 @@ SKILL = Path(__file__).resolve().parents[2] / ".claude" / "skills" / "verify-med
 CLAUSE = re.compile(r"(?<!\bis )(?<!\bare )proven by((?:`[^`\n]*`|\.(?!\s|$)|[^`*;.\n])*)", re.IGNORECASE | re.MULTILINE)
 NAME = re.compile(r"`([^`\n]*)`")
 DRIVE_LIKE = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
-EVIDENCE = re.compile(r"\d\d[a-z]?-[\w-]+(?:\.png|\.ax\.txt)?|[\w.-]+\.(?:png|ax\.txt|json|log|wav|mp4)")
+EVIDENCE = re.compile(r"\d\d[a-z]?-[\w-]+(?:\.png|\.ax\.txt)?|[\w-]+(?:\.ax)?\.[a-z][a-z0-9]{1,4}")
 SCREENSHOT = re.compile(r"\.(?:png|ax\.txt)$")
 HARNESS_FILES = frozenset({
     "steps.log", "app.log", "cef.log", "doctor.json", "doctor-relaunch.json", "result.json", "guard.json",
@@ -50,7 +50,10 @@ def problems(features: dict[str, str], drives: dict[str, str]) -> list[Problem]:
                 if name in drives or name in HARNESS_FILES:
                     continue
                 if EVIDENCE.fullmatch(name):
-                    written = re.compile(rf"(?<![\w.-]){re.escape(SCREENSHOT.sub('', name))}(?![\w-])")
+                    # A capture is named without its extension (`screenshot("02-playing")`), so the bare
+                    # name must end there; `segments.png` is not `segments.json`.
+                    spellings = {name, SCREENSHOT.sub("", name)}
+                    written = re.compile(rf"(?<![\w.-])(?:{'|'.join(map(re.escape, spellings))})(?![\w.-])")
                     if not any(written.search(drives[drive]) for drive in named):
                         found.append(Problem(feature, line, f"no drive among {', '.join(named)} writes `{name}`."))
                 elif DRIVE_LIKE.fullmatch(name):
