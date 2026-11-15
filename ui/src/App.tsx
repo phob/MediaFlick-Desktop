@@ -5,6 +5,7 @@ import { AppShell } from "@/components/AppShell"
 import { BootstrapRetry } from "@/components/BootstrapRetry"
 import { LoadingScreen } from "@/components/LoadingScreen"
 import { SeerrGate } from "@/components/seerr/SeerrGate"
+import { WhatsNewDialog } from "@/components/WhatsNewDialog"
 import { WindowTitleSync } from "@/components/WindowTitleSync"
 import { RatingsProvider } from "@/lib/ratings"
 import { TechnicalProvider } from "@/lib/technical"
@@ -119,6 +120,7 @@ export default function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
             </AppShell>
+            <WhatsNewDialog />
           </TechnicalProvider>
         </RatingsProvider>
       )}

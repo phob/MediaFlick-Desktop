@@ -75,6 +75,7 @@ export const queryKeys = {
   companion: key("companion"),
   calendar: (start: string, end: string) => key("calendar", start, end),
   settings: key("settings"),
+  whatsNew: key("whats-new"),
   viewing: (account: string) => key("viewing", account),
   browsing: (account: string) => key("browsing", account),
   ratingsStatus: key("ratings", "status"),

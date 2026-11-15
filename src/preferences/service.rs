@@ -124,6 +124,8 @@ pub struct PreferencesService {
     state: Mutex<PreferencesState>,
     accounts: Arc<AccountConfigurationService>,
     listener: Mutex<Option<mpsc::Sender<SettingsChange>>>,
+    /// This device ran MediaFlick 0.1.6, read once at startup.
+    upgraded_from_0_1_6: bool,
 }
 
 struct PreferencesState {
@@ -136,6 +138,7 @@ impl PreferencesService {
         mut settings: AppSettings,
         accounts: Arc<AccountConfigurationService>,
         active_account: Option<AccountKey>,
+        upgraded_from_0_1_6: bool,
     ) -> Self {
         settings.sanitize();
         settings.appearance = active_account
@@ -149,6 +152,7 @@ impl PreferencesService {
             }),
             accounts,
             listener: Mutex::new(None),
+            upgraded_from_0_1_6,
         }
     }
 
@@ -381,6 +385,20 @@ impl PreferencesService {
         .map(|_| ())
     }
 
+    /// Whether the one-time What's new is due: this device ran 0.1.6 and it
+    /// was not closed yet.
+    pub fn whats_new_pending(&self) -> bool {
+        self.upgraded_from_0_1_6 && !self.snapshot().whats_new_seen
+    }
+
+    pub fn close_whats_new(&self) -> Result<(), PreferencesError> {
+        self.update(|next| {
+            next.whats_new_seen = true;
+            Ok(())
+        })
+        .map(|_| ())
+    }
+
     pub fn set_server_url(&self, server_url: String) -> Result<(), PreferencesError> {
         self.update(move |next| {
             next.jellyfin_url = Some(server_url);
@@ -547,7 +565,7 @@ mod tests {
         let alice = AccountKey::new("server", "alice").expect("alice account");
         let bob = AccountKey::new("server", "bob").expect("bob account");
         let service =
-            PreferencesService::new(AppSettings::default(), accounts, Some(alice.clone()));
+            PreferencesService::new(AppSettings::default(), accounts, Some(alice.clone()), false);
 
         service
             .patch_appearance(AppearanceSettingsPatch {
@@ -581,7 +599,7 @@ mod tests {
         let accounts = Arc::new(
             AccountConfigurationService::open(path.clone()).expect("open account settings"),
         );
-        let service = PreferencesService::new(AppSettings::default(), accounts, None);
+        let service = PreferencesService::new(AppSettings::default(), accounts, None, false);
 
         assert!(
             service
