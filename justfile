@@ -139,6 +139,7 @@ check-pr base="origin/main": fmt-check ui
     actionlint
     python3 scripts/ci/check_changelog_fragment.py {{base}}
     python3 scripts/ci/check_file_size.py {{base}}
+    python3 scripts/ci/check_feature_map.py
     python3 scripts/ci/check_guards.py {{base}}
     python3 scripts/ci/check_ui_ratchet.py {{base}}
     python3 -m unittest discover -s scripts/ci -p 'test_*.py'
