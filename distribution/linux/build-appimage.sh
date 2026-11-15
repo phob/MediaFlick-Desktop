@@ -35,11 +35,12 @@ for file in lib/libmpv.so.2 SHA256SUMS SOURCE-REVISIONS.txt SYSTEM-PACKAGES.txt 
 done
 (cd "$libmpv_dir" && sha256sum --check --strict SHA256SUMS)
 
-target_dir="${CARGO_TARGET_DIR:-build/cargo-target}/release"
-binary="$target_dir/mediaflick-desktop"
+# `just release` (scripts/stage-app.mjs) stages the binary and CEF runtime here.
+staged_dir="build"
+binary="$staged_dir/mediaflick-desktop"
 if [[ ! -x "$binary" ]]; then
-    echo "Missing release binary: $binary" >&2
-    echo "Run 'cargo build --release --bin mediaflick-desktop' first." >&2
+    echo "Missing staged release binary: $binary" >&2
+    echo "Run 'just release' first." >&2
     exit 1
 fi
 
@@ -55,14 +56,13 @@ mkdir -p \
 
 install -m 0755 "$binary" "$appdir/usr/bin/mediaflick-desktop"
 
-# CEF's Linux runtime files are copied next to the Cargo binary by cef-dll-sys.
 shopt -s nullglob
 for pattern in \
     "*.so" "*.so.*" \
     "*.bin" "*.dat" "*.pak" \
     "chrome-sandbox" "snapshot_blob.bin" "v8_context_snapshot.bin" \
     "vk_swiftshader_icd.json"; do
-    for file in "$target_dir"/$pattern; do
+    for file in "$staged_dir"/$pattern; do
         if [[ -f "$file" ]]; then
             cp -P "$file" "$appdir/usr/bin/"
         fi
@@ -84,7 +84,7 @@ required=(
     "$appdir/usr/bin/libcef.so"
     "$appdir/usr/bin/icudtl.dat"
     "$appdir/usr/bin/resources.pak"
-    "$target_dir/CREDITS.html"
+    "$staged_dir/CREDITS.html"
 )
 for file in "${required[@]}"; do
     if [[ ! -e "$file" ]]; then
@@ -93,13 +93,13 @@ for file in "${required[@]}"; do
     fi
 done
 
-if [[ ! -d "$target_dir/locales" ]]; then
-    echo "Missing required CEF locales directory: $target_dir/locales" >&2
+if [[ ! -d "$staged_dir/locales" ]]; then
+    echo "Missing required CEF locales directory: $staged_dir/locales" >&2
     exit 1
 fi
-cp -R "$target_dir/locales" "$appdir/usr/bin/locales"
+cp -R "$staged_dir/locales" "$appdir/usr/bin/locales"
 
-install -m 0644 LICENSE THIRD-PARTY-NOTICES.md "$target_dir/CREDITS.html" \
+install -m 0644 LICENSE THIRD-PARTY-NOTICES.md "$staged_dir/CREDITS.html" \
     "$appdir/usr/share/doc/mediaflick-desktop/"
 cp distribution/linux/io.github.phob.MediaFlickDesktop.desktop "$appdir/usr/share/applications/io.github.phob.MediaFlickDesktop.desktop"
 cp distribution/linux/io.github.phob.MediaFlickDesktop.metainfo.xml "$appdir/usr/share/metainfo/io.github.phob.MediaFlickDesktop.metainfo.xml"
