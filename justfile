@@ -181,39 +181,13 @@ libarchive-wasm mode="check":
 
 # Build and stage the app into ./build
 [group('build')]
-[windows]
 build:
-    cargo build --bin mediaflick-desktop
-    New-Item -ItemType Directory -Force build | Out-Null
-    Get-ChildItem "$env:CARGO_TARGET_DIR/debug" -File | Copy-Item -Destination build -Force
-    if (Test-Path "$env:CARGO_TARGET_DIR/debug/locales") { Copy-Item "$env:CARGO_TARGET_DIR/debug/locales" build -Recurse -Force }
-
-# Build and stage the app into ./build
-[group('build')]
-[unix]
-build:
-    cargo build --bin mediaflick-desktop
-    mkdir -p build
-    find "$CARGO_TARGET_DIR/debug" -maxdepth 1 -type f -exec cp {} build/ \;
-    if [ -d "$CARGO_TARGET_DIR/debug/locales" ]; then rm -rf build/locales && cp -R "$CARGO_TARGET_DIR/debug/locales" build/locales; fi
+    node scripts/stage-app.mjs
 
 # Build and stage a release app into ./build
 [group('build')]
-[windows]
 release:
-    cargo build --release --bin mediaflick-desktop
-    New-Item -ItemType Directory -Force build | Out-Null
-    Get-ChildItem "$env:CARGO_TARGET_DIR/release" -File | Copy-Item -Destination build -Force
-    if (Test-Path "$env:CARGO_TARGET_DIR/release/locales") { Copy-Item "$env:CARGO_TARGET_DIR/release/locales" build -Recurse -Force }
-
-# Build and stage a release app into ./build
-[group('build')]
-[unix]
-release:
-    cargo build --release --bin mediaflick-desktop
-    mkdir -p build
-    find "$CARGO_TARGET_DIR/release" -maxdepth 1 -type f -exec cp {} build/ \;
-    if [ -d "$CARGO_TARGET_DIR/release/locales" ]; then rm -rf build/locales && cp -R "$CARGO_TARGET_DIR/release/locales" build/locales; fi
+    node scripts/stage-app.mjs --release
 
 # Build and stage a non-debug app into ./build
 [group('build')]

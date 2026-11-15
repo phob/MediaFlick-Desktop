@@ -18,7 +18,8 @@ Building is mainly intended for developers and advanced users.
 just build
 ```
 
-The staged app is created in `build/`:
+`just build` and `just release` stage the app with the CEF runtime and its
+locales in `build/` (`scripts/stage-app.mjs`):
 
 ```text
 build/mediaflick-desktop.exe
@@ -189,8 +190,9 @@ just linux-appimage
 ```
 
 Publish `dist/linux/mediaflick-libmpv-linux-<arch>-sources.tar.zst` beside the
-AppImage. To rebuild only libmpv, use `just libmpv`. To package an existing
-release binary and runtime, run `bash distribution/linux/build-appimage.sh`.
+AppImage. To rebuild only libmpv, use `just libmpv`. To package the release
+app that `just release` already staged in `build/`, run
+`bash distribution/linux/build-appimage.sh`.
 
 macOS DMG packaging creates an unsigned/ad-hoc signed `.app` bundle:
 
