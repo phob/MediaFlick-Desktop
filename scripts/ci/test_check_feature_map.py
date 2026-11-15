@@ -120,6 +120,19 @@ class PlantedChanges(unittest.TestCase):
                 self.assertEqual(self.planted(feature, number, drive, at, extra), [])
 
 
+class Commands(unittest.TestCase):
+    """#341's whats-new claim cites a helper script with its arguments, a command and not evidence."""
+
+    def test_a_script_run_with_arguments_is_not_evidence(self) -> None:
+        claim = "*Proven by `whats-new` with the Companion (`jellyfin-version-servers.py 12.4+companion`).*\n"
+        self.assertEqual(problems({"whats-new": claim}, {"whats-new": "export default async function () {}\n"}), [])
+
+    def test_a_misspelled_drive_with_arguments_still_fails(self) -> None:
+        claim = "*Proven by `whats-new` and `whats-nwe --account SERVER`.*\n"
+        found = problems({"whats-new": claim}, {"whats-new": "export default async function () {}\n"})
+        self.assertEqual(lines(found), {("whats-new", 1)}, found)
+
+
 class ScreenshotNames(unittest.TestCase):
     """Review of PR #337: `segments.png` was accepted from a drive that writes only `segments.json`."""
 

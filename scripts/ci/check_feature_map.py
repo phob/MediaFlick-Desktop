@@ -5,9 +5,10 @@ Usage: check_feature_map.py
 A "Proven by" claim in .claude/skills/verify-mediaflick/features/*.md runs to the first `*`, `;`,
 sentence end or line end ("X is proven by Y" states a rule and is not a claim). It must name a drive
 in drives/, and every backticked name in it must be one of its drives, an evidence file one of them
-writes (a whole name in its source, for a capture with or without `.png` or `.ax.txt`) or one the harness writes for every
-run, or not look like either (`--account`, `Cast`). Whether the prose around a claim is true is left
-to review. Tests: test_check_feature_map.py.
+writes (a whole name in its source, for a capture with or without `.png` or `.ax.txt`) or one the
+harness writes for every run, or not look like either (`--account`, `Cast`). A name with arguments is
+a command and cites no evidence, though its first word must still be a drive if it looks like one.
+Whether the prose around a claim is true is left to review. Tests: test_check_feature_map.py.
 """
 
 import re
@@ -41,15 +42,17 @@ def problems(features: dict[str, str], drives: dict[str, str]) -> list[Problem]:
     for feature, text in sorted(features.items()):
         for clause in CLAUSE.finditer(text):
             line = text.count("\n", 0, clause.start()) + 1
-            names = [name.split()[0] for name in NAME.findall(clause.group(1)) if name.strip()]
-            named = [name for name in names if name in drives]
+            # A name with arguments is a command (`playback --account SERVER`, `jellyfin-version-servers.py 12.4`):
+            # its first word may be a drive, but it cites no evidence.
+            names = [(name.split()[0], len(name.split()) > 1) for name in NAME.findall(clause.group(1)) if name.strip()]
+            named = [name for name, _ in names if name in drives]
             if not named:
                 found.append(Problem(feature, line, f'"{clause.group(0).strip()}" names no drive in drives/.'))
                 continue
-            for name in names:
+            for name, command in names:
                 if name in drives or name in HARNESS_FILES:
                     continue
-                if EVIDENCE.fullmatch(name):
+                if not command and EVIDENCE.fullmatch(name):
                     # A capture is named without its extension (`screenshot("02-playing")`), so the bare
                     # name must end there; `segments.png` is not `segments.json`.
                     spellings = {name, SCREENSHOT.sub("", name)}
