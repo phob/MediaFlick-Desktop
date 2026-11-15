@@ -8,11 +8,12 @@ import { useCompanion } from "./queries"
 export const COMPANION_GUIDE_URL = "https://flick.media/companion/"
 
 /**
- * The server answered that it has no Companion. A plugin that could not be
- * reached may still be installed, so it does not count as missing.
+ * The server answered that it has no Companion and could run one. A plugin
+ * that could not be reached may still be installed, so it does not count as
+ * missing; a server older than the Companion needs cannot install it.
  */
 export function companionMissing(status: CompanionStatus | undefined) {
-  return Boolean(status?.checked && !status.available && status.error === null)
+  return Boolean(status?.checked && !status.available && status.error === null && !status.serverTooOld)
 }
 
 /**

@@ -3,7 +3,7 @@
 // cleanup. Start it through `just verify <drive>`, never directly: the
 // isolation wrapper is what keeps the app off the user's screen.
 //
-//   just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--keep-profile] [--services-down] [--negative-control NAME]
+//   just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--seed-data DIR] [--keep-profile] [--services-down] [--negative-control NAME]
 //
 // <drive> is a file path or the name of a file in ../drives (without .mjs).
 // --negative-control NAME runs the drive on a build with the change under test
@@ -49,13 +49,14 @@ const { values: options, positionals } = parseArgs({
     "signed-out": { type: "boolean", default: false },
     "log-level": { type: "string", default: "debug" },
     seed: { type: "string" },
+    "seed-data": { type: "string" },
     "keep-profile": { type: "boolean", default: false },
     "services-down": { type: "boolean", default: false },
     "negative-control": { type: "string" },
   },
 })
 const [driveArg] = positionals
-if (!driveArg) throw new Error("usage: just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--keep-profile] [--services-down] [--negative-control NAME]")
+if (!driveArg) throw new Error("usage: just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--seed-data DIR] [--keep-profile] [--services-down] [--negative-control NAME]")
 const drivePath = /[\\/]|\.mjs$/.test(driveArg) ? path.resolve(driveArg) : path.join(import.meta.dirname, "..", "drives", `${driveArg}.mjs`)
 if (!existsSync(drivePath)) throw new Error(`no drive at ${drivePath}`)
 const driveName = path.basename(drivePath, ".mjs")
@@ -154,6 +155,10 @@ for (const realDir of Object.values(real)) {
 if (options.seed) {
   cpSync(path.resolve(options.seed), configDir, { recursive: true })
   log(`seeded ${configDir} from ${options.seed}`)
+}
+if (options["seed-data"]) {
+  cpSync(path.resolve(options["seed-data"]), dataDir, { recursive: true })
+  log(`seeded ${dataDir} from ${options["seed-data"]}`)
 }
 if (account && !signedOut) {
   seedLibrary(dataDir, account)
