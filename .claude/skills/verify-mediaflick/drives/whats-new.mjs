@@ -1,9 +1,9 @@
 // The one-time "What's new" for a device updated from MediaFlick 0.1.6, and
 // the Companion install guide link (operator decisions of 2026-11-15).
 //
-// The profile decides what is expected: seeded with a 0.1.6 config.json
-// (`--seed .claude/skills/verify-mediaflick/seeds/whats-new-0-1-6`, the file as
-// 0.1.6's `to_vec_pretty` of AppSettings wrote it on window close) the dialog
+// The profile decides what is expected: seeded with 0.1.6's config.json
+// (`--seed .claude/skills/verify-mediaflick/seeds/upgrade-0-1-6`, shared with
+// the `upgrade-0-1-6` drive, as 0.1.6 wrote it) the dialog
 // must open once after sign-in, never on the sign-in screen, and stay closed
 // after a relaunch; on a fresh profile it must never open. The server decides
 // the rest, read with the app's own token: `/Users/Me`'s
@@ -19,7 +19,7 @@
 // MEDIAFLICK_VERIFY_WHATS_NEW_PASSWORD (default empty). Writes only the
 // profile's settings.json. Every check is recorded in whats-new.json and the
 // run fails at the end listing each failed one.
-//   just verify whats-new --seed .claude/skills/verify-mediaflick/seeds/whats-new-0-1-6
+//   just verify whats-new --seed .claude/skills/verify-mediaflick/seeds/upgrade-0-1-6
 import { readFileSync } from "node:fs"
 
 const GUIDE = "https://flick.media/companion/"

@@ -1,8 +1,0 @@
-{
-  "jellyfin_url": "https://demo.jellyfin.org/stable",
-  "webui_window": {
-    "width": 1440,
-    "height": 900,
-    "maximized": false
-  }
-}

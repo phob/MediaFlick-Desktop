@@ -70,7 +70,8 @@ pub struct AppSettings {
     pub mark_watched_next: Option<String>,
     #[serde(default, skip_serializing_if = "AppearanceSettings::is_default")]
     pub appearance: AppearanceSettings,
-    /// The one-time What's new for a device updated from 0.1.6 was closed.
+    /// The one-time What's new for a device updated from 0.1.6 was closed
+    /// (`carries_0_1_6_data`).
     #[serde(default, skip_serializing_if = "is_false")]
     pub whats_new_seen: bool,
 }
