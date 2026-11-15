@@ -156,20 +156,6 @@ export function useSettings() {
   return useQuery({ queryKey: queryKeys.settings, queryFn: api.settings })
 }
 
-/** The one-time What's new for a device updated from 0.1.6. */
-export function useWhatsNew(enabled: boolean) {
-  return useQuery({ queryKey: queryKeys.whatsNew, queryFn: api.whatsNew, enabled, staleTime: Infinity })
-}
-
-export function useCloseWhatsNew() {
-  const client = useQueryClient()
-  return useMutation({
-    mutationFn: api.closeWhatsNew,
-    onError: reportError(client),
-    onSuccess: (whatsNew) => client.setQueryData(queryKeys.whatsNew, whatsNew),
-  })
-}
-
 export function useRatingsStatus(enabled = true) {
   return useQuery({
     queryKey: queryKeys.ratingsStatus,

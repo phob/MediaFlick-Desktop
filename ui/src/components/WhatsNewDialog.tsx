@@ -11,7 +11,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { companionMissing } from "@/lib/companion"
-import { useCloseWhatsNew, useCompanion, useStatus, useWhatsNew } from "@/lib/queries"
+import { useCompanion, useStatus } from "@/lib/queries"
+import { useCloseWhatsNew, useWhatsNew } from "@/lib/whats-new"
 
 type Change = {
   title: string
