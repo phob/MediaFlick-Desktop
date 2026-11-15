@@ -36,6 +36,8 @@ const SIGN_IN = { role: "button", name: "Sign in" }
 const QUICK_CONNECT = { role: "button", name: "Use Quick Connect" }
 const CARD = (name) => ({ role: "link", name: `Open details for ${name}` })
 const SIDEBAR = { css: '[data-sidebar="sidebar"]' }
+const SETTINGS = { role: "link", name: "Settings" }
+const WHATS_NEW = { role: "dialog", name: "What's new since MediaFlick 0.1.6" }
 const numbers = (version) => version.split(".").map(Number)
 const older = (left, right) => {
   for (let index = 0; index < 3; index++) if (left[index] !== right[index]) return left[index] < right[index]
@@ -149,12 +151,27 @@ async function signOut(ctx, server) {
   ctx.check((await ctx.api("/api/status")).body.authenticated === false, `signed out of ${server.version}`)
 }
 
+// The sign-in form, as ctx.signIn fills it; a 0.1.6 profile then opens its
+// one-time What's new over Home, which hides the sidebar until it is closed.
+async function signIn(ctx, server) {
+  await ctx.fill({ role: "textbox", name: "Username" }, server.username)
+  // A refused server's password may still be in the field; the demo's is empty.
+  await ctx.fill({ role: "textbox", name: "Password" }, server.password)
+  if (!server.password) await ctx.key("Backspace", { keyCode: 8 })
+  await ctx.press(SIGN_IN)
+  const shown = await ctx.until(async () => ((await ctx.exists(WHATS_NEW)) ? "dialog" : (await ctx.exists(SETTINGS)) ? "home" : null), "Home or What's new", 60000)
+  if (shown === "dialog") {
+    await ctx.press({ role: "button", name: "Got it", within: WHATS_NEW })
+    await ctx.find(SETTINGS, { timeout: 30000 })
+  }
+}
+
 async function supported(ctx, server, report) {
   const entry = { version: server.version, url: server.url, outcome: "signed in" }
   await ctx.fill(SERVER, server.url)
   await ctx.until(() => ctx.app.evaluate(`document.body.innerText.includes(${JSON.stringify(` · ${server.version}`)})`), `the probe naming ${server.version}`, 30000)
   ctx.check(!(await ctx.exists({ role: "alert" })), "no refusal for a supported server")
-  await ctx.signIn({ username: server.username, password: server.password })
+  await signIn(ctx, server)
   const status = (await ctx.api("/api/status")).body
   ctx.check(status.authenticated === true && status.userName === server.username, `/api/status reports ${server.username}`)
   await ctx.until(async () => {
