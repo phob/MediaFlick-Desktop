@@ -458,7 +458,7 @@ try {
   log(`${result.passed ? "PASSED" : "FAILED"} ${path.relative(root, evidence)} (exit: ${result.exit})`)
   if (reverted) {
     const why = !driveStarted ? "the run failed before the drive started" : !driveFailed ? "the drive passed with the change reverted" : "the drive failed, but the run timed out or was not clean (see result.json)"
-    log(result.negativeControl.held ? "NEGATIVE CONTROL HELD: a check failed with the change reverted" : `NEGATIVE CONTROL NOT HELD: ${why}`)
+    log(result.negativeControl.held ? `NEGATIVE CONTROL HELD: the drive failed with the change reverted: ${driveFailure}` : `NEGATIVE CONTROL NOT HELD: ${why}`)
   }
   // A timed-out drive is abandoned, not cancelled; its pending CDP calls or
   // timers must not keep the run alive once the result is on disk.
