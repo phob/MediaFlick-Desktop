@@ -304,7 +304,7 @@ impl CompanionSession {
                     &[("start", start.to_string()), ("end", end.to_string())],
                 )
             })?;
-            join_calendar(&self.library, &mut value);
+            join_calendar(&self.library, &mut value)?;
             return Ok(value);
         }
         self.fallback_calendar(scope, start, end)
@@ -564,9 +564,9 @@ impl CompanionSession {
     }
 }
 
-fn join_calendar(library: &Library, value: &mut Value) {
+fn join_calendar(library: &Library, value: &mut Value) -> Result<(), ApiError> {
     let Some(entries) = value["entries"].as_array_mut() else {
-        return;
+        return Ok(());
     };
     let kinds = entries.iter().map(calendar_kind).collect::<Vec<_>>();
     let mut tmdb_by_kind: HashMap<CatalogKind, Vec<String>> = HashMap::new();
@@ -602,15 +602,13 @@ fn join_calendar(library: &Library, value: &mut Value) {
         CatalogKind::Episode,
         CatalogKind::Series,
     ] {
-        for (id, item) in library
-            .ids_by_tmdb(kind, tmdb_by_kind.get(&kind).map_or(&[], Vec::as_slice))
-            .unwrap_or_default()
+        for (id, item) in
+            library.ids_by_tmdb(kind, tmdb_by_kind.get(&kind).map_or(&[], Vec::as_slice))?
         {
             resolved.insert((kind, format!("tmdb:{id}")), item);
         }
-        for (id, item) in library
-            .ids_by_tvdb(kind, tvdb_by_kind.get(&kind).map_or(&[], Vec::as_slice))
-            .unwrap_or_default()
+        for (id, item) in
+            library.ids_by_tvdb(kind, tvdb_by_kind.get(&kind).map_or(&[], Vec::as_slice))?
         {
             resolved.insert((kind, format!("tvdb:{id}")), item);
         }
@@ -638,6 +636,7 @@ fn join_calendar(library: &Library, value: &mut Value) {
         entry["libraryItemId"] = item.map_or(Value::Null, Value::String);
         entry["seriesLibraryItemId"] = series_item.map_or(Value::Null, Value::String);
     }
+    Ok(())
 }
 
 /// The Companion calendar lists movies and episodes.
@@ -840,7 +839,7 @@ mod tests {
             }]
         });
 
-        join_calendar(&library, &mut calendar);
+        join_calendar(&library, &mut calendar).expect("join");
 
         assert_eq!(calendar["entries"][0]["libraryItemId"], "episode-1");
         assert_eq!(calendar["entries"][0]["seriesLibraryItemId"], "series-1");

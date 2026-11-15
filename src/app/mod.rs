@@ -1,5 +1,6 @@
 pub mod build_info;
 pub mod cli;
+pub mod clock;
 #[cfg(target_os = "linux")]
 pub mod desktop;
 pub mod ids;

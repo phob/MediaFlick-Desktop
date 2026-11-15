@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use serde::Serialize;
 
@@ -207,8 +207,8 @@ impl Session {
     fn read(&self) -> SessionState {
         self.state
             .read()
-            .map(|state| state.clone())
-            .unwrap_or_default()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     pub fn server_url(&self) -> Option<String> {

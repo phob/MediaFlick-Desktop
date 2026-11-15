@@ -13,9 +13,8 @@ use super::{
     MAX_IDENTITY_PAGES, MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET,
     META_BOOTSTRAP_TOTAL, META_CATALOG_READY, META_EMPTY_SWEEP_AT, META_LAST_BOOTSTRAP,
     META_LAST_IDENTITY_SWEEP, META_LAST_SYNC, META_LATEST_FAILURE, META_WATERMARK,
-    META_WATERMARK_IDS, MIN_CONFIRM_GAP, REBOOTSTRAP_INTERVAL, SyncHandle, SyncPhase, SyncReport,
-    Trigger, best_effort, cancelled, commit, fetch_page, first_catalog_download, now_unix,
-    storage_error,
+    META_WATERMARK_IDS, MIN_CONFIRM_GAP, REBOOTSTRAP_INTERVAL, Step, SyncHandle, SyncPhase,
+    SyncReport, Trigger, cancelled, commit, fetch_page, first_catalog_download, now_unix, optional,
 };
 
 pub fn run_cycle(
@@ -34,7 +33,7 @@ pub(super) fn run_cycle_inner(
 ) -> Result<SyncReport, ApiError> {
     let started = Instant::now();
     let scope = session.scope()?;
-    let initial_catalog = first_catalog_download(library).map_err(|error| storage_error(&error))?;
+    let initial_catalog = first_catalog_download(library)?;
     let recovering_ownership = meta(library, META_LATEST_FAILURE)?.as_deref() == Some("1");
     let mut report = SyncReport::default();
     let mut walked = MembershipReplaced::default();
@@ -53,8 +52,7 @@ pub(super) fn run_cycle_inner(
             walk_membership(library, session, &scope, true, control, &mut walked)?;
         }
         report.bootstrapped = bootstrap(library, session, &scope, control)?;
-        walked.walk_landed |= initial_catalog
-            && !first_catalog_download(library).map_err(|error| storage_error(&error))?;
+        walked.walk_landed |= initial_catalog && !first_catalog_download(library)?;
         cancelled(control, session, &scope)?;
         if let Some(control) = control {
             control.set_phase(SyncPhase::Reconciling);
@@ -133,25 +131,25 @@ fn restart_bootstrap(
     scope: &SessionScope,
 ) -> Result<(), ApiError> {
     commit(session, scope, |live| {
-        library
-            .set_meta(live, META_BOOTSTRAP_DONE, "0")
-            .map_err(|error| storage_error(&error))?;
-        library
-            .set_meta(live, META_BOOTSTRAP_OFFSET, "0")
-            .map_err(|error| storage_error(&error))?;
-        library
-            .set_meta(live, META_BOOTSTRAP_TOTAL, "")
-            .map_err(|error| storage_error(&error))?;
+        library.set_meta(live, META_BOOTSTRAP_DONE, "0")?;
+        library.set_meta(live, META_BOOTSTRAP_OFFSET, "0")?;
+        library.set_meta(live, META_BOOTSTRAP_TOTAL, "")?;
         Ok(())
     })
 }
 
+/// Marks the stored catalog as possibly behind the server. The cycle reports
+/// its own failure either way, so a failure to store the mark is only logged.
 fn record_failure(library: &Library, session: &Session, scope: &SessionScope) {
-    let _ = commit(session, scope, |live| {
-        library
-            .set_meta(live, META_LATEST_FAILURE, "1")
-            .map_err(|storage| storage_error(&storage))
+    let recorded = commit(session, scope, |live| {
+        Ok(library.set_meta(live, META_LATEST_FAILURE, "1")?)
     });
+    match recorded {
+        Ok(()) | Err(ApiError::Cancelled) => {}
+        Err(error) => {
+            tracing::warn!(target: "library.sync", "could not record the failed sync: {error}");
+        }
+    }
 }
 
 fn record_success(
@@ -160,15 +158,11 @@ fn record_success(
     scope: &SessionScope,
     report: &SyncReport,
 ) -> Result<(), ApiError> {
-    let serialized_report = serde_json::to_string(report).unwrap_or_default();
+    let serialized_report = encoded(report)?;
     commit(session, scope, |live| {
-        library
-            .set_meta(live, META_LATEST_FAILURE, "0")
-            .map_err(|error| storage_error(&error))?;
+        library.set_meta(live, META_LATEST_FAILURE, "0")?;
         touch(library, live, META_LAST_SYNC)?;
-        library
-            .set_meta(live, "sync.last_report", &serialized_report)
-            .map_err(|error| storage_error(&error))?;
+        library.set_meta(live, "sync.last_report", &serialized_report)?;
         Ok(())
     })
 }
@@ -219,11 +213,14 @@ fn list_libraries(
     scope: &SessionScope,
     control: Option<&SyncHandle>,
 ) -> Result<ListedLibraries, ApiError> {
-    let refreshed = refresh_libraries(library, session, scope);
-    let Some(listed) = best_effort("the library list", refreshed)? else {
-        return Ok(ListedLibraries {
-            no_catalog_library: false,
-        });
+    let refreshed = refresh_libraries(library, session, scope).map(Step::Settled);
+    let listed = match optional("the library list", refreshed)? {
+        Step::Settled(listed) => listed,
+        Step::Skipped | Step::Failed => {
+            return Ok(ListedLibraries {
+                no_catalog_library: false,
+            });
+        }
     };
     if listed.changed {
         announce(session, scope, control, |control| {
@@ -278,15 +275,15 @@ fn walk_membership(
 ) -> Result<(), ApiError> {
     let owed = if owe_all {
         commit(session, scope, |live| {
-            library
-                .owe_every_membership(live)
-                .map_err(|error| storage_error(&error))
+            library.owe_every_membership(live).map_err(ApiError::from)
         })
     } else {
         Ok(())
     };
-    let pass = owed.and_then(|()| membership_pass(library, session, scope, control, walked_so_far));
-    best_effort("library membership", pass)?;
+    let pass = owed
+        .and_then(|()| membership_pass(library, session, scope, control, walked_so_far))
+        .map(Step::Settled);
+    optional("library membership", pass)?;
     Ok(())
 }
 
@@ -363,7 +360,10 @@ fn bootstrap(
             ingest_ms = ingest_started.elapsed().as_millis() as u64,
             "bootstrapped a library page"
         );
-        if page.total_record_count > 0 && offset >= page.total_record_count {
+        if page
+            .total_record_count
+            .is_some_and(|total| total > 0 && offset >= total)
+        {
             break false;
         }
         if (page.items.len() as i64) < PAGE_SIZE {
@@ -398,28 +398,14 @@ fn commit_catalog_page(
     offset: i64,
 ) -> Result<LibraryChangeBatch, ApiError> {
     commit(session, scope, |live| {
-        let changes = library
-            .ingest_page(live, &page.items)
-            .map_err(|error| storage_error(&error))?;
-        if page.total_record_count > 0 || offset == 0 {
-            library
-                .set_meta(
-                    live,
-                    META_BOOTSTRAP_TOTAL,
-                    &page.total_record_count.max(0).to_string(),
-                )
-                .map_err(|error| storage_error(&error))?;
-        }
-        library
-            .set_meta(live, META_CATALOG_READY, "1")
-            .map_err(|error| storage_error(&error))?;
-        library
-            .set_meta(
-                live,
-                META_BOOTSTRAP_OFFSET,
-                &(offset + page.items.len() as i64).to_string(),
-            )
-            .map_err(|error| storage_error(&error))?;
+        let changes = library.ingest_page(live, &page.items)?;
+        store_bootstrap_total(library, live, page.total_record_count, offset)?;
+        library.set_meta(live, META_CATALOG_READY, "1")?;
+        library.set_meta(
+            live,
+            META_BOOTSTRAP_OFFSET,
+            &(offset + page.items.len() as i64).to_string(),
+        )?;
         Ok(changes)
     })
 }
@@ -431,9 +417,7 @@ fn finish_bootstrap(
     written: usize,
 ) -> Result<usize, ApiError> {
     commit(session, scope, |live| {
-        library
-            .set_meta(live, META_BOOTSTRAP_DONE, "1")
-            .map_err(|error| storage_error(&error))?;
+        library.set_meta(live, META_BOOTSTRAP_DONE, "1")?;
         touch(library, live, META_LAST_BOOTSTRAP)
     })?;
     tracing::info!(target: "library.sync", items = written, "library bootstrap complete");
@@ -451,9 +435,7 @@ fn commit_bootstrap_watermark(
         return Ok(());
     };
     commit(session, scope, |live| {
-        library
-            .set_meta(live, META_WATERMARK, watermark)
-            .map_err(|error| storage_error(&error))?;
+        library.set_meta(live, META_WATERMARK, watermark)?;
         write_watermark_ids(library, live, watermark_ids)
     })
 }
@@ -462,33 +444,41 @@ fn commit_empty_bootstrap_page(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
-    total_record_count: i64,
+    total_record_count: Option<i64>,
     offset: i64,
     elapsed: Duration,
 ) -> Result<(), ApiError> {
     commit(session, scope, |live| {
-        if total_record_count > 0 || offset == 0 {
-            library
-                .set_meta(
-                    live,
-                    META_BOOTSTRAP_TOTAL,
-                    &total_record_count.max(0).to_string(),
-                )
-                .map_err(|error| storage_error(&error))?;
-        }
-        library
-            .set_meta(live, META_CATALOG_READY, "1")
-            .map_err(|error| storage_error(&error))?;
+        store_bootstrap_total(library, live, total_record_count, offset)?;
+        library.set_meta(live, META_CATALOG_READY, "1")?;
         Ok(())
     })?;
     if offset == 0 {
         tracing::info!(
             target: "library.sync",
             ready_ms = elapsed.as_millis() as u64,
-            "empty catalog confirmed; library is ready"
+            counted = total_record_count.is_some(),
+            "empty catalog page; library is ready"
         );
     }
     Ok(())
+}
+
+/// Stores the server's catalog count for the progress display. A count the
+/// server left out stays unknown, and a 0 after the first page keeps the
+/// count an earlier page reported.
+fn store_bootstrap_total(
+    library: &Library,
+    live: &Live,
+    total: Option<i64>,
+    offset: i64,
+) -> rusqlite::Result<()> {
+    match total {
+        Some(total) if total > 0 || offset == 0 => {
+            library.set_meta(live, META_BOOTSTRAP_TOTAL, &total.max(0).to_string())
+        }
+        Some(_) | None => Ok(()),
+    }
 }
 
 /// Walks `DateCreated` descending until it reaches items already cached.
@@ -535,9 +525,7 @@ fn incremental(
                 || item.date_created.is_none()
         });
         let page_changes = commit(session, scope, |live| {
-            library
-                .ingest_page(live, &fresh)
-                .map_err(|error| storage_error(&error))
+            library.ingest_page(live, &fresh).map_err(ApiError::from)
         })?;
         written += fresh.len();
         changes.merge(page_changes);
@@ -550,9 +538,7 @@ fn incremental(
 
     if let Some(newest) = newest {
         commit(session, scope, |live| {
-            library
-                .set_meta(live, META_WATERMARK, &newest)
-                .map_err(|error| storage_error(&error))?;
+            library.set_meta(live, META_WATERMARK, &newest)?;
             write_watermark_ids(library, live, &newest_ids)
         })?;
     }
@@ -625,7 +611,7 @@ fn apply_sweep_verdict(
             )
             .map(Some),
     };
-    written.map_err(|error| storage_error(&error))
+    written.map_err(ApiError::from)
 }
 
 /// One identity-only pass over the library that both mirrors watch state and
@@ -671,7 +657,7 @@ fn walk_identity(
         let changed = commit(session, scope, |live| {
             library
                 .apply_user_data(live, &records)
-                .map_err(|error| storage_error(&error))
+                .map_err(ApiError::from)
         })?;
         refreshed += changed.item_ids.len();
         changes.merge(changed);
@@ -745,13 +731,14 @@ fn write_watermark_ids(
 ) -> Result<(), ApiError> {
     let mut ids = ids.iter().cloned().collect::<Vec<_>>();
     ids.sort_unstable();
-    library
-        .set_meta(
-            live,
-            META_WATERMARK_IDS,
-            &serde_json::to_string(&ids).unwrap_or_default(),
-        )
-        .map_err(|error| storage_error(&error))
+    Ok(library.set_meta(live, META_WATERMARK_IDS, &encoded(&ids)?)?)
+}
+
+/// JSON for a sync marker. A value that cannot be encoded is a storage
+/// failure: storing an empty marker instead would read back as "nothing seen".
+fn encoded(value: &impl serde::Serialize) -> Result<String, ApiError> {
+    serde_json::to_string(value)
+        .map_err(|error| ApiError::Storage(format!("could not encode a sync marker: {error}")))
 }
 
 /// Jellyfin timestamps are ISO-8601 UTC, so lexicographic order is chronological.
@@ -789,13 +776,13 @@ fn full_bootstrap_due(library: &Library) -> Result<bool, ApiError> {
 }
 
 fn meta(library: &Library, key: &str) -> Result<Option<String>, ApiError> {
-    library.meta(key).map_err(|error| storage_error(&error))
+    library.meta(key).map_err(ApiError::from)
 }
 
 fn touch(library: &Library, live: &Live, key: &str) -> Result<(), ApiError> {
     library
         .set_meta(live, key, &now_unix().to_string())
-        .map_err(|error| storage_error(&error))
+        .map_err(ApiError::from)
 }
 
 #[cfg(test)]

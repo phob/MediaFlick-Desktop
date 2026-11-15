@@ -48,11 +48,7 @@ fn sanitize_instance_id(id: &str) -> Option<String> {
 }
 
 fn new_instance_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+    let nanos = crate::app::clock::since_epoch().as_nanos();
     let pid = std::process::id();
     format!("{nanos:032x}{pid:08x}")
 }

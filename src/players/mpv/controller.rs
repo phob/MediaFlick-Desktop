@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -420,8 +420,8 @@ impl MpvController {
     pub fn snapshot(&self) -> PlayerSnapshot {
         self.snapshot
             .lock()
-            .map(|snapshot| snapshot.clone())
-            .unwrap_or_default()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     pub fn shutdown(&self) {

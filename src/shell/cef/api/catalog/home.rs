@@ -1,3 +1,7 @@
+use std::sync::PoisonError;
+
+use crate::library::ItemDetail;
+
 use super::home_settings::{HomeConfiguration, ResolvedHome, resolved_home, settings_view};
 use super::*;
 
@@ -42,12 +46,13 @@ pub(in super::super) struct Billboard {
 
 pub(in super::super) fn home_view(services: &Services) -> Result<HomeResponse, ApiResponse> {
     let home = resolved_home(services)?;
+    home_rows(services, &home).map_err(|error| storage_failure(&error))
+}
+
+fn home_rows(services: &Services, home: &ResolvedHome) -> rusqlite::Result<HomeResponse> {
     let watching_enabled = element_enabled(&home.settings, HomeBuiltIn::Watching);
     let continue_watching = if watching_enabled && home.settings.watching.continue_watching {
-        services
-            .library
-            .continue_watching(HOME_ROW_LIMIT)
-            .unwrap_or_default()
+        services.library.continue_watching(HOME_ROW_LIMIT)?
     } else {
         Vec::new()
     };
@@ -59,7 +64,7 @@ pub(in super::super) fn home_view(services: &Services) -> Result<HomeResponse, A
         .filter(|element| element.enabled)
     {
         let row = match &element.element {
-            HomeElementId::BuiltIn { id } => built_in_home_row(services, &home.account, *id),
+            HomeElementId::BuiltIn { id } => built_in_home_row(services, &home.account, *id)?,
             HomeElementId::Genre { id } if home.genres.contains(id) => Some(home_row(
                 HomeRowSource::Genre { id: id.clone() },
                 id,
@@ -70,10 +75,10 @@ pub(in super::super) fn home_view(services: &Services) -> Result<HomeResponse, A
                         sort: ItemSort::CommunityRating,
                         ..Default::default()
                     },
-                ),
+                )?,
             )),
             HomeElementId::Collection { id } if home.mediaflick_collections => {
-                home_collection(services, &home, id)
+                home_collection(services, home, id)?
             }
             _ => None,
         };
@@ -84,7 +89,7 @@ pub(in super::super) fn home_view(services: &Services) -> Result<HomeResponse, A
         }
     }
     Ok(HomeResponse {
-        configuration: settings_view(&home, &home.settings),
+        configuration: settings_view(home, &home.settings),
         continue_watching,
         rows,
     })
@@ -94,9 +99,9 @@ fn built_in_home_row(
     services: &Services,
     account: &AccountKey,
     id: HomeBuiltIn,
-) -> Option<HomeRow> {
+) -> rusqlite::Result<Option<HomeRow>> {
     let (title, items) = match id {
-        HomeBuiltIn::Watching | HomeBuiltIn::Upcoming => return None,
+        HomeBuiltIn::Watching | HomeBuiltIn::Upcoming => return Ok(None),
         HomeBuiltIn::BecauseYouWatched => return because_you_watched(services, account),
         HomeBuiltIn::RecentlyAdded => (
             "Recently Added Movies",
@@ -107,22 +112,21 @@ fn built_in_home_row(
                     sort: ItemSort::DateAdded,
                     ..Default::default()
                 },
-            ),
+            )?,
         ),
         HomeBuiltIn::RecentlyAddedShows => (
             "Recently Added Shows",
             services
                 .library
-                .recently_added_episodes(HOME_ROW_LIMIT as usize)
-                .unwrap_or_default(),
+                .recently_added_episodes(HOME_ROW_LIMIT as usize)?,
         ),
         HomeBuiltIn::LatestMovies => (
             "Latest Movies",
-            latest_home_items(&services.library, CatalogKind::Movie),
+            latest_home_items(&services.library, CatalogKind::Movie)?,
         ),
         HomeBuiltIn::LatestShows => (
             "Latest Shows",
-            latest_home_items(&services.library, CatalogKind::Series),
+            latest_home_items(&services.library, CatalogKind::Series)?,
         ),
         HomeBuiltIn::MyList => (
             "Favorites",
@@ -133,10 +137,10 @@ fn built_in_home_row(
                     sort: ItemSort::DateAdded,
                     ..Default::default()
                 },
-            ),
+            )?,
         ),
     };
-    Some(home_row(HomeRowSource::BuiltIn { id }, title, items))
+    Ok(Some(home_row(HomeRowSource::BuiltIn { id }, title, items)))
 }
 
 fn element_enabled(settings: &HomeSettings, id: HomeBuiltIn) -> bool {
@@ -146,9 +150,9 @@ fn element_enabled(settings: &HomeSettings, id: HomeBuiltIn) -> bool {
         .any(|element| element.enabled && element.element == HomeElementId::BuiltIn { id })
 }
 
-fn home_query(library: &Library, mut query: ItemQuery) -> Vec<ItemSummary> {
+fn home_query(library: &Library, mut query: ItemQuery) -> rusqlite::Result<Vec<ItemSummary>> {
     query.limit = HOME_ROW_LIMIT;
-    library.query_page(&query).unwrap_or_default()
+    library.query_page(&query)
 }
 
 fn home_row(source: HomeRowSource, title: &str, items: Vec<ItemSummary>) -> HomeRow {
@@ -159,23 +163,16 @@ fn home_row(source: HomeRowSource, title: &str, items: Vec<ItemSummary>) -> Home
     }
 }
 
-fn because_you_watched(services: &Services, account: &AccountKey) -> Option<HomeRow> {
-    let seed = {
-        let mut seeds = services
-            .home_watched
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        seeds
-            .entry(account.clone())
-            .or_insert_with(|| {
-                services
-                    .library
-                    .random_played_movie_with_genre()
-                    .unwrap_or_default()
-            })
-            .clone()
-    }?;
-    let genre = seed.genres.first()?;
+fn because_you_watched(
+    services: &Services,
+    account: &AccountKey,
+) -> rusqlite::Result<Option<HomeRow>> {
+    let Some(seed) = watched_seed(services, account)? else {
+        return Ok(None);
+    };
+    let Some(genre) = seed.genres.first() else {
+        return Ok(None);
+    };
     let items = home_query(
         &services.library,
         ItemQuery {
@@ -184,8 +181,8 @@ fn because_you_watched(services: &Services, account: &AccountKey) -> Option<Home
             sort: ItemSort::CommunityRating,
             ..Default::default()
         },
-    );
-    (!items.is_empty()).then(|| {
+    )?;
+    Ok((!items.is_empty()).then(|| {
         home_row(
             HomeRowSource::BuiltIn {
                 id: HomeBuiltIn::BecauseYouWatched,
@@ -193,17 +190,49 @@ fn because_you_watched(services: &Services, account: &AccountKey) -> Option<Home
             &format!("Because you watched {}", seed.summary.name),
             items,
         )
-    })
+    }))
 }
 
-fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -> Option<HomeRow> {
-    let profile = home
+/// The played movie the shelf is built around, picked once per account and
+/// kept, so the shelf does not change on every visit. A failed pick is not
+/// kept, and the next visit picks again.
+fn watched_seed(services: &Services, account: &AccountKey) -> rusqlite::Result<Option<ItemDetail>> {
+    let kept = services
+        .home_watched
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(account)
+        .cloned();
+    if let Some(seed) = kept {
+        return Ok(seed);
+    }
+    let picked = services.library.random_played_movie_with_genre()?;
+    Ok(services
+        .home_watched
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .entry(account.clone())
+        .or_insert(picked)
+        .clone())
+}
+
+fn home_collection(
+    services: &Services,
+    home: &ResolvedHome,
+    profile_id: &str,
+) -> rusqlite::Result<Option<HomeRow>> {
+    let Some(profile) = home
         .profiles
         .iter()
-        .find(|profile| profile.id == profile_id && profile.available_on_home)?;
-    let snapshot = crate::collections::snapshots::SnapshotRepository::new(&services.library)
-        .profile(&home.account, &profile.id, &profile.revision)
-        .ok()??;
+        .find(|profile| profile.id == profile_id && profile.available_on_home)
+    else {
+        return Ok(None);
+    };
+    let Some(snapshot) = crate::collections::snapshots::SnapshotRepository::new(&services.library)
+        .profile(&home.account, &profile.id, &profile.revision)?
+    else {
+        return Ok(None);
+    };
     let classified = crate::collections::matching::classify(
         &services.library,
         &home.account,
@@ -212,8 +241,7 @@ fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -
             complete_sync: crate::library::sync::ownership_available(&services.library),
             restricted_user: services.session.user_restricted(),
         },
-    )
-    .ok()?;
+    )?;
     let ids = classified
         .owned
         .iter()
@@ -223,8 +251,7 @@ fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -
         .collect::<Vec<_>>();
     let by_id = services
         .library
-        .items_by_ids(&ids)
-        .ok()?
+        .items_by_ids(&ids)?
         .into_iter()
         .map(|item| (item.id.clone(), item))
         .collect::<HashMap<_, _>>();
@@ -232,13 +259,13 @@ fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -
         .iter()
         .filter_map(|id| by_id.get(id).cloned())
         .collect::<Vec<_>>();
-    Some(home_row(
+    Ok(Some(home_row(
         HomeRowSource::Collection {
             id: profile.id.clone(),
         },
         &profile.title,
         items,
-    ))
+    )))
 }
 
 pub(super) fn home_resume(services: &Arc<Services>) -> Result<HomeResumeResponse, ApiResponse> {
@@ -253,7 +280,7 @@ pub(super) fn home_resume(services: &Arc<Services>) -> Result<HomeResumeResponse
         services
             .library
             .continue_watching(HOME_ROW_LIMIT)
-            .unwrap_or_default()
+            .map_err(|error| storage_failure(&error))?
     } else {
         Vec::new()
     };
@@ -298,7 +325,7 @@ fn deduplicate_next_up(resume: &[ItemSummary], next_up: Vec<ItemSummary>) -> Vec
         .collect()
 }
 
-fn latest_home_items(library: &Library, kind: CatalogKind) -> Vec<ItemSummary> {
+fn latest_home_items(library: &Library, kind: CatalogKind) -> rusqlite::Result<Vec<ItemSummary>> {
     home_query(
         library,
         ItemQuery {
@@ -339,8 +366,8 @@ mod tests {
             .upsert_page(&crate::jellyfin::session::Live::for_test(), &items)
             .expect("seed");
 
-        let movies = latest_home_items(&library, CatalogKind::Movie);
-        let shows = latest_home_items(&library, CatalogKind::Series);
+        let movies = latest_home_items(&library, CatalogKind::Movie).expect("movies");
+        let shows = latest_home_items(&library, CatalogKind::Series).expect("shows");
 
         assert_eq!(movies[0].id, "new-movie");
         assert_eq!(movies[1].id, "old-movie");

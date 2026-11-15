@@ -123,6 +123,14 @@ impl fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
+/// A failed read or write of the local library is a storage failure, never a
+/// server answer, so `?` on a library call reports it as one.
+impl From<rusqlite::Error> for ApiError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Storage(error.to_string())
+    }
+}
+
 #[derive(Clone)]
 pub struct JellyfinClient {
     agent: ureq::Agent,

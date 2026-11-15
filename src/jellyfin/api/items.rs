@@ -406,7 +406,7 @@ pub fn fetch_live(
                 item.child_count = None;
             }
             Ok(ItemsResponse {
-                total_record_count: i64::try_from(items.len()).unwrap_or(i64::MAX),
+                total_record_count: Some(i64::try_from(items.len()).unwrap_or(i64::MAX)),
                 items,
                 start_index: 0,
             })
