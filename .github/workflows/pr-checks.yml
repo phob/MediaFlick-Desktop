@@ -58,6 +58,9 @@ jobs:
       - name: Check file sizes
         run: python3 scripts/ci/check_file_size.py "$BASE"
 
+      - name: Check verify feature map proofs
+        run: python3 scripts/ci/check_feature_map.py
+
       - name: Install pnpm
         uses: pnpm/action-setup@v6
         with:

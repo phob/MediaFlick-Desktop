@@ -3,9 +3,12 @@
 // cleanup. Start it through `just verify <drive>`, never directly: the
 // isolation wrapper is what keeps the app off the user's screen.
 //
-//   just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--seed-data DIR] [--keep-profile] [--services-down]
+//   just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--seed-data DIR] [--keep-profile] [--services-down] [--negative-control NAME]
 //
 // <drive> is a file path or the name of a file in ../drives (without .mjs).
+// --negative-control NAME runs the drive on a build with the change under test
+// reverted in the working tree, and succeeds only when a check of the drive
+// fails; NAME says what is reverted, the recorded patch shows it.
 // Evidence goes to build/verify/<run-id>/ and survives cleanup.
 
 import { execFileSync, spawn } from "node:child_process"
@@ -49,10 +52,11 @@ const { values: options, positionals } = parseArgs({
     "seed-data": { type: "string" },
     "keep-profile": { type: "boolean", default: false },
     "services-down": { type: "boolean", default: false },
+    "negative-control": { type: "string" },
   },
 })
 const [driveArg] = positionals
-if (!driveArg) throw new Error("usage: just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--seed-data DIR] [--keep-profile] [--services-down]")
+if (!driveArg) throw new Error("usage: just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--seed-data DIR] [--keep-profile] [--services-down] [--negative-control NAME]")
 const drivePath = /[\\/]|\.mjs$/.test(driveArg) ? path.resolve(driveArg) : path.join(import.meta.dirname, "..", "drives", `${driveArg}.mjs`)
 if (!existsSync(drivePath)) throw new Error(`no drive at ${drivePath}`)
 const driveName = path.basename(drivePath, ".mjs")
@@ -63,6 +67,13 @@ const timeoutMs = Number(options.timeout) * 1000
 if (!(timeoutMs > 0 && timeoutMs <= 3600_000)) throw new Error("--timeout must be 1..3600 seconds")
 
 const isolation = assertIsolated()
+
+// The revert is the working tree's change to the product, outside this skill,
+// so the drive and its harness stay as committed or as being written.
+const reverted = options["negative-control"]
+if (reverted !== undefined && !/^[A-Za-z0-9._-]{1,80}$/.test(reverted)) throw new Error("--negative-control NAME may only use letters, digits, '.', '_' and '-'")
+const revertPatch = reverted === undefined ? null : execFileSync("git", ["-C", root, "diff", "HEAD", "--", ".", ":(exclude).claude/skills/verify-mediaflick"], { encoding: "utf8" })
+if (revertPatch === "") throw new Error("--negative-control needs the change reverted in the working tree; `git diff HEAD` outside the skill is empty")
 
 if ([options.url, options.account, options.login].filter(Boolean).length > 1) throw new Error("pass only one of --url, --account and --login")
 const login = options.login ? serverKey(options.login).normalized : null
@@ -81,6 +92,11 @@ const log = stepLogger(path.join(evidence, "steps.log"))
 const writeJson = (name, value) => writeFileSync(path.join(evidence, name), `${JSON.stringify(value, null, 2)}\n`)
 const started = Date.now()
 const result = { runId, drive: path.relative(root, drivePath), passed: false, error: null, exit: null, evidence: path.relative(root, evidence) }
+if (revertPatch) writeFileSync(path.join(evidence, "negative-control.patch"), revertPatch)
+let driveStarted = false
+let driveFailed = false
+let driveFailure = null
+let driveTimedOut = false
 // A promise a drive forgot to await must fail the drive and still reach
 // teardown and the after-run tasks, not crash the process past them.
 let unhandledError = null
@@ -355,13 +371,19 @@ try {
   })
   const drive = (await import(pathToFileURL(drivePath).href)).default
   if (typeof drive !== "function") throw new Error(`${result.drive} must export a default async function (ctx)`)
-  log(`drive ${result.drive}`)
+  log(`drive ${result.drive}${reverted ? ` (negative control: ${reverted})` : ""}`)
+  driveStarted = true
   await Promise.race([
     within(drive(harness), timeoutMs, () => {
+      driveTimedOut = true
       throw new Error(`drive timed out after ${timeoutMs / 1000} s`)
     }),
     unhandled,
-  ])
+  ]).catch((error) => {
+    driveFailed = true
+    driveFailure = error instanceof Error ? error.message : String(error)
+    throw error
+  })
   if (signOutBlocked) throw new Error("the drive tried to sign out of a cached Jellyfin account")
   if (login && !secrets.size) throw new Error("the login drive did not cache a session (ctx.saveAccount)")
   result.passed = true
@@ -431,9 +453,23 @@ try {
     log(leaked.length ? `token scan: redacted the token from ${leaked.join(", ")}` : "token scan ok: no evidence file holds the token")
   }
   result.durationMs = Date.now() - started
+  // A control holds only when the drive failed on an otherwise clean run: a
+  // timeout (a stall), an unawaited rejection, or a teardown, after-run, guard or
+  // token failure proves nothing about the check. Whether `failure` is the check
+  // under test, and not a server or network error, is for whoever records it.
+  const clean = !driveTimedOut && !unhandledError && !cleanupErrors.length && !(changed.length && !running.length) && !result.leftovers && !result.tokenScan?.leaked.length
+  // result.json is written after the token scan, so what it carries from the drive is redacted here.
+  const redact = (text) => [...secrets].reduce((redacted, secret) => redacted.replaceAll(secret, "<redacted>"), text)
+  if (result.error) result.error = redact(result.error)
+  const failure = driveFailure && redact(driveFailure)
+  if (reverted) result.negativeControl = { reverted, head: gitHead(), patch: "negative-control.patch", failure, held: driveFailed && clean }
   writeJson("result.json", result)
   log(`${result.passed ? "PASSED" : "FAILED"} ${path.relative(root, evidence)} (exit: ${result.exit})`)
+  if (reverted) {
+    const why = !driveStarted ? "the run failed before the drive started" : !driveFailed ? "the drive passed with the change reverted" : "the drive failed, but the run timed out or was not clean (see result.json)"
+    log(result.negativeControl.held ? `NEGATIVE CONTROL HELD: the drive failed with the change reverted: ${failure}` : `NEGATIVE CONTROL NOT HELD: ${why}`)
+  }
   // A timed-out drive is abandoned, not cancelled; its pending CDP calls or
   // timers must not keep the run alive once the result is on disk.
-  process.exit(result.passed ? 0 : 1)
+  process.exit((reverted ? result.negativeControl.held : result.passed) ? 0 : 1)
 }
