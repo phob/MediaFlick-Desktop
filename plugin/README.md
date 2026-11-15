@@ -20,6 +20,9 @@ would fail at runtime there.
 
 - The `Jellyfin.Controller` version in the plugin project is the floor.
   `package.py` derives `targetAbi` from it, so the two cannot drift.
+  Desktop's `MINIMUM_SERVER` in `src/companion/mod.rs`, which tells users on an
+  older server that the Companion needs a newer Jellyfin, has a Rust test that
+  reads the same reference.
 - Renovate proposes only new major Jellyfin packages. Raise the floor by hand,
   in one change to every Jellyfin package reference, and only when the plugin
   needs a newer API.

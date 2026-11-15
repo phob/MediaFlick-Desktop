@@ -9,6 +9,7 @@ use crate::preferences::{AccountKey, normalize_server_url};
 use super::api::auth::{self, Credentials};
 use super::api::model::UserAccess;
 use super::api::{ApiError, JellyfinClient};
+use super::version::{ServerTooOld, ServerVersion};
 
 #[derive(Debug, Clone, Default)]
 struct SessionState {
@@ -46,8 +47,11 @@ pub struct SessionStatus {
 pub struct ServerInfo {
     pub server_url: String,
     pub server_name: String,
-    pub version: String,
+    pub version: ServerVersion,
     pub quick_connect: bool,
+    /// Set when the server is older than Desktop supports. Sign-in to it is
+    /// refused, so Quick Connect is not checked.
+    pub too_old: Option<ServerTooOld>,
 }
 
 /// A Quick Connect code to show the user, and the secret to poll it with.
@@ -354,17 +358,19 @@ impl Session {
     pub fn connect(&self, server_url: &str) -> Result<ServerInfo, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
         let client = self.anonymous_client(&normalized);
-        let info = auth::public_system_info(&client)?;
-        let quick_connect = auth::quick_connect_enabled(&client);
+        let (server_name, version) = identify(&client)?;
+        let too_old = version.short_of(ServerVersion::DESKTOP_MINIMUM);
+        let quick_connect = too_old.is_none() && auth::quick_connect_enabled(&client);
         if let Ok(mut state) = self.state.write() {
             state.server_url = Some(normalized.clone());
-            state.server_name = Some(info.server_name.clone());
+            state.server_name = Some(server_name.clone());
         }
         Ok(ServerInfo {
             server_url: normalized,
-            server_name: info.server_name,
-            version: info.version,
+            server_name,
+            version,
             quick_connect,
+            too_old,
         })
     }
 
@@ -376,6 +382,7 @@ impl Session {
     ) -> Result<SessionStatus, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
         let client = self.anonymous_client(&normalized);
+        require_supported(&client)?;
         let credentials = auth::authenticate_by_name(&client, username, password)?;
         self.accept(&normalized, credentials)
     }
@@ -383,6 +390,7 @@ impl Session {
     pub fn quick_connect_start(&self, server_url: &str) -> Result<QuickConnectStart, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
         let client = self.anonymous_client(&normalized);
+        require_supported(&client)?;
         if !auth::quick_connect_enabled(&client) {
             return Err(ApiError::Status { status: 501 });
         }
@@ -628,6 +636,30 @@ impl SessionState {
             && !self.deleting
             && self.generation == next_generation(generation)
             && self.account_key().as_ref() == Some(account)
+    }
+}
+
+/// Reads the server's name and version from its public system info. A
+/// Jellyfin server always reports its version, except for the stand-in that
+/// answers while it migrates at startup and refuses everything else.
+fn identify(client: &JellyfinClient) -> Result<(String, ServerVersion), ApiError> {
+    let info = auth::public_system_info(client)?;
+    let version = info.version.ok_or_else(|| {
+        ApiError::Decode(
+            "the server did not report its Jellyfin version; if it is starting up, try again in a moment"
+                .to_string(),
+        )
+    })?;
+    Ok((info.server_name, version))
+}
+
+/// Refuses a server older than Desktop supports before any credentials or
+/// Quick Connect request reach it.
+fn require_supported(client: &JellyfinClient) -> Result<(), ApiError> {
+    let (_, version) = identify(client)?;
+    match version.short_of(ServerVersion::DESKTOP_MINIMUM) {
+        Some(too_old) => Err(ApiError::ServerTooOld(too_old)),
+        None => Ok(()),
     }
 }
 

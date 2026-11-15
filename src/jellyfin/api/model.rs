@@ -7,11 +7,14 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::jellyfin::version::ServerVersion;
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct PublicSystemInfo {
     pub server_name: String,
-    pub version: String,
+    #[serde(deserialize_with = "ServerVersion::deserialize_reported")]
+    pub version: Option<ServerVersion>,
     pub id: String,
 }
 

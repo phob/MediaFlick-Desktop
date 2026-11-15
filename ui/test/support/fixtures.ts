@@ -94,6 +94,7 @@ export function companionWithSeerr(): CompanionStatus {
     },
     error: null,
     supportedApi: { min: 1, max: 1 },
+    serverTooOld: null,
   }
 }
 

@@ -7,7 +7,7 @@ import { testQueryClient } from "./test-query-client"
 import { TestProviders } from "./test-utils"
 
 const serverUrl = "https://jellyfin.example"
-const serverInfo: ServerInfo = { serverUrl, serverName: "My Jellyfin", version: "12.0.0", quickConnect: true }
+const serverInfo: ServerInfo = { serverUrl, serverName: "My Jellyfin", version: "12.0.0", quickConnect: true, tooOld: null }
 
 beforeEach(() => {
   vi.spyOn(api, "settings").mockResolvedValue({ ...clientSettingsFixture(), serverUrl: null })
@@ -64,6 +64,29 @@ test("disabled Quick Connect stays visible and password sign-in remains availabl
   expect(await screen.findByText("Incorrect username or password")).toBeTruthy()
   expect(api.login).toHaveBeenCalledWith(serverUrl, "viewer", "password")
   expect(api.quickConnectStart).not.toHaveBeenCalled()
+})
+
+// Martin set the floor on 2026-11-15: Desktop signs in to Jellyfin 10.11.0
+// and newer. The native app reports 10.10.7 this way (fixtures/jellyfin/public-info).
+test("a server older than Jellyfin 10.11.0 is refused before any credentials are sent", async () => {
+  vi.mocked(api.connect).mockResolvedValue({
+    ...serverInfo,
+    version: "10.10.7",
+    quickConnect: false,
+    tooOld: { version: "10.10.7", minimum: "10.11.0" },
+  })
+  renderSignIn()
+  enterServer()
+  const refusal = await screen.findByRole("alert")
+  expect(refusal.textContent).toBe("This server runs Jellyfin 10.10.7. MediaFlick needs Jellyfin 10.11.0 or newer.")
+  expect(quickConnectButton().disabled).toBe(true)
+
+  fireEvent.change(screen.getByLabelText("Username"), { target: { value: "viewer" } })
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: "password" } })
+  const signIn = screen.getByRole<HTMLButtonElement>("button", { name: "Sign in" })
+  expect(signIn.disabled).toBe(true)
+  fireEvent.click(signIn)
+  expect(api.login).not.toHaveBeenCalled()
 })
 
 test("editing a saved server clears its code and cancels its active poll before blur", async () => {

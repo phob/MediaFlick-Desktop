@@ -79,6 +79,8 @@ playback; manually starting a title begins a new session, and explicit Next acti
 
 ## Install
 
+**Server.** MediaFlick Desktop needs **Jellyfin 10.11.0 or newer** and tells you on the sign-in screen when a server is older. The optional [MediaFlick Companion](#mediaflick-companion) needs **Jellyfin 12.0.0 or newer**; on Jellyfin 10.11 the app works fully without it.
+
 **Windows.** Download the latest `MediaFlickDesktop-Setup-<version>.exe` from [Releases](https://github.com/phob/mediaflick-desktop/releases/latest) and run it. The built-in player is ready immediately; installing external mpv is optional.
 
 On first launch, enter your Jellyfin server address and sign in. Right-click anywhere for **Client Settings**, **Open Jellyfin dashboard**, and **About**.
@@ -100,7 +102,8 @@ their own licenses; release attribution and bundled-runtime details are in
 
 The optional server plugin lives in [`plugin/`](plugin/README.md). It runs on
 Jellyfin 12.0.0 and later 12.x releases and exposes only typed, authenticated
-operations. There is no generic service proxy. Configure Sonarr, Radarr, Seerr, MDBList, and TMDB support
+operations. On an older server, **Settings → MediaFlick Companion** says that it
+needs Jellyfin 12.0.0. There is no generic service proxy. Configure Sonarr, Radarr, Seerr, MDBList, and TMDB support
 from Jellyfin's plugin dashboard. Install it from its Jellyfin plugin repository
 as described at [flick.media/companion](https://flick.media/companion/). Desktop clients discover it automatically,
 report plugin and service availability under **Settings → MediaFlick Companion**,
