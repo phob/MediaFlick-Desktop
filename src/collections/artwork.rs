@@ -16,9 +16,9 @@ const ORPHAN_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 pub enum PosterReferences<'a> {
     /// collections.json and its backup name every poster in use.
     Readable(&'a Path),
-    /// collections.json was damaged on this start and no valid backup replaced
-    /// it. Only the moved-aside file names the posters in use, so none of them
-    /// may be treated as orphaned.
+    /// A damaged collections.json was moved aside, on this start or an earlier
+    /// one, and is still there. It may name posters in use that nothing else
+    /// names, so none of them may be treated as orphaned.
     Lost,
 }
 
@@ -85,7 +85,7 @@ impl ArtworkStore {
         let PosterReferences::Readable(collections_path) = references else {
             tracing::warn!(
                 target: "collections",
-                "kept every custom poster: collections.json was damaged and had no valid backup"
+                "kept every custom poster: a damaged collections.json was moved aside and is still there"
             );
             return Ok(0);
         };

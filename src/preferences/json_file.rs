@@ -192,9 +192,31 @@ pub fn backup_path(path: &Path) -> PathBuf {
     appended_path(path, ".bak")
 }
 
+const DAMAGED_SUFFIX: &str = ".broken-";
+
 fn damaged_path(path: &Path) -> PathBuf {
     let timestamp = crate::app::clock::since_epoch().as_secs();
-    appended_path(path, &format!(".broken-{timestamp}"))
+    appended_path(path, &format!("{DAMAGED_SUFFIX}{timestamp}"))
+}
+
+/// Whether a damaged copy of `path`, moved aside on this start or an earlier
+/// one, is still next to it.
+pub fn damaged_copy_exists(path: &Path) -> io::Result<bool> {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return Ok(false);
+    };
+    let prefix = format!("{}{DAMAGED_SUFFIX}", name.to_string_lossy());
+    let entries = match std::fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        if entry?.file_name().to_string_lossy().starts_with(&prefix) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn appended_path(path: &Path, suffix: &str) -> PathBuf {

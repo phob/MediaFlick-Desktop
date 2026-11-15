@@ -10,7 +10,8 @@ use crate::collections::{CollectionMode, CollectionProfile, ProviderReadiness};
 
 use super::AccountKey;
 use super::json_file::{
-    RecoveryNotice, invalid_data, load_versioned_with_recovery, save_with_backup,
+    RecoveryNotice, damaged_copy_exists, invalid_data, load_versioned_with_recovery,
+    save_with_backup,
 };
 use super::store::config_dir;
 
@@ -72,8 +73,9 @@ struct State {
 
 pub struct CollectionConfigurationService {
     path: PathBuf,
-    /// The file was damaged on open and no valid backup replaced it.
-    unrecovered: bool,
+    /// A damaged copy of the file was moved aside, on this start or an
+    /// earlier one, and is still there.
+    damaged_copy_kept: bool,
     state: Mutex<State>,
 }
 
@@ -97,19 +99,17 @@ impl CollectionConfigurationService {
             }
         };
         validate_accounts(&document)?;
-        let unrecovered = recovery
-            .as_ref()
-            .is_some_and(|notice| !notice.restored_backup);
+        let damaged_copy_kept = damaged_copy_exists(&path)?;
         Ok(Self {
             path,
-            unrecovered,
+            damaged_copy_kept,
             state: Mutex::new(State { document, recovery }),
         })
     }
 
     /// What the orphaned-poster sweep may trust to name the posters in use.
     pub fn poster_references(&self) -> PosterReferences<'_> {
-        if self.unrecovered {
+        if self.damaged_copy_kept {
             PosterReferences::Lost
         } else {
             PosterReferences::Readable(&self.path)

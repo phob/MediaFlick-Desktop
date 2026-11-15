@@ -45,7 +45,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Companion: Releases, ratings and status](./companion.md): the Companion status page, the Releases page and its toggles, MDBList ratings. Proven by `companion`.
 - [What's new after a 0.1.6 update](./whats-new.md): the one-time dialog after sign-in on a 0.1.6 profile, the Companion install offer for administrators, and the install guide row on Companion settings. Proven by `whats-new` on a local Jellyfin administrator and the demo server.
 - [Discover and Requests](./discover-requests.md): Seerr rows, genres, search, title pages, a real request and its cancellation. Proven by `discover-requests`.
-- [Collections](./collections.md): Movie Franchises, My Collections from a template, Jellyfin mode with BoxSets and the route guard, and custom posters kept after a damaged `collections.json`. Proven by `collections` and `poster-cleanup`.
+- [Collections](./collections.md): Movie Franchises, My Collections from a template, Jellyfin mode with BoxSets and the route guard, and custom posters kept while a damaged `collections.json` is set aside. Proven by `collections` and `poster-cleanup`.
 - [Account settings and integrations](./account-settings.md): Viewing, Appearance, the leave guard between account shelves, Letterboxd. Proven by `account-settings`.
 
 ## Unmapped surfaces

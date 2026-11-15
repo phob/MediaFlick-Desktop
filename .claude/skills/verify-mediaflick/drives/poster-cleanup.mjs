@@ -11,7 +11,10 @@
 // posters dated 30 days back (the harness seed copy does not keep mtimes, so
 // the drive writes them itself). It relaunches the app on that profile and
 // checks that the damaged file was moved aside byte for byte and both posters
-// are still there byte for byte. Never signs in. Every check is recorded in
+// are still there byte for byte. Then it relaunches once more: there is no
+// collections.json by then, only the moved-aside file, and both posters must
+// still survive (operator decision on PR #342: skip the cleanup while any
+// collections.json.broken-* exists). Never signs in. Every check is recorded in
 // poster-cleanup.json and the run fails at the end listing each failed one.
 //   just verify poster-cleanup
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from "node:fs"
@@ -75,13 +78,25 @@ async function steps(ctx, report, record) {
   record(broken.length === 1, "the damaged collections.json was moved aside once", broken)
   record(broken.length === 1 && readFileSync(path.join(ctx.configDir, broken[0]), "utf8") === damaged, "the moved-aside file keeps the damaged bytes")
 
-  const remaining = existsSync(artDir) ? readdirSync(artDir).sort() : []
-  report.postersAfterStart = remaining
+  report.postersAfterDamagedStart = checkPosters(artDir, record, "the damaged start")
+
+  await ctx.relaunch()
+  await ctx.until("document.title === 'Sign in — MediaFlick'", "the sign-in screen after the second relaunch", 30000)
+  await ctx.screenshot("02-after-second-relaunch")
+  const secondNames = readdirSync(ctx.configDir)
+  report.configFilesAfterSecondStart = secondNames.sort()
+  record(!secondNames.includes("collections.json"), "the next start has no collections.json")
+  record(broken.length === 1 && secondNames.includes(broken[0]), "the moved-aside file is still there on the next start", broken)
+  report.postersAfterNextStart = checkPosters(artDir, record, "the next start")
+}
+
+function checkPosters(artDir, record, start) {
   for (const poster of POSTERS) {
     const name = `${poster.id}.${poster.extension}`
     const file = path.join(artDir, name)
     const kept = existsSync(file)
-    record(kept, `poster ${name}, 30 days old and named only by the damaged file, survives the start`)
-    record(kept && readFileSync(file).equals(poster.bytes), `poster ${name} keeps its bytes`)
+    record(kept, `poster ${name}, 30 days old and named only by the damaged file, survives ${start}`)
+    record(kept && readFileSync(file).equals(poster.bytes), `poster ${name} keeps its bytes after ${start}`)
   }
+  return existsSync(artDir) ? readdirSync(artDir).sort() : []
 }
