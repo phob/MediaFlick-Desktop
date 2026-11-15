@@ -1,5 +1,7 @@
 // Generated from src/shell/cef/api/wire.rs by `just wire-types`. Do not edit.
 
+import type { ServerTooOld } from "./jellyfin.version.gen.ts"
+
 export type CompanionInfo = {
   pluginVersion: string,
   apiVersion: number,
@@ -14,6 +16,11 @@ export type CompanionStatus = {
   info: CompanionInfo | null,
   error: string | null,
   supportedApi: SupportedApi,
+  /**
+   * Set when the Companion was not found and the server is older than
+   * the Companion needs, so it cannot be installed there.
+   */
+  serverTooOld: ServerTooOld | null,
 };
 
 export type SupportedApi = {

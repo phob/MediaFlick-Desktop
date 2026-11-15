@@ -672,6 +672,14 @@ mod tests {
             let (mut stale, _) = listener.accept().expect("stale request");
             let stale_line = read_request(&mut stale);
             reached_tx.send(()).expect("signal");
+            // Sign-in reads the server version before it sends credentials.
+            let (mut info, _) = listener.accept().expect("public info request");
+            read_request(&mut info);
+            respond(
+                &mut info,
+                "200 OK",
+                include_str!("../../../fixtures/jellyfin/public-info/12.4.0.json"),
+            );
             let (mut login, _) = listener.accept().expect("login request");
             let login_line = read_request(&mut login);
             respond(

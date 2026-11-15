@@ -7,6 +7,7 @@ use serde::de::DeserializeOwned;
 
 use crate::app::build_info;
 use crate::app::urls::{build_query, join_url};
+use crate::jellyfin::version::ServerTooOld;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(120);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -46,6 +47,8 @@ pub enum ApiError {
     /// The account the request ran for was switched, signed out or deleted
     /// before its answer arrived.
     AccountChanged,
+    /// The server is older than Desktop supports, so sign-in is refused.
+    ServerTooOld(ServerTooOld),
 }
 
 impl ApiError {
@@ -58,7 +61,8 @@ impl ApiError {
             | Self::Storage(_)
             | Self::NotConfigured
             | Self::Cancelled
-            | Self::AccountChanged => false,
+            | Self::AccountChanged
+            | Self::ServerTooOld(_) => false,
         }
     }
 
@@ -76,7 +80,7 @@ impl ApiError {
             Self::Unauthorized => 401,
             Self::RateLimited { .. } => 429,
             Self::Status { status } | Self::Remote { status, .. } => *status,
-            Self::NotConfigured | Self::AccountChanged => 409,
+            Self::NotConfigured | Self::AccountChanged | Self::ServerTooOld(_) => 409,
             Self::Cancelled => 499,
             Self::Transport(_) | Self::Decode(_) => 502,
             Self::Storage(_) => 500,
@@ -107,6 +111,11 @@ impl fmt::Display for ApiError {
             Self::AccountChanged => write!(
                 formatter,
                 "the Jellyfin account changed while the request was running"
+            ),
+            Self::ServerTooOld(too_old) => write!(
+                formatter,
+                "This server runs Jellyfin {}. MediaFlick needs Jellyfin {} or newer.",
+                too_old.version, too_old.minimum
             ),
         }
     }

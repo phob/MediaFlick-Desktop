@@ -111,7 +111,9 @@ export function CompanionIntegration() {
 
   const pluginDescription = companion.available
     ? "MediaFlick Companion is installed on this Jellyfin server and responding."
-    : companion.error ?? "MediaFlick Companion was not found on this Jellyfin server."
+    : companion.serverTooOld
+      ? `MediaFlick Companion needs Jellyfin ${companion.serverTooOld.minimum} or newer. This server runs Jellyfin ${companion.serverTooOld.version}.`
+      : companion.error ?? "MediaFlick Companion was not found on this Jellyfin server."
   const pluginAvailable = companion.available && companion.compatible
   const capabilities = companion.info?.capabilities ?? []
   const missingFeatures = pluginAvailable

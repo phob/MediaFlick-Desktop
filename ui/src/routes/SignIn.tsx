@@ -55,6 +55,7 @@ export default function SignIn() {
 
   const quickError = quickConnect.error ?? poll.error
   const quickConnectAvailable = Boolean(serverAddress && info.data?.quickConnect)
+  const tooOld = info.data?.tooOld
   let quickConnectHelp = "Enter your server address first to use Quick Connect without a password."
   if (serverAddress) {
     if (!probeTarget && !addressComplete) {
@@ -63,6 +64,8 @@ export default function SignIn() {
       quickConnectHelp = "Checking Quick Connect availability…"
     } else if (info.error) {
       quickConnectHelp = "Could not check Quick Connect. Check your server address and connection."
+    } else if (tooOld) {
+      quickConnectHelp = "Sign-in is not available until this Jellyfin server is updated."
     } else if (!info.data?.quickConnect) {
       quickConnectHelp = "Quick Connect is not enabled on this server. Sign in with your username and password."
     } else {
@@ -108,6 +111,11 @@ export default function SignIn() {
                 autoComplete="url"
                 className="h-11 border-edge bg-field"
               />
+              {tooOld && (
+                <p role="alert" className="text-sm text-destructive">
+                  This server runs Jellyfin {tooOld.version}. MediaFlick needs Jellyfin {tooOld.minimum} or newer.
+                </p>
+              )}
             </div>
             <div className="flex flex-col gap-3 border-b border-white/8 pb-4">
               <p id="quick-connect-help" className="text-sm text-muted-foreground" role="status">
@@ -161,7 +169,7 @@ export default function SignIn() {
               />
             </div>
             {login.error && <p className="text-sm text-destructive">{login.error.message}</p>}
-            <Button type="submit" size="lg" disabled={login.isPending || !serverAddress}>
+            <Button type="submit" size="lg" disabled={login.isPending || !serverAddress || Boolean(tooOld)}>
               {login.isPending ? "Signing in…" : "Sign in"}
             </Button>
           </form>
