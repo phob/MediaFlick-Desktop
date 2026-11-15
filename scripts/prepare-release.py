@@ -264,6 +264,8 @@ def check_prepared(version: str) -> str:
     if not Path(RELEASE_FILE).is_file():
         raise SystemExit(f"{RELEASE_FILE} is missing, so it does not release {version}. {hint}")
     release = current_release()
+    if release == Release(version=version, channel="latest"):
+        raise SystemExit(f"{version} is already the Latest release, so there is nothing to build or publish.")
     if release != Release(version=version, channel="prerelease"):
         raise SystemExit(f'{RELEASE_FILE} says {release.version} on channel "{release.channel}", not {version} as a prerelease. {hint}')
     for name, found in (
