@@ -5,6 +5,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::collections::artwork::PosterReferences;
 use crate::collections::{CollectionMode, CollectionProfile, ProviderReadiness};
 
 use super::AccountKey;
@@ -71,6 +72,8 @@ struct State {
 
 pub struct CollectionConfigurationService {
     path: PathBuf,
+    /// The file was damaged on open and no valid backup replaced it.
+    unrecovered: bool,
     state: Mutex<State>,
 }
 
@@ -94,10 +97,23 @@ impl CollectionConfigurationService {
             }
         };
         validate_accounts(&document)?;
+        let unrecovered = recovery
+            .as_ref()
+            .is_some_and(|notice| !notice.restored_backup);
         Ok(Self {
             path,
+            unrecovered,
             state: Mutex::new(State { document, recovery }),
         })
+    }
+
+    /// What the orphaned-poster sweep may trust to name the posters in use.
+    pub fn poster_references(&self) -> PosterReferences<'_> {
+        if self.unrecovered {
+            PosterReferences::Lost
+        } else {
+            PosterReferences::Readable(&self.path)
+        }
     }
 
     pub fn take_recovery_notice(&self) -> Option<RecoveryNotice> {

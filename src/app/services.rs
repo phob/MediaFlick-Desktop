@@ -231,7 +231,10 @@ pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Service
     ));
     let artwork_path = custom_art_dir();
     let artwork = open_configuration(&artwork_path, ArtworkStore::open)?;
-    if let Err(error) = artwork.collect_orphans(&collections_path, std::time::SystemTime::now()) {
+    if let Err(error) = artwork.collect_orphans(
+        collections.poster_references(),
+        std::time::SystemTime::now(),
+    ) {
         tracing::warn!(target: "collections", "could not clean custom artwork: {error}");
     }
     let deletion_path = pending_deletions_file_path();

@@ -25,6 +25,7 @@ Preconditions: your own server with the Companion (`collection-experience-v1` an
 - **Jellyfin mode.** In Settings → `Collections`, `ctx.choose({ name: "Collection mode" }, "Jellyfin")` and `Save` write `modeSelection: "jellyfin"`; the sidebar swaps to `Jellyfin Collections`, whose grid shows one card per BoxSet, as many as Jellyfin's `TotalRecordCount` (85 on the test server). `/collections/franchises` then redirects to `/collections/jellyfin`. *Proven by `collections` (`05-jellyfin-collections`).*
 - **Back to defaults.** `Delete <title>`, `Collection mode` → `MediaFlick`, `Save`: `collections.json` holds no profile and no `jellyfin` mode. *Proven by `collections`.*
 - **Custom poster.** `Choose poster` opens a native file dialog; set `input[aria-label="Custom poster file"]` with CDP `DOM.setFileInputFiles` instead (PNG, JPEG or WebP up to 10 MB). Source-only.
+- **Posters after a damaged collections.json.** Startup deletes custom posters older than 7 days that neither `collections.json` nor its `.bak` names, except on a start where `collections.json` was damaged and no valid backup replaced it. *Proven by `poster-cleanup`, which needs no server.*
 
 ## Gotchas
 
