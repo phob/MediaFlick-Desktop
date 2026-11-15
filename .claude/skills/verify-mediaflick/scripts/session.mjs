@@ -453,12 +453,14 @@ try {
   // token failure proves nothing about the check. Whether `failure` is the check
   // under test, and not a server or network error, is for whoever records it.
   const clean = !driveTimedOut && !unhandledError && !cleanupErrors.length && !(changed.length && !running.length) && !result.leftovers && !result.tokenScan?.leaked.length
-  if (reverted) result.negativeControl = { reverted, head: gitHead(), patch: "negative-control.patch", failure: driveFailure, held: driveFailed && clean }
+  // result.json is written after the token scan, so the message is redacted here.
+  const failure = driveFailure && [...secrets].reduce((text, secret) => text.replaceAll(secret, "<redacted>"), driveFailure)
+  if (reverted) result.negativeControl = { reverted, head: gitHead(), patch: "negative-control.patch", failure, held: driveFailed && clean }
   writeJson("result.json", result)
   log(`${result.passed ? "PASSED" : "FAILED"} ${path.relative(root, evidence)} (exit: ${result.exit})`)
   if (reverted) {
     const why = !driveStarted ? "the run failed before the drive started" : !driveFailed ? "the drive passed with the change reverted" : "the drive failed, but the run timed out or was not clean (see result.json)"
-    log(result.negativeControl.held ? `NEGATIVE CONTROL HELD: the drive failed with the change reverted: ${driveFailure}` : `NEGATIVE CONTROL NOT HELD: ${why}`)
+    log(result.negativeControl.held ? `NEGATIVE CONTROL HELD: the drive failed with the change reverted: ${failure}` : `NEGATIVE CONTROL NOT HELD: ${why}`)
   }
   // A timed-out drive is abandoned, not cancelled; its pending CDP calls or
   // timers must not keep the run alive once the result is on disk.
