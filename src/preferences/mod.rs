@@ -8,6 +8,7 @@ mod reader;
 mod shortcuts;
 mod v0_1_6;
 mod viewing;
+mod whats_new;
 pub use viewing::{
     NextEpisode, PlayerComfort, StartupView, SubtitleMode, ViewingSettings, ViewingWrite,
     startup_view,
@@ -31,3 +32,4 @@ pub use service::{
     PreferencesService, SettingsChange,
 };
 pub use store::*;
+pub use whats_new::carries_0_1_6_data;

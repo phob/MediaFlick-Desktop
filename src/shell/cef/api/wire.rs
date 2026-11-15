@@ -61,6 +61,7 @@ use super::ratings::RatingsBatchBody;
 use super::seerr::{SeerrRequestBody, SeerrRequestCancelled};
 use super::settings::{
     BrowsingBody, BrowsingRoutes, BrowsingSaved, SettingsView, ViewingSettingsWrite, ViewingView,
+    WhatsNew,
 };
 use super::shell::{MpvHelpOpened, ShellQueued, ShellRequestBody, ShellRequestQueued};
 use super::{ApiResponse, AppStatus, NO_STORE, StartupResponse};
@@ -205,6 +206,7 @@ wire_types! {
     UploadedArtwork,
     ViewingSettingsWrite,
     ViewingView,
+    WhatsNew,
 }
 
 /// The body of every non-2xx JSON response. It is generated for the UI but

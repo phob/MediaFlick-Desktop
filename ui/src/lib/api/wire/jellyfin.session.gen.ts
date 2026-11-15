@@ -29,4 +29,9 @@ export type SessionStatus = {
   userId: string | null,
   userName: string | null,
   deviceId: string,
+  /**
+   * The signed-in user administers the server, as the last policy read
+   * showed. A restored session reads `false` until its policy is read.
+   */
+  administrator: boolean,
 };

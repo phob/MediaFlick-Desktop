@@ -1,5 +1,7 @@
 import { AlertTriangle, CheckCircle2 } from "lucide-react"
+import { CompanionGuideLink } from "@/components/CompanionGuideLink"
 import { ApiError, type CompanionService } from "@/lib/api"
+import { companionMissing } from "@/lib/companion"
 import { useCompanion, useSeerrStatus, useStatus } from "@/lib/queries"
 import { PageTitle, Section, SettingsError, SettingsLoading, SettingsRow, SignInRequired } from "./shared"
 
@@ -139,6 +141,16 @@ export function CompanionIntegration() {
         <SettingsRow title="Connection" description={pluginDescription}>
           <Availability available={companion.available} />
         </SettingsRow>
+        {companionMissing(companion) && (
+          <SettingsRow
+            title="Install"
+            description={status.administrator
+              ? "The guide shows how to add the plugin repository to Jellyfin, restart it and install MediaFlick Companion."
+              : "Your server administrator can add MediaFlick Companion. The guide shows how."}
+          >
+            <CompanionGuideLink />
+          </SettingsRow>
+        )}
       </Section>
       {companion.available && (
         <Section

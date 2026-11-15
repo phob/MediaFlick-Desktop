@@ -1,4 +1,19 @@
+import type { CompanionStatus } from "./api"
 import { useCompanion } from "./queries"
+
+/**
+ * The Companion install guide on flick.media: add the plugin repository to
+ * Jellyfin, restart it, and install MediaFlick Companion.
+ */
+export const COMPANION_GUIDE_URL = "https://flick.media/companion/"
+
+/**
+ * The server answered that it has no Companion. A plugin that could not be
+ * reached may still be installed, so it does not count as missing.
+ */
+export function companionMissing(status: CompanionStatus | undefined) {
+  return Boolean(status?.checked && !status.available && status.error === null)
+}
 
 /**
  * The Companion capabilities this app may use: none from a plugin it is not

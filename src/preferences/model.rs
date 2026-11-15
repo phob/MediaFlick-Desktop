@@ -70,6 +70,9 @@ pub struct AppSettings {
     pub mark_watched_next: Option<String>,
     #[serde(default, skip_serializing_if = "AppearanceSettings::is_default")]
     pub appearance: AppearanceSettings,
+    /// The one-time What's new for a device updated from 0.1.6 was closed.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub whats_new_seen: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -493,6 +496,7 @@ impl Default for AppSettings {
             skip_commercial: SegmentSkipMode::default(),
             mark_watched_next: default_mark_watched_next(),
             appearance: AppearanceSettings::default(),
+            whats_new_seen: false,
         }
     }
 }
