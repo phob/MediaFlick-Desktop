@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Install the MediaFlick Companion</title>
+    <meta name="description" content="Install the MediaFlick Companion Jellyfin plugin from its repository: add the repository, install the plugin from the catalog, and restart Jellyfin. Needs Jellyfin 12.0.0 or newer." />
+    <meta name="theme-color" content="#070b09" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Install the MediaFlick Companion" />
+    <meta property="og:description" content="Add one repository URL to Jellyfin 12 and install the MediaFlick Companion from the plugin catalog." />
+    <meta property="og:url" content="https://flick.media/companion/" />
+    <link rel="canonical" href="https://flick.media/companion/" />
+    <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/companion/copy.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="chrome">
+      <div class="shell chrome-row">
+        <a class="brand" href="/" aria-label="MediaFlick home">
+          <img class="brand-icon" src="/app-icon.svg" alt="" width="30" height="30" />
+          <span class="wordmark">Media<b>Flick</b></span>
+        </a>
+        <div class="chrome-actions">
+          <a class="icon-link" href="https://github.com/phob/MediaFlick-Desktop" rel="noreferrer" aria-label="MediaFlick on GitHub">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.08.63-1.33-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.56 9.56 0 0 1 5 0c1.91-1.3 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg>
+          </a>
+          <a class="btn btn-primary btn-sm" href="/#download">Download</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="section install">
+        <div class="shell">
+          <div class="rail"><span class="rail-mark"></span><p class="data">Companion · Install</p><span class="rail-rule"></span></div>
+          <div class="section-head">
+            <h1>Install the MediaFlick Companion.</h1>
+            <p>
+              The Companion is an optional Jellyfin plugin. It brings Sonarr, Radarr, Seerr,
+              MDBList and TMDB into MediaFlick Desktop, and keeps their addresses and API keys
+              on your server. A Jellyfin administrator installs it once for everyone.
+            </p>
+          </div>
+
+          <p class="install-requires">
+            <span class="data">Requires</span>
+            <span><b>Jellyfin 12.0.0 or newer.</b> Older servers don't offer the Companion in their catalog.</span>
+          </p>
+
+          <ol class="install-steps">
+            <li class="install-step">
+              <span class="install-number data" aria-hidden="true">01</span>
+              <div>
+                <h2>Add the plugin repository</h2>
+                <p>
+                  In Jellyfin, open <b>Dashboard → Plugins → Repositories</b>, add a repository
+                  named <b>MediaFlick Companion</b> with this URL, and save.
+                </p>
+                <div class="repo-url">
+                  <code data-copy-source>https://flick.media/companion/manifest.json</code>
+                  <button type="button" class="btn btn-ghost btn-sm" data-copy hidden>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M9 9h10v11H9zM5 15V4h10"/></svg>
+                    <span data-copy-label>Copy URL</span>
+                  </button>
+                </div>
+              </div>
+            </li>
+            <li class="install-step">
+              <span class="install-number data" aria-hidden="true">02</span>
+              <div>
+                <h2>Install MediaFlick Companion from the catalog</h2>
+                <p>
+                  Open <b>Dashboard → Plugins → Catalog</b>, find <b>MediaFlick Companion</b>
+                  under General, and install the newest version.
+                </p>
+              </div>
+            </li>
+            <li class="install-step">
+              <span class="install-number data" aria-hidden="true">03</span>
+              <div>
+                <h2>Restart Jellyfin</h2>
+                <p>
+                  Jellyfin loads a new plugin when it starts. Restart it from the
+                  <b>Dashboard</b>, or restart its service or container.
+                </p>
+              </div>
+            </li>
+          </ol>
+
+          <div class="install-after">
+            <h2>Then</h2>
+            <p>
+              Open <b>Dashboard → Plugins → MediaFlick Companion</b> to connect Seerr, Sonarr,
+              Radarr, MDBList and TMDB. Each is optional. In MediaFlick Desktop,
+              <b>Settings → MediaFlick Companion</b> shows the plugin and which features it
+              offers. Updates arrive through the same repository.
+            </p>
+            <p>
+              The <a href="https://github.com/phob/MediaFlick-Desktop/blob/main/plugin/README.md" rel="noreferrer">administrator guide</a>
+              covers each service, the shared rating quota and what Desktop can see.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer-grid">
+        <div>
+          <a class="brand" href="/">
+            <img class="brand-icon" src="/app-icon.svg" alt="" width="26" height="26" />
+            <span class="wordmark">Media<b>Flick</b></span>
+          </a>
+          <p class="footer-note">A Jellyfin client for people who care what plays the video. Not affiliated with the Jellyfin project.</p>
+        </div>
+        <nav class="footer-links" aria-label="Footer">
+          <a href="https://github.com/phob/MediaFlick-Desktop" rel="noreferrer">GitHub</a>
+          <a href="https://github.com/phob/MediaFlick-Desktop/releases" rel="noreferrer">Releases</a>
+          <a href="https://github.com/phob/MediaFlick-Desktop/blob/main/CHANGELOG.md" rel="noreferrer">Changelog</a>
+          <a href="https://github.com/phob/MediaFlick-Desktop/blob/main/LICENSE" rel="noreferrer">GPL-2.0-or-later</a>
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,37 @@
+name: Latest Release Guard
+
+# The desktop updater and the flick.media download buttons read GitHub's
+# Latest release. A Companion release (or anything else) marked Latest would
+# stop every desktop update, so this puts Latest back on the newest desktop
+# release and fails red to make the mistake visible.
+#
+# GitHub runs a release event with the workflow file at the release's tagged
+# commit, so this fires for releases tagged after it landed on main.
+on:
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: latest-release-guard
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Keep a desktop release as Latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          # A release event checks out the release's tag, which may be an old
+          # commit; the guard always runs the default branch's script.
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Check the Latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/keep_desktop_latest.py "$GITHUB_REPOSITORY"

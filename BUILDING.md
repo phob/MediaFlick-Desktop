@@ -74,8 +74,8 @@ push a version tag, or consume `CHANGELOG.md` or `changelog.d/`. The temporary
 version patch is applied only to the build jobs. Keep this test release as a
 draft; its downloads are accessible to repository maintainers after signing in.
 
-Use the separate **Draft Companion Release** workflow for server packages;
-see [Companion test repository](plugin/README.md#test-repository).
+Use the separate **Companion Release** workflow for server packages; see
+[Companion release](plugin/README.md#release).
 
 ```sh
 just release

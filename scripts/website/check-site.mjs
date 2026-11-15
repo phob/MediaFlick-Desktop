@@ -11,9 +11,15 @@
 // on console errors, CSP violations, missing assets, horizontal overflow or
 // broken interactions.
 //
+// It also checks the Companion install guide (/companion/) at both viewports,
+// including its copy button, and that /companion/manifest.json is served as
+// JSON in Jellyfin's plugin repository format with entries that point only at
+// published GitHub Release assets.
+//
 // The output directory (default build/website-check) receives report.json,
-// full-page screenshots (desktop.png and mobile.png) and one viewport
-// screenshot per walkthrough step (walk-<viewport>-<step>.png).
+// full-page screenshots (desktop.png, mobile.png, companion-desktop.png and
+// companion-mobile.png) and one viewport screenshot per walkthrough step
+// (walk-<viewport>-<step>.png).
 
 import { createServer } from "node:http"
 import { readFile, stat, mkdir, writeFile, rm } from "node:fs/promises"
@@ -31,6 +37,49 @@ const CDP_PORT = Number(process.env.CDP_PORT ?? 9351)
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml",
   ".webp": "image/webp", ".mp4": "video/mp4", ".webm": "video/webm", ".xml": "application/xml", ".txt": "text/plain",
+  ".json": "application/json",
+}
+
+const COMPANION_GUID = "11d8f2bb-2b9d-4ce1-8c33-5a0f809dfd2f"
+const REPOSITORY_URL = "https://flick.media/companion/manifest.json"
+
+// Jellyfin's repository format (a list of plugins, each with versions), and the
+// operator's rule that an entry points only at a published release asset.
+function manifestProblems(manifest) {
+  if (!Array.isArray(manifest)) return ["manifest is not a JSON array"]
+  const problems = []
+  if (manifest.length > 1) problems.push(`manifest lists ${manifest.length} plugins`)
+  for (const plugin of manifest) {
+    if (plugin?.guid !== COMPANION_GUID) problems.push(`plugin guid ${plugin?.guid} is not the Companion's`)
+    for (const field of ["name", "description", "overview", "owner", "category"]) {
+      if (typeof plugin?.[field] !== "string" || !plugin[field]) problems.push(`plugin ${field} is missing`)
+    }
+    if (!Array.isArray(plugin?.versions) || plugin.versions.length === 0) {
+      problems.push("plugin has no versions")
+      continue
+    }
+    const seen = []
+    for (const entry of plugin.versions) {
+      const version = entry?.version
+      if (typeof version !== "string" || !/^(0|[1-9]\d*)(\.(0|[1-9]\d*)){2,3}$/.test(version)) {
+        problems.push(`version ${version} is not numeric`)
+        continue
+      }
+      const asset = `https://github.com/phob/MediaFlick-Desktop/releases/download/companion-v${version}/mediaflick-companion_${version}.zip`
+      if (entry.sourceUrl !== asset) problems.push(`${version}: sourceUrl ${entry.sourceUrl} is not ${asset}`)
+      if (!/^[0-9a-f]{32}$/.test(entry.checksum ?? "")) problems.push(`${version}: checksum is not an MD5 hex digest`)
+      if (!/^\d+\.\d+\.\d+\.\d+$/.test(entry.targetAbi ?? "")) problems.push(`${version}: targetAbi ${entry.targetAbi} is not a four-part version`)
+      if (typeof entry.changelog !== "string") problems.push(`${version}: changelog is missing`)
+      if (Number.isNaN(Date.parse(entry.timestamp))) problems.push(`${version}: timestamp ${entry.timestamp} is not a date`)
+      // Jellyfin compares System.Version values, so 0.2.2 and 0.2.2.0 are one build.
+      const parts = [...version.split(".").map(Number), 0].slice(0, 4)
+      const order = (other) => (other.map((part, index) => Math.sign(part - parts[index])).find((sign) => sign !== 0) ?? 0)
+      if (seen.some((other) => order(other) === 0)) problems.push(`${version} is listed twice`)
+      else if (seen.length && order(seen.at(-1)) < 0) problems.push(`${version} is listed after an older version`)
+      seen.push(parts)
+    }
+  }
+  return problems
 }
 
 const headersFile = await readFile(path.join(siteDir, "_headers"), "utf8")
@@ -325,6 +374,81 @@ try {
     for (const problem of problems) fail(name, problem)
     report.viewports[name] = { ...metrics, heroTop: Math.round(heroTop), pageHeight: fullHeight, imagesChecked: assets.checked, hero, order, walkthrough, tracking, interactions, screenshot: path.relative(root, shot) }
   }
+  // The Companion repository manifest, as Jellyfin fetches it.
+  const manifestResponse = await fetch(`${siteUrl}companion/manifest.json`)
+  const manifestText = await manifestResponse.text()
+  let manifest = null
+  try {
+    manifest = JSON.parse(manifestText)
+  } catch (error) {
+    report.failures.push(`companion manifest is not JSON: ${error.message}`)
+  }
+  const manifestIssues = manifest === null ? [] : manifestProblems(manifest)
+  for (const issue of manifestIssues) report.failures.push(`companion manifest: ${issue}`)
+  const contentType = manifestResponse.headers.get("content-type") ?? ""
+  if (manifestResponse.status !== 200 || !contentType.startsWith("application/json")) report.failures.push(`companion manifest answered ${manifestResponse.status} ${contentType}`)
+  report.companionManifest = {
+    status: manifestResponse.status,
+    contentType,
+    plugins: Array.isArray(manifest) ? manifest.length : null,
+    versions: Array.isArray(manifest) ? manifest.flatMap((plugin) => (Array.isArray(plugin?.versions) ? plugin.versions.map((entry) => entry?.version) : [])) : null,
+    problems: manifestIssues,
+  }
+
+  // The install guide at both viewports.
+  await page.send("Browser.grantPermissions", { permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"], origin: siteUrl.replace(/\/$/, "") })
+  await page.send("Emulation.setFocusEmulationEnabled", { enabled: true })
+  report.companionPage = {}
+  for (const [name, metrics] of Object.entries(viewports)) {
+    problems.length = 0
+    await page.send("Emulation.setDeviceMetricsOverride", metrics)
+    await page.send("Emulation.setTouchEmulationEnabled", { enabled: metrics.mobile })
+    const loaded = new Promise((resolve) => {
+      const off = page.on("Page.loadEventFired", () => {
+        off()
+        resolve()
+      })
+    })
+    await page.send("Page.navigate", { url: `${siteUrl}companion/` })
+    await loaded
+    await sleep(400)
+    const guide = await page.evaluate(`(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+      const button = document.querySelector("[data-copy]")
+      const visible = !!button && !button.hidden && getComputedStyle(button).display !== "none"
+      button?.click()
+      await wait(300)
+      const copied = await navigator.clipboard.readText().catch((error) => "error: " + error)
+      return {
+        title: document.title,
+        heading: document.querySelector("h1")?.textContent.trim(),
+        steps: [...document.querySelectorAll(".install-step h2")].map((heading) => heading.textContent.trim()),
+        url: document.querySelector("[data-copy-source]")?.textContent.trim(),
+        requires: document.querySelector(".install-requires")?.textContent.replace(/\s+/g, " ").trim(),
+        copyVisible: visible,
+        copyLabel: document.querySelector("[data-copy-label]")?.textContent,
+        copied,
+        overflow: document.documentElement.scrollWidth - innerWidth,
+        csp: window.__cspViolations,
+        brokenImages: [...document.images].filter((image) => image.complete && image.naturalWidth === 0).map((image) => image.currentSrc),
+      }
+    })()`)
+    if (guide.url !== REPOSITORY_URL) fail(`companion-${name}`, `repository URL is ${guide.url}`)
+    if (guide.steps.length !== 3) fail(`companion-${name}`, `the guide has ${guide.steps.length} steps`)
+    if (!guide.requires?.includes("Jellyfin 12.0.0 or newer")) fail(`companion-${name}`, `the guide does not state the Jellyfin 12.0.0 minimum: ${guide.requires}`)
+    if (!guide.copyVisible) fail(`companion-${name}`, "copy button is hidden")
+    if (guide.copied !== REPOSITORY_URL || guide.copyLabel !== "Copied") fail(`companion-${name}`, `copy button put ${JSON.stringify(guide.copied)} on the clipboard (label ${guide.copyLabel})`)
+    if (guide.overflow > 1) fail(`companion-${name}`, `page overflows horizontally by ${guide.overflow}px`)
+    if (guide.csp.length) fail(`companion-${name}`, `CSP violations: ${guide.csp.join("; ")}`)
+    if (guide.brokenImages.length) fail(`companion-${name}`, `images failed: ${guide.brokenImages.join(", ")}`)
+    for (const problem of problems) fail(`companion-${name}`, problem)
+    const height = await page.evaluate("document.documentElement.scrollHeight")
+    const { data } = await page.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true, clip: { x: 0, y: 0, width: metrics.width, height, scale: 1 } })
+    const shot = path.join(outDir, `companion-${name}.png`)
+    await writeFile(shot, Buffer.from(data, "base64"))
+    report.companionPage[name] = { ...guide, screenshot: path.relative(root, shot) }
+  }
+
   report.notFound = [...new Set(requests.filter((entry) => entry.status === 404).map((entry) => entry.path))]
   for (const missing of report.notFound) report.failures.push(`404: ${missing}`)
 } finally {

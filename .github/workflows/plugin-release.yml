@@ -1,19 +1,30 @@
-name: Draft Companion Release
+name: Companion Release
 
+# Two steps, run in order for each Companion version:
+#   1. Run this workflow with step `draft`. It tests, packages and creates a
+#      draft release `companion-v<version>` with --latest=false.
+#   2. A maintainer tests the draft and publishes it, with "Set as the latest
+#      release" unchecked (the Latest Release Guard repairs and flags a slip).
+#      Publishing runs the `repository` step, which adds the published package
+#      to website/public/companion/manifest.json (https://flick.media/companion/manifest.json)
+#      on a branch and links a ready pull request in the run summary. Run it by
+#      hand with step `repository` if the release event did not.
+# There is no tag trigger: publishing a draft creates its tag, and a tag
+# trigger would then try to draft the same release again.
 on:
-  push:
-    tags:
-      - "companion-v*"
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
         description: "Companion version (three or four numeric components)"
         required: true
         type: string
-      test_repository:
-        description: "Also host the package on the public companion-test-repository branch for Jellyfin testing"
-        type: boolean
-        default: false
+      step:
+        description: "draft: build a draft release. repository: add a published release to the flick.media manifest"
+        type: choice
+        options: [draft, repository]
+        default: draft
 
 permissions:
   contents: write
@@ -23,7 +34,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  draft:
+    if: github.event_name == 'workflow_dispatch' && inputs.step == 'draft'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -36,7 +48,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${INPUT_VERSION:-${GITHUB_REF_NAME#companion-v}}"
+          version="$INPUT_VERSION"
           if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$ ]]; then
             echo "Jellyfin requires three or four numeric version components." >&2
             exit 1
@@ -80,64 +92,93 @@ jobs:
             throw "Compiled plugin version does not match release version."
           }
 
-      - name: Package plugin and repository manifest
+      - name: Package plugin
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          TAG: ${{ steps.version.outputs.tag }}
-          TEST_REPOSITORY: ${{ inputs.test_repository }}
         run: |
-          asset="mediaflick-companion_${VERSION}.zip"
-          source_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${asset}"
-          changelog="MediaFlick Companion ${VERSION}: calendar, requests, ratings, and collections."
-          if [[ "$TEST_REPOSITORY" == true ]]; then
-            source_url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/companion-test-repository/packages/${VERSION}/${asset}"
-            changelog="Test build ${VERSION}. For manual testing with Jellyfin 12; not a stable release."
-          fi
-          python3 plugin/package.py \
+          python3 plugin/package.py build \
             --version "$VERSION" \
             --publish-dir plugin/bin/Release/publish \
             --output-dir plugin/bin/Release/package \
-            --source-url "$source_url" \
-            --changelog "$changelog"
+            --changelog "MediaFlick Companion ${VERSION}: calendar, requests, ratings, and collections."
 
       - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
-          TEST_REPOSITORY: ${{ inputs.test_repository }}
         run: |
-          extra_args=()
-          notes="MediaFlick Companion ${VERSION}. Requires Jellyfin 12. Keep this release as a draft until tested."
-          if [[ "$TEST_REPOSITORY" == true ]]; then
-            extra_args+=(--prerelease)
-            notes+=" Test repository: https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/companion-test-repository/manifest.json"
-          fi
           gh release create "$TAG" \
-            --draft --latest=false --target "$GITHUB_SHA" "${extra_args[@]}" \
+            --draft --latest=false --target "$GITHUB_SHA" \
             --title "MediaFlick Companion v${VERSION}" \
-            --notes "$notes" \
+            --notes "MediaFlick Companion ${VERSION}. Requires Jellyfin 12.0.0 or newer. Install it from https://flick.media/companion/ once published. When publishing, leave 'Set as the latest release' unchecked." \
             "plugin/bin/Release/package/mediaflick-companion_${VERSION}.zip" \
-            plugin/bin/Release/package/meta.json \
-            plugin/bin/Release/package/manifest.json
+            plugin/bin/Release/package/meta.json
 
-      - name: Publish isolated Jellyfin test repository
-        if: ${{ inputs.test_repository }}
+  repository:
+    if: >-
+      (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'companion-v') && !github.event.release.prerelease)
+      || (github.event_name == 'workflow_dispatch' && inputs.step == 'repository')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          # The manifest entry lands on the default branch, whatever commit the release tagged.
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Prepare version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        shell: bash
         run: |
           set -euo pipefail
-          catalog="$RUNNER_TEMP/companion-catalog"
-          branch=companion-test-repository
-          if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
-            git fetch origin "$branch"
-            git worktree add --detach "$catalog" FETCH_HEAD
-          else
-            git worktree add --detach "$catalog" HEAD
-            git -C "$catalog" switch --orphan "$branch"
+          version="${INPUT_VERSION:-${RELEASE_TAG#companion-v}}"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$ ]]; then
+            echo "Jellyfin requires three or four numeric version components." >&2
+            exit 1
           fi
-          python3 plugin/stage-test-repository.py \
-            --package-dir plugin/bin/Release/package --repository-dir "$catalog" --source-sha "$GITHUB_SHA"
-          git -C "$catalog" config user.name "github-actions[bot]"
-          git -C "$catalog" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$catalog" add README.md manifest.json packages
-          git -C "$catalog" commit -m "Add Companion test package"
-          git -C "$catalog" push origin "HEAD:$branch"
+          {
+            echo "version=$version"
+            echo "tag=companion-v$version"
+            echo "branch=companion-repository/v$version"
+          } >> "$GITHUB_OUTPUT"
+
+      # package.py downloads the asset without credentials, so a draft (404)
+      # or a missing asset fails here and never reaches the manifest.
+      - name: Add the published package to the manifest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          python3 plugin/package.py add \
+            --source-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/mediaflick-companion_${VERSION}.zip" \
+            --manifest website/public/companion/manifest.json
+
+      # Actions may not open pull requests in this repository, and a pull
+      # request opened by the workflow token would not run the required checks.
+      # The branch is pushed and the summary links a pull request to open.
+      - name: Push the manifest branch
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BRANCH: ${{ steps.version.outputs.branch }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --create "$BRANCH"
+          git commit --all --message "feat(companion): list Companion ${VERSION} in the flick.media repository"
+          git push --force origin "HEAD:refs/heads/${BRANCH}"
+          title="feat(companion): list Companion ${VERSION} in the flick.media repository"
+          link="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${BASE}...${BRANCH}?quick_pull=1&title=$(jq -rn --arg t "$title" '$t|@uri')"
+          {
+            echo "### Companion ${VERSION} is ready for the repository"
+            echo
+            echo "Open the pull request: ${link}"
+            echo
+            echo "It adds ${VERSION} to website/public/companion/manifest.json. Once merged and deployed, Jellyfin servers with the repository https://flick.media/companion/manifest.json offer the update."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Open the manifest pull request::${link}"

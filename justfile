@@ -44,6 +44,7 @@ plugin:
 [group('test')]
 plugin-test:
     dotnet test --project plugin/tests/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
+    python3 -m unittest discover -s plugin -p 'test_*.py'
 
 # Load the packaged plugin into real Jellyfin servers (default: minimum and newest minor; Linux only)
 [group('test')]
