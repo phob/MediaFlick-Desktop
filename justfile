@@ -51,6 +51,12 @@ plugin-test:
 plugin-e2e *versions:
     python3 scripts/e2e/companion-jellyfin.py {{versions}}
 
+# Prove the update from 0.1.6 and the way back against real 0.1.6, local Jellyfin servers and your own server (Linux; `just linux-appimage` first). Report: build/e2e/upgrade-0-1-6
+[group('test')]
+[linux]
+upgrade-e2e *args: build
+    node scripts/e2e/upgrade-0-1-6.mjs {{args}}
+
 # Deploy the plugin to the configured Jellyfin development host and restart it
 [group('run')]
 plugin-deploy: plugin

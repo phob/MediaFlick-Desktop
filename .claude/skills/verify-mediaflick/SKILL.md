@@ -38,10 +38,13 @@ Arguments after the drive go to `session.mjs`:
 - `--signed-out` (with `--account`): starts on that server's sign-in screen instead; `ctx.signIn({})` signs in with Quick Connect, approved by the harness as the cached account, so the app gets its own token and may sign out.
 - `--log-level FILTER`: the app's `--log-level`, an `EnvFilter`, default `debug`. Playback drives use `debug,jellyfin.playstate=trace,playback=trace` for the playstate reports.
 - `--seed DIR`: copied into the empty config dir before launch, for example a prepared `settings.json`.
+- `--seed-data DIR`: copied into the empty data dir before launch, for example the `cef-cache` an older release left.
 - `--keep-profile`: leaves the profile on disk for inspection. Remove it later with `just verify-cleanup`.
 - `--services-down`: the in-session doctor expects `/api/status` to answer 503 instead of 200, for a drive whose seed makes the app's services fail to open.
 
 `MEDIAFLICK_VERIFY_HARD_TIMEOUT` (seconds, default 900) bounds the whole wrapper run.
+
+`MEDIAFLICK_DESKTOP_EXE` runs another build instead of the staged `build/mediaflick-desktop`, such as a packaged AppImage. Such a build brings its own CEF runtime, so the session sets none of the staged build's `LD_LIBRARY_PATH` or `LD_PRELOAD`. `just verify` still builds and stages first.
 
 `MEDIAFLICK_VERIFY_SCREEN` (Linux, `WIDTHxHEIGHTxDEPTH`, default `1920x1080x24`) sizes the private Xvfb screen, such as `3840x2160x24` for a 4K screen at 100% scaling. Each side must be 100 to 8192 pixels and the depth 8, 16 or 24. The app window still opens at 1280x720; a drive that needs the whole screen sizes it with `xdotool`, as `reader-mouse` does.
 
@@ -144,7 +147,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | `until(exprOrFn, description, timeout)` | Poll a page expression or Node function until truthy; logs `saw <description>`. Never use fixed sleeps for state. |
 | `check(condition, message)` | Fail, or log `ok: message`. |
 | `signIn({ server, username, password })` | Drive the sign-in form and wait for the sidebar. Under `--account`, only confirm that the app started signed in as the cached user; under `--account … --signed-out`, sign in with Quick Connect approved by the harness. |
-| `quickConnect({ timeout, approve })` | From the sign-in screen, press `Use Quick Connect`, log the code (`QUICK CONNECT CODE …`) and wait up to `timeout` ms (default 600000) for someone to approve it. `approve: true` (only with `--signed-out`) approves it as the cached account. |
+| `quickConnect({ timeout, approve, signedIn })` | From the sign-in screen, press `Use Quick Connect`, log the code (`QUICK CONNECT CODE …`) and wait up to `timeout` ms (default 600000) for someone to approve it. `approve: true` (only with `--signed-out`) approves it as the cached account. `signedIn` is the target that shows once signed in, default the sidebar's `Settings` link; pass the dialog when one opens over it, such as What's new. |
 | `saveAccount()` | Under `just verify-login` only: cache the signed-in session for `--account` runs and write `account.json`. |
 | `account` | `{ server, userName, userId, login: false, signedOut }` under `--account`, `{ server, login: true }` under `verify-login`, else `null`. Never holds the token. |
 | `jellyfin(path)` | GET on the server to read back server state (`/Items/<id>?userId=${ctx.account.userId}`): as the cached account under `--account`, otherwise as the session the app stored when the drive signed in (the demo account, read-only). |
