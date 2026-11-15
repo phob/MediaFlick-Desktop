@@ -66,7 +66,11 @@ impl AppSettings {
                 settings.sanitize();
                 settings
             }
-            Ok(None) => Self::default(),
+            Ok(None) => {
+                let mut settings = super::v0_1_6::import(&config_dir());
+                settings.sanitize();
+                settings
+            }
             Err(error) => {
                 tracing::warn!(
                     "failed to read {}; using defaults and leaving the file unchanged: {error}",

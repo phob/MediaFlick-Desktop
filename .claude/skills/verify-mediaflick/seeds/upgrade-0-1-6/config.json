@@ -1,0 +1,11 @@
+{
+  "jellyfin_url": "https://demo.jellyfin.org/stable",
+  "mpv_path": "/usr/bin/mpv",
+  "player_backend": "mpchc",
+  "mpchc_path": "C:\\Program Files\\MPC-HC\\mpc-hc64.exe",
+  "default_fullscreen": "windowed",
+  "streaming_quality": "20_mbps",
+  "show_scrollbars": true,
+  "skip_intro": "always",
+  "skip_credits": "disabled"
+}
