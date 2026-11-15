@@ -1,5 +1,5 @@
 use std::fmt;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 
 use serde::{Deserialize, Deserializer};
 
@@ -159,8 +159,9 @@ impl PreferencesService {
     pub fn snapshot(&self) -> AppSettings {
         self.state
             .lock()
-            .map(|state| state.settings.clone())
-            .unwrap_or_default()
+            .unwrap_or_else(PoisonError::into_inner)
+            .settings
+            .clone()
     }
 
     pub fn activate_account(

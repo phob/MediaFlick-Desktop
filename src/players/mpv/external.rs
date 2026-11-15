@@ -83,10 +83,16 @@ fn remove_packaged_cef_preload(command: &mut Command) {
         return;
     }
 
-    match cleaned_ld_preload(
-        &std::env::var("LD_PRELOAD").unwrap_or_default(),
-        &cef_preload,
-    ) {
+    let current = match std::env::var("LD_PRELOAD") {
+        Ok(current) => current,
+        Err(std::env::VarError::NotPresent) => String::new(),
+        // A value that is not text cannot be split safely, so mpv gets it unchanged.
+        Err(std::env::VarError::NotUnicode(_)) => {
+            command.env_remove("MEDIAFLICK_DESKTOP_CEF_PRELOAD");
+            return;
+        }
+    };
+    match cleaned_ld_preload(&current, &cef_preload) {
         Some(ld_preload) => command.env("LD_PRELOAD", ld_preload),
         None => command.env_remove("LD_PRELOAD"),
     };

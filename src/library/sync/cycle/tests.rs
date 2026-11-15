@@ -383,6 +383,25 @@ fn an_unreadable_sync_state_stops_the_cycle_instead_of_restarting_the_catalog() 
     assert!(!bootstrap_progress(&library).complete);
 }
 
+// Rule (77a0a67, extended to the catalog by agent-proofing step 6): a count
+// the server leaves out is unknown, not 0.
+#[test]
+fn a_first_catalog_page_without_a_count_leaves_the_total_unknown() {
+    for (answer, total) in [(UNCOUNTED, None), (EMPTY_PAGE, Some(0))] {
+        let library = Arc::new(Library::open_in_memory().expect("library"));
+
+        let (result, requests) = cycle(
+            &library,
+            Trigger::Requested,
+            vec![ok(NOT_JSON), ok(answer), ok(EMPTY_PAGE)],
+        );
+
+        result.expect("an empty catalog syncs");
+        assert_eq!(steps(&requests), ["views", "bootstrap", "incremental"]);
+        assert_eq!(bootstrap_progress(&library).total, total, "{answer}");
+    }
+}
+
 struct Announced {
     result: Result<SyncReport, ApiError>,
     events: Vec<&'static str>,

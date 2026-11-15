@@ -29,11 +29,12 @@ Preconditions:
 - **Retry now, server back.** `proxy.heal()`, press `Retry now`, wait for `{ role: "link", name: "Settings" }` and pathname `/`. `bootstrap.state` is `ready`. *Proven by `bootstrap-retry`.*
 - **Sign out.** Press `Sign out`; `{ role: "textbox", name: "Server" }` returns and `/api/status` reports `authenticated: false`. *Proven by `bootstrap-retry`.*
 - **Relaunch.** `await ctx.relaunch()` while the proxy still fails, then the retry screen handles above and `await ctx.until(() => ctx.windowShown(), …)`. *Proven by `bootstrap-retry` on Linux and Windows.*
+- **Storage reason.** Hold the first `/UserViews` on a proxy `answer` Promise, take the write lock with `new DatabaseSync(path.join(ctx.dataDir, "library.db")).exec("BEGIN IMMEDIATE")` (retry while the app is mid-write), then let the answer through: storing the list waits out the app's 10 s busy timeout and fails. `{ role: "heading", name: "MediaFlick couldn't save your library" }` appears and `/api/status` reports `reason: "storage"`; `ROLLBACK` and close, then `Retry now` loads Home. *Proven by `storage-failure`.*
 - **Proof.** Snapshot and screenshot the retry screen on first launch and after relaunch, and Home after `Retry now`.
 
 ## Gotchas
 
-- The reason heading is a card title with `role="heading"`; the `server` and `storage` wordings need a server that answers with errors or a broken local database, and are not driven.
+- The reason heading is a card title with `role="heading"`; the `server` wording needs a server that answers with errors and is not driven. The `storage` wording is driven by `storage-failure`.
 - The cover stays up until the first failed attempt ends. The client tries a request 3 times (250 ms, then 500 ms apart), so the retry screen appears about 1 to 2 s after the first dropped request. A server that never accepts the connection costs three 10 s connect timeouts, about 31 s; one that accepts and never answers holds the attempt up to the shared 120 s budget (`src/jellyfin/api/client.rs`; neither driven).
 - The worker's backoff grows across attempts (5, 10, 20, 40, 60 s, each plus a jitter under 20% that is 0 at the 5 s step). A 429 with `Retry-After` stretches it beyond 60 s. A failed `Retry now` advances it one step like any failed attempt; Sign out while the worker waits does not reset it, but Sign out during a running attempt cancels it and does (`src/library/sync/worker.rs`). To prove that `Retry now` caused an attempt, wait until `retryAt` is far enough away before pressing it.
 - `Trying again now…` and the disabled `Retry now` also show when the countdown reaches 0, before the worker's own attempt starts.

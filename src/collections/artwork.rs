@@ -79,7 +79,9 @@ impl ArtworkStore {
                 continue;
             }
             let modified = entry.metadata()?.modified()?;
-            if now.duration_since(modified).unwrap_or_default() < ORPHAN_AGE {
+            // A poster stamped later than now is not old yet.
+            let age = now.duration_since(modified).unwrap_or(Duration::ZERO);
+            if age < ORPHAN_AGE {
                 continue;
             }
             std::fs::remove_file(path)?;

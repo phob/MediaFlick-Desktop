@@ -486,10 +486,22 @@ fn summary_row(row: &Row<'_>) -> rusqlite::Result<ItemSummary> {
     })
 }
 
+/// `items.genres` is always a JSON array (`'[]'` by default), so one that
+/// does not parse is a damaged row, not a title without genres.
+fn genres_column(row: &Row<'_>, index: usize) -> rusqlite::Result<Vec<String>> {
+    serde_json::from_str(&row.get::<_, String>(index)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })
+}
+
 fn detail_row(row: &Row<'_>) -> rusqlite::Result<ItemDetail> {
     Ok(ItemDetail {
         summary: summary_row(row)?,
-        genres: serde_json::from_str(&row.get::<_, String>(22)?).unwrap_or_default(),
+        genres: genres_column(row, 22)?,
         original_title: row.get(23)?,
         provider_ids: ProviderIds {
             tmdb: row.get(24)?,

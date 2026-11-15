@@ -268,7 +268,7 @@ pub(super) fn preview(
         }
         let result = match services
             .companion
-            .refresh_collection(&scope, &provider_request(services, &profile))
+            .refresh_collection(&scope, &provider_request(services, &profile)?)
         {
             Ok(result) => result,
             Err(error) => return Err(ApiResponse::from_api_error(&error)),
@@ -310,7 +310,7 @@ pub(super) fn preview(
     }
     match services
         .companion
-        .preview_collection(&scope, &provider_request(services, &profile))
+        .preview_collection(&scope, &provider_request(services, &profile)?)
     {
         Ok(result) => Ok(result),
         Err(error) => Err(ApiResponse::from_api_error(&error)),
@@ -495,7 +495,7 @@ fn commit_result_profile(
     let attempt = crate::library::now_unix();
     let result = match services
         .companion
-        .refresh_collection(&scope, &provider_request(services, &profile))
+        .refresh_collection(&scope, &provider_request(services, &profile)?)
     {
         Ok(result) => result,
         Err(error) => {
@@ -621,20 +621,10 @@ fn remove_unreferenced_artwork(
     }
 }
 
-fn provider_request(services: &Services, profile: &CollectionProfile) -> Value {
-    let owned_tmdb_ids = matches!(profile.source, CollectionSource::TmdbCollection { .. })
-        .then(|| {
-            crate::collections::matching::owned_tmdb_ids(
-                &services.library,
-                crate::collections::MediaType::Movie,
-            )
-            .unwrap_or_default()
-        })
-        .unwrap_or_default();
-    json!({
-        "source": profile.source,
-        "mediaType": profile.media_type,
-        "limit": profile.limit,
-        "ownedTmdbIds": owned_tmdb_ids,
-    })
+fn provider_request(
+    services: &Services,
+    profile: &CollectionProfile,
+) -> Result<Value, ApiResponse> {
+    crate::collections::matching::provider_request(&services.library, profile)
+        .map_err(|error| storage_failure(&error))
 }

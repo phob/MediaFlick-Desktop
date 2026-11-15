@@ -362,7 +362,7 @@ pub fn catalog_children_page(children: Vec<ItemSummary>, page: Option<ChildPage>
 pub fn live_page(response: &ItemsResponse) -> ItemPage {
     ItemPage {
         items: response.items.iter().map(ItemSummary::from_dto).collect(),
-        total: response.total_record_count,
+        total: response.total_or_received(),
     }
 }
 
@@ -375,7 +375,7 @@ pub fn playlist_page(response: &ItemsResponse, page: ChildPage) -> ItemPage {
                 ..ItemSummary::from_dto(dto)
             })
             .collect(),
-        total: response.total_record_count,
+        total: response.total_or_received(),
     }
 }
 

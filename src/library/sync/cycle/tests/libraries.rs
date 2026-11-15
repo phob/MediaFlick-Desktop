@@ -332,3 +332,52 @@ fn the_first_sync_walks_each_library_once() {
     result.expect("the second sync");
     assert_eq!(steps(&requests), ["views", "incremental"]);
 }
+
+/// Makes the local database refuse one kind of write, as a full or
+/// read-only disk would.
+fn refuse(library: &Library, event: &str, table: &str) {
+    library
+        .db
+        .with_connection(|connection| {
+            connection.execute_batch(&format!(
+                "CREATE TRIGGER refuse_write BEFORE {event} ON {table}
+                 BEGIN SELECT RAISE(ABORT, 'storage refused'); END;"
+            ))
+        })
+        .expect("trigger");
+}
+
+// Rule (agent-proofing step 6): a failed storage write surfaces as a storage
+// error, not as a step that is merely not done yet.
+#[test]
+fn a_storage_failure_while_storing_the_library_list_fails_the_cycle() {
+    let library = settled_library(&[("m1", "Movie")]);
+    refuse(&library, "INSERT", "libraries");
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![views(&[(MOVIES, "movies")]), ok(EMPTY_PAGE)],
+    );
+
+    assert!(matches!(result, Err(ApiError::Storage(_))), "{result:?}");
+    assert_eq!(steps(&requests), ["views"]);
+    assert_eq!(listed(&library), None);
+}
+
+#[test]
+fn a_storage_failure_while_storing_a_membership_fails_the_cycle() {
+    let library = settled_library(&[("m1", "Movie"), ("m2", "Movie")]);
+    refuse(&library, "INSERT", "item_libraries");
+    let listing = || views(&[(MOVIES, "movies")]);
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![listing(), ok(EMPTY_PAGE), members(&["m1", "m2"], 2)],
+    );
+
+    assert!(matches!(result, Err(ApiError::Storage(_))), "{result:?}");
+    assert_eq!(steps(&requests), ["views", "incremental", "walk movies"]);
+    assert_eq!(walks_due(&library), [MOVIES]);
+}

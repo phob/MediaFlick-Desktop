@@ -192,7 +192,7 @@ fn fetch_person_filmography(
         })?;
         let received = i64::try_from(page.items.len()).unwrap_or(i64::MAX);
         if received == 0 {
-            if page.total_record_count > offset {
+            if page.total_record_count.is_some_and(|total| total > offset) {
                 return Err(ApiError::Decode(
                     "the server omitted part of an exact person filmography".to_string(),
                 ));
@@ -207,10 +207,12 @@ fn fetch_person_filmography(
         );
         join_person_items(value, &page.items);
         offset = offset.saturating_add(received);
-        if page.total_record_count > 0 && offset >= page.total_record_count {
-            return Ok(filmography);
-        }
-        if page.total_record_count <= 0 && received < items::PERSON_PAGE_SIZE {
+        let finished = match page.total_record_count {
+            Some(total) if total > 0 => offset >= total,
+            // Without a count, only a short page ends the filmography.
+            Some(_) | None => received < items::PERSON_PAGE_SIZE,
+        };
+        if finished {
             return Ok(filmography);
         }
     }

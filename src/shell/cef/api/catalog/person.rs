@@ -45,7 +45,7 @@ pub(super) fn query_person_items(
     })?;
     Ok(ItemPage {
         items: response.items.iter().map(ItemSummary::from_dto).collect(),
-        total: response.total_record_count,
+        total: response.total_or_received(),
     })
 }
 

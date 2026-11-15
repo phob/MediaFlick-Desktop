@@ -7,8 +7,8 @@ use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary, Member
 use crate::library::{Library, TitleKind};
 
 use super::{
-    IDENTITY_PAGE_SIZE, MAX_IDENTITY_PAGES, SyncHandle, best_effort, cancelled, commit, fetch_page,
-    opened, storage_error,
+    IDENTITY_PAGE_SIZE, MAX_IDENTITY_PAGES, Step, SyncHandle, cancelled, commit, fetch_page,
+    opened, optional,
 };
 
 pub(super) struct LibraryList {
@@ -45,9 +45,7 @@ pub(super) fn refresh_libraries(
             })
             .filter(|parsed| seen.insert(parsed.id.clone()))
             .collect::<Vec<_>>();
-        let replaced = library
-            .replace_libraries(live, &libraries)
-            .map_err(|error| storage_error(&error))?;
+        let replaced = library.replace_libraries(live, &libraries)?;
         Ok((libraries, replaced, unusable))
     })?;
     for id in unusable {
@@ -60,7 +58,7 @@ pub(super) fn refresh_libraries(
 }
 
 pub(super) fn catalog_library_ids(library: &Library) -> Result<Vec<String>, ApiError> {
-    let registry = library.libraries().map_err(|error| storage_error(&error))?;
+    let registry = library.libraries()?;
     let LibraryRegistry::Known(libraries) = registry else {
         return Ok(Vec::new());
     };
@@ -78,7 +76,7 @@ pub(super) fn membership_pass(
     control: Option<&SyncHandle>,
     walked_so_far: &mut MembershipReplaced,
 ) -> Result<(), ApiError> {
-    let registry = library.libraries().map_err(|error| storage_error(&error))?;
+    let registry = library.libraries()?;
     let LibraryRegistry::Known(libraries) = registry else {
         return Ok(());
     };
@@ -90,7 +88,9 @@ pub(super) fn membership_pass(
         let walk = refresh_membership(library, session, scope, &id, title, control);
         let rate_limited = matches!(walk, Err(ApiError::RateLimited { .. }));
         let step = format!("the membership of library {}", id.as_str());
-        walked_so_far.merge(best_effort(&step, walk)?.unwrap_or_default());
+        if let Step::Settled(walked) = optional(&step, walk)? {
+            walked_so_far.merge(walked);
+        }
         if rate_limited {
             break;
         }
@@ -105,17 +105,17 @@ fn refresh_membership(
     library_id: &LibraryId,
     title: TitleKind,
     control: Option<&SyncHandle>,
-) -> Result<MembershipReplaced, ApiError> {
+) -> Result<Step<MembershipReplaced>, ApiError> {
     let Some(ids) = member_ids(session, scope, library_id, title, control)? else {
-        return Ok(MembershipReplaced::default());
+        return Ok(Step::Skipped);
     };
     if ids.is_empty() {
         tracing::debug!(target: "library.sync", library = library_id.as_str(), "the server listed no titles in a library; keeping its membership");
     }
     commit(session, scope, |live| {
-        library
-            .replace_membership(live, library_id, &ids)
-            .map_err(|error| storage_error(&error))
+        Ok(Step::Settled(
+            library.replace_membership(live, library_id, &ids)?,
+        ))
     })
 }
 
@@ -150,7 +150,9 @@ fn member_ids(
                 .filter(|id| !id.trim().is_empty()),
         );
         if received < IDENTITY_PAGE_SIZE {
-            if (ids.len() as i64) < counted {
+            if let Some(counted) = counted
+                && (ids.len() as i64) < counted
+            {
                 tracing::warn!(
                     target: "library.sync",
                     library = library_id.as_str(),

@@ -247,10 +247,7 @@ fn content_length(response: &ureq::http::Response<ureq::Body>) -> Option<u64> {
 }
 
 pub(crate) fn unique_download_dir() -> PathBuf {
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or(0);
+    let nonce = crate::app::clock::since_epoch().as_nanos();
     std::env::temp_dir()
         .join("mediaflick-desktop-updates")
         .join(format!("{}-{nonce}", std::process::id()))

@@ -121,7 +121,7 @@ pub(super) fn profile_detail(
     let repository = SnapshotRepository::new(&services.library);
     let refresh = repository
         .refresh_state(&account, &profile.id)
-        .unwrap_or_default();
+        .map_err(|error| storage_failure(&error))?;
     let snapshot = match repository.profile(&account, &profile.id, &profile.revision) {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => {
@@ -387,7 +387,7 @@ pub(super) fn movie_franchise(
     let repository = SnapshotRepository::new(&services.library);
     let collection = repository
         .franchises(&account)
-        .unwrap_or_default()
+        .map_err(|error| storage_failure(&error))?
         .into_iter()
         .find(|franchise| {
             franchise

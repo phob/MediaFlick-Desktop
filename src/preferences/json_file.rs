@@ -1,7 +1,6 @@
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -194,9 +193,7 @@ pub fn backup_path(path: &Path) -> PathBuf {
 }
 
 fn damaged_path(path: &Path) -> PathBuf {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs());
+    let timestamp = crate::app::clock::since_epoch().as_secs();
     appended_path(path, &format!(".broken-{timestamp}"))
 }
 

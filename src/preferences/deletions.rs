@@ -1,6 +1,6 @@
 use std::io;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
@@ -71,8 +71,9 @@ impl PendingDeletionService {
     pub fn pending(&self) -> Vec<PendingDeletion> {
         self.journal
             .lock()
-            .map(|journal| journal.deletions.clone())
-            .unwrap_or_default()
+            .unwrap_or_else(PoisonError::into_inner)
+            .deletions
+            .clone()
     }
 
     pub fn begin(&self, deletion: PendingDeletion) -> io::Result<()> {

@@ -4,7 +4,7 @@
 //! pool for the duration of a query instead of sharing a single handle.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 
 use rusqlite::{Connection, OpenFlags};
 
@@ -107,11 +107,8 @@ impl Database {
             connection.pragma_update(None, "optimize", 0x10002)
         })();
         if result.is_ok() {
-            let retired = self
-                .idle
-                .lock()
-                .map(|mut idle| std::mem::take(&mut *idle))
-                .unwrap_or_default();
+            let retired =
+                std::mem::take(&mut *self.idle.lock().unwrap_or_else(PoisonError::into_inner));
             drop(retired);
         }
         self.release(connection);
