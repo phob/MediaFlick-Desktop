@@ -51,6 +51,21 @@ Jellyfin with `just plugin-deploy`.
 
 ## Build a release app
 
+A release is a commit on `main` that already carries its version and changelog
+section. In the release-notes PR, after consolidating the fragments, run:
+
+```sh
+mkdir -p build
+python3 scripts/prepare-release.py --version 0.2.0 --notes-out build/release-notes.md
+```
+
+Commit the changes it makes to `CHANGELOG.md`, `Cargo.toml`, and `Cargo.lock`,
+and merge the PR. Then run **Draft Release** in GitHub Actions on `main` with
+the same version. The workflow commits nothing. Its first job stops within a
+minute when `main` is not that release; otherwise it builds every package,
+tags the commit it built, and creates a draft release with the changelog
+section as its notes.
+
 For a disposable packaged test build, run **Draft Release** in GitHub Actions
 on the desired branch with a prerelease version such as `0.2.0-test.1` and
 `test_draft` enabled. This uses the normal platform builds and smoke tests,
