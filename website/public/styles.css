@@ -217,6 +217,8 @@ code {
 }
 .chrome-nav[data-ink] .nav-ink { opacity: 1; }
 .chrome-actions { display: flex; align-items: center; gap: 0.6rem; }
+/* Pages without the section nav, such as /companion/, keep the actions on the right. */
+.brand + .chrome-actions { margin-left: auto; }
 
 @media (max-width: 860px) {
   .chrome-nav { display: none; }
@@ -1417,6 +1419,65 @@ code {
 }
 .download-more { margin-top: 2rem; color: var(--muted); }
 .download-more a { color: var(--foreground); text-decoration-color: color-mix(in srgb, var(--primary) 60%, transparent); text-underline-offset: 3px; }
+
+/* The Companion install guide (/companion/): three numbered steps on cards,
+   the repository URL as data with a copy button. */
+.install { padding-block: clamp(3rem, 7vw, 5.5rem); }
+.install .section-head { margin-bottom: 1.6rem; }
+.install .section-head h1 { font-size: clamp(2rem, 4.6vw, 3.4rem); line-height: 1.04; }
+.install-requires {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 0.9rem;
+  max-width: 760px;
+  padding: 0.85rem 1.1rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--signal-deep) 10%, var(--card));
+  color: var(--muted);
+}
+.install-requires .data { color: var(--primary); }
+.install-requires b { color: var(--foreground); font-weight: 600; }
+.install-steps { display: grid; gap: 1rem; max-width: 760px; margin: 2rem 0 0; padding: 0; list-style: none; }
+.install-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 1.1rem;
+  padding: 1.4rem 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.install-number { color: var(--primary); font-size: 0.9rem; line-height: 1.9; }
+.install-step h2 { font-size: 1.25rem; letter-spacing: -0.015em; }
+.install-step p { margin-top: 0.45rem; color: var(--muted); }
+.install-step b,
+.install-after b { color: var(--foreground); font-weight: 600; }
+.repo-url {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+.repo-url code {
+  min-width: 0;
+  padding: 0.55rem 0.8rem;
+  overflow-wrap: anywhere;
+  border-color: var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 0.92rem;
+  user-select: all;
+}
+.repo-url .btn[data-copied] { border-color: var(--primary); color: var(--primary); }
+.install-after { display: grid; gap: 0.8rem; max-width: 760px; margin-top: 2.5rem; color: var(--muted); }
+.install-after h2 { color: var(--foreground); font-size: 1.25rem; letter-spacing: -0.015em; }
+.install-after a { color: var(--foreground); text-decoration-color: color-mix(in srgb, var(--primary) 60%, transparent); text-underline-offset: 3px; }
+@media (max-width: 560px) {
+  .install-step { grid-template-columns: 1fr; gap: 0.4rem; padding: 1.2rem; }
+}
 
 .footer { padding-block: 3rem 3.5rem; border-top: 1px solid var(--hairline); color: var(--muted); }
 .footer-grid { display: grid; grid-template-columns: 1.2fr auto; gap: 2rem 3rem; }
