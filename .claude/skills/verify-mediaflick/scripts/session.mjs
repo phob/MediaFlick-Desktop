@@ -453,8 +453,10 @@ try {
   // token failure proves nothing about the check. Whether `failure` is the check
   // under test, and not a server or network error, is for whoever records it.
   const clean = !driveTimedOut && !unhandledError && !cleanupErrors.length && !(changed.length && !running.length) && !result.leftovers && !result.tokenScan?.leaked.length
-  // result.json is written after the token scan, so the message is redacted here.
-  const failure = driveFailure && [...secrets].reduce((text, secret) => text.replaceAll(secret, "<redacted>"), driveFailure)
+  // result.json is written after the token scan, so what it carries from the drive is redacted here.
+  const redact = (text) => [...secrets].reduce((redacted, secret) => redacted.replaceAll(secret, "<redacted>"), text)
+  if (result.error) result.error = redact(result.error)
+  const failure = driveFailure && redact(driveFailure)
   if (reverted) result.negativeControl = { reverted, head: gitHead(), patch: "negative-control.patch", failure, held: driveFailed && clean }
   writeJson("result.json", result)
   log(`${result.passed ? "PASSED" : "FAILED"} ${path.relative(root, evidence)} (exit: ${result.exit})`)
