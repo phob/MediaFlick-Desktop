@@ -424,7 +424,7 @@ try {
         heading: document.querySelector("h1")?.textContent.trim(),
         steps: [...document.querySelectorAll(".install-step h2")].map((heading) => heading.textContent.trim()),
         url: document.querySelector("[data-copy-source]")?.textContent.trim(),
-        requires: document.querySelector(".install-requires")?.textContent.replace(/\s+/g, " ").trim(),
+        requires: document.querySelector(".install-requires")?.textContent.replace(/\\s+/g, " ").trim(),
         copyVisible: visible,
         copyLabel: document.querySelector("[data-copy-label]")?.textContent,
         copied,

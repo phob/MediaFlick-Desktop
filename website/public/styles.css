@@ -217,6 +217,8 @@ code {
 }
 .chrome-nav[data-ink] .nav-ink { opacity: 1; }
 .chrome-actions { display: flex; align-items: center; gap: 0.6rem; }
+/* Pages without the section nav, such as /companion/, keep the actions on the right. */
+.brand + .chrome-actions { margin-left: auto; }
 
 @media (max-width: 860px) {
   .chrome-nav { display: none; }
