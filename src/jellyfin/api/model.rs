@@ -7,11 +7,14 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::jellyfin::version::ServerVersion;
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct PublicSystemInfo {
     pub server_name: String,
-    pub version: String,
+    #[serde(deserialize_with = "ServerVersion::deserialize_reported")]
+    pub version: Option<ServerVersion>,
     pub id: String,
 }
 
@@ -40,6 +43,7 @@ pub struct UserPolicy {
     #[serde(default = "enabled_by_default")]
     pub enable_all_folders: bool,
     pub enabled_folders: Vec<String>,
+    pub is_administrator: bool,
 }
 
 impl Default for UserPolicy {
@@ -50,6 +54,7 @@ impl Default for UserPolicy {
             block_unrated_items: Vec::new(),
             enable_all_folders: true,
             enabled_folders: Vec::new(),
+            is_administrator: false,
         }
     }
 }
@@ -61,6 +66,37 @@ impl UserPolicy {
             || !self.block_unrated_items.is_empty()
             || !self.enable_all_folders
             || !self.enabled_folders.is_empty()
+    }
+}
+
+/// What the signed-in user's Jellyfin policy lets the app rely on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UserAccess {
+    /// The catalog may hide titles from this user, so Missing stays hidden.
+    pub restricted: bool,
+    /// The user administers the server, so the app may offer server setup.
+    pub administrator: bool,
+}
+
+impl UserAccess {
+    /// Before a policy is read nothing is proven: Missing stays hidden and no
+    /// server setup is offered.
+    pub const UNVERIFIED: Self = Self {
+        restricted: true,
+        administrator: false,
+    };
+
+    pub fn of(policy: Option<&UserPolicy>) -> Self {
+        policy.map_or(Self::UNVERIFIED, |policy| Self {
+            restricted: policy.restricts_catalog(),
+            administrator: policy.is_administrator,
+        })
+    }
+}
+
+impl Default for UserAccess {
+    fn default() -> Self {
+        Self::UNVERIFIED
     }
 }
 

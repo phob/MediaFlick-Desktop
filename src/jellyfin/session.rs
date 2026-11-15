@@ -7,7 +7,9 @@ use crate::library::{Library, StoredCredentials};
 use crate::preferences::{AccountKey, normalize_server_url};
 
 use super::api::auth::{self, Credentials};
+use super::api::model::UserAccess;
 use super::api::{ApiError, JellyfinClient};
+use super::version::{ServerTooOld, ServerVersion};
 
 #[derive(Debug, Clone, Default)]
 struct SessionState {
@@ -18,7 +20,7 @@ struct SessionState {
     user_name: Option<String>,
     device_id: String,
     token: Option<String>,
-    restricted: bool,
+    access: UserAccess,
     expired: bool,
     generation: u64,
     deleting: bool,
@@ -34,6 +36,9 @@ pub struct SessionStatus {
     pub user_id: Option<String>,
     pub user_name: Option<String>,
     pub device_id: String,
+    /// The signed-in user administers the server, as the last policy read
+    /// showed. A restored session reads `false` until its policy is read.
+    pub administrator: bool,
 }
 
 /// The Jellyfin server at a normalized address, before sign-in.
@@ -42,8 +47,11 @@ pub struct SessionStatus {
 pub struct ServerInfo {
     pub server_url: String,
     pub server_name: String,
-    pub version: String,
+    pub version: ServerVersion,
     pub quick_connect: bool,
+    /// Set when the server is older than Desktop supports. Sign-in to it is
+    /// refused, so Quick Connect is not checked.
+    pub too_old: Option<ServerTooOld>,
 }
 
 /// A Quick Connect code to show the user, and the secret to poll it with.
@@ -181,9 +189,9 @@ impl Session {
             user_name: stored.user_name.clone(),
             device_id: stored.device_id.clone(),
             token: stored.token,
-            // Restored sessions hide Missing until a live user-policy read
-            // proves that the account has no catalog restrictions.
-            restricted: true,
+            // Restored sessions hide Missing and offer no server setup until a
+            // live user-policy read proves otherwise.
+            access: UserAccess::UNVERIFIED,
             expired: false,
             generation: u64::from(authenticated),
             deleting: false,
@@ -227,7 +235,7 @@ impl Session {
     }
 
     pub fn user_restricted(&self) -> bool {
-        self.read().restricted
+        self.read().access.restricted
     }
 
     pub fn refresh_user_policy(&self) {
@@ -248,12 +256,9 @@ impl Session {
             || (),
             |live| {
                 let user = live.open(user).map_err(drop)?;
-                let restricted = user
-                    .policy
-                    .as_ref()
-                    .is_none_or(super::api::model::UserPolicy::restricts_catalog);
+                let access = UserAccess::of(user.policy.as_ref());
                 if let Ok(mut state) = self.state.write() {
-                    state.restricted = restricted;
+                    state.access = access;
                 }
                 Ok(())
             },
@@ -353,17 +358,19 @@ impl Session {
     pub fn connect(&self, server_url: &str) -> Result<ServerInfo, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
         let client = self.anonymous_client(&normalized);
-        let info = auth::public_system_info(&client)?;
-        let quick_connect = auth::quick_connect_enabled(&client);
+        let (server_name, version) = identify(&client)?;
+        let too_old = version.short_of(ServerVersion::DESKTOP_MINIMUM);
+        let quick_connect = too_old.is_none() && auth::quick_connect_enabled(&client);
         if let Ok(mut state) = self.state.write() {
             state.server_url = Some(normalized.clone());
-            state.server_name = Some(info.server_name.clone());
+            state.server_name = Some(server_name.clone());
         }
         Ok(ServerInfo {
             server_url: normalized,
-            server_name: info.server_name,
-            version: info.version,
+            server_name,
+            version,
             quick_connect,
+            too_old,
         })
     }
 
@@ -375,6 +382,7 @@ impl Session {
     ) -> Result<SessionStatus, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
         let client = self.anonymous_client(&normalized);
+        require_supported(&client)?;
         let credentials = auth::authenticate_by_name(&client, username, password)?;
         self.accept(&normalized, credentials)
     }
@@ -382,6 +390,7 @@ impl Session {
     pub fn quick_connect_start(&self, server_url: &str) -> Result<QuickConnectStart, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
         let client = self.anonymous_client(&normalized);
+        require_supported(&client)?;
         if !auth::quick_connect_enabled(&client) {
             return Err(ApiError::Status { status: 501 });
         }
@@ -479,7 +488,7 @@ impl Session {
             state.user_id = Some(credentials.user_id);
             state.user_name = Some(credentials.user_name);
             state.token = Some(credentials.token);
-            state.restricted = credentials.restricted;
+            state.access = credentials.access;
             state.expired = false;
             state.deleting = false;
             state.generation = next_generation(state.generation);
@@ -509,7 +518,7 @@ impl Session {
             state.user_name = None;
             state.server_id = None;
             state.token = None;
-            state.restricted = true;
+            state.access = UserAccess::UNVERIFIED;
             state.expired = false;
             state.deleting = false;
             state.generation = next_generation(state.generation);
@@ -592,6 +601,7 @@ impl Session {
             user_id: state.user_id,
             user_name: state.user_name,
             device_id: state.device_id,
+            administrator: state.access.administrator,
         }
     }
 }
@@ -629,6 +639,30 @@ impl SessionState {
     }
 }
 
+/// Reads the server's name and version from its public system info. A
+/// Jellyfin server always reports its version, except for the stand-in that
+/// answers while it migrates at startup and refuses everything else.
+fn identify(client: &JellyfinClient) -> Result<(String, ServerVersion), ApiError> {
+    let info = auth::public_system_info(client)?;
+    let version = info.version.ok_or_else(|| {
+        ApiError::Decode(
+            "the server did not report its Jellyfin version; if it is starting up, try again in a moment"
+                .to_string(),
+        )
+    })?;
+    Ok((info.server_name, version))
+}
+
+/// Refuses a server older than Desktop supports before any credentials or
+/// Quick Connect request reach it.
+fn require_supported(client: &JellyfinClient) -> Result<(), ApiError> {
+    let (_, version) = identify(client)?;
+    match version.short_of(ServerVersion::DESKTOP_MINIMUM) {
+        Some(too_old) => Err(ApiError::ServerTooOld(too_old)),
+        None => Ok(()),
+    }
+}
+
 fn next_generation(generation: u64) -> u64 {
     generation.wrapping_add(1).max(1)
 }
@@ -639,7 +673,7 @@ fn storage_error(error: &rusqlite::Error) -> ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Live, Session};
+    use super::{Live, Session, UserAccess};
     use crate::jellyfin::api::ApiError;
     use crate::jellyfin::api::auth::Credentials;
     use crate::library::Library;
@@ -659,7 +693,10 @@ mod tests {
             user_id: user.to_string(),
             user_name: user.to_string(),
             server_id: "server".to_string(),
-            restricted: false,
+            access: UserAccess {
+                restricted: false,
+                administrator: false,
+            },
         }
     }
 
@@ -772,7 +809,7 @@ mod tests {
         assert_eq!(library.stats().total, 1);
 
         let mut bob = credentials("bob");
-        bob.restricted = true;
+        bob.access.restricted = true;
         session
             .accept("http://server:8096", bob)
             .expect("sign in restricted Bob");

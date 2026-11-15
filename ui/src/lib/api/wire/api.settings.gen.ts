@@ -102,6 +102,10 @@ export type ViewingView = {
   hideWatched: boolean,
 };
 
+export type WhatsNew = {
+  pending: boolean,
+};
+
 export type ApiSettingsRoutes = {
   "GET /api/settings": { params: null, body: null, kind: "json", response: SettingsView },
   "GET /api/settings/viewing": { params: null, body: null, kind: "json", response: ViewingView },
@@ -112,4 +116,6 @@ export type ApiSettingsRoutes = {
   "PATCH /api/settings/client/playback": { params: null, body: PlaybackSettingsPatch, kind: "json", response: SettingsView },
   "PATCH /api/settings/client/application": { params: null, body: ApplicationSettingsPatch, kind: "json", response: SettingsView },
   "PATCH /api/settings/appearance": { params: null, body: AppearanceSettingsPatch, kind: "json", response: SettingsView },
+  "GET /api/settings/whats-new": { params: null, body: null, kind: "json", response: WhatsNew },
+  "POST /api/settings/whats-new/seen": { params: null, body: null, kind: "json", response: WhatsNew },
 };

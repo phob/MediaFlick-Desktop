@@ -6,3 +6,4 @@ pub mod playback_reporter;
 pub mod remote;
 pub mod session;
 pub mod socket;
+pub mod version;

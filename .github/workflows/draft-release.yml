@@ -1,14 +1,26 @@
-name: Draft Release
+name: Build Release
 
+# Builds every package and publishes a release as a prerelease, never as Latest.
+# Release (release.yml) calls it when a merge to main moves release.toml to a new
+# version. Run it by hand on main to retry that version after a failed build, or
+# on any branch with test_draft for a disposable draft.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version number to release (for example, 0.1.0 or v0.1.0)"
+        description: "Version to build: the one release.toml names on main (for example, 0.2.0), or a test version such as 0.2.0-test.1"
         required: true
         type: string
       test_draft:
         description: "Disposable test draft: preserve the changelog and do not commit or tag a release"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      test_draft:
         type: boolean
         default: false
 
@@ -61,8 +73,9 @@ jobs:
             test -s "$RUNNER_TEMP/release.patch"
           else
             # A release is the commit the release-notes PR merged: it already
-            # carries the version and the changelog section, and it passed the
-            # PR checks. Nothing is committed here.
+            # carries the version, the changelog section and a release.toml
+            # naming it as a prerelease, and it passed the PR checks. Nothing
+            # is committed here.
             if [[ "$GITHUB_REF" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
               echo "A release is built from ${DEFAULT_BRANCH}. Use test_draft on other branches." >&2
               exit 1
@@ -573,7 +586,7 @@ jobs:
           path: dist/macos/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-macos-${{ matrix.arch }}.dmg
 
   publish:
-    name: Tag and create draft release
+    name: Tag and publish release
     runs-on: ubuntu-latest
     needs:
       - prepare
@@ -618,7 +631,7 @@ jobs:
           git tag -a "${TAG}" -m "Release ${TAG}"
           git push origin "${TAG}"
 
-      - name: Create draft GitHub release
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
@@ -635,9 +648,12 @@ jobs:
           printf 'Release assets:\n'
           printf '  %s\n' "${assets[@]}"
 
-          extra_args=(--verify-tag)
+          # A release is published as a prerelease, which GitHub's releases/latest
+          # never returns, so neither the in-app updater nor flick.media offers it.
+          # A later merge of release.toml's channel to "latest" makes it Latest.
+          extra_args=(--verify-tag --prerelease --latest=false)
           if [[ "$TEST_DRAFT" == true ]]; then
-            extra_args=(--target "$SOURCE_SHA" --prerelease --latest=false)
+            extra_args=(--draft --target "$SOURCE_SHA" --prerelease --latest=false)
             # A maintainer may have attached already successful platform builds
             # while fixing another platform. Complete only that disposable draft.
             if gh release view "$TAG" --json isDraft,isPrerelease > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
@@ -649,7 +665,6 @@ jobs:
             fi
           fi
           gh release create "${TAG}" \
-            --draft \
             "${extra_args[@]}" \
             --title "MediaFlick Desktop ${TAG}" \
             --notes-file release-prep/release-notes.md \

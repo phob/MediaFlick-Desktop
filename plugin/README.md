@@ -20,48 +20,73 @@ would fail at runtime there.
 
 - The `Jellyfin.Controller` version in the plugin project is the floor.
   `package.py` derives `targetAbi` from it, so the two cannot drift.
+  Desktop's `MINIMUM_SERVER` in `src/companion/mod.rs`, which tells users on an
+  older server that the Companion needs a newer Jellyfin, has a Rust test that
+  reads the same reference.
 - Renovate proposes only new major Jellyfin packages. Raise the floor by hand,
   in one change to every Jellyfin package reference, and only when the plugin
   needs a newer API.
 - Before raising the floor, keep earlier catalog entries in the repository
   manifest. Jellyfin then offers older servers the newest build they can load.
 - `just plugin-e2e` downloads the official portable server for the floor and
-  for the newest minor release, loads the packaged plugin into each, and calls
+  for the newest minor release. On each clean server it reads the committed
+  repository manifest, installs the packaged plugin from a loopback
+  repository through Jellyfin's catalog, restarts, and calls
   `/MediaFlick/info`. Pass versions such as `12.0 12.2` to choose them. The
   report and server logs go to `build/e2e/companion-jellyfin/`.
 
-## Test repository
+## Install
 
-The opt-in Jellyfin test repository URL is:
+Administrators install the Companion from its Jellyfin plugin repository:
 
 ```text
-https://raw.githubusercontent.com/phob/MediaFlick-Desktop/companion-test-repository/manifest.json
+https://flick.media/companion/manifest.json
 ```
 
-In Jellyfin 12, open **Dashboard → Plugins → Repositories**, add this URL with
-the name **MediaFlick Companion — Test**, and install **MediaFlick Companion**
-from the catalog. Restart Jellyfin, then open Desktop's **Settings → MediaFlick
-Companion** to check discovery. Configure provider services in Jellyfin's plugin
-dashboard. Test packages use the normal plugin identity and update an existing
-installation. Remove the test repository when finished to stop test updates.
+In Jellyfin 12.0.0 or newer, open **Dashboard → Plugins → Repositories**, add
+this URL with the name **MediaFlick Companion**, install **MediaFlick
+Companion** from the catalog, and restart Jellyfin. Desktop's **Settings →
+MediaFlick Companion** then reports the plugin. Configure provider services in
+Jellyfin's plugin dashboard. The same steps are on
+[flick.media/companion](https://flick.media/companion/), which Desktop links to
+when a server has no Companion.
 
-Maintainers create packages through **Draft Companion Release** in GitHub
-Actions, choosing a numeric version such as `0.2.1` and enabling
-`test_repository`. The workflow stamps and verifies the compiled DLL version,
-tests and packages the plugin, creates a GitHub draft, and hosts the ZIP and
-manifest on the separate `companion-test-repository` branch. Jellyfin can fetch
-these files without GitHub authentication; draft release assets alone would
-not work. Existing package versions cannot be overwritten, and the catalog
-retains earlier entries for update testing. Use a new numeric version for each
-new package. Test status belongs to this opt-in repository because Jellyfin
-plugin versions cannot contain a suffix such as `-test.1`.
+The manifest is `website/public/companion/manifest.json`. Its entries point
+only at published GitHub Release assets: Jellyfin downloads without signing
+in, so a draft's asset would answer 404. Until the first Companion release is
+published, the manifest is an empty list, which Jellyfin reads without error
+(a missing manifest logs an error on every catalog refresh).
 
-Companion versions are independent of Desktop versions. Compatibility uses
+## Release
+
+Companion versions are independent of Desktop versions and must be three or
+four numbers; Jellyfin accepts no suffix such as `-test.1`. Compatibility uses
 the advertised API version and capabilities, plus the package's Jellyfin ABI.
-Companion drafts are explicitly excluded from GitHub's latest release so they
-cannot interrupt Desktop update discovery. A production repository can later
-host the same manifest format on the website with published GitHub Release
-asset URLs; it must never point to private draft downloads.
+`plugin/build.yaml` names the next release; `just plugin-test` checks that its
+`version` matches `Directory.Build.props` and its `targetAbi` matches the
+`Jellyfin.Controller` floor.
+
+1. Run **Companion Release** in GitHub Actions on `main` with step `draft` and
+   the version. It tests, stamps and verifies the DLL version, packages the
+   plugin with `package.py build`, and creates a draft release
+   `companion-v<version>` excluded from Latest.
+2. Test the draft: download its ZIP and extract it into a test server's
+   `plugins/MediaFlick Companion_<version>` directory, or run
+   `just plugin-e2e` on the same commit.
+3. Publish the draft with **Set as the latest release** unchecked. The
+   desktop updater and the website's download buttons read GitHub's Latest
+   release, so a Companion release there would stop Desktop updates. The
+   **Latest Release Guard** workflow runs on every published or edited release
+   and puts Latest back on the newest desktop release, failing red when it had
+   to.
+4. Publishing runs the workflow's `repository` step. `package.py add`
+   downloads the published ZIP anonymously, takes the entry's checksum from
+   those bytes, keeps earlier versions and refuses to replace a listed one. It
+   pushes the result to `companion-repository/v<version>` and the run summary
+   links a pull request to open. If the release event did not run it, run
+   **Companion Release** with step `repository` and the version.
+5. Merge that pull request. Cloudflare deploys the website, and servers with
+   the repository offer the update.
 
 ## MDBList and TMDB administrator setup
 

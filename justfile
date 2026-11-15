@@ -44,6 +44,7 @@ plugin:
 [group('test')]
 plugin-test:
     dotnet test --project plugin/tests/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
+    python3 -m unittest discover -s plugin -p 'test_*.py'
 
 # Load the packaged plugin into real Jellyfin servers (default: minimum and newest minor; Linux only)
 [group('test')]
@@ -141,6 +142,8 @@ check-pr base="origin/main": fmt-check ui
     python3 scripts/ci/check_guards.py {{base}}
     python3 scripts/ci/check_ui_ratchet.py {{base}}
     python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+    python3 -m unittest discover -s scripts -p 'test_prepare_release.py'
+    python3 scripts/prepare-release.py --transition {{base}}
     shellcheck distribution/libmpv/linux/build.sh distribution/linux/build-appimage.sh
     python3 -m unittest discover -s distribution/libmpv/linux -p 'test_*.py'
     pnpm --dir ui lint

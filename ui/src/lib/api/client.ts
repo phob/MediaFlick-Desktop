@@ -145,6 +145,8 @@ export const api = {
     probe: () => request("POST /api/companion/probe"),
   },
   settings: () => request("GET /api/settings"),
+  whatsNew: () => request("GET /api/settings/whats-new"),
+  closeWhatsNew: () => request("POST /api/settings/whats-new/seen"),
   homeSettings: () => request("GET /api/settings/home"),
   saveHomeSettings: (body: HomeSettingsWrite) => request("PATCH /api/settings/home", { body }),
   settingsPatch: {

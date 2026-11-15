@@ -1,5 +1,7 @@
 import { AlertTriangle, CheckCircle2 } from "lucide-react"
+import { CompanionGuideLink } from "@/components/CompanionGuideLink"
 import { ApiError, type CompanionService } from "@/lib/api"
+import { companionMissing } from "@/lib/companion"
 import { useCompanion, useSeerrStatus, useStatus } from "@/lib/queries"
 import { PageTitle, Section, SettingsError, SettingsLoading, SettingsRow, SignInRequired } from "./shared"
 
@@ -111,7 +113,9 @@ export function CompanionIntegration() {
 
   const pluginDescription = companion.available
     ? "MediaFlick Companion is installed on this Jellyfin server and responding."
-    : companion.error ?? "MediaFlick Companion was not found on this Jellyfin server."
+    : companion.serverTooOld
+      ? `MediaFlick Companion needs Jellyfin ${companion.serverTooOld.minimum} or newer. This server runs Jellyfin ${companion.serverTooOld.version}.`
+      : companion.error ?? "MediaFlick Companion was not found on this Jellyfin server."
   const pluginAvailable = companion.available && companion.compatible
   const capabilities = companion.info?.capabilities ?? []
   const missingFeatures = pluginAvailable
@@ -139,6 +143,16 @@ export function CompanionIntegration() {
         <SettingsRow title="Connection" description={pluginDescription}>
           <Availability available={companion.available} />
         </SettingsRow>
+        {companionMissing(companion) && (
+          <SettingsRow
+            title="Install"
+            description={status.administrator
+              ? "The guide shows how to add the plugin repository to Jellyfin, restart it and install MediaFlick Companion."
+              : "Your server administrator can add MediaFlick Companion. The guide shows how."}
+          >
+            <CompanionGuideLink />
+          </SettingsRow>
+        )}
       </Section>
       {companion.available && (
         <Section

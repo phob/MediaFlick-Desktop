@@ -422,6 +422,10 @@ const UNCHECKED_CLAIMS: &[(&str, &str)] = &[
     ),
     ("PlayerSettingsPatch.player_backend", FROM_ID),
     (
+        "ServerVersion",
+        "`Serialize` writes `Display`, `major.minor.patch`, so a string; the UI never sends one",
+    ),
+    (
         "SortKey",
         "`Serialize` writes `SortKey::id`, which each variant's `#[ts(rename)]` repeats",
     ),

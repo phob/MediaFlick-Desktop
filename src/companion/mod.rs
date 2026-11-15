@@ -13,9 +13,11 @@ use serde_json::{Value, json};
 
 use crate::app::services::ShellBridge;
 use crate::collections::{ProviderReadiness, ProviderResult};
+use crate::jellyfin::api::auth;
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::{Live, Scoped, Session, SessionScope, Stale};
+use crate::jellyfin::version::{ServerTooOld, ServerVersion};
 use crate::library::{CatalogKind, Library};
 
 mod seerr;
@@ -26,6 +28,10 @@ const MAX_API_VERSION: i64 = 1;
 const FAILED_PROBE_RETRY: Duration = Duration::from_secs(30);
 const SUCCESSFUL_PROBE_REUSE: Duration = Duration::from_secs(5 * 60);
 const FRANCHISE_MEMBERSHIPS_CAPABILITY: &str = "franchise-memberships-v1";
+/// The oldest Jellyfin the Companion installs on. `plugin/package.py` writes
+/// the Jellyfin.Controller version the plugin compiles against as its
+/// `targetAbi`, which Jellyfin reads as the minimum server version.
+pub const MINIMUM_SERVER: ServerVersion = ServerVersion::new(12, 0, 0);
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, ts_rs::TS)]
 #[serde(default, rename_all = "camelCase")]
@@ -59,6 +65,9 @@ pub struct CompanionStatus {
     pub info: Option<CompanionInfo>,
     pub error: Option<String>,
     pub supported_api: SupportedApi,
+    /// Set when the Companion was not found and the server is older than
+    /// the Companion needs, so it cannot be installed there.
+    pub server_too_old: Option<ServerTooOld>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, ts_rs::TS)]
@@ -72,6 +81,7 @@ struct ProbeState {
     checked: bool,
     info: Option<CompanionInfo>,
     error: Option<String>,
+    server_too_old: Option<ServerTooOld>,
     checked_at: Option<Instant>,
 }
 
@@ -146,6 +156,7 @@ impl CompanionSession {
                 checked: true,
                 info: None,
                 error: None,
+                server_too_old: None,
                 checked_at: Some(Instant::now()),
             });
             return Ok(None);
@@ -168,6 +179,7 @@ impl CompanionSession {
                             )
                         }),
                         info: Some(info.clone()),
+                        server_too_old: None,
                         checked_at: Some(Instant::now()),
                     };
                     Ok((state, info))
@@ -182,11 +194,27 @@ impl CompanionSession {
                 Ok(Some(info))
             }
             Err(ApiError::Status { status: 404 } | ApiError::Remote { status: 404, .. }) => {
-                self.replace_scoped(&scope, |_live| {
+                // Only says why it is missing, so a failed read leaves the
+                // plain "not found" instead of failing the probe.
+                let server = scope
+                    .fetch(|client, _| auth::public_system_info(client))
+                    .inspect_err(|error| {
+                        tracing::debug!(target: "companion", "could not read the server version: {error}");
+                    });
+                self.replace_scoped(&scope, |live| {
+                    let server_too_old = match server {
+                        Ok(server) => live
+                            .open(server)
+                            .map_err(|Stale| ApiError::AccountChanged)?
+                            .version
+                            .and_then(|version| version.short_of(MINIMUM_SERVER)),
+                        Err(_) => None,
+                    };
                     let state = ProbeState {
                         checked: true,
                         info: None,
                         error: None,
+                        server_too_old,
                         checked_at: Some(Instant::now()),
                     };
                     Ok((state, ()))
@@ -206,6 +234,7 @@ impl CompanionSession {
                         error: Some(
                             "the MediaFlick Companion plugin could not be reached".to_string(),
                         ),
+                        server_too_old: previous.server_too_old,
                         checked_at: Some(Instant::now()),
                     };
                     Ok((state, ()))
@@ -241,6 +270,7 @@ impl CompanionSession {
                 min: MIN_API_VERSION,
                 max: MAX_API_VERSION,
             },
+            server_too_old: state.server_too_old,
         }
     }
 
@@ -627,11 +657,30 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use super::{CompanionInfo, CompanionSession, ProbeState, join_calendar};
+    use super::{CompanionInfo, CompanionSession, MINIMUM_SERVER, ProbeState, join_calendar};
     use crate::jellyfin::api::model::BaseItemDto;
     use crate::jellyfin::session::Session;
+    use crate::jellyfin::version::ServerVersion;
     use crate::library::Library;
     use serde_json::json;
+
+    /// The plugin's project file is the source: Jellyfin refuses a plugin
+    /// whose targetAbi is newer than the server, and package.py takes that
+    /// targetAbi from this reference.
+    #[test]
+    fn minimum_server_is_the_jellyfin_the_plugin_builds_against() {
+        let project = include_str!(
+            "../../plugin/src/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj"
+        );
+        let controller = project
+            .split(r#"Include="Jellyfin.Controller" Version=""#)
+            .nth(1)
+            .and_then(|rest| rest.split('"').next());
+        assert_eq!(
+            controller.and_then(ServerVersion::parse),
+            Some(MINIMUM_SERVER)
+        );
+    }
 
     fn companion_at(server_url: String) -> (Arc<Session>, CompanionSession) {
         let library = Arc::new(Library::open_in_memory().expect("library"));

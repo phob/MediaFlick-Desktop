@@ -18,8 +18,8 @@ use crate::playback::PlaybackCoordinator;
 use crate::preferences::{
     AccountConfigurationService, AccountKey, AppSettings, CollectionConfigurationService,
     PendingDeletion, PendingDeletionService, PlaybackPreferenceService, PreferencesService,
-    ReaderStore, accounts_file_path, collections_file_path, pending_deletions_file_path,
-    playback_preferences_file_path, reader_file_path,
+    ReaderStore, accounts_file_path, carries_0_1_6_data, collections_file_path, config_dir,
+    pending_deletions_file_path, playback_preferences_file_path, reader_file_path,
 };
 use crate::shell::InitPermit;
 
@@ -227,6 +227,7 @@ pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Service
         initial_settings,
         accounts.clone(),
         active_account,
+        carries_0_1_6_data(&config_dir()),
     ));
     let artwork_path = custom_art_dir();
     let artwork = open_configuration(&artwork_path, ArtworkStore::open)?;
@@ -506,6 +507,7 @@ pub(crate) mod test_support {
                 AppSettings::default(),
                 accounts.clone(),
                 session.account_key(),
+                false,
             ));
             let companion = Arc::new(CompanionSession::new(
                 session.clone(),

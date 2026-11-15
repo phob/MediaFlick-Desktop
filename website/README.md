@@ -5,6 +5,12 @@ build step and does not share dependencies with the desktop UI:
 `public/index.html`, `public/styles.css`, `public/site.js`, and the screenshots
 and loops in `public/media`.
 
+`public/companion/` is the Companion's install guide (`/companion/`, with
+`copy.js` for its copy button) and its Jellyfin plugin repository
+(`/companion/manifest.json`). Keep both URLs: Desktop links to the guide and
+Jellyfin servers poll the manifest. Change the manifest only through
+`plugin/package.py add` (see [Companion release](../plugin/README.md#release)).
+
 The page leads with what sets MediaFlick apart: the **Highlights** section
 comes straight after the hero, then the Companion, and only then the features
 any Jellyfin app has (playback, browsing, playstate). Keep that order when
@@ -89,9 +95,14 @@ drives headless Chrome or Edge at a desktop and a phone viewport, and fails on:
   after the playback sections, or a Highlights card without its tag
 - a nav underline or spine that doesn't track the current section
 - broken tabs, accent swatches, or lightbox (open and close)
+- an install guide that does not show the repository URL, its three steps and
+  the Jellyfin 12.0.0 minimum, or whose copy button does not copy the URL
+- a Companion manifest that is not served as JSON in Jellyfin's repository
+  format, or that has an entry pointing anywhere but its published
+  `companion-v<version>` release asset
 
-It writes `build/website-check/report.json`, full-page `desktop.png` and
-`mobile.png`, and one viewport screenshot per walkthrough step
+It writes `build/website-check/report.json`, full-page `desktop.png`,
+`mobile.png`, `companion-desktop.png` and `companion-mobile.png`, and one viewport screenshot per walkthrough step
 (`walk-<viewport>-<step>.png`). Headless Chrome may not start the hero
 recording at all; the report notes that under `hero.playback`, and the
 library-phase assertion is skipped in that case.

@@ -202,7 +202,8 @@ impl SyncFailure {
             | ApiError::Decode(_)
             | ApiError::NotConfigured
             | ApiError::Cancelled
-            | ApiError::AccountChanged => Self::Server,
+            | ApiError::AccountChanged
+            | ApiError::ServerTooOld(_) => Self::Server,
         }
     }
 }

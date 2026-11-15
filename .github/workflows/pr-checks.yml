@@ -37,6 +37,13 @@ jobs:
       - name: Test the guard check
         run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
 
+      - name: Test the release script
+        run: python3 -m unittest discover -s scripts -p 'test_prepare_release.py'
+
+      # A merged release.toml change is a release; refuse one that skips a step or goes back.
+      - name: Check the release.toml change
+        run: python3 scripts/prepare-release.py --transition "$BASE"
+
       # Labels are read live: a rerun of an older run must not reuse a stale event payload.
       - name: Check changelog fragment
         env:

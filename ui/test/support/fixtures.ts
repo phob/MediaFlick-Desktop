@@ -71,6 +71,7 @@ export function appStatus(overrides: Partial<Status> = {}): Status {
     userId: null,
     userName: null,
     deviceId: "test-device",
+    administrator: false,
     library: { movies: 0, series: 0, seasons: 0, episodes: 0, total: 0 },
     syncing: false,
     lastSync: null,
@@ -93,6 +94,7 @@ export function companionWithSeerr(): CompanionStatus {
     },
     error: null,
     supportedApi: { min: 1, max: 1 },
+    serverTooOld: null,
   }
 }
 
