@@ -16,3 +16,7 @@
 
 /media/*
   Cache-Control: public, max-age=604800
+
+# Jellyfin servers poll the Companion repository; a new entry should reach them within minutes.
+/companion/manifest.json
+  Cache-Control: public, max-age=300

@@ -255,6 +255,9 @@ jobs:
       - name: Test
         run: dotnet test --project plugin/tests/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
 
+      - name: Test package tooling
+        run: python3 -m unittest discover -s plugin -p 'test_*.py'
+
       - name: Publish
         run: dotnet publish plugin/src/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj --configuration Release --output plugin/bin/Release/publish
 

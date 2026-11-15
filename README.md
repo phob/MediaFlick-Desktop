@@ -101,7 +101,8 @@ their own licenses; release attribution and bundled-runtime details are in
 The optional server plugin lives in [`plugin/`](plugin/README.md). It runs on
 Jellyfin 12.0.0 and later 12.x releases and exposes only typed, authenticated
 operations. There is no generic service proxy. Configure Sonarr, Radarr, Seerr, MDBList, and TMDB support
-from Jellyfin's plugin dashboard. Desktop clients discover it automatically,
+from Jellyfin's plugin dashboard. Install it from its Jellyfin plugin repository
+as described at [flick.media/companion](https://flick.media/companion/). Desktop clients discover it automatically,
 report plugin and service availability under **Settings → MediaFlick Companion**,
 and never receive service addresses or API keys. MDBList ratings use a
 shared stable-ID cache, stale-while-revalidate, bounded batches, and durable

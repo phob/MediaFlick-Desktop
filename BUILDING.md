@@ -93,8 +93,8 @@ push a version tag, or consume `CHANGELOG.md`, `changelog.d/`, or
 Keep this test release as a draft; its downloads are accessible to repository
 maintainers after signing in.
 
-Use the separate **Draft Companion Release** workflow for server packages;
-see [Companion test repository](plugin/README.md#test-repository).
+Use the separate **Companion Release** workflow for server packages; see
+[Companion release](plugin/README.md#release).
 
 ## Build a release app
 
