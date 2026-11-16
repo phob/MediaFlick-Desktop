@@ -11,6 +11,17 @@ use crate::preferences::config_dir;
 const MAX_POSTER_BYTES: usize = 10 * 1024 * 1024;
 const ORPHAN_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
+/// Where the orphaned-poster sweep learns which posters are still in use.
+#[derive(Clone, Copy)]
+pub enum PosterReferences<'a> {
+    /// collections.json and its backup name every poster in use.
+    Readable(&'a Path),
+    /// A damaged collections.json was moved aside, on this start or an earlier
+    /// one, and is still there. It may name posters in use that nothing else
+    /// names, so none of them may be treated as orphaned.
+    Lost,
+}
+
 pub struct ArtworkStore {
     directory: PathBuf,
 }
@@ -66,7 +77,18 @@ impl ArtworkStore {
             .find(|path| path.is_file())
     }
 
-    pub fn collect_orphans(&self, collections_path: &Path, now: SystemTime) -> io::Result<usize> {
+    pub fn collect_orphans(
+        &self,
+        references: PosterReferences<'_>,
+        now: SystemTime,
+    ) -> io::Result<usize> {
+        let PosterReferences::Readable(collections_path) = references else {
+            tracing::warn!(
+                target: "collections",
+                "kept every custom poster: a damaged collections.json was moved aside and is still there"
+            );
+            return Ok(0);
+        };
         let live = live_artwork_ids(collections_path);
         let mut removed = 0;
         for entry in std::fs::read_dir(&self.directory)? {
