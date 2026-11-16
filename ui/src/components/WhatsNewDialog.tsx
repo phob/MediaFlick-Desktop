@@ -47,8 +47,14 @@ const COMPANION_FEATURES: readonly CompanionEntry[] = [
   {
     title: "Movie franchises",
     text: "Every TMDB movie franchise you own a part of, in release order, with the films you're missing.",
-    link: { to: "/collections", label: "Collections" },
+    link: { to: "/collections/franchises", label: "Movie Franchises" },
     capability: "franchise-memberships-v1",
+  },
+  {
+    title: "My Collections",
+    text: "Make your own collections from templates such as trending or streaming services, or from a public MDBList list, with your own poster.",
+    link: { to: "/collections/mine", label: "My Collections" },
+    capability: "collection-experience-v1",
   },
 ]
 
