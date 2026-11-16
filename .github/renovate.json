@@ -37,6 +37,22 @@
       "enabled": false
     },
     {
+      "description": "The .NET SDK in global.json stays on the .NET major Jellyfin runs on (10 for Jellyfin 12), so minor and patch 10.x updates come through but a new major does not.",
+      "matchManagers": [
+        "nuget"
+      ],
+      "matchDatasources": [
+        "dotnet-version"
+      ],
+      "matchPackageNames": [
+        "dotnet-sdk"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    },
+    {
       "description": "Move all Jellyfin packages together so the plugin and its tests compile against one server version.",
       "matchManagers": [
         "nuget"
