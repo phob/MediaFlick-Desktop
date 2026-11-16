@@ -5,11 +5,13 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::collections::artwork::PosterReferences;
 use crate::collections::{CollectionMode, CollectionProfile, ProviderReadiness};
 
 use super::AccountKey;
 use super::json_file::{
-    RecoveryNotice, invalid_data, load_versioned_with_recovery, save_with_backup,
+    RecoveryNotice, damaged_copy_exists, invalid_data, load_versioned_with_recovery,
+    save_with_backup,
 };
 use super::store::config_dir;
 
@@ -71,6 +73,9 @@ struct State {
 
 pub struct CollectionConfigurationService {
     path: PathBuf,
+    /// A damaged copy of the file was moved aside, on this start or an
+    /// earlier one, and is still there.
+    damaged_copy_kept: bool,
     state: Mutex<State>,
 }
 
@@ -94,10 +99,21 @@ impl CollectionConfigurationService {
             }
         };
         validate_accounts(&document)?;
+        let damaged_copy_kept = damaged_copy_exists(&path)?;
         Ok(Self {
             path,
+            damaged_copy_kept,
             state: Mutex::new(State { document, recovery }),
         })
+    }
+
+    /// What the orphaned-poster sweep may trust to name the posters in use.
+    pub fn poster_references(&self) -> PosterReferences<'_> {
+        if self.damaged_copy_kept {
+            PosterReferences::Lost
+        } else {
+            PosterReferences::Readable(&self.path)
+        }
     }
 
     pub fn take_recovery_notice(&self) -> Option<RecoveryNotice> {
