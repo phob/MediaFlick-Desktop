@@ -1,6 +1,5 @@
 // End-to-end proof of the update from MediaFlick 0.1.6 to this build, and of
-// going back to 0.1.6 (fleetCommander card "Prove the upgrade from 0.1.6, and
-// the way back", operator decisions of 2026-11-15). Linux only.
+// going back to 0.1.6 (operator decisions of 2026-11-15). Linux only.
 //
 //   just upgrade-e2e --account https://jellyfin.example.com
 //   node scripts/e2e/upgrade-0-1-6.mjs --account SERVER [--only id,id] [--appimage FILE] [--servers servers.json]
