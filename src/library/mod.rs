@@ -470,7 +470,7 @@ pub struct Library {
 }
 
 impl Library {
-    pub fn open(path: &Path) -> rusqlite::Result<Self> {
+    pub fn open(path: &Path) -> Result<Self, db::OpenError> {
         let library = Self {
             db: db::Database::open(path)?,
         };
@@ -479,7 +479,7 @@ impl Library {
     }
 
     #[cfg(test)]
-    pub fn open_in_memory() -> rusqlite::Result<Self> {
+    pub fn open_in_memory() -> Result<Self, db::OpenError> {
         let library = Self {
             db: db::Database::open_in_memory()?,
         };

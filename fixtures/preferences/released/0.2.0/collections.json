@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "accounts": [
+    {
+      "serverId": "f1c70000000000000000000000000001",
+      "userId": "f1c70000000000000000000000000002",
+      "modeSelection": null,
+      "franchises": {
+        "includeUnreleased": false
+      },
+      "profiles": [
+        {
+          "id": "f1c7000000000000000000000000002b",
+          "revision": "f1c7000000000000000000000000002c",
+          "template": {
+            "id": "tmdb.discover.movie.trending-day"
+          },
+          "title": "Trending today",
+          "description": "",
+          "customPosterId": "f1c7000000000000000000000000002f",
+          "source": {
+            "kind": "tmdbDiscover",
+            "parameters": {
+              "feed": "trending",
+              "window": "day"
+            }
+          },
+          "mediaType": "movie",
+          "limit": {
+            "kind": "all"
+          },
+          "cadence": "daily",
+          "availableOnHome": false
+        }
+      ]
+    }
+  ]
+}

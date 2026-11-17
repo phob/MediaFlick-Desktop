@@ -61,6 +61,7 @@ unimplemented = "deny"
 unwrap_used = "deny"
 
 [dev-dependencies]
+sha2 = "0.11"
 syn = { version = "2", features = ["full", "visit"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]

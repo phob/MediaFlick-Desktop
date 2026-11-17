@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "accounts": [
+    {
+      "serverId": "f1c70000000000000000000000000001",
+      "userId": "f1c70000000000000000000000000002",
+      "items": [
+        {
+          "itemId": "f1c7000000000000000000000000000f",
+          "mediaSource": {
+            "id": "f1c7000000000000000000000000000f",
+            "index": 0,
+            "name": "Movie 1 - Remux-2160p",
+            "container": "mkv"
+          },
+          "audioTrack": {
+            "index": 1,
+            "language": "eng",
+            "title": "Dolby Atmos 7.1 Mix",
+            "displayTitle": "Dolby Atmos 7.1 Mix - English - Dolby TrueHD + Dolby Atmos - Default",
+            "codec": "truehd",
+            "channels": 8,
+            "isDefault": true,
+            "isForced": false,
+            "isHearingImpaired": false,
+            "isExternal": false
+          },
+          "subtitleTrack": {
+            "index": 4,
+            "language": "eng",
+            "title": null,
+            "displayTitle": "English - SUBRIP",
+            "codec": "subrip",
+            "channels": null,
+            "isDefault": false,
+            "isForced": false,
+            "isHearingImpaired": false,
+            "isExternal": false
+          },
+          "updatedAt": 1794945043
+        }
+      ]
+    }
+  ]
+}

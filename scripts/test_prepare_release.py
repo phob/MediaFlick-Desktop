@@ -15,12 +15,25 @@ def release_toml(version, channel):
     return f'version = "{version}"\nchannel = "{channel}"\n'
 
 
+SCHEMA_SOURCE = "src/library/db/migrate.rs"
+
+
+def schema_source(version):
+    return f"pub(super) const FIRST_RELEASED_SCHEMA: i32 = 23;\n\npub const SCHEMA_VERSION: i32 = {version};\n"
+
+
+def frozen_schema(version):
+    return f"fixtures/library-db/released/schema-{version}.sql"
+
+
 # The state of main before 0.2.0: v0.1.6 is published and GitHub's Latest release.
 RELEASE_FILES = {
     "CHANGELOG.md": "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Upcoming feature.\n",
     "Cargo.toml": '[package]\nname = "mediaflick-desktop"\nversion = "0.1.6"\n',
     "Cargo.lock": '[[package]]\nname = "mediaflick-desktop"\nversion = "0.1.6"\n',
     "release.toml": release_toml("0.1.6", "latest"),
+    SCHEMA_SOURCE: schema_source(23),
+    frozen_schema(23): "CREATE TABLE credentials (id INTEGER PRIMARY KEY);\n",
 }
 
 
@@ -30,6 +43,7 @@ PREPARED_VERSION = 'version = "0.2.0"'
 
 def write_release_files(root, files=RELEASE_FILES):
     for name, contents in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text(contents)
 
 
@@ -38,7 +52,7 @@ def run_script(root, *arguments):
 
 
 def read_files(root):
-    return {path.name: path.read_text() for path in root.iterdir() if path.is_file()}
+    return {path.relative_to(root).as_posix(): path.read_text() for path in root.rglob("*") if path.is_file() and ".git" not in path.relative_to(root).parts}
 
 
 def read_release(root):
@@ -100,7 +114,7 @@ class PrepareReleaseTests(unittest.TestCase):
             write_release_files(root)
             result = subprocess.run([sys.executable, str(SCRIPT), "--version", "1.0.0", "--test-draft", "--notes-out", "notes.md"], cwd=root, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
-            self.assertEqual({path.name: path.read_text() for path in root.iterdir()}, RELEASE_FILES)
+            self.assertEqual(read_files(root), RELEASE_FILES)
 
     def test_check_writes_the_notes_the_release_pr_promoted(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -138,6 +152,31 @@ class PrepareReleaseTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("0.2.0", result.stderr)
                 self.assertEqual(read_files(root), files)
+
+    def test_check_requires_the_published_schema_to_be_frozen(self):
+        # Operator decision (2026-11-17, D6): a library.db schema counts as released once its
+        # first prerelease is published, so that release must carry its frozen schema.
+        prepared = prepared_files("0.2.0")
+        for name, files in {
+            "no frozen schema": {path: text for path, text in prepared.items() if path != frozen_schema(23)},
+            "a newer schema than the frozen one": prepared | {SCHEMA_SOURCE: schema_source(24)},
+        }.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                write_release_files(root, files)
+                result = run_script(root, "--version", "0.2.0", "--check", "--notes-out", "notes.md")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("schema", result.stderr)
+                self.assertIn("fixtures/library-db/released/schema-", result.stderr)
+                self.assertEqual(read_files(root), files)
+
+    def test_check_accepts_a_newer_schema_once_it_is_frozen(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            files = prepared_files("0.2.0") | {SCHEMA_SOURCE: schema_source(24), frozen_schema(24): "-- 24\n"}
+            write_release_files(root, files)
+            result = run_script(root, "--version", "0.2.0", "--check", "--notes-out", "notes.md")
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_check_cannot_be_combined_with_a_test_draft(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -215,6 +254,13 @@ class ReleaseFileTests(unittest.TestCase):
 
     def test_a_release_pr_publishes_a_prerelease(self):
         self.assert_action(self.plan(RELEASE_FILES, prepared_files("0.2.0")), "prerelease", "0.2.0")
+
+    def test_a_release_pr_without_its_frozen_schema_publishes_nothing(self):
+        merged = {path: text for path, text in prepared_files("0.2.0").items() if path != frozen_schema(23)}
+        result = self.plan(RELEASE_FILES, merged)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("action=", result.stdout)
+        self.assertIn(frozen_schema(23), result.stderr)
 
     def test_a_pr_that_changes_only_the_channel_makes_it_latest(self):
         prerelease = prepared_files("0.2.0")
