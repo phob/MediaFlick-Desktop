@@ -4,4 +4,4 @@
 # A later PR that changes only `channel` to "latest" makes that release Latest.
 # `prepare-release.py --version` writes it; see BUILDING.md, "Release a version".
 version = "0.2.0"
-channel = "prerelease"
+channel = "latest"

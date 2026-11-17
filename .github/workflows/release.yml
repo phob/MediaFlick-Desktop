@@ -68,8 +68,13 @@ jobs:
             || fail "There is no release ${TAG}. Its release PR publishes it as a prerelease first."
           jq -e '.isDraft | not' "$RUNNER_TEMP/release.json" > /dev/null \
             || fail "${TAG} is a draft. Only a published prerelease becomes Latest."
-          jq -e '.isPrerelease' "$RUNNER_TEMP/release.json" > /dev/null \
-            || fail "${TAG} is not a prerelease, so this change does not make it Latest."
+          # A release already made Latest by hand on GitHub only needs release.toml to catch up.
+          if ! jq -e '.isPrerelease' "$RUNNER_TEMP/release.json" > /dev/null; then
+            latest="$(gh api "repos/${GH_REPO}/releases/latest" --jq .tag_name)"
+            [[ "$latest" == "$TAG" ]] || fail "${TAG} is not a prerelease, so this change does not make it Latest."
+            echo "${TAG} is already the Latest release; nothing was edited."
+            exit 0
+          fi
 
           gh release edit "$TAG" --prerelease=false --latest
           latest="$(gh api "repos/${GH_REPO}/releases/latest" --jq .tag_name)"
