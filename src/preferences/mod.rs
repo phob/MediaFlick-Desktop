@@ -5,6 +5,8 @@ mod json_file;
 pub mod model;
 mod playback;
 mod reader;
+#[cfg(test)]
+mod released_formats;
 mod shortcuts;
 mod v0_1_6;
 mod viewing;
