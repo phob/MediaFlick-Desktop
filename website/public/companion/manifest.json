@@ -1,1 +1,20 @@
-[]
+[
+  {
+    "guid": "11d8f2bb-2b9d-4ce1-8c33-5a0f809dfd2f",
+    "name": "MediaFlick Companion",
+    "description": "Calendar, requests, ratings, and collections for MediaFlick Desktop, with provider credentials kept on the server.",
+    "overview": "Calendar, requests, ratings, and collections for MediaFlick Desktop, with provider credentials kept on the server.",
+    "owner": "phob",
+    "category": "General",
+    "versions": [
+      {
+        "version": "0.2.2.0",
+        "changelog": "MediaFlick Companion 0.2.2.0: calendar, requests, ratings, and collections.",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/phob/MediaFlick-Desktop/releases/download/companion-v0.2.2.0/mediaflick-companion_0.2.2.0.zip",
+        "checksum": "d5cca8f1d7bba497ea20835bcd4acd9b",
+        "timestamp": "2026-11-17T11:31:52+00:00"
+      }
+    ]
+  }
+]
