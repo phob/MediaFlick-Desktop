@@ -346,6 +346,9 @@ fn every_released_schema_opens_at_the_structure_of_a_fresh_install() {
     }
 }
 
+/// While `MIGRATIONS` is empty this opens schema 23 as it is; the next bump
+/// makes it the real upgrade. `released_rows_survive_a_migration_to_the_next_schema`
+/// covers the upgrade path until then.
 #[test]
 fn released_rows_survive_opening_value_for_value() {
     let scratch = Scratch::new();
@@ -538,6 +541,10 @@ fn a_migration_that_breaks_a_foreign_key_is_rolled_back() {
         ),
         "a broken reference fails the migration: {result:?}"
     );
+    assert!(
+        format!("{result:?}").contains("broken foreign keys: collection_snapshot_items"),
+        "the integrity check, not another statement, failed it: {result:?}"
+    );
     assert_eq!(
         user_version(&reopened).expect("version"),
         FIRST_RELEASED_SCHEMA
@@ -637,7 +644,10 @@ fn a_failed_development_recreation_keeps_the_old_database() {
 
     let result = migrate(&connection);
 
-    assert!(result.is_err(), "the recreation fails: {result:?}");
+    assert!(
+        format!("{result:?}").contains("CHECK constraint failed"),
+        "restoring the staged choice after the drop failed it: {result:?}"
+    );
     assert!(foreign_keys_on(&connection));
     drop(connection);
     let reopened = open(&scratch.database());
