@@ -3,5 +3,5 @@
 # as a GitHub prerelease, which the in-app updater and flick.media do not offer.
 # A later PR that changes only `channel` to "latest" makes that release Latest.
 # `prepare-release.py --version` writes it; see BUILDING.md, "Release a version".
-version = "0.1.6"
-channel = "latest"
+version = "0.2.0"
+channel = "prerelease"

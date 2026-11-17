@@ -1,3 +1,0 @@
-### Changed
-
-- Updated CEF to 152.4.0, clap to 4.6.7, Oxlint to 1.85.0, Lucide to 1.47.0, TanStack Virtual to 3.14.13, and Microsoft.NET.Test.Sdk to 18.10.1, and refreshed locked Rust and UI dependencies ([#157](https://github.com/phob/MediaFlick-Desktop/pull/157), [#163](https://github.com/phob/MediaFlick-Desktop/pull/163), [#164](https://github.com/phob/MediaFlick-Desktop/pull/164), [#166](https://github.com/phob/MediaFlick-Desktop/pull/166), [#167](https://github.com/phob/MediaFlick-Desktop/pull/167), [#171](https://github.com/phob/MediaFlick-Desktop/pull/171), [#172](https://github.com/phob/MediaFlick-Desktop/pull/172) by [@renovate](https://github.com/apps/renovate)).
