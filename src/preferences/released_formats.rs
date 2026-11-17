@@ -3,7 +3,7 @@
 //!
 //! The files in `fixtures/preferences/released/0.2.0/` are what the released
 //! 0.2.0 AppImage wrote while a drive set each choice through its UI
-//! (sanitized by `scripts/fixtures/freeze_0_2_0.py`). The expected values are
+//! (sanitized by `scripts/fixtures/freeze_release.py`). The expected values are
 //! the choices that drive recorded in its `fixture-intent.json`: Default
 //! fullscreen Windowed, Show scrollbars on, Hide watched by default, audio
 //! languages en and de, the Cobalt accent with IMDb and Rotten Tomatoes
@@ -75,7 +75,13 @@ impl Released {
         );
         let names = std::fs::read_dir(&self.dir)
             .expect("scratch")
-            .map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .filter(|file| file.starts_with(name) && file != name)
             .collect::<Vec<_>>();
         assert!(names.is_empty(), "opening {name} left {names:?}");
@@ -206,8 +212,8 @@ fn playback_preferences_json_from_0_2_0_loads_and_survives_a_save() {
         .as_str()
         .expect("item id")
         .to_owned();
-    let playback = PlaybackPreferenceService::open(released.path("playback-preferences.json"))
-        .expect("opens");
+    let playback =
+        PlaybackPreferenceService::open(released.path("playback-preferences.json")).expect("opens");
     assert!(playback.take_recovery_notice().is_none());
     released.assert_untouched("playback-preferences.json");
 

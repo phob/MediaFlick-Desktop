@@ -161,8 +161,8 @@ if (options["seed-data"]) {
   log(`seeded ${dataDir} from ${options["seed-data"]}`)
 }
 if (account && !signedOut) {
-  seedLibrary(dataDir, account)
-  log(`seeded library.db with the cached session for ${account.userName}`)
+  const seeded = seedLibrary(dataDir, account)
+  log(seeded === "spliced" ? `put the cached token for ${account.userName} into the seeded library.db, whose session it is` : `seeded library.db with the cached session for ${account.userName}`)
 }
 log(`profile ${profile}`)
 

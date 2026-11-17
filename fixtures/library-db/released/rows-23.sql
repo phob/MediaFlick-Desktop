@@ -1,6 +1,6 @@
 -- Rows from the library.db the released MediaFlick Desktop 0.2.0 AppImage wrote on 2026-11-17,
 -- after a first sync of a real Jellyfin 12.2 library with the MediaFlick Companion. Frozen:
--- never edit this file. Sanitized by scripts/fixtures/freeze_0_2_0.py: ids, titles, artwork
+-- never edit this file. Sanitized by scripts/fixtures/freeze_release.py: ids, titles, artwork
 -- paths and account names are fakes, mapped consistently. Load it after schema-23.sql.
 
 -- credentials: token: synthetic; 0.2.0's profile had its token removed

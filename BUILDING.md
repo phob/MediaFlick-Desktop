@@ -56,6 +56,17 @@ Merging a PR is what releases a version. `release.toml` at the repository root
 names the version `main` is at and the channel it is published on, and a merged
 change to it is the release:
 
+0. **Prove the update from the current Latest.** On Linux, run the upgrade
+   proof from the Latest release's profile, and from 0.1.6:
+
+   ```sh
+   just upgrade-e2e-0-2-0 --account https://jellyfin.example.com --profile <a profile 0.2.0 left>
+   just linux-appimage && just upgrade-e2e --account https://jellyfin.example.com
+   ```
+
+   Both must pass. Put each `report.json`'s scenario list in the release PR.
+   Once a later version is Latest, add an `upgrade-<version>` proof for it the
+   same way. `fixtures/library-db/README.md` says how to make the 0.2.0 profile.
 1. **Release PR: publish a prerelease.** After consolidating the fragments, run:
 
    ```sh
@@ -64,7 +75,12 @@ change to it is the release:
    ```
 
    Commit its changes to `CHANGELOG.md`, `Cargo.toml`, `Cargo.lock`, and
-   `release.toml`, which now names `0.2.0` on the `prerelease` channel. When the
+   `release.toml`, which now names `0.2.0` on the `prerelease` channel. A
+   `library.db` schema counts as released with its first prerelease, so if
+   `SCHEMA_VERSION` (`src/library/db/migrate.rs`) has no
+   `fixtures/library-db/released/schema-<N>.sql` yet, freeze it in this PR as
+   `fixtures/library-db/README.md` says: `--transition` and `--check` refuse a
+   release without it. When the
    PR merges, the **Release** workflow runs **Build Release**: it builds every
    package, then tags the merged commit and publishes a GitHub prerelease with
    the changelog section as its notes. The in-app updater and flick.media follow
@@ -77,8 +93,9 @@ change to it is the release:
 The PR checks run `prepare-release.py --transition origin/main` on the merged
 result. `release.toml` must name the version in `Cargo.toml`, versions only move
 forward, a new version starts on the `prerelease` channel with its changelog
-section, and a Latest version cannot become a prerelease again. A merge that
-leaves `release.toml` unchanged releases nothing.
+section and its frozen `library.db` schema, and a Latest version cannot become
+a prerelease again. A merge that leaves `release.toml` unchanged releases
+nothing.
 
 When a platform build fails, nothing is tagged or published. Rerun the failed
 jobs, or merge the fix and run **Build Release** in GitHub Actions on `main` with

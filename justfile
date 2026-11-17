@@ -57,6 +57,12 @@ plugin-e2e *versions:
 upgrade-e2e *args: build
     node scripts/e2e/upgrade-0-1-6.mjs {{args}}
 
+# Prove the update from 0.2.0 (the first release with a library.db), the way back and forward again, on a profile the released 0.2.0 left (Linux). Report: build/e2e/upgrade-0-2-0
+[group('test')]
+[linux]
+upgrade-e2e-0-2-0 *args: build
+    node scripts/e2e/upgrade-0-2-0.mjs {{args}}
+
 # Deploy the plugin to the configured Jellyfin development host and restart it
 [group('run')]
 plugin-deploy: plugin

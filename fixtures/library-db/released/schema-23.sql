@@ -1,7 +1,7 @@
--- The library.db schema MediaFlick Desktop 0.2.0 shipped (PRAGMA user_version 23), as the
--- released v0.2.0 AppImage created it, in creation order. Frozen: never edit this file.
--- Written by scripts/fixtures/freeze_0_2_0.py, which leaves out SQLite's own objects and the
--- shadow tables of items_fts; SQLite creates those when these statements run.
+-- The released library.db schema 23 (PRAGMA user_version), as the release build
+-- created it, in creation order. Frozen: never edit this file.
+-- Written by scripts/fixtures/freeze_release.py, which leaves out SQLite's own objects and the
+-- shadow tables of each virtual table; SQLite creates those when these statements run.
 CREATE TABLE credentials (
     id           INTEGER PRIMARY KEY CHECK (id = 1),
     server_url   TEXT,

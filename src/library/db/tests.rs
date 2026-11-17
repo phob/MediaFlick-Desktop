@@ -3,7 +3,7 @@
 //!
 //! Expected values come from the frozen fixtures in
 //! `fixtures/library-db/released/`, which hold what the released MediaFlick
-//! 0.2.0 AppImage wrote (sanitized by `scripts/fixtures/freeze_0_2_0.py`), or
+//! 0.2.0 AppImage wrote (sanitized by `scripts/fixtures/freeze_release.py`), or
 //! from the invariant a test names. Failure modes covered here, written down
 //! before the code:
 //!
@@ -39,7 +39,7 @@ use super::migrate::{
 /// that has none.
 const RELEASED_SCHEMAS: &[(i32, &str)] = &[(
     23,
-    "22781bffe5df53f53549f07facfcd7d3604a2d2b494ac912471891c14626b26c",
+    "c163dffd97f343bc1e6ec01611f8d1b15f04f15bf569da9988e997ab7cf82853",
 )];
 
 /// The synthetic sign-in token `rows-23.sql` holds.

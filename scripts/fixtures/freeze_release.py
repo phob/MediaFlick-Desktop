@@ -1,32 +1,38 @@
 #!/usr/bin/env python3
-"""Freeze what MediaFlick Desktop 0.2.0 wrote, as sanitized fixtures for the tests.
+"""Freeze what a released MediaFlick Desktop wrote, as fixtures for the tests.
 
-    python3 -I scripts/fixtures/freeze_0_2_0.py PROFILE [OUT]
+    python3 -I scripts/fixtures/freeze_release.py schema LIBRARY_DB [OUT]
+    python3 -I scripts/fixtures/freeze_release.py 0.2.0 PROFILE [OUT]
 
-PROFILE is a profile the released v0.2.0 AppImage left, in the verify layout
-(`config/mediaflick-desktop/`, `data/mediaflick-desktop/library.db`), such as
-the one `.claude/skills/verify-mediaflick/drives/upgrade-0-2-0.mjs` documents.
-OUT defaults to `fixtures/`. The script writes:
+OUT defaults to `fixtures/`.
 
-- `library-db/released/schema-23.sql`: the executable schema 0.2.0 created,
-  from `sqlite_master` in creation order. SQLite's own objects
-  (`sqlite_stat*`, autoindexes) and the shadow tables of each virtual table
-  are left out: SQLite creates those itself when the statements run.
+`schema` writes `library-db/released/schema-<N>.sql`, N being LIBRARY_DB's
+`PRAGMA user_version`: the executable schema that database holds, from
+`sqlite_master` in creation order. SQLite's own objects (`sqlite_stat*`,
+autoindexes) and the shadow tables of each virtual table are left out:
+SQLite creates those itself when the statements run. Run it on the
+library.db a fresh profile of the release build creates.
+
+`0.2.0` takes PROFILE, a profile the released v0.2.0 AppImage left in the
+verify layout (`config/mediaflick-desktop/`, `data/mediaflick-desktop/`; see
+fixtures/library-db/README.md), and writes:
+
+- `library-db/released/schema-23.sql`, as `schema` does;
 - `library-db/released/rows-23.sql`: a few rows of every table, with their
   relations kept, and the rows that need a value the profile did not have
   (marked synthetic): a sign-in token, the cache-owner keys, one staged
-  Letterboxd profile, one staged playback choice and one identity mapping.
-- `preferences/released/0.2.0/*.json`: the JSON files 0.2.0 wrote, in its format
-  (serde_json pretty, no final newline).
+  Letterboxd profile, one staged playback choice and one identity mapping;
+- `preferences/released/0.2.0/*.json`: the JSON files 0.2.0 wrote, in its
+  format (serde_json pretty, no final newline).
 
 Sanitizing is deterministic: the same profile gives the same bytes. Every
 server, user, device, item, library, profile and image id is replaced by a
 fake id of the same shape in order of first appearance, and so are TMDB,
 IMDb and TVDB ids. Titles, overviews, studios, tags, artwork paths, file
-names, the server URL, the user name and the Letterboxd account become
-neutral values. The same value maps to the same fake everywhere, so the
-relations between rows and files survive. The raw profile never goes into
-the repository.
+names, vote counts, the server URL, the user name and the Letterboxd account
+become neutral values. The same value maps to the same fake everywhere, so
+the relations between rows and files survive. The raw profile never goes
+into the repository.
 """
 
 from __future__ import annotations
@@ -93,6 +99,7 @@ def literal(value: object) -> str:
 
 
 def schema(db: sqlite3.Connection) -> str:
+    version = db.execute("PRAGMA user_version").fetchone()[0]
     virtual = [name for (name,) in db.execute("SELECT name FROM sqlite_master WHERE sql LIKE 'CREATE VIRTUAL TABLE%'")]
     shadows = {f"{name}_{suffix}" for name in virtual for suffix in ("data", "idx", "content", "docsize", "config")}
     statements = [
@@ -101,10 +108,10 @@ def schema(db: sqlite3.Connection) -> str:
         if not name.startswith("sqlite_") and name not in shadows
     ]
     header = (
-        "-- The library.db schema MediaFlick Desktop 0.2.0 shipped (PRAGMA user_version 23), as the\n"
-        "-- released v0.2.0 AppImage created it, in creation order. Frozen: never edit this file.\n"
-        "-- Written by scripts/fixtures/freeze_0_2_0.py, which leaves out SQLite's own objects and the\n"
-        "-- shadow tables of items_fts; SQLite creates those when these statements run.\n"
+        f"-- The released library.db schema {version} (PRAGMA user_version), as the release build\n"
+        "-- created it, in creation order. Frozen: never edit this file.\n"
+        "-- Written by scripts/fixtures/freeze_release.py, which leaves out SQLite's own objects and the\n"
+        "-- shadow tables of each virtual table; SQLite creates those when these statements run.\n"
     )
     return header + "\n".join(statements) + "\n"
 
@@ -323,7 +330,7 @@ def rows(db: sqlite3.Connection, fakes: Fakes) -> str:
     lines = [
         "-- Rows from the library.db the released MediaFlick Desktop 0.2.0 AppImage wrote on 2026-11-17,",
         "-- after a first sync of a real Jellyfin 12.2 library with the MediaFlick Companion. Frozen:",
-        "-- never edit this file. Sanitized by scripts/fixtures/freeze_0_2_0.py: ids, titles, artwork",
+        "-- never edit this file. Sanitized by scripts/fixtures/freeze_release.py: ids, titles, artwork",
         "-- paths and account names are fakes, mapped consistently. Load it after schema-23.sql.",
     ]
     for table, entries, note in tables:
@@ -400,27 +407,36 @@ def preferences(config: Path, fakes: Fakes) -> dict[str, str]:
     }
 
 
+def open_read_only(database: Path) -> sqlite3.Connection:
+    # immutable=1: a read-only open of a WAL database still writes its -shm file.
+    return sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro&immutable=1", uri=True)
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) not in (2, 3):
+    if len(argv) not in (3, 4) or argv[1] not in ("schema", "0.2.0"):
         print(__doc__, file=sys.stderr)
         return 2
-    profile = Path(argv[1])
-    out = Path(argv[2]) if len(argv) == 3 else Path("fixtures")
-    database = profile / "data" / "mediaflick-desktop" / "library.db"
-    # immutable=1: a read-only open of a WAL database still writes its -shm file.
-    db = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro&immutable=1", uri=True)
-    version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version != 23:
-        raise SystemExit(f"{database} is at schema {version}, not 0.2.0's 23")
-    fakes = Fakes()
-    outputs = {
-        out / "library-db" / "released" / "schema-23.sql": schema(db),
-        out / "library-db" / "released" / "rows-23.sql": rows(db, fakes),
-        **{
-            out / "preferences" / "released" / "0.2.0" / name: text
-            for name, text in preferences(profile / "config" / "mediaflick-desktop", fakes).items()
-        },
-    }
+    out = Path(argv[3]) if len(argv) == 4 else Path("fixtures")
+    if argv[1] == "schema":
+        db = open_read_only(Path(argv[2]))
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        outputs = {out / "library-db" / "released" / f"schema-{version}.sql": schema(db)}
+    else:
+        profile = Path(argv[2])
+        database = profile / "data" / "mediaflick-desktop" / "library.db"
+        db = open_read_only(database)
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version != 23:
+            raise SystemExit(f"{database} is at schema {version}, not 0.2.0's 23")
+        fakes = Fakes()
+        outputs = {
+            out / "library-db" / "released" / "schema-23.sql": schema(db),
+            out / "library-db" / "released" / "rows-23.sql": rows(db, fakes),
+            **{
+                out / "preferences" / "released" / "0.2.0" / name: text
+                for name, text in preferences(profile / "config" / "mediaflick-desktop", fakes).items()
+            },
+        }
     for path, text in outputs.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
