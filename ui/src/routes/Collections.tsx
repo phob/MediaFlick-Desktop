@@ -22,15 +22,14 @@ import { toastFailure } from "@/lib/failure-toast"
 import { useLocalDate } from "@/lib/local-date"
 import { queryKeys } from "@/lib/query-client"
 import {
-  accountKey,
   franchiseQueryOptions,
   myCollectionQueryOptions,
   useCollectionSettings,
   useFranchises,
   useJellyfinCollections,
   useMyCollections,
-  useStatus,
-} from "@/lib/queries"
+} from "@/lib/collection-queries"
+import { accountKey, useStatus } from "@/lib/session-queries"
 
 function titleCardPalette(name: string) {
   let hash = 0

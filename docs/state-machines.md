@@ -131,9 +131,9 @@ The steps run in this order (`services.rs:396-450`): Idle → journal entry (`de
 
 **App gate** (`App.tsx:42-69`): status pending → blank; catalog loading → blank; `BootstrapRetry`; `SignIn` unless authenticated or on Settings; otherwise the shell.
 
-**What refetches status:** the `jellyfin-session-expired` event, mutation errors (`queries.ts:51-60`), and successful login, logout, Quick Connect or deletion. A **query** failing with 401 does not refetch status.
+**What refetches status:** the `jellyfin-session-expired` event, mutation errors (`mutation-failure.ts:10-19`), and successful login, logout, Quick Connect or deletion. A **query** failing with 401 does not refetch status.
 
-**Quick Connect** (`SignIn.tsx`, `queries.ts:619-631`) moves from idle to start (pending, then a code is shown), then polls every 2 s until authenticated. Polling decides from `data?.authenticated`, so it keeps going after an error (SE-3).
+**Quick Connect** (`SignIn.tsx`, `session-queries.ts:97-127`) moves from idle to start (pending, then a code is shown), then polls every 2 s until authenticated. Polling decides from `data?.authenticated`, so it keeps going after an error (SE-3).
 
 ### SE-1. Failed account deletion is replayed after the user signs back in
 
@@ -141,7 +141,7 @@ The steps run in this order (`services.rs:396-450`): Idle → journal entry (`de
 
 1. `DELETE /api/collections/local-account` journals the deletion, then tombstones the session: `deleting=true`, gen+1 (`services.rs:403-407`).
 2. A step fails, for example `accounts.remove_account` (`services.rs:414-417`). The handler answers 500. Nothing clears `deleting`, and no shell event is sent.
-3. The UI's `onError` only shows a toast (`ApplicationSettings.tsx:66`) and does not refetch status. Every query now gets 401 because `scope()` refuses `deleting` (`session.rs:265-267`). Queries don't retry and don't refetch status, so the shell sits on dead controls until a mutation fails or the status pulse runs (it polls only while sync is active, `queries.ts:91-100`).
+3. The UI's `onError` only shows a toast (`ApplicationSettings.tsx:66`) and does not refetch status. Every query now gets 401 because `scope()` refuses `deleting` (`session.rs:265-267`). Queries don't retry and don't refetch status, so the shell sits on dead controls until a mutation fails or the status pulse runs (it polls only while sync is active, `session-queries.ts:45-56`).
 4. The user signs in again as the same account. `commit_credentials` sets `deleting=false` (`session.rs:480`). The journal entry stays.
 5. At the next launch, `resume_pending_deletions` deletes the account again, along with any settings the user saved meanwhile, then signs the user out (`services.rs:316-328`, 435-444).
 
@@ -162,7 +162,7 @@ The steps run in this order (`services.rs:396-450`): Idle → journal entry (`de
 
 | Finding | Status | Evidence | Fix |
 |---|---|---|---|
-| An expired Quick Connect code keeps polling every 2 s; Start stays hidden until the server field changes | Confirmed | `queries.ts:631` (`refetchInterval` reads stale `data`), `SignIn.tsx:101-105`, 116-137 | Stop on error; reset the mutation on 404 |
+| An expired Quick Connect code keeps polling every 2 s; Start stays hidden until the server field changes | Confirmed | `session-queries.ts:122` (`refetchInterval` reads stale `data`), `SignIn.tsx:101-105`, 116-137 | Stop on error; reset the mutation on 404 |
 | The restricted policy is checked once at launch; if that fails, collections and Home "Missing" stay hidden all run | Confirmed | `services.rs:292-299`, `session.rs:237-241`, `session.rs:182` | Retry after the first successful scoped call |
 | Home settings Save resolves Home from `session.account_key()` before taking its scope | Plausible | `home_settings.rs:19-22`, 331-341 | Take the scope first and resolve Home for `scope.account()` |
 | A Quick Connect poll abandoned in the UI still signs in natively | Plausible | `quick_connect_poll` ignores `cancelled` | Check `request.cancelled` before `accept` |
@@ -329,7 +329,7 @@ Related, also **Plausible** and Linux only: `present_regions` blocks the CEF UI 
 | External mpv with `keep-open=yes` in the user's `mpv.conf` never reaches EOF; `eof-reached` is stored but never read | S2 | Plausible (user config) | `external.rs:28-47`, `events.rs:257-268` |
 | Replacing an active item reports it stopped to Jellyfin but sends no Stopped event to the UI | S4 | Confirmed | `controller.rs:764-771` |
 | A remote command that passed its scope check, or that the socket read just before noticing the scope changed, still runs after sign-out: a queued load (`play.rs:90-108`, `controller.rs:390-400`, 537-543) or Pause/Stop/Seek (`socket.rs:306-318`, `remote.rs:247-259`). The socket checks the scope before a blocking read with a 5 s timeout (`socket.rs:47`), so the window is up to 5 s | S3 | Plausible (scope change during a socket read or while a load is queued) | — |
-| The PlayerBar can briefly reappear after Stop (a stale `playerState` GET lands after the Stopped event) | S4 | Plausible | `queries.ts:568-570` |
+| The PlayerBar can briefly reappear after Stop (a stale `playerState` GET lands after the Stopped event) | S4 | Plausible | `playback-queries.ts:103-112` |
 | Windows: reinstalling mpv fails while the warmed `mpv.exe` runs from the install directory | S3 | Plausible | `player_setup.rs:110-115` |
 
 ---
@@ -746,6 +746,6 @@ These candidates were traced and are prevented by the guard named. They are list
 - **A refetch overwriting a dirty scalar field:** `mergeDraft` keeps changed top-level keys. Only arrays and objects are affected (UI-4, UI-6).
 - **Account A's draft saved into account B by a single request:** remount on the account key, `useSourceDraft` reset, native `commit_if_current`. A multi-request Save is not covered (UI-6).
 - **Back button, mouse buttons or sidebar links bypassing the guard:** all go through `useBlocker`.
-- **Optimistic toggles not rolled back:** watched and favorite are not optimistic; they send absolute values and invalidate on success (`queries.ts:481-505`).
+- **Optimistic toggles not rolled back:** watched and favorite are not optimistic; they send absolute values and invalidate on success (`item-queries.ts:129-153`).
 - **Native lost updates on settings files:** the lock is held across the save.
 - **A partial Letterboxd save:** each completed step leaves the pending list.

@@ -17,7 +17,7 @@ import type {
   LetterboxdReviewsResponse,
   SeerrMediaType,
 } from "@/lib/api"
-import { useLetterboxdMovieReviews, useLetterboxdReviews } from "@/lib/queries"
+import { useLetterboxdMovieReviews, useLetterboxdReviews } from "@/lib/integration-queries"
 
 const REVIEW_PREVIEW_CHARS = 420
 const REVIEW_OPEN_DELAY_MS = 350

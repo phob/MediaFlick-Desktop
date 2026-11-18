@@ -1,5 +1,5 @@
 import type { CompanionStatus } from "./api"
-import { useCompanion } from "./queries"
+import { useCompanion } from "./integration-queries"
 
 /**
  * The Companion install guide on flick.media: add the plugin repository to

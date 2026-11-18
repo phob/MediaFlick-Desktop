@@ -12,7 +12,8 @@ import {
 } from "@/components/ui/dialog"
 import type { CompanionStatus } from "@/lib/api"
 import { companionMissing, useCompanionCapabilities } from "@/lib/companion"
-import { useCompanion, useStatus } from "@/lib/queries"
+import { useCompanion } from "@/lib/integration-queries"
+import { useStatus } from "@/lib/session-queries"
 import { useCloseWhatsNew, useWhatsNew } from "@/lib/whats-new"
 
 type Entry = {

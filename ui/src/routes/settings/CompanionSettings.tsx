@@ -2,7 +2,9 @@ import { AlertTriangle, CheckCircle2 } from "lucide-react"
 import { CompanionGuideLink } from "@/components/CompanionGuideLink"
 import { ApiError, type CompanionService } from "@/lib/api"
 import { companionMissing } from "@/lib/companion"
-import { useCompanion, useSeerrStatus, useStatus } from "@/lib/queries"
+import { useCompanion } from "@/lib/integration-queries"
+import { useSeerrStatus } from "@/lib/seerr-queries"
+import { useStatus } from "@/lib/session-queries"
 import { PageTitle, Section, SettingsError, SettingsLoading, SettingsRow, SignInRequired } from "./shared"
 
 const COMPANION_SERVICES: ReadonlyArray<{

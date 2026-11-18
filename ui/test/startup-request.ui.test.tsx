@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { api, type StartupResponse } from "../src/lib/api"
-import { accountKey, primeStartupQueries } from "../src/lib/queries"
+import { accountKey } from "../src/lib/session-queries"
+import { primeStartupQueries } from "../src/lib/startup-queries"
 import { createQueryClient, queryKeys } from "../src/lib/query-client"
 import { appStatus } from "./support/fixtures"
 import { clientSettingsFixture } from "./support/settings"

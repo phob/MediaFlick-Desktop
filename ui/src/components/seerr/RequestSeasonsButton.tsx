@@ -3,7 +3,7 @@ import { useState } from "react"
 import { RequestDialog } from "@/components/seerr/RequestDialog"
 import { Button } from "@/components/ui/button"
 import type { ItemDetail } from "@/lib/api"
-import { useSeerrMedia, useSeerrStatus } from "@/lib/queries"
+import { useSeerrMedia, useSeerrStatus } from "@/lib/seerr-queries"
 
 /**
  * "Request season" on a series the library only partly has.

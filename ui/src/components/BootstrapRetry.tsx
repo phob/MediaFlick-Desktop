@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { api, type SyncRetry } from "@/lib/api"
 import { toastFailure } from "@/lib/failure-toast"
-import { useLogout } from "@/lib/queries"
+import { useLogout } from "@/lib/session-queries"
 import { queryKeys } from "@/lib/query-client"
 import { SYNC_FAILURES } from "@/lib/sync-failure"
 

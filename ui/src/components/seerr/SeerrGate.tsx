@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ApiError } from "@/lib/api"
-import { useSeerrStatus } from "@/lib/queries"
+import { useSeerrStatus } from "@/lib/seerr-queries"
 import { useCompanionCapabilities } from "@/lib/companion"
 
 /**

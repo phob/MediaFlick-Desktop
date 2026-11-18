@@ -38,7 +38,8 @@ import { castSearchPath } from "@/lib/cast-search"
 import { discoverCompanyPath } from "@/lib/discovery"
 import { formatDate, formatLanguage } from "@/lib/format"
 import { detailNavigationState, readDetailNavigationState } from "@/lib/navigation"
-import { useCollectionTitle, useSeerrMedia, useSeerrStatus } from "@/lib/queries"
+import { useCollectionTitle } from "@/lib/collection-queries"
+import { useSeerrMedia, useSeerrStatus } from "@/lib/seerr-queries"
 import { titleKindOfCollection } from "@/lib/kinds"
 
 /** Studios or networks, each opening Discover filtered to it. */

@@ -27,7 +27,7 @@ import {
   useSeerrRequest,
   useSeerrRequestOptions,
   useSeerrStatus,
-} from "@/lib/queries"
+} from "@/lib/seerr-queries"
 
 function isRequestable(season: SeerrSeason, is4k: boolean) {
   return season[is4k ? "status4k" : "status"] === "unknown"

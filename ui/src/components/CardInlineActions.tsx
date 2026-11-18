@@ -3,7 +3,8 @@ import { ItemActionButtons } from "@/components/ItemActionButtons"
 import type { ItemSummary } from "@/lib/api"
 import { toastFailure } from "@/lib/failure-toast"
 import { useQualityOverride } from "@/lib/playback-quality"
-import { useNextUp, usePlay, useSetFavorite, useSetPlayed } from "@/lib/queries"
+import { useNextUp, useSetFavorite, useSetPlayed } from "@/lib/item-queries"
+import { usePlay } from "@/lib/playback-queries"
 
 /**
  * The expanded preview's three actions, kept on the artwork when that preview

@@ -1,7 +1,8 @@
 import { useSpoilerProtection } from "@/lib/viewing"
 import { useEffect } from "react"
 import { matchPath, useLocation } from "react-router-dom"
-import { useItem, useStatus } from "@/lib/queries"
+import { useItem } from "@/lib/item-queries"
+import { useStatus } from "@/lib/session-queries"
 import { windowTitle } from "@/lib/window-title"
 
 export function WindowTitleSync() {

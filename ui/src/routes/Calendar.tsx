@@ -22,7 +22,9 @@ import {
   type CalendarSource,
   type SeerrResult,
 } from "@/lib/api"
-import { usePlay, useReleaseCalendar, useSeerrStatus } from "@/lib/queries"
+import { useReleaseCalendar } from "@/lib/integration-queries"
+import { usePlay } from "@/lib/playback-queries"
+import { useSeerrStatus } from "@/lib/seerr-queries"
 import { localDate } from "@/lib/local-date"
 import { detailNavigationState } from "@/lib/navigation"
 import { cn } from "@/lib/utils"

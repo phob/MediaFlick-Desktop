@@ -16,7 +16,8 @@ import {
 import { formatCommunityRating, formatRuntime } from "@/lib/format"
 import { useQualityOverride } from "@/lib/playback-quality"
 import { usePreview } from "@/lib/preview"
-import { usePlay, useSetPlayed } from "@/lib/queries"
+import { useSetPlayed } from "@/lib/item-queries"
+import { usePlay } from "@/lib/playback-queries"
 import { cn } from "@/lib/utils"
 import { Pressable } from "@/components/ui/pressable"
 

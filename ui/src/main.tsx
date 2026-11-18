@@ -8,7 +8,7 @@ import "./app.css"
 import { Toaster } from "./components/ui/sonner"
 import { installAppSurfaceGuard } from "./lib/app-surface"
 import { listenForLibrariesChangedBeforeBridge } from "./lib/library-events"
-import { primeStartupQueries } from "./lib/queries"
+import { primeStartupQueries } from "./lib/startup-queries"
 import { createQueryClient } from "./lib/query-client"
 
 // Browser history rather than hash routing: the scheme is registered

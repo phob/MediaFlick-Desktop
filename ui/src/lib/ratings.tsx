@@ -4,7 +4,8 @@ import { api, ApiError, type ItemRatings } from "./api"
 import { COALESCE_MS, useCardBatches } from "./card-batches"
 import { RatingsContext } from "./rating-context"
 import { queryKeys } from "./query-client"
-import { useRatingsStatus, useSettings } from "./queries"
+import { useRatingsStatus } from "./integration-queries"
+import { useSettings } from "./settings-queries"
 import { readShellEvent } from "./shell-events"
 
 const CACHE_RECHECK_SECONDS = 6 * 60 * 60

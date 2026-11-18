@@ -22,7 +22,9 @@ import {
   readDetailNavigationState,
   type DetailNavigationState,
 } from "@/lib/navigation"
-import { useChildren, useCollectionSettings, useItem, useItemAbout, useLibraries, useMediaInfo, useMovieCollection, useNextUp } from "@/lib/queries"
+import { useCollectionSettings, useMovieCollection } from "@/lib/collection-queries"
+import { useChildren, useItem, useItemAbout, useMediaInfo, useNextUp } from "@/lib/item-queries"
+import { useLibraries } from "@/lib/library-queries"
 import { seasonRailOrder } from "@/lib/seasons"
 
 function episodeCode(episode: ItemSummary) {

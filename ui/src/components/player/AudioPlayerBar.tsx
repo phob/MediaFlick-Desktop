@@ -6,7 +6,7 @@ import { Timeline } from "@/components/player/Timeline"
 import { formatClock } from "@/components/player/format"
 import { Button } from "@/components/ui/button"
 import { imageUrl, TICKS_PER_MS, type AudioNowPlaying, type PlayerState } from "@/lib/api"
-import { usePatchPlayerState, usePlayerCommand } from "@/lib/queries"
+import { usePatchPlayerState, usePlayerCommand } from "@/lib/playback-queries"
 
 export function AudioPlayerBar({ player, audio }: { player: PlayerState; audio: AudioNowPlaying }) {
   const command = usePlayerCommand()

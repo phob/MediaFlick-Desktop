@@ -13,7 +13,7 @@ import {
 } from "@/lib/api"
 import { formatRuntime, formatYearOnly } from "@/lib/format"
 import type { DetailNavigationState } from "@/lib/navigation"
-import { usePlay, usePlayerState, usePlayQueue } from "@/lib/queries"
+import { usePlay, usePlayerState, usePlayQueue } from "@/lib/playback-queries"
 import { cn } from "@/lib/utils"
 
 

@@ -38,11 +38,7 @@ import {
   type DiscoveryAvailability,
   writeDiscoveryFilters,
 } from "@/lib/discovery"
-import {
-  useInfiniteSeerrSearch,
-  useSeerrDiscover,
-  useSeerrGenres,
-} from "@/lib/queries"
+import { useInfiniteSeerrSearch, useSeerrDiscover, useSeerrGenres } from "@/lib/seerr-queries"
 import { queryKeys } from "@/lib/query-client"
 import { cn } from "@/lib/utils"
 import { Pressable } from "@/components/ui/pressable"

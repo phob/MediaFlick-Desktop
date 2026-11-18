@@ -49,17 +49,16 @@ import {
   formatResolution,
   formatVideoRange,
 } from "@/lib/format"
+import { useItem, useMediaInfo } from "@/lib/item-queries"
 import {
   useChangePlaybackQuality,
-  useItem,
-  useMediaInfo,
   usePlaybackNeighbors,
   usePlayNeighbor,
   usePatchPlayerState,
   usePlayerCommand,
   usePlayerState,
-  useSettings,
-} from "@/lib/queries"
+} from "@/lib/playback-queries"
+import { useSettings } from "@/lib/settings-queries"
 import { SUBTITLES_OFF, TrackMenu, TrackSubmenu, type TrackChoices } from "@/components/player/TrackMenu"
 import { TuningMenu, type PlaybackTuning } from "@/components/player/TuningMenu"
 import { AudioPlayerBar } from "@/components/player/AudioPlayerBar"

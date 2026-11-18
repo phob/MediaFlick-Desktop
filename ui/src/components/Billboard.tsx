@@ -12,14 +12,9 @@ import {
 } from "@/lib/api"
 import { formatCommunityRating, formatRemaining, formatRuntime } from "@/lib/format"
 import { isJsonObject, jsonNumber, jsonString, type JsonValue } from "@/lib/json"
-import {
-  useItemSynopsis,
-  useNextUp,
-  usePlay,
-  useSetFavorite,
-  useSettings,
-  useTrailer,
-} from "@/lib/queries"
+import { useItemSynopsis, useNextUp, useSetFavorite, useTrailer } from "@/lib/item-queries"
+import { usePlay } from "@/lib/playback-queries"
+import { useSettings } from "@/lib/settings-queries"
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 import { detailNavigationState } from "@/lib/navigation"
 import { cn } from "@/lib/utils"

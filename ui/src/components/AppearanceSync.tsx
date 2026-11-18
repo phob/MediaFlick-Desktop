@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { useSettings } from "@/lib/queries"
+import { useSettings } from "@/lib/settings-queries"
 
 export function AppearanceSync() {
   const { data: settings } = useSettings()

@@ -1,7 +1,7 @@
 import { useScrollRestoration } from "@/lib/scroll-restoration"
 import { api } from "@/lib/api"
 import { DEFAULT_VIEWING, useViewing } from "@/lib/viewing"
-import { useBrowsing } from "@/lib/queries"
+import { useBrowsing } from "@/lib/settings-queries"
 import { useEffect, useRef, useState, type ComponentType } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { ItemGrid, type ItemGridHandle, type ItemGridProps } from "@/components/ItemGrid"
@@ -30,7 +30,7 @@ import {
   type LibraryFilterState,
   writeLibraryFilters,
 } from "@/lib/library-filters"
-import { useBrowseLetters, useItems, usePersonResolution } from "@/lib/queries"
+import { useBrowseLetters, useItems, usePersonResolution } from "@/lib/library-queries"
 import { cn } from "@/lib/utils"
 
 const SEARCH_PERSON_ROW_LIMIT = 12
