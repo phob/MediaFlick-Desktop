@@ -1,7 +1,7 @@
 <h1 align="center">
   <img src="distribution/app-icon.png" alt="MediaFlick Desktop logo" width="180" height="180">
   <br>
-  MediaFlick Desktop
+  MediaFlick Desktop (dry run A)
 </h1>
 
 <p align="center"><b>Jellyfin playback that works immediately and still respects a serious mpv setup.</b></p>
