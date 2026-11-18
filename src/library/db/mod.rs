@@ -81,10 +81,18 @@ impl Database {
             open_flags: read_write_flags(),
             idle: Mutex::new(Vec::new()),
         };
-        // A refused file is checked before `configure`, which would switch
-        // its journal mode to WAL and so rewrite its header.
+        // An existing file is checked through a read-only connection first:
+        // closing a writable one merges an unmerged WAL into the file, and
+        // `configure` would switch its journal mode, so a refused file stays
+        // as it was.
+        if path.exists() {
+            let probe = Connection::open_with_flags(
+                path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )?;
+            migrate::refuse_newer(&probe)?;
+        }
         let connection = Connection::open_with_flags(&database.path, database.open_flags)?;
-        migrate::refuse_newer(&connection)?;
         configure(&connection)?;
         migrate::migrate(&connection)?;
         database.release(connection);

@@ -32,7 +32,8 @@
 // build/e2e/upgrade-0-2-0/report.json, with each scenario's snapshots,
 // screenshots and logs next to it. Exits non-zero when a scenario fails.
 //
-// --negative-control NAME passes through to each session (see the verify
+// --only picks scenarios; one that continues from another's profile brings it
+// along. --negative-control NAME passes through to each session (see the verify
 // skill's "Negative control"); pick the scenario with --only. Its drive must
 // then fail on a check.
 import { execFileSync, spawn } from "node:child_process"
@@ -96,11 +97,13 @@ const SCENARIOS = [
   },
   {
     id: "2-back",
+    after: "1-update",
     title: "The way back: the real 0.2.0 on the profile this build left",
     run: async () => startOn("2-back", { binary: released, profile: profileOf("1-update"), phase: "back", schema: (await snapshot(profileOf("1-update"))).userVersion }),
   },
   {
     id: "3-forward",
+    after: "2-back",
     title: "This build again on the profile 0.2.0 used after it",
     run: () => startOn("3-forward", { binary: staged, profile: profileOf("2-back"), phase: "forward", schema: SCHEMA }),
   },
@@ -135,6 +138,8 @@ const SCENARIOS = [
 
 const unknown = only ? [...only].filter((id) => !SCENARIOS.some((scenario) => scenario.id === id)) : []
 if (unknown.length) throw new Error(`--only names no scenario ${unknown.join(", ")}; the scenarios are ${SCENARIOS.map((scenario) => scenario.id).join(", ")}`)
+// A scenario that continues from another's profile brings that one along.
+for (const scenario of [...SCENARIOS].reverse()) if (only?.has(scenario.id) && scenario.after) only.add(scenario.after)
 
 rmSync(out, { recursive: true, force: true })
 mkdirSync(out, { recursive: true })

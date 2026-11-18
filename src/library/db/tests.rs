@@ -625,6 +625,56 @@ fn a_newer_database_in_rollback_mode_keeps_its_bytes() {
     );
 }
 
+#[test]
+fn a_newer_database_with_an_unmerged_wal_keeps_its_bytes() {
+    // A newer app that stopped without checkpointing leaves committed pages
+    // in library.db-wal. Closing a writable connection would merge them into
+    // library.db; a refused file must not be written that way either.
+    let writer_dir = Scratch::new();
+    let scratch = Scratch::new();
+    let writer = Connection::open(writer_dir.database()).expect("open");
+    writer
+        .execute_batch(
+            "PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;
+             CREATE TABLE future_table (id INTEGER); INSERT INTO future_table VALUES (1);",
+        )
+        .expect("future schema");
+    writer
+        .pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+        .expect("stamp future");
+    for suffix in ["", "-wal", "-shm"] {
+        std::fs::copy(
+            writer_dir.0.join(format!("library.db{suffix}")),
+            scratch.0.join(format!("library.db{suffix}")),
+        )
+        .expect("copy the live files");
+    }
+    drop(writer);
+    let wal = scratch.0.join("library.db-wal");
+    assert!(
+        std::fs::metadata(&wal).expect("wal").len() > 0,
+        "the copy holds unmerged WAL pages"
+    );
+    let before = (
+        std::fs::read(scratch.database()).expect("bytes"),
+        std::fs::read(&wal).expect("wal bytes"),
+    );
+
+    let result = super::Database::open(&scratch.database());
+
+    assert!(
+        matches!(result, Err(OpenError::NewerSchema { found }) if found == SCHEMA_VERSION + 1),
+        "a newer schema is refused: {:?}",
+        result.err()
+    );
+    assert_eq!(
+        std::fs::read(scratch.database()).expect("bytes"),
+        before.0,
+        "refusing the file merged its WAL into it"
+    );
+    assert_eq!(std::fs::read(&wal).expect("wal bytes"), before.1);
+}
+
 /// A schema-13 development database whose staged playback choice holds a
 /// media source the current schema's CHECK rejects. Restoring it fails after
 /// the old tables were dropped: where a crash would leave the file.
