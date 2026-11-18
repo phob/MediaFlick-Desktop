@@ -2,3 +2,6 @@ ui/src/lib/api/wire.gen.ts text eol=lf linguist-generated=true
 ui/src/lib/api/wire/*.gen.ts text eol=lf linguist-generated=true
 # A unified diff writes an empty context line as a single space.
 ui/patches/*.patch -whitespace
+# A released library.db schema is frozen by its SHA-256, so its bytes must not
+# depend on the checkout: Git for Windows' core.autocrlf would write CRLF.
+fixtures/**/*.sql text eol=lf
