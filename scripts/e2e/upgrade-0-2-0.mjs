@@ -88,6 +88,54 @@ const json = (value) => `${JSON.stringify(value, null, 2)}\n`
 const log = (line) => console.log(`[upgrade-0-2-0] ${line}`)
 const appDirs = (profile) => ({ config: path.join(profile, "config/mediaflick-desktop"), data: path.join(profile, "data/mediaflick-desktop") })
 
+const SCENARIOS = [
+  {
+    id: "1-update",
+    title: "This build on a profile the released 0.2.0 left: nothing recreated, every row and choice kept",
+    run: () => startOn("1-update", { binary: staged, profile: original, phase: "update", schema: SCHEMA }),
+  },
+  {
+    id: "2-back",
+    title: "The way back: the real 0.2.0 on the profile this build left",
+    run: async () => startOn("2-back", { binary: released, profile: profileOf("1-update"), phase: "back", schema: (await snapshot(profileOf("1-update"))).userVersion }),
+  },
+  {
+    id: "3-forward",
+    title: "This build again on the profile 0.2.0 used after it",
+    run: () => startOn("3-forward", { binary: staged, profile: profileOf("2-back"), phase: "forward", schema: SCHEMA }),
+  },
+  {
+    id: "4-newer-refused",
+    title: "A library.db from a newer MediaFlick: refused once, left as it was, the window still shown",
+    async run() {
+      const profile = copyProfile(original, path.join(out, this.id, "profile"))
+      const { data } = appDirs(profile)
+      writeDatabase(data, (db) => {
+        db.exec(`PRAGMA user_version = ${SCHEMA + 1}`)
+        db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
+      })
+      const file = path.join(data, "library.db")
+      const bytes = await sha256File(file)
+      const env = { ...process.env, HOME: path.join(profile, "home"), XDG_CONFIG_HOME: path.join(profile, "config"), XDG_DATA_HOME: path.join(profile, "data"), XDG_CACHE_HOME: path.join(profile, "cache"), XDG_STATE_HOME: path.join(profile, "state"), LD_LIBRARY_PATH: path.dirname(staged), ...(existsSync(path.join(path.dirname(staged), "libcef.so")) ? { LD_PRELOAD: path.join(path.dirname(staged), "libcef.so") } : {}) }
+      const stats = spawnSync(staged, ["--library-stats"], env)
+      const checks = [
+        { ok: stats.code !== 0, message: "--library-stats refuses the newer library.db", detail: stats.code },
+        { ok: /newer MediaFlick/.test(stats.stderr) && /left as it was/.test(stats.stderr), message: "the refusal says a newer MediaFlick wrote it and that it was left as it was", detail: stats.stderr.trim() },
+        { ok: !/remove library\.db|delete library\.db/i.test(stats.stderr), message: "the refusal does not tell the user to remove library.db" },
+        { ok: (await sha256File(file)) === bytes, message: "library.db is byte for byte as it was" },
+      ]
+      const run = await session(this.id, "library-refused", ["--services-down", "--seed-data", data], { MEDIAFLICK_VERIFY_REFUSED_SHA256: bytes, MEDIAFLICK_VERIFY_REFUSED_SCHEMA: String(SCHEMA + 1) }, 600)
+      const result = collect(this.id, run, "library-refused.json")
+      rmSync(profile, { recursive: true, force: true })
+      const passed = result.passed && checks.every((check) => check.ok)
+      return { ...result, passed, checks: [...checks, ...(result.checks ?? [])], error: passed ? null : [result.error, ...checks.filter((check) => !check.ok).map((check) => check.message)].filter(Boolean).join("; ") }
+    },
+  },
+]
+
+const unknown = only ? [...only].filter((id) => !SCENARIOS.some((scenario) => scenario.id === id)) : []
+if (unknown.length) throw new Error(`--only names no scenario ${unknown.join(", ")}; the scenarios are ${SCENARIOS.map((scenario) => scenario.id).join(", ")}`)
+
 rmSync(out, { recursive: true, force: true })
 mkdirSync(out, { recursive: true })
 
@@ -372,54 +420,6 @@ async function startOn(id, { binary, profile, phase, schema, args = [] }) {
   const left = existsSync(path.join(run.evidence, "pids.json")) ? keptProfile(run, path.join(out, id, "profile")) : null
   return { ...result, presync: { binary: presync.binary, checks: presync.checks, after: presync.after }, before: summary(before), profile: left && path.relative(root, left) }
 }
-
-const SCENARIOS = [
-  {
-    id: "1-update",
-    title: "This build on a profile the released 0.2.0 left: nothing recreated, every row and choice kept",
-    run: () => startOn("1-update", { binary: staged, profile: original, phase: "update", schema: SCHEMA }),
-  },
-  {
-    id: "2-back",
-    title: "The way back: the real 0.2.0 on the profile this build left",
-    run: async () => startOn("2-back", { binary: released, profile: profileOf("1-update"), phase: "back", schema: (await snapshot(profileOf("1-update"))).userVersion }),
-  },
-  {
-    id: "3-forward",
-    title: "This build again on the profile 0.2.0 used after it",
-    run: () => startOn("3-forward", { binary: staged, profile: profileOf("2-back"), phase: "forward", schema: SCHEMA }),
-  },
-  {
-    id: "4-newer-refused",
-    title: "A library.db from a newer MediaFlick: refused once, left as it was, the window still shown",
-    async run() {
-      const profile = copyProfile(original, path.join(out, this.id, "profile"))
-      const { data } = appDirs(profile)
-      writeDatabase(data, (db) => {
-        db.exec(`PRAGMA user_version = ${SCHEMA + 1}`)
-        db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
-      })
-      const file = path.join(data, "library.db")
-      const bytes = await sha256File(file)
-      const env = { ...process.env, HOME: path.join(profile, "home"), XDG_CONFIG_HOME: path.join(profile, "config"), XDG_DATA_HOME: path.join(profile, "data"), XDG_CACHE_HOME: path.join(profile, "cache"), XDG_STATE_HOME: path.join(profile, "state"), LD_LIBRARY_PATH: path.dirname(staged), ...(existsSync(path.join(path.dirname(staged), "libcef.so")) ? { LD_PRELOAD: path.join(path.dirname(staged), "libcef.so") } : {}) }
-      const stats = spawnSync(staged, ["--library-stats"], env)
-      const checks = [
-        { ok: stats.code !== 0, message: "--library-stats refuses the newer library.db", detail: stats.code },
-        { ok: /newer MediaFlick/.test(stats.stderr) && /left as it was/.test(stats.stderr), message: "the refusal says a newer MediaFlick wrote it and that it was left as it was", detail: stats.stderr.trim() },
-        { ok: !/remove library\.db|delete library\.db/i.test(stats.stderr), message: "the refusal does not tell the user to remove library.db" },
-        { ok: (await sha256File(file)) === bytes, message: "library.db is byte for byte as it was" },
-      ]
-      const run = await session(this.id, "library-refused", ["--services-down", "--seed-data", data], { MEDIAFLICK_VERIFY_REFUSED_SHA256: bytes, MEDIAFLICK_VERIFY_REFUSED_SCHEMA: String(SCHEMA + 1) }, 600)
-      const result = collect(this.id, run, "library-refused.json")
-      rmSync(profile, { recursive: true, force: true })
-      const passed = result.passed && checks.every((check) => check.ok)
-      return { ...result, passed, checks: [...checks, ...(result.checks ?? [])], error: passed ? null : [result.error, ...checks.filter((check) => !check.ok).map((check) => check.message)].filter(Boolean).join("; ") }
-    },
-  },
-]
-
-const unknown = only ? [...only].filter((id) => !SCENARIOS.some((scenario) => scenario.id === id)) : []
-if (unknown.length) throw new Error(`--only names no scenario ${unknown.join(", ")}; the scenarios are ${SCENARIOS.map((scenario) => scenario.id).join(", ")}`)
 
 const results = {}
 function profileOf(id) {
