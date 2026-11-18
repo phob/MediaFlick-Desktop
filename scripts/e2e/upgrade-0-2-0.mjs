@@ -128,6 +128,8 @@ function copyProfile(from, to) {
   cpSync(source.config, target.config, { recursive: true, filter: (file) => !/mediaflick-desktop\.log(\.\d+)?$/.test(file) })
   cpSync(source.data, target.data, { recursive: true })
   writeDatabase(target.data, (db) => {
+    // Overwrite the freed bytes too, or the token would stay in the file.
+    db.exec("PRAGMA secure_delete = ON")
     db.exec("UPDATE credentials SET token = NULL WHERE id = 1")
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
   })
@@ -135,15 +137,19 @@ function copyProfile(from, to) {
 }
 
 // What the profile holds: library.db row by row, and the user's files.
-function snapshot(profile) {
+async function snapshot(profile, columnsFrom = null) {
   const { config, data } = appDirs(profile)
-  const database = readDatabaseCopy(data, (db) => {
+  const database = await readDatabaseCopy(data, (db) => {
     const tables = {}
     const names = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((row) => row.name)
     const virtual = db.prepare("SELECT name FROM sqlite_master WHERE sql LIKE 'CREATE VIRTUAL TABLE%'").all().map((row) => row.name)
     for (const name of names.filter((table) => !virtual.some((owner) => table.startsWith(`${owner}_`)))) {
       const columns = db.prepare(`SELECT name FROM pragma_table_xinfo('${name}') WHERE hidden = 0`).all().map((row) => row.name)
-      tables[name] = { columns, ...rowsDigest(db, name, columns) }
+      // Against an earlier snapshot, rows are compared on the columns that
+      // snapshot had: a migration may add a column, never drop one.
+      const held = columnsFrom?.tables[name]?.columns
+      const compared = held && held.every((column) => columns.includes(column)) ? held : columns
+      tables[name] = { columns, ...rowsDigest(db, name, compared) }
     }
     return {
       userVersion: db.prepare("PRAGMA user_version").get().user_version,
@@ -212,7 +218,7 @@ function compare(before, after, schema) {
 
 // One start of `binary` with --library-stats on a copy of `profile`: the real
 // open, migration included, and an exit before any network or sync.
-function openBeforeSync(id, binary, profile, before, schema) {
+async function openBeforeSync(id, binary, profile, before, schema) {
   const dir = path.join(out, id, "pre-sync")
   const copy = copyProfile(profile, path.join(dir, "profile"))
   const env = {
@@ -232,7 +238,7 @@ function openBeforeSync(id, binary, profile, before, schema) {
   const run = spawnSync(binary, ["--library-stats", "--log-level", "debug"], env)
   const appLog = readLog(appDirs(copy).config)
   writeFileSync(path.join(dir, "library-stats.log"), `exit ${run.code}\n--- stdout\n${run.stdout}\n--- stderr\n${run.stderr}\n--- mediaflick-desktop.log\n${appLog}`)
-  const after = snapshot(copy)
+  const after = await snapshot(copy, before)
   const checks = [
     { ok: run.code === 0, message: `${path.basename(binary)} opens library.db (--library-stats exit ${run.code})`, ...(run.code === 0 ? {} : { detail: run.stderr.trim() }) },
     { ok: !/recreating the .*library database/.test(appLog), message: "the open recreates nothing" },
@@ -337,7 +343,7 @@ const released = await releasedAppImage()
 report.builds.released = { release: RELEASED.release, path: path.relative(root, released), sha256: RELEASED.sha256 }
 
 const original = copyProfile(path.resolve(options.profile), path.join(out, "0-profile-0.2.0"))
-const start = snapshot(original)
+const start = await snapshot(original)
 writeFileSync(path.join(out, "0-profile-0.2.0", "before.json"), json(start))
 if (start.userVersion !== RELEASED.schema) throw new Error(`${options.profile} holds library.db at schema ${start.userVersion}, not 0.2.0's ${RELEASED.schema}`)
 for (const [field, key] of [["server_id", "serverId"], ["user_id", "userId"], ["device_id", "deviceId"], ["server_url", "serverUrl"]]) {
@@ -347,11 +353,11 @@ report.profile = { source: path.resolve(options.profile), copy: path.relative(ro
 
 // One start of a binary on `profile`: the pre-sync open, then the UI session.
 async function startOn(id, { binary, profile, phase, schema, args = [] }) {
-  const before = snapshot(profile)
+  const before = await snapshot(profile)
   const beforeFile = path.join(out, id, "before.json")
   mkdirSync(path.dirname(beforeFile), { recursive: true })
   writeFileSync(beforeFile, json(before))
-  const presync = openBeforeSync(id, binary, profile, before, schema)
+  const presync = await openBeforeSync(id, binary, profile, before, schema)
   const { config, data } = appDirs(profile)
   const env = {
     MEDIAFLICK_VERIFY_UPGRADE_BEFORE: beforeFile,
@@ -376,7 +382,7 @@ const SCENARIOS = [
   {
     id: "2-back",
     title: "The way back: the real 0.2.0 on the profile this build left",
-    run: () => startOn("2-back", { binary: released, profile: profileOf("1-update"), phase: "back", schema: snapshot(profileOf("1-update")).userVersion }),
+    run: async () => startOn("2-back", { binary: released, profile: profileOf("1-update"), phase: "back", schema: (await snapshot(profileOf("1-update"))).userVersion }),
   },
   {
     id: "3-forward",
@@ -411,6 +417,9 @@ const SCENARIOS = [
     },
   },
 ]
+
+const unknown = only ? [...only].filter((id) => !SCENARIOS.some((scenario) => scenario.id === id)) : []
+if (unknown.length) throw new Error(`--only names no scenario ${unknown.join(", ")}; the scenarios are ${SCENARIOS.map((scenario) => scenario.id).join(", ")}`)
 
 const results = {}
 function profileOf(id) {

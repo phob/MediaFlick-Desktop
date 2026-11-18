@@ -1,11 +1,11 @@
 # Updating from MediaFlick 0.2.0
 
-A user who updates from MediaFlick 0.2.0, the first release with a `library.db`, starts signed in on the same Jellyfin device, with the library, franchises, collections and ratings it had, and every choice they made: the Player, Application and Viewing settings, the accent, Letterboxd profiles, My Collections with their custom posters, and per-title track choices. Starting the new build rewrites none of the files that hold those choices. Going back to the real 0.2.0 afterwards works, and so does updating again. A `library.db` that a newer MediaFlick wrote is refused once and left as it was; the services stay down until the user installs that newer version again.
+A user who updates from MediaFlick 0.2.0, the first release with a `library.db`, starts signed in on the same Jellyfin device, with the library, franchises, collections and ratings it had, and every choice they made: the Player, Application and Viewing settings, the accent, Letterboxd profiles, My Collections with their custom posters, and per-title track choices. Starting the new build changes none of those choices: the JSON files and posters stay as they were, except the page `accounts.json` records as last shown (`browsing`), which every navigation saves. Going back to the real 0.2.0 afterward works, and so does updating again. A `library.db` that a newer MediaFlick wrote is refused once and left as it was; the services stay down until the user installs that newer version again.
 
 ## Sub-features
 
 - `update-keeps-library`: the first start of this build on a 0.2.0 profile opens `library.db` without recreating it, and every table keeps every row, value for value, before any sync could refill it.
-- `update-keeps-choices`: the user's JSON files and posters stay as they were, and every choice shows in the UI.
+- `update-keeps-choices`: the user's JSON files and posters stay as they were (`accounts.json` apart from `browsing`), and every choice shows in the UI.
 - `way-back`: the released 0.2.0 AppImage starts signed in on the profile this build left, shows the same choices and completes a sync; this build then takes the profile back.
 - `newer-database-refused`: a `library.db` stamped with a newer schema is refused with a reason, tried only once, and left byte for byte.
 

@@ -81,7 +81,11 @@ impl Database {
             open_flags: read_write_flags(),
             idle: Mutex::new(Vec::new()),
         };
-        let connection = database.new_connection()?;
+        // A refused file is checked before `configure`, which would switch
+        // its journal mode to WAL and so rewrite its header.
+        let connection = Connection::open_with_flags(&database.path, database.open_flags)?;
+        migrate::refuse_newer(&connection)?;
+        configure(&connection)?;
         migrate::migrate(&connection)?;
         database.release(connection);
         Ok(database)

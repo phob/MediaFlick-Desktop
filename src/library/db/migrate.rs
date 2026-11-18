@@ -36,6 +36,15 @@ pub(super) fn user_version(connection: &Connection) -> rusqlite::Result<i32> {
     connection.query_row("PRAGMA user_version", [], |row| row.get(0))
 }
 
+/// Refuses a database a newer MediaFlick wrote. Reads only.
+pub(super) fn refuse_newer(connection: &Connection) -> Result<(), OpenError> {
+    let version = user_version(connection)?;
+    if version > SCHEMA_VERSION {
+        return Err(OpenError::NewerSchema { found: version });
+    }
+    Ok(())
+}
+
 pub(super) fn migrate(connection: &Connection) -> Result<(), OpenError> {
     migrate_with(connection, MIGRATIONS)
 }

@@ -81,7 +81,7 @@ async function steps(ctx, { before, presync, phase, schema, report, record }) {
     deviceId: db.prepare("SELECT device_id FROM credentials WHERE id = 1").get()?.device_id ?? null,
     meta: Object.fromEntries(db.prepare("SELECT key, value FROM meta").all().map((row) => [row.key, row.value])),
   }))
-  const opened = database()
+  const opened = await database()
   report.database = { userVersion: opened.userVersion, deviceId: opened.deviceId }
   record(opened.deviceId === before.credentials.device_id, "the Jellyfin device is the one 0.2.0 signed in on", opened.deviceId)
   record(opened.userVersion === schema, `library.db is at schema ${schema}`, opened.userVersion)
@@ -142,7 +142,7 @@ async function steps(ctx, { before, presync, phase, schema, report, record }) {
   await ctx.screenshot("05-playback-choice")
 
   const synced = await ctx.until(async () => {
-    const meta = database().meta
+    const meta = (await database()).meta
     return Number(meta["sync.completed_at"] ?? 0) >= launchedAfter && !(await ctx.api("/api/status")).body?.syncProgress?.active ? meta : null
   }, "a sync to complete after the launch", 300000).catch(() => null)
   record(synced !== null && synced["sync.latest_failure"] === "0", "a sync completes on this library.db without a failure", synced && { completedAt: synced["sync.completed_at"], latestFailure: synced["sync.latest_failure"], report: synced["sync.last_report"] })
@@ -151,7 +151,7 @@ async function steps(ctx, { before, presync, phase, schema, report, record }) {
   await ctx.find({ role: "link", name: "Settings" }, { timeout: 60000 })
   const again = (await ctx.api("/api/status")).body
   record(again?.authenticated === true && again.userName === before.credentials.user_name, "after a relaunch it is still signed in", again?.userName)
-  const relaunched = database()
+  const relaunched = await database()
   record(relaunched.userVersion === schema && relaunched.deviceId === before.credentials.device_id, "after a relaunch library.db keeps its schema and device", { userVersion: relaunched.userVersion, deviceId: relaunched.deviceId })
   const relaunchLog = ctx.appLog()
   record((relaunchLog.match(/library schema migrated/g) ?? []).length === migrated.length && !/recreating the .*library database/.test(relaunchLog), "the relaunch migrates and recreates nothing")

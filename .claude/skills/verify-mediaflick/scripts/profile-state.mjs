@@ -8,10 +8,10 @@
 // at start included. That is navigation, not a change to anything the user
 // chose.
 import { createHash } from "node:crypto"
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { DatabaseSync } from "node:sqlite"
+import { DatabaseSync, backup } from "node:sqlite"
 
 const STORES = ["settings.json", "accounts.json", "collections.json", "playback-preferences.json"]
 
@@ -37,14 +37,19 @@ export function userFileDigests(configDir) {
   return digests
 }
 
-// Runs `read` on a copy of the library.db in `dataDir`: a read-only open of a
-// WAL database still writes its -shm file, and the app may have it open.
-export function readDatabaseCopy(dataDir, read) {
+// Runs `read` on a consistent copy of the library.db in `dataDir`, made with
+// SQLite's backup API, so a checkpoint the running app makes meanwhile cannot
+// tear it. The source is opened read-only; in WAL mode that still writes its
+// -shm file, which neither the app nor a later byte comparison of library.db
+// minds.
+export async function readDatabaseCopy(dataDir, read) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "mediaflick-profile-db-"))
   try {
-    for (const suffix of ["", "-wal", "-shm"]) {
-      const file = path.join(dataDir, `library.db${suffix}`)
-      if (existsSync(file)) copyFileSync(file, path.join(dir, `library.db${suffix}`))
+    const source = new DatabaseSync(path.join(dataDir, "library.db"), { readOnly: true })
+    try {
+      await backup(source, path.join(dir, "library.db"))
+    } finally {
+      source.close()
     }
     const db = new DatabaseSync(path.join(dir, "library.db"))
     try {

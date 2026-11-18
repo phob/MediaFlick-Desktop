@@ -595,6 +595,36 @@ fn a_newer_database_is_refused_and_left_untouched() {
     assert_eq!(rows(&reopened, &released_columns), before);
 }
 
+#[test]
+fn a_newer_database_in_rollback_mode_keeps_its_bytes() {
+    // The app's own files are in WAL mode, but a refused file is not this
+    // build's to change in any way, its journal mode included.
+    let scratch = Scratch::new();
+    {
+        let connection = Connection::open(scratch.database()).expect("open");
+        connection
+            .execute_batch("PRAGMA journal_mode = DELETE; CREATE TABLE future_table (id INTEGER);")
+            .expect("future schema");
+        connection
+            .pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+            .expect("stamp future");
+    }
+    let before = std::fs::read(scratch.database()).expect("bytes");
+
+    let result = super::Database::open(&scratch.database());
+
+    assert!(
+        matches!(result, Err(OpenError::NewerSchema { found }) if found == SCHEMA_VERSION + 1),
+        "a newer schema is refused: {:?}",
+        result.err()
+    );
+    assert_eq!(
+        std::fs::read(scratch.database()).expect("bytes"),
+        before,
+        "refusing the file changed it"
+    );
+}
+
 /// A schema-13 development database whose staged playback choice holds a
 /// media source the current schema's CHECK rejects. Restoring it fails after
 /// the old tables were dropped: where a crash would leave the file.

@@ -229,7 +229,7 @@ def rows(db: sqlite3.Connection, fakes: Fakes) -> str:
         {"key": "cache.owner_user_id", "value": fakes.hex_id(user)},
     ], "synthetic: 0.2.0 writes these keys at sign-in, which the profile's seeded session skipped"))
     tables.append(("libraries", [
-        {**row, "id": fakes.hex_id(row["id"]), "primary_image_tag": fakes.hex_id(row["primary_image_tag"])}
+        {**row, "id": fakes.hex_id(row["id"]), "name": fakes.label("Library", str(row["name"])), "primary_image_tag": fakes.hex_id(row["primary_image_tag"])}
         for row in select("SELECT * FROM libraries ORDER BY position")
     ], None))
     sanitized_items = []
