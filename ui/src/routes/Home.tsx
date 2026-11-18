@@ -19,7 +19,9 @@ import {
 } from "@/lib/api"
 import { detailNavigationState } from "@/lib/navigation"
 import { firstLibraryOf, libraryPath } from "@/lib/libraries"
-import { useBillboard, useHome, useHomeResume, useLibraries, useLibraryShelves, useReleaseCalendar } from "@/lib/queries"
+import { useBillboard, useHome, useHomeResume, useLibraryShelves } from "@/lib/home-queries"
+import { useReleaseCalendar } from "@/lib/integration-queries"
+import { useLibraries } from "@/lib/library-queries"
 import { cn } from "@/lib/utils"
 import { useViewing } from "@/lib/viewing"
 

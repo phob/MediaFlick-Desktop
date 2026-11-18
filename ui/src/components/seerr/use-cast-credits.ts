@@ -1,4 +1,5 @@
-import { useSeerrPersonCredits, useSeerrStatus, useStatus } from "@/lib/queries"
+import { useSeerrPersonCredits, useSeerrStatus } from "@/lib/seerr-queries"
+import { useStatus } from "@/lib/session-queries"
 import { useCompanionCapabilities } from "@/lib/companion"
 
 /**

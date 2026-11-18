@@ -50,7 +50,7 @@ import {
   type LibraryFilterState,
 } from "@/lib/library-filters"
 import { useGenres, useStudios, useTags } from "@/lib/facet-queries"
-import { useLibraryOptions, useOfficialRatings } from "@/lib/queries"
+import { useLibraryOptions, useOfficialRatings } from "@/lib/library-queries"
 import { cn } from "@/lib/utils"
 
 const ANY = "__any__"

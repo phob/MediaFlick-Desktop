@@ -24,7 +24,8 @@ import {
 import { formatRemaining, formatRuntime } from "@/lib/format"
 import { useDetailNavigationState } from "@/hooks/use-detail-navigation-state"
 import { PreviewContext, createExpandedStore, type PreviewApi, type PreviewTarget } from "@/lib/preview"
-import { useItem, useNextUp, usePlay, useSetFavorite, useSetPlayed } from "@/lib/queries"
+import { useItem, useNextUp, useSetFavorite, useSetPlayed } from "@/lib/item-queries"
+import { usePlay } from "@/lib/playback-queries"
 
 /**
  * How long the pointer has to rest on a card before it expands. Short enough to

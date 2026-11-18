@@ -26,7 +26,7 @@ import {
   formatResolution,
   formatVideoRange,
 } from "@/lib/format"
-import { useSetPlaybackPreference } from "@/lib/queries"
+import { useSetPlaybackPreference } from "@/lib/item-queries"
 
 /**
  * A full-subtitle release carries thirty tracks. Listing them all buries the

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { seerrImageUrl, type SeerrRequest } from "@/lib/api"
-import { useSeerrCancelRequest, useSeerrMedia, useSeerrRequests } from "@/lib/queries"
+import { useSeerrCancelRequest, useSeerrMedia, useSeerrRequests } from "@/lib/seerr-queries"
 import { detailNavigationState } from "@/lib/navigation"
 import { titleKindOfSeerr } from "@/lib/kinds"
 

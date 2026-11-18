@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { api, ApiError, type MediaStream } from "./api"
 import { COALESCE_MS, useCardBatches } from "./card-batches"
-import { useSettings } from "./queries"
+import { useSettings } from "./settings-queries"
 import { readShellEvent } from "./shell-events"
 import { TechnicalContext } from "./technical-context"
 

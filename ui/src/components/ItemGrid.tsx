@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useScrollMargin } from "@/hooks/use-scroll-margin"
 import { PAGE_SIZE, type ItemSummary } from "@/lib/api"
 import type { BrowseSource } from "@/lib/libraries"
-import { useBrowsePages } from "@/lib/queries"
+import { useBrowsePages } from "@/lib/library-queries"
 
 const FALLBACK = { poster: 168, gap: 18, card: 306 }
 

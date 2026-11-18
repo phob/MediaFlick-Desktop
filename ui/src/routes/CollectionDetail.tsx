@@ -22,9 +22,8 @@ import {
   useFranchise,
   useJellyfinCollection,
   useMyCollection,
-  useSeerrMedia,
-  useSeerrStatus,
-} from "@/lib/queries"
+} from "@/lib/collection-queries"
+import { useSeerrMedia, useSeerrStatus } from "@/lib/seerr-queries"
 import { toastFailure } from "@/lib/failure-toast"
 import { detailNavigationState } from "@/lib/navigation"
 import { useLocalDate } from "@/lib/local-date"

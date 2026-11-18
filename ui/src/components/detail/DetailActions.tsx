@@ -19,13 +19,9 @@ import {
 } from "@/lib/api"
 import { formatRemaining } from "@/lib/format"
 import { setQualityOverride, useQualityOverride } from "@/lib/playback-quality"
-import {
-  useOpenExternal,
-  usePlay,
-  useSetFavorite,
-  useSetPlayed,
-  useSettings,
-} from "@/lib/queries"
+import { useOpenExternal, useSetFavorite, useSetPlayed } from "@/lib/item-queries"
+import { usePlay } from "@/lib/playback-queries"
+import { useSettings } from "@/lib/settings-queries"
 
 /** Stands in for "no override" — Radix Select cannot hold an empty value. */
 const FROM_SETTINGS = "__settings__"

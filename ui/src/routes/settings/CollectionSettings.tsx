@@ -42,12 +42,11 @@ import { toastFailure } from "@/lib/failure-toast"
 import { jsonString, sameJson } from "@/lib/json"
 import { queryKeys } from "@/lib/query-client"
 import {
-  accountKey,
   useCollectionProfiles,
   useCollectionSettings,
   useCollectionTemplates,
-  useStatus,
-} from "@/lib/queries"
+} from "@/lib/collection-queries"
+import { accountKey, useStatus } from "@/lib/session-queries"
 import {
   PageTitle,
   PendingRow,

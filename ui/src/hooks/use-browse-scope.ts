@@ -2,7 +2,7 @@ import { useParams, useSearchParams } from "react-router-dom"
 import type { BrowseCapabilities, Library } from "@/lib/api"
 import type { ListingSource } from "@/lib/libraries"
 import { libraryItemQuery, libraryQuery } from "@/lib/library-filters"
-import { useLibraries } from "@/lib/queries"
+import { useLibraries } from "@/lib/library-queries"
 
 export type BrowseScope =
   | { status: "loading" }

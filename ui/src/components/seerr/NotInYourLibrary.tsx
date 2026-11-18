@@ -1,5 +1,5 @@
 import { SeerrResults } from "@/components/seerr/SeerrResults"
-import { useSeerrSearch, useSeerrStatus } from "@/lib/queries"
+import { useSeerrSearch, useSeerrStatus } from "@/lib/seerr-queries"
 
 /**
  * The unified-search tail: what the library does not have, under what it does.

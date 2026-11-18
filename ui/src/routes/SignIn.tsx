@@ -18,8 +18,8 @@ import {
   useQuickConnectPoll,
   useQuickConnectStart,
   useServerInfo,
-  useSettings,
-} from "@/lib/queries"
+} from "@/lib/session-queries"
+import { useSettings } from "@/lib/settings-queries"
 import { looksLikeServerAddress } from "@/lib/server-address"
 
 const PROBE_DEBOUNCE_MS = 400

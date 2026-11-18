@@ -48,16 +48,13 @@ import { libraryIcon, libraryIdFromPath, libraryPath } from "@/lib/libraries"
 import { useLocalDate } from "@/lib/local-date"
 import { isSidebarRouteActive, librarySearchFromLocation, readDetailNavigationState } from "@/lib/navigation"
 import {
-  accountKey,
   franchisesQueryOptions,
   myCollectionsQueryOptions,
   useCollectionSettings,
-  useItem,
-  useLibraries,
-  useLogout,
-  useStatus,
-  useSyncProgress,
-} from "@/lib/queries"
+} from "@/lib/collection-queries"
+import { useItem } from "@/lib/item-queries"
+import { useLibraries } from "@/lib/library-queries"
+import { accountKey, useLogout, useStatus, useSyncProgress } from "@/lib/session-queries"
 import { SYNC_FAILURES } from "@/lib/sync-failure"
 
 const NAV = [

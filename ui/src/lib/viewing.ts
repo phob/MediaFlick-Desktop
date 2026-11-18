@@ -1,7 +1,8 @@
 import { createContext, useContext } from "react"
 import { useQuery } from "@tanstack/react-query"
 import type { ItemSummary, PlayerComfort, ViewingSettings } from "./api"
-import { accountKey, useStatus, viewingQueryOptions } from "./queries"
+import { accountKey, useStatus } from "./session-queries"
+import { viewingQueryOptions } from "./settings-queries"
 
 export const DEFAULT_VIEWING: ViewingSettings = {
   spoilerProtection: false, nextEpisode: "auto", countdownSeconds: 10, episodeLimit: 0,

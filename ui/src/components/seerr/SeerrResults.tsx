@@ -5,7 +5,8 @@ import { SeerrCard } from "@/components/seerr/SeerrCard"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { SeerrCapabilities, SeerrResult } from "@/lib/api"
 import { discoveryCardKey } from "@/lib/discovery"
-import { useItem, useSeerrStatus } from "@/lib/queries"
+import { useItem } from "@/lib/item-queries"
+import { useSeerrStatus } from "@/lib/seerr-queries"
 
 function ResultCard({
   result,

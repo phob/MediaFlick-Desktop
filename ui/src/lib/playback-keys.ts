@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { useEffect, useEffectEvent } from "react"
 import type { PlayerCommand, PlayerState } from "./api"
-import { usePatchPlayerState, usePlayerCommand, usePlayNeighbor } from "./queries"
+import { usePatchPlayerState, usePlayerCommand, usePlayNeighbor } from "./playback-queries"
 import { queryKeys } from "./query-client"
 
 const AUDIO_SEEK_BACK_MS = 10_000

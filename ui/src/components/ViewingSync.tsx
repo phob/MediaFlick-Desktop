@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { api } from "@/lib/api"
 import { libraryIdFromPath, startupRoute } from "@/lib/libraries"
-import { accountKey, useBrowsing, useStatus } from "@/lib/queries"
+import { accountKey, useStatus } from "@/lib/session-queries"
+import { useBrowsing } from "@/lib/settings-queries"
 import { DEFAULT_VIEWING, useViewing } from "@/lib/viewing"
 
 export function ViewingSync() {

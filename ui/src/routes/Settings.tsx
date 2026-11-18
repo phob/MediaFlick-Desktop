@@ -13,7 +13,7 @@ import {
 import { Fragment } from "react"
 import { Link as RouterLink, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import SettingsDraftGuard from "@/components/SettingsDraftGuard"
-import { accountKey, useStatus } from "@/lib/queries"
+import { accountKey, useStatus } from "@/lib/session-queries"
 import CollectionSettingsPage from "./settings/CollectionSettings"
 import ApplicationSettings from "./settings/ApplicationSettings"
 import { Appearance } from "./settings/AppearanceSettings"
