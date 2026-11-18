@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "accounts": [
+    {
+      "serverId": "f1c70000000000000000000000000001",
+      "userId": "f1c70000000000000000000000000002",
+      "appearance": {
+        "accent": "cobalt",
+        "rating_sources": [
+          "imdb",
+          "tomatoes"
+        ]
+      },
+      "viewing": {
+        "spoilerProtection": false,
+        "nextEpisode": "auto",
+        "countdownSeconds": 10,
+        "episodeLimit": 0,
+        "audioLanguages": [
+          "en",
+          "de"
+        ],
+        "subtitleLanguages": [],
+        "preferOriginalAudio": false,
+        "subtitleMode": "server",
+        "resumeRewindSeconds": 0,
+        "textScale": 100,
+        "posterSize": 168,
+        "previewDelayMs": 550,
+        "startupDestination": "home",
+        "rememberFilters": false,
+        "hideWatched": true
+      },
+      "browsing": {
+        "last": "/collections/mine/f1c7000000000000000000000000002b"
+      },
+      "letterboxd_profiles": [
+        {
+          "id": "f1c7000000000000000000000000002e",
+          "provider": "letterboxd",
+          "profileKey": "fixture-critic",
+          "displayName": "Fixture Critic",
+          "canonicalUrl": "https://letterboxd.com/fixture-critic/",
+          "enabled": true,
+          "verificationStatus": "verified",
+          "createdAt": 1794944940,
+          "lastCheckedAt": 1794944940
+        }
+      ]
+    }
+  ]
+}

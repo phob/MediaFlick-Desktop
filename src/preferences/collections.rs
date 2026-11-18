@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::collections::artwork::PosterReferences;
+use crate::collections::artwork::{LostReferences, PosterReferences};
 use crate::collections::{CollectionMode, CollectionProfile, ProviderReadiness};
 
 use super::AccountKey;
@@ -73,9 +73,8 @@ struct State {
 
 pub struct CollectionConfigurationService {
     path: PathBuf,
-    /// A damaged copy of the file was moved aside, on this start or an
-    /// earlier one, and is still there.
-    damaged_copy_kept: bool,
+    /// Why the file cannot name the posters in use, if it cannot.
+    references_lost: Option<LostReferences>,
     state: Mutex<State>,
 }
 
@@ -86,6 +85,7 @@ impl CollectionConfigurationService {
             COLLECTION_CONFIG_VERSION,
             "collections configuration",
         )?;
+        let missing = loaded.is_none();
         let (document, recovery) = match loaded {
             None => (CollectionConfigurationFile::default(), None),
             Some(loaded) if loaded.document.version == COLLECTION_CONFIG_VERSION => {
@@ -99,20 +99,25 @@ impl CollectionConfigurationService {
             }
         };
         validate_accounts(&document)?;
-        let damaged_copy_kept = damaged_copy_exists(&path)?;
+        let references_lost = if damaged_copy_exists(&path)? {
+            Some(LostReferences::DamagedCopyKept)
+        } else if missing {
+            Some(LostReferences::Missing)
+        } else {
+            None
+        };
         Ok(Self {
             path,
-            damaged_copy_kept,
+            references_lost,
             state: Mutex::new(State { document, recovery }),
         })
     }
 
     /// What the orphaned-poster sweep may trust to name the posters in use.
     pub fn poster_references(&self) -> PosterReferences<'_> {
-        if self.damaged_copy_kept {
-            PosterReferences::Lost
-        } else {
-            PosterReferences::Readable(&self.path)
+        match self.references_lost {
+            Some(reason) => PosterReferences::Lost(reason),
+            None => PosterReferences::Readable(&self.path),
         }
     }
 

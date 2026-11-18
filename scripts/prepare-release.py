@@ -32,6 +32,12 @@ LOCK_VERSION_RE = re.compile(r'(\[\[package\]\]\s*\nname = "mediaflick-desktop"\
 RELEASE_FILE = "release.toml"
 RELEASE_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
+# library.db's schema counts as released once its first prerelease is published, so that
+# release carries the schema frozen as fixtures/library-db/released/schema-<N>.sql.
+SCHEMA_SOURCE = Path("src/library/db/migrate.rs")
+SCHEMA_VERSION_RE = re.compile(r"^pub const SCHEMA_VERSION: i32 = (\d+);$", re.MULTILINE)
+RELEASED_SCHEMAS = Path("fixtures/library-db/released")
+
 Channel = Literal["prerelease", "latest"]
 Action = Literal["none", "prerelease", "latest"]
 
@@ -275,6 +281,8 @@ def check_prepared(version: str) -> str:
         if found != version:
             raise SystemExit(f"{name} is at {found}, not {version}. {hint}")
 
+    check_schema_frozen(version)
+
     changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
     heading = release_heading(changelog, version)
     if not heading:
@@ -283,6 +291,21 @@ def check_prepared(version: str) -> str:
     if not has_entries(release_notes):
         raise SystemExit(f"CHANGELOG.md's section for {version} has no bullet entries.")
     return f"{release_notes}\n"
+
+
+def check_schema_frozen(version: str) -> None:
+    """Exits unless the library.db schema this release creates is frozen."""
+    if not SCHEMA_SOURCE.is_file():
+        raise SystemExit(f"{SCHEMA_SOURCE} is missing, so the library.db schema {version} creates is unknown.")
+    match = SCHEMA_VERSION_RE.search(SCHEMA_SOURCE.read_text(encoding="utf-8"))
+    if not match:
+        raise SystemExit(f"{SCHEMA_SOURCE} has no `pub const SCHEMA_VERSION: i32 = N;`, so the library.db schema {version} creates is unknown.")
+    frozen = RELEASED_SCHEMAS / f"schema-{match.group(1)}.sql"
+    if not frozen.is_file():
+        raise SystemExit(
+            f"{version} would publish library.db schema {match.group(1)}, which has no frozen {frozen.as_posix()}. "
+            "Freeze it in the release-notes PR: BUILDING.md, \"Release a version\", says how."
+        )
 
 
 def main() -> None:
@@ -307,7 +330,8 @@ def main() -> None:
             "The bundled application reports the test version.\n\n"
             "## Manual checks\n\n"
             "- Fresh installation, launch, sign-in, and Quick Connect.\n"
-            "- Upgrade an existing installation and verify settings, accounts, collections, and posters.\n"
+            "- Upgrade an existing installation and verify the sign-in, library, settings, accounts, collections, and posters "
+            "(on Linux, `just upgrade-e2e-0-2-0` proves the update from 0.2.0).\n"
             "- Movies and Series: browsing, search, details, and account switching.\n"
             "- Built-in libmpv and external mpv: start, pause, seek, resume, subtitles, "
             "segment skipping, next episode, and Jellyfin progress/watched state.\n"

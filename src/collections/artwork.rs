@@ -16,10 +16,21 @@ const ORPHAN_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 pub enum PosterReferences<'a> {
     /// collections.json and its backup name every poster in use.
     Readable(&'a Path),
-    /// A damaged collections.json was moved aside, on this start or an earlier
-    /// one, and is still there. It may name posters in use that nothing else
-    /// names, so none of them may be treated as orphaned.
-    Lost,
+    /// Nothing trustworthy names the posters in use, so none of them may be
+    /// treated as orphaned. The reason is logged.
+    Lost(LostReferences),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum LostReferences {
+    /// A damaged collections.json was moved aside, on this start or an
+    /// earlier one, and is still there. It may name posters that nothing
+    /// else names.
+    DamagedCopyKept,
+    /// There is no collections.json: the user moved or deleted it, or it is
+    /// not where this build looks. Its backup alone may be older than the
+    /// posters in use.
+    Missing,
 }
 
 pub struct ArtworkStore {
@@ -82,12 +93,22 @@ impl ArtworkStore {
         references: PosterReferences<'_>,
         now: SystemTime,
     ) -> io::Result<usize> {
-        let PosterReferences::Readable(collections_path) = references else {
-            tracing::warn!(
-                target: "collections",
-                "kept every custom poster: a damaged collections.json was moved aside and is still there"
-            );
-            return Ok(0);
+        let collections_path = match references {
+            PosterReferences::Readable(path) => path,
+            PosterReferences::Lost(LostReferences::DamagedCopyKept) => {
+                tracing::warn!(
+                    target: "collections",
+                    "kept every custom poster: a damaged collections.json was moved aside and is still there"
+                );
+                return Ok(0);
+            }
+            PosterReferences::Lost(LostReferences::Missing) => {
+                tracing::info!(
+                    target: "collections",
+                    "kept every custom poster: there is no collections.json to name the ones in use"
+                );
+                return Ok(0);
+            }
         };
         let live = live_artwork_ids(collections_path);
         let mut removed = 0;

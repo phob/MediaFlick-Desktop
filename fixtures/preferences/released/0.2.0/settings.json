@@ -1,0 +1,32 @@
+{
+  "comfort": {
+    "subtitleSize": 100,
+    "subtitleOutline": 3,
+    "subtitleBackground": 0,
+    "subtitlePosition": 100,
+    "seekBackSeconds": 10,
+    "seekForwardSeconds": 30,
+    "pauseKey": "k",
+    "muteKey": "m",
+    "fullscreenKey": "f",
+    "seekBackKey": "j",
+    "seekForwardKey": "l",
+    "stopKey": "q",
+    "subtitlesKey": "v",
+    "seekBackThirtyKey": "DOWN",
+    "seekForwardThirtyKey": "UP"
+  },
+  "player_backend": "libmpv",
+  "default_fullscreen": "windowed",
+  "show_scrollbars": true,
+  "webui_window": {
+    "width": 1280,
+    "height": 800,
+    "position": {
+      "x": 0,
+      "y": 0
+    },
+    "maximized": false
+  },
+  "mark_watched_next": "w"
+}

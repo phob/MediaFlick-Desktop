@@ -95,12 +95,17 @@ export function saveAccount(server, dataDir) {
 }
 
 // Writes a library.db holding only the session, stamped with an old schema
-// version. The app's pre-1.0 recreation path (src/library/db.rs `migrate`)
-// then builds the current schema and keeps the session, the same way an
-// upgrade keeps a user signed in.
+// version. The app's development recreation path (src/library/db/migrate.rs)
+// then builds the current schema and keeps the session, so the app starts
+// signed in.
+//
+// A seeded library.db, such as a profile a released MediaFlick left, keeps
+// every row: only the cached token goes into its credentials row, and only
+// when that row is the cached account's own session (same server, user and
+// device), since the token is bound to that device.
 export function seedLibrary(dataDir, account) {
   const file = path.join(dataDir, "library.db")
-  if (existsSync(file)) throw new Error(`${file} already exists; refusing to seed over it`)
+  if (existsSync(file)) return spliceToken(file, account)
   const database = new DatabaseSync(file)
   try {
     database.exec(`CREATE TABLE credentials (
@@ -111,6 +116,21 @@ export function seedLibrary(dataDir, account) {
       .prepare("INSERT INTO credentials (id, server_url, user_id, user_name, server_id, device_id, token, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?)")
       .run(account.serverUrl, account.userId, account.userName, account.serverId, account.deviceId, account.token, Math.floor(Date.now() / 1000))
     database.exec("PRAGMA user_version = 1")
+  } finally {
+    database.close()
+  }
+  return "created"
+}
+
+function spliceToken(file, account) {
+  const database = new DatabaseSync(file)
+  try {
+    const row = database.prepare("SELECT server_url, server_id, user_id, device_id FROM credentials WHERE id = 1").get()
+    const expected = { server_url: account.serverUrl, server_id: account.serverId, user_id: account.userId, device_id: account.deviceId }
+    const differs = Object.keys(expected).filter((key) => row?.[key] !== expected[key])
+    if (differs.length) throw new Error(`${file} holds another session than the cached one for ${account.server} (${differs.join(", ")} differ); refusing to put the token in`)
+    database.prepare("UPDATE credentials SET token = ? WHERE id = 1").run(account.token)
+    return "spliced"
   } finally {
     database.close()
   }

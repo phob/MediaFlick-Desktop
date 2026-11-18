@@ -7,6 +7,10 @@ use crate::app::services::{self as app_services, Services};
 use crate::preferences::AppSettings;
 
 static SERVICES: OnceLock<Arc<Services>> = OnceLock::new();
+/// Why the services failed to open. Set once, it is final for the process:
+/// a failed open is not retried on the next request. A retry would only redo
+/// the same work under `INIT_LOCK`, which the UI thread waits on, and a failed
+/// `library.db` migration would run and roll back again on every request.
 static INIT_ERROR: OnceLock<String> = OnceLock::new();
 /// `OnceLock::set` only makes the *result* single-shot, not the work leading up
 /// to it, so the whole sequence is serialized here instead.
@@ -31,7 +35,13 @@ pub(in crate::shell) fn init_error() -> Option<&'static str> {
     reason = "the services are not open yet, so settings.json is read here to open them"
 )]
 pub(in crate::shell) fn init() -> Option<Arc<Services>> {
-    services().or_else(|| init_with_settings(AppSettings::load_at_startup()))
+    if let Some(services) = services() {
+        return Some(services);
+    }
+    if INIT_ERROR.get().is_some() {
+        return None;
+    }
+    init_with_settings(AppSettings::load_at_startup())
 }
 
 pub(in crate::shell) fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>> {
@@ -51,6 +61,9 @@ pub(in crate::shell) fn init_with_settings(initial_settings: AppSettings) -> Opt
     };
     if let Some(services) = SERVICES.get() {
         return Some(services.clone());
+    }
+    if INIT_ERROR.get().is_some() {
+        return None;
     }
     let services = match app_services::open(&permit, initial_settings) {
         Ok(services) => services,

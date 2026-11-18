@@ -17,10 +17,10 @@ static DEVICE_FILE_HELD: std::sync::Mutex<Option<String>> = std::sync::Mutex::ne
 
 impl AppSettings {
     /// Reads settings.json for startup. `main` reads it once per process, and
-    /// the shell's service locator reads it again for each API request that
-    /// arrives before the services are open, including after a failed open.
-    /// Once they are open, runtime code receives settings from
-    /// `PreferencesService` instead of reading the file.
+    /// the shell's service locator reads it again for an API request that
+    /// arrives before the services have opened or failed to open. Once they
+    /// are open, runtime code receives settings from `PreferencesService`
+    /// instead of reading the file.
     pub fn load_at_startup() -> Self {
         Self::load()
     }
