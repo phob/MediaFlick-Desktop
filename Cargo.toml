@@ -62,7 +62,7 @@ unwrap_used = "deny"
 
 [dev-dependencies]
 sha2 = "0.11"
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 sevenz-rust2 = { version = "0.25", default-features = false, features = ["util"] }

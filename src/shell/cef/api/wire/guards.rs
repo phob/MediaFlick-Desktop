@@ -445,7 +445,7 @@ struct Claims {
 }
 
 fn impl_target(item: &syn::ItemImpl) -> Option<(String, String)> {
-    let (_, trait_path, _) = item.trait_.as_ref()?;
+    let (trait_path, _) = item.trait_.as_ref()?;
     let trait_name = trait_path.segments.last()?.ident.to_string();
     let syn::Type::Path(self_ty) = item.self_ty.as_ref() else {
         return None;
