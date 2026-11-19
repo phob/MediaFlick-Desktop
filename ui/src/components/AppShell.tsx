@@ -1,5 +1,5 @@
 import { useViewing } from "@/lib/viewing"
-import { useEffect, useLayoutEffect, useState, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { matchPath, useLocation } from "react-router-dom"
 import { AppSidebar } from "@/components/AppSidebar"
 import { PlayerBar } from "@/components/PlayerBar"
@@ -17,28 +17,17 @@ import { useScrollRestoration } from "@/lib/scroll-restoration"
 import mediaFlickLogo from "../../../distribution/app-icon.svg"
 
 const PLAYER_CHROME_HIDE_DELAY_MS = 3000
-const CURSOR_REVEAL_DISTANCE_PX = 10
-const PLAYER_BAR_REVEAL_HEIGHT_PX = 112
-const PLAYER_BRAND_REVEAL_WIDTH_PX = 220
-const PLAYER_BRAND_REVEAL_HEIGHT_PX = 90
-
-function pointerIsNearPlayerChrome(event: MouseEvent) {
-  const nearPlayerBar = event.clientY >= window.innerHeight - PLAYER_BAR_REVEAL_HEIGHT_PX
-  const nearBrand =
-    event.clientX <= PLAYER_BRAND_REVEAL_WIDTH_PX &&
-    event.clientY <= PLAYER_BRAND_REVEAL_HEIGHT_PX
-  return nearPlayerBar || nearBrand
-}
+const PLAYER_CHROME_REVEAL_DEADZONE_PX = 10
 
 interface PointerPosition {
   clientX: number
   clientY: number
 }
 
-function pointerMovedFarEnough(event: MouseEvent, origin: PointerPosition) {
+function pointerLeftDeadzone(origin: PointerPosition, event: MouseEvent) {
   const deltaX = event.clientX - origin.clientX
   const deltaY = event.clientY - origin.clientY
-  return deltaX * deltaX + deltaY * deltaY >= CURSOR_REVEAL_DISTANCE_PX ** 2
+  return deltaX * deltaX + deltaY * deltaY > PLAYER_CHROME_REVEAL_DEADZONE_PX ** 2
 }
 
 export function RouteScrollViewport({ children }: { children: ReactNode }) {
@@ -52,99 +41,73 @@ export function RouteScrollViewport({ children }: { children: ReactNode }) {
   )
 }
 
+/**
+ * The Built-in player's chrome (brand and player bar) and the cursor show
+ * together when the pointer moves past a deadzone anywhere over the window,
+ * and hide after a few seconds without such a move. They stay while paused,
+ * while a bar menu is open, and while the pointer or keyboard focus is in the
+ * bar.
+ */
 function IntegratedPlayerOverlay({ paused }: { paused: boolean }) {
-  const [playerChromeVisible, setPlayerChromeVisible] = useState(true)
-  const [cursorRecentlyMoved, setCursorRecentlyMoved] = useState(true)
+  const [pointerIdle, setPointerIdle] = useState(false)
   const [playerMenuOpen, setPlayerMenuOpen] = useState(false)
-  const chromeVisible = paused || playerMenuOpen || playerChromeVisible
-  const cursorVisible = paused || playerMenuOpen || cursorRecentlyMoved
-  const handlePlayerMenuOpenChange = (open: boolean) => {
-    setPlayerMenuOpen(open)
-    if (open) setPlayerChromeVisible(true)
-  }
+  const [pointerOverBar, setPointerOverBar] = useState(false)
+  const [keyboardFocusInBar, setKeyboardFocusInBar] = useState(false)
+  const held = paused || playerMenuOpen || pointerOverBar || keyboardFocusInBar
+  // A hold resets idleness, so the chrome stays for the full delay after it.
+  if (held && pointerIdle) setPointerIdle(false)
+  const chromeVisible = held || !pointerIdle
+
+  // `origin` is where the pointer last counted as moving, or where it rested
+  // when the chrome hid; null until the first move, which only sets it.
+  const pointer = useRef<{ origin: PointerPosition | null; last: PointerPosition | null }>({ origin: null, last: null })
 
   useEffect(() => {
-    let chromeHideTimer: number | undefined
-    let cursorHideTimer: number | undefined
-    let pointerPosition: PointerPosition | undefined
-    let cursorRevealOrigin: PointerPosition | null | undefined
-    const clearHideTimers = () => {
-      if (chromeHideTimer !== undefined) window.clearTimeout(chromeHideTimer)
-      if (cursorHideTimer !== undefined) window.clearTimeout(cursorHideTimer)
-      chromeHideTimer = undefined
-      cursorHideTimer = undefined
-    }
-    const scheduleChromeHide = () => {
-      if (chromeHideTimer !== undefined) window.clearTimeout(chromeHideTimer)
-      if (paused || playerMenuOpen) return
-      chromeHideTimer = window.setTimeout(
-        () => setPlayerChromeVisible(false),
-        PLAYER_CHROME_HIDE_DELAY_MS,
-      )
-    }
-    const scheduleCursorHide = () => {
-      if (cursorHideTimer !== undefined) window.clearTimeout(cursorHideTimer)
-      if (paused || playerMenuOpen) return
-      cursorHideTimer = window.setTimeout(() => {
-        cursorRevealOrigin = pointerPosition ?? null
-        setCursorRecentlyMoved(false)
+    let hideTimer: number | undefined
+    const scheduleHide = () => {
+      window.clearTimeout(hideTimer)
+      if (held) return
+      hideTimer = window.setTimeout(() => {
+        pointer.current.origin = pointer.current.last
+        setPointerIdle(true)
       }, PLAYER_CHROME_HIDE_DELAY_MS)
     }
     const handleMouseMove = (event: MouseEvent) => {
-      const previousPosition = pointerPosition
-      pointerPosition = { clientX: event.clientX, clientY: event.clientY }
-
-      if (cursorRevealOrigin !== undefined) {
-        if (cursorRevealOrigin === null) {
-          cursorRevealOrigin = pointerPosition
-          return
-        }
-        if (!pointerMovedFarEnough(event, cursorRevealOrigin)) return
-        cursorRevealOrigin = undefined
-      } else if (
-        previousPosition === undefined ||
-        (event.clientX === previousPosition.clientX && event.clientY === previousPosition.clientY)
-      ) {
-        return
-      }
-
-      setCursorRecentlyMoved(true)
-      scheduleCursorHide()
-      if (!pointerIsNearPlayerChrome(event)) return
-      setPlayerChromeVisible(true)
-      scheduleChromeHide()
-    }
-    const rearmAutoHide = () => {
-      scheduleChromeHide()
-      scheduleCursorHide()
+      const { origin } = pointer.current
+      pointer.current.last = { clientX: event.clientX, clientY: event.clientY }
+      if (origin !== null && !pointerLeftDeadzone(origin, event)) return
+      pointer.current.origin = pointer.current.last
+      if (origin === null) return
+      setPointerIdle(false)
+      scheduleHide()
     }
     const handleVisibilityChange = () => {
-      if (!document.hidden) rearmAutoHide()
+      if (!document.hidden) scheduleHide()
     }
 
-    if (!paused && !playerMenuOpen) rearmAutoHide()
+    scheduleHide()
 
     window.addEventListener("mousemove", handleMouseMove)
-    window.addEventListener("resize", rearmAutoHide)
-    window.addEventListener("focus", rearmAutoHide)
-    window.addEventListener("pageshow", rearmAutoHide)
-    document.addEventListener("fullscreenchange", rearmAutoHide)
+    window.addEventListener("resize", scheduleHide)
+    window.addEventListener("focus", scheduleHide)
+    window.addEventListener("pageshow", scheduleHide)
+    document.addEventListener("fullscreenchange", scheduleHide)
     document.addEventListener("visibilitychange", handleVisibilityChange)
     return () => {
-      clearHideTimers()
+      window.clearTimeout(hideTimer)
       window.removeEventListener("mousemove", handleMouseMove)
-      window.removeEventListener("resize", rearmAutoHide)
-      window.removeEventListener("focus", rearmAutoHide)
-      window.removeEventListener("pageshow", rearmAutoHide)
-      document.removeEventListener("fullscreenchange", rearmAutoHide)
+      window.removeEventListener("resize", scheduleHide)
+      window.removeEventListener("focus", scheduleHide)
+      window.removeEventListener("pageshow", scheduleHide)
+      document.removeEventListener("fullscreenchange", scheduleHide)
       document.removeEventListener("visibilitychange", handleVisibilityChange)
     }
-  }, [paused, playerMenuOpen])
+  }, [held])
 
   useLayoutEffect(() => {
-    document.documentElement.toggleAttribute("data-libmpv-cursor-hidden", !cursorVisible)
+    document.documentElement.toggleAttribute("data-libmpv-cursor-hidden", !chromeVisible)
     return () => document.documentElement.removeAttribute("data-libmpv-cursor-hidden")
-  }, [cursorVisible])
+  }, [chromeVisible])
 
   return (
     <main className="libmpv-overlay pointer-events-none flex h-full min-w-0 flex-col justify-between overflow-hidden">
@@ -164,8 +127,19 @@ function IntegratedPlayerOverlay({ paused }: { paused: boolean }) {
         data-visible={chromeVisible}
         aria-hidden={!chromeVisible}
         inert={!chromeVisible}
+        onPointerEnter={() => setPointerOverBar(true)}
+        onPointerLeave={() => setPointerOverBar(false)}
+        onFocus={(event) => {
+          // Focus inside a menu's portal bubbles here too; the open menu holds the bar then.
+          setKeyboardFocusInBar(event.currentTarget.contains(event.target) && event.target.matches(":focus-visible"))
+        }}
+        onBlur={(event) => {
+          if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) {
+            setKeyboardFocusInBar(false)
+          }
+        }}
       >
-        <PlayerBar onMenuOpenChange={handlePlayerMenuOpenChange} />
+        <PlayerBar onMenuOpenChange={setPlayerMenuOpen} />
       </div>
     </main>
   )

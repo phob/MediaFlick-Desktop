@@ -29,6 +29,129 @@ async function stopFromBar(ctx) {
   await ctx.press({ role: "menuitem", name: "Stop playback" })
 }
 
+// The Built-in player's chrome reveal rule: a pointer move of more than 10 px
+// from where the pointer rested, anywhere over the window, shows the bar and
+// the cursor; 3 s without such a move hides them; an open bar menu, the
+// pointer over the bar and keyboard focus in the bar hold them.
+const REVEAL_DEADZONE_PX = 10
+const HIDE_DELAY_MS = 3000
+const HOLD_MS = HIDE_DELAY_MS + 2000
+
+const chrome = (ctx) => ctx.app.evaluate(`(() => {
+  const [brand, bar] = document.querySelectorAll(".libmpv-overlay-chrome")
+  return { brand: brand?.dataset.visible === "true", bar: bar?.dataset.visible === "true", cursorHidden: document.documentElement.hasAttribute("data-libmpv-cursor-hidden") }
+})()`)
+
+// Returns when the page had the move, before the pause between moves.
+async function moveTo(ctx, [x, y]) {
+  await ctx.app.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" })
+  const movedAt = Date.now()
+  await ctx.sleep(60)
+  return movedAt
+}
+
+// Moves in steps of `stepPx`, as a hand on a mouse does, not in one jump.
+// Returns when the page had the last step.
+async function glide(ctx, from, to, stepPx) {
+  const distance = Math.hypot(to[0] - from[0], to[1] - from[1])
+  const steps = Math.max(1, Math.ceil(distance / stepPx))
+  let movedAt = 0
+  for (let step = 1; step <= steps; step++) {
+    movedAt = await moveTo(ctx, [from[0] + ((to[0] - from[0]) * step) / steps, from[1] + ((to[1] - from[1]) * step) / steps])
+  }
+  return movedAt
+}
+
+// An open menu is modal: Radix hides the rest of the page, the bar included,
+// from the accessibility tree, so `menuOpen` skips the Pause lookup.
+async function barShown(ctx, shown, description, { menuOpen = false } = {}) {
+  const state = await chrome(ctx)
+  const ok = state.bar === shown && state.brand === shown && state.cursorHidden === !shown
+  const pause = menuOpen ? null : await ctx.exists({ role: "button", name: "Pause" })
+  const reachable = pause === null ? "" : `, Pause ${pause ? "reachable" : "not reachable"}`
+  ctx.check(ok && (pause === null || pause === shown), `${description} (bar ${state.bar ? "shown" : "hidden"}, brand ${state.brand ? "shown" : "hidden"}, cursor ${state.cursorHidden ? "hidden" : "shown"}${reachable})`)
+  return state
+}
+
+// Measures from the last move that counted until the chrome hides.
+async function waitForHide(ctx, since) {
+  const elapsed = await ctx.until(async () => ((await chrome(ctx)).bar ? null : Date.now() - since), "the player bar to hide", HIDE_DELAY_MS + 5000, { quiet: true })
+  return elapsed
+}
+
+async function checkBarReveal(ctx) {
+  const [width, height] = await ctx.app.evaluate("[innerWidth, innerHeight]")
+  const centre = [Math.round(width / 2), Math.round(height / 2)]
+  const offset = ([x, y], [dx, dy]) => [x + dx, y + dy]
+  const reveal = { deadzonePx: REVEAL_DEADZONE_PX, hideDelayMs: HIDE_DELAY_MS, window: [width, height] }
+
+  ctx.step("bar reveal: glide to the middle of the video in 12 px steps, then rest")
+  const rested = await glide(ctx, offset(centre, [-60, 0]), centre, 12)
+  await barShown(ctx, true, "a move over the middle of the video shows the bar")
+  // One page read at a fixed time after the last move: the accessibility
+  // lookups above can take a second on a busy machine.
+  await ctx.sleep(Math.max(0, rested + HIDE_DELAY_MS - 1000 - Date.now()))
+  const before = await chrome(ctx)
+  const sampledAfterMs = Date.now() - rested
+  ctx.check(sampledAfterMs < HIDE_DELAY_MS - 200, `sampled the bar ${sampledAfterMs} ms after the last move, before the delay ends`)
+  ctx.check(before.bar && before.brand && !before.cursorHidden, `the bar, brand and cursor are still shown ${sampledAfterMs} ms after the last move`)
+  reveal.hiddenAfterMs = await waitForHide(ctx, rested)
+  ctx.check(reveal.hiddenAfterMs >= HIDE_DELAY_MS - 100 && reveal.hiddenAfterMs <= HIDE_DELAY_MS + 700, `the bar hid ${reveal.hiddenAfterMs} ms after the last move (expected ${HIDE_DELAY_MS} ms)`)
+  await barShown(ctx, false, "the bar, brand and cursor hide after the idle delay")
+  await ctx.screenshot("02a-bar-hidden-idle")
+  displayCapture(ctx, "02a-bar-hidden-idle-display")
+
+  const jitter = [[3, 0], [0, -4], [-5, 5], [6, -6], [7, 7], [-9, 0], [0, 9], [0, 0]]
+  ctx.step(`bar reveal: jitter within ${REVEAL_DEADZONE_PX} px of the rest point: ${jitter.map(([dx, dy]) => `(${dx},${dy})`).join(" ")}`)
+  for (const delta of jitter) await moveTo(ctx, offset(centre, delta))
+  await ctx.sleep(1000)
+  await barShown(ctx, false, "moves within the deadzone leave the bar hidden")
+  reveal.jitter = jitter.map(([dx, dy]) => Math.hypot(dx, dy))
+  await ctx.screenshot("02b-bar-hidden-after-jitter")
+
+  ctx.step("bar reveal: glide 32 px right across the middle of the video in 4 px steps")
+  await glide(ctx, centre, offset(centre, [32, 0]), 4)
+  await ctx.until(async () => (await chrome(ctx)).bar, "the player bar to show", 1000)
+  await barShown(ctx, true, "a slow move past the deadzone over the middle of the video shows the bar")
+  await ctx.screenshot("02c-bar-revealed")
+  displayCapture(ctx, "02c-bar-revealed-display")
+
+  await ctx.hover({ role: "button", name: "Pause" })
+  await ctx.sleep(HOLD_MS)
+  await barShown(ctx, true, `the bar stays while the pointer rests on it (${HOLD_MS} ms)`)
+
+  const menu = { role: "menu", name: "Playback settings" }
+  await ctx.press({ role: "button", name: "Playback settings" })
+  await ctx.find(menu, { timeout: 5000 })
+  const away = [Math.round(width * 0.3), Math.round(height * 0.35)]
+  ctx.step(`bar reveal: pointer off the bar to (${away.join(",")}) with the menu open`)
+  await moveTo(ctx, away)
+  ctx.check(!(await ctx.app.evaluate(`document.querySelectorAll(".libmpv-overlay-chrome")[1]?.matches(":hover")`)), "the pointer left the bar")
+  await ctx.sleep(HOLD_MS)
+  reveal.focusInMenu = await ctx.app.evaluate(`({ role: document.activeElement?.getAttribute("role"), focusVisible: document.activeElement?.matches(":focus-visible"), inBarDom: document.querySelectorAll(".libmpv-overlay-chrome")[1]?.contains(document.activeElement) })`)
+  ctx.step(`focus while the menu is open: ${JSON.stringify(reveal.focusInMenu)}`)
+  ctx.check(await ctx.exists(menu), "the Playback settings menu is still open")
+  await barShown(ctx, true, `the bar stays while one of its menus is open (${HOLD_MS} ms, pointer off the bar)`, { menuOpen: true })
+  await ctx.screenshot("02d-bar-held-by-menu")
+  displayCapture(ctx, "02d-bar-held-by-menu-display")
+
+  await ctx.key("Escape", { keyCode: 27 })
+  await ctx.until(async () => !(await ctx.exists(menu)), "the menu to close", 5000)
+  reveal.focusAfterEscape = await ctx.app.evaluate(`({ label: document.activeElement?.getAttribute("aria-label"), focusVisible: document.activeElement?.matches(":focus-visible") })`)
+  ctx.step(`focus after Escape: ${JSON.stringify(reveal.focusAfterEscape)}`)
+  await ctx.sleep(HOLD_MS)
+  await barShown(ctx, true, `the bar stays while keyboard focus is in it (${HOLD_MS} ms)`)
+
+  ctx.step("bar reveal: click the middle of the video to take focus out of the bar")
+  const clicked = await moveTo(ctx, centre)
+  for (const type of ["mousePressed", "mouseReleased"]) await ctx.app.send("Input.dispatchMouseEvent", { type, x: centre[0], y: centre[1], button: "left", clickCount: 1 })
+  ctx.check(!(await ctx.app.evaluate(`document.querySelectorAll(".libmpv-overlay-chrome")[1]?.contains(document.activeElement)`)), "focus left the bar")
+  reveal.hiddenAfterReleaseMs = await waitForHide(ctx, clicked)
+  ctx.check(reveal.hiddenAfterReleaseMs <= HIDE_DELAY_MS + 700, `with every hold released the bar hid ${reveal.hiddenAfterReleaseMs} ms after the last move`)
+  ctx.check((await ctx.player()).paused === false, "the reveal checks left playback running")
+  return reveal
+}
+
 async function pickMovie(ctx) {
   const { Items } = await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&recursive=true&includeItemTypes=Movie&isPlayed=false&sortBy=SortName&fields=MediaStreams&limit=200`)
   const movie = Items.find((item) => {
@@ -85,6 +208,7 @@ export default async function playback(ctx) {
   ctx.check(t2 > t1 + 1 && (await ctx.mpv("pause")) === false, `mpv plays (time-pos ${t1.toFixed(1)} → ${t2.toFixed(1)} s)`)
   report.mpv = { vo: await ctx.mpv("current-vo"), hwdec: await ctx.mpv("hwdec-current"), timePos: [t1, t2] }
   displayCapture(ctx, "02-playing")
+  if (integrated) report.reveal = await checkBarReveal(ctx)
 
   const beforeRapid = (await ctx.player()).positionMs
   for (let press = 0; press < 6; press++) await ctx.key("ArrowRight", { code: "ArrowRight", keyCode: 39 })

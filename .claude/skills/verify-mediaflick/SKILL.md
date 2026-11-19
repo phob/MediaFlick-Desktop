@@ -161,7 +161,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | `player()` | `GET /api/player/state`: `active`, `itemId`, `playMethod`, `positionMs`, `durationMs`, `paused`, `tracks`, `skipSegments`, `diagnostics`. |
 | `mpv(property)` | Reads one mpv property (`time-pos`, `pause`, `current-vo`, `hwdec-current`) over mpv's IPC socket, found through `app.log`'s `mpv IPC connected ipc_path=`, on one connection kept for the drive. On Windows, when a script has moved mpv's IPC server (SVP's `mpvSockets.lua` re-points it to `<TEMP>\mpvSockets\<pid>`), it follows the move and logs `mpv IPC moved by a script`. Reads only: the app stays mpv's single command writer. |
 | `playstates()` | The playstate reports in `app.log`: `{ queued: [{ at, endpoint, itemId, positionS }], sent: [{ at, endpoint, itemId, status }] }`. Needs `--log-level "debug,jellyfin.playstate=trace"`. |
-| `revealPlayer()` | Moves the pointer near the bottom edge so the Built-in player's hidden, `inert` bar comes back for ARIA lookups. |
+| `revealPlayer()` | Moves the pointer twice near the bottom edge, past the Built-in player's 10 px reveal deadzone, so its hidden, `inert` bar comes back for ARIA lookups. |
 | `displayCapture(name, { seconds })` | Linux only: the whole X display with ffmpeg `x11grab` as `<name>.png`, or an MP4 clip with `seconds`. It contains the mpv video, which CDP screenshots (the page alone) do not. |
 | `pathname()` | `location.pathname + location.search`. |
 | `api(path)` | GET the app's own `/api/*` as the UI does, to read results. Never the action under test. |
