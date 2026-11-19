@@ -88,8 +88,13 @@ async function checkBarReveal(ctx) {
   ctx.step("bar reveal: glide to the middle of the video in 12 px steps, then rest")
   const rested = await glide(ctx, offset(centre, [-60, 0]), centre, 12)
   await barShown(ctx, true, "a move over the middle of the video shows the bar")
-  await ctx.sleep(HIDE_DELAY_MS - 600)
-  await barShown(ctx, true, `the bar is still shown ${HIDE_DELAY_MS - 600} ms after the last move`)
+  // One page read at a fixed time after the last move: the accessibility
+  // lookups above can take a second on a busy machine.
+  await ctx.sleep(Math.max(0, rested + HIDE_DELAY_MS - 1000 - Date.now()))
+  const before = await chrome(ctx)
+  const sampledAfterMs = Date.now() - rested
+  ctx.check(sampledAfterMs < HIDE_DELAY_MS - 200, `sampled the bar ${sampledAfterMs} ms after the last move, before the delay ends`)
+  ctx.check(before.bar && before.brand && !before.cursorHidden, `the bar, brand and cursor are still shown ${sampledAfterMs} ms after the last move`)
   reveal.hiddenAfterMs = await waitForHide(ctx, rested)
   ctx.check(reveal.hiddenAfterMs >= HIDE_DELAY_MS - 100 && reveal.hiddenAfterMs <= HIDE_DELAY_MS + 700, `the bar hid ${reveal.hiddenAfterMs} ms after the last move (expected ${HIDE_DELAY_MS} ms)`)
   await barShown(ctx, false, "the bar, brand and cursor hide after the idle delay")
