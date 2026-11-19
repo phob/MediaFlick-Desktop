@@ -169,8 +169,7 @@ fn dispatch(request: &ApiRequest, services: impl FnOnce() -> Option<Arc<Services
     };
 
     let Some(services) = services() else {
-        return ApiResponse::error(
-            503,
+        return ApiResponse::startup_failed(
             locator::init_error().unwrap_or("the library database is unavailable"),
         );
     };

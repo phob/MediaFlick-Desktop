@@ -223,6 +223,12 @@ struct ErrorBody {
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     account_changed: Option<bool>,
+    /// Set on the 503 that answers every request once the services failed
+    /// to open at startup. `error` says why; the failure is final for the
+    /// process, so the UI shows it instead of signing in.
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    startup_failed: Option<bool>,
 }
 
 impl ApiResponse {
@@ -257,6 +263,20 @@ impl ApiResponse {
                 error: message.into(),
                 expired: None,
                 account_changed: None,
+                startup_failed: None,
+            },
+        )
+    }
+
+    /// The answer to every request after the services failed to open.
+    pub(super) fn startup_failed(reason: &str) -> Self {
+        Self::json(
+            503,
+            ErrorBody {
+                error: reason.to_string(),
+                expired: None,
+                account_changed: None,
+                startup_failed: Some(true),
             },
         )
     }
@@ -268,6 +288,7 @@ impl ApiResponse {
                 error: error.to_string(),
                 expired: Some(*error == ApiError::Unauthorized),
                 account_changed: (*error == ApiError::AccountChanged).then_some(true),
+                startup_failed: None,
             },
         )
     }

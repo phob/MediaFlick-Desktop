@@ -83,6 +83,7 @@ pub(super) fn migrate_with(
     })
     .map_err(|error| OpenError::Migration {
         from: version,
+        step: version..target,
         error,
     })?;
     tracing::debug!(target: "library.db", version = target, "library schema ready");
@@ -101,10 +102,22 @@ fn upgrade(
         .ok()
         .and_then(|first| migrations.get(first..))
         .ok_or(OpenError::NewerSchema { found: from })?;
+    // The step that runs when the change fails; the whole range once every
+    // step ran, for a failed integrity check or commit.
+    let mut running = from..to;
     change_schema(connection, to, |transaction| {
-        steps.iter().try_for_each(|step| step(transaction))
+        for (version, step) in (from..).zip(steps) {
+            running = version..version + 1;
+            step(transaction)?;
+        }
+        running = from..to;
+        Ok(())
     })
-    .map_err(|error| OpenError::Migration { from, error })?;
+    .map_err(|error| OpenError::Migration {
+        from,
+        step: running,
+        error,
+    })?;
     tracing::info!(target: "library.db", from, to, "library schema migrated {from} → {to}");
     Ok(())
 }

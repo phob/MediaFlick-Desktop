@@ -25,9 +25,10 @@
 //
 // Scenarios: 1-update (this build on the 0.2.0 profile), 2-back (the real
 // 0.2.0 on what 1-update left), 3-forward (this build again on what 2-back
-// left), and 4-newer-refused (this build on the profile stamped with a newer
-// schema: it must refuse it once, leave the file as it was, and keep the
-// window up). Every expectation comes from the profile as the previous app
+// left), 4-newer-refused (this build on the profile stamped with a newer
+// schema) and 5-migration-failed (stamped with schema 0, so the schema change
+// fails and rolls back): this build must refuse the file once, leave it as it
+// was, and show the reason on a startup error screen instead of sign-in. Every expectation comes from the profile as the previous app
 // left it (before.json), never from the code under test. The artifact is
 // build/e2e/upgrade-0-2-0/report.json, with each scenario's snapshots,
 // screenshots and logs next to it. Exits non-zero when a scenario fails.
@@ -109,32 +110,55 @@ const SCENARIOS = [
   },
   {
     id: "4-newer-refused",
-    title: "A library.db from a newer MediaFlick: refused once, left as it was, the window still shown",
-    async run() {
-      const profile = copyProfile(original, path.join(out, this.id, "profile"))
-      const { data } = appDirs(profile)
-      writeDatabase(data, (db) => {
-        db.exec(`PRAGMA user_version = ${SCHEMA + 1}`)
-        db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
-      })
-      const file = path.join(data, "library.db")
-      const bytes = await sha256File(file)
-      const env = { ...process.env, HOME: path.join(profile, "home"), XDG_CONFIG_HOME: path.join(profile, "config"), XDG_DATA_HOME: path.join(profile, "data"), XDG_CACHE_HOME: path.join(profile, "cache"), XDG_STATE_HOME: path.join(profile, "state"), LD_LIBRARY_PATH: path.dirname(staged), ...(existsSync(path.join(path.dirname(staged), "libcef.so")) ? { LD_PRELOAD: path.join(path.dirname(staged), "libcef.so") } : {}) }
-      const stats = spawnSync(staged, ["--library-stats"], env)
-      const checks = [
-        { ok: stats.code !== 0, message: "--library-stats refuses the newer library.db", detail: stats.code },
-        { ok: /newer MediaFlick/.test(stats.stderr) && /left as it was/.test(stats.stderr), message: "the refusal says a newer MediaFlick wrote it and that it was left as it was", detail: stats.stderr.trim() },
-        { ok: !/remove library\.db|delete library\.db/i.test(stats.stderr), message: "the refusal does not tell the user to remove library.db" },
-        { ok: (await sha256File(file)) === bytes, message: "library.db is byte for byte as it was" },
-      ]
-      const run = await session(this.id, "library-refused", ["--services-down", "--seed-data", data], { MEDIAFLICK_VERIFY_REFUSED_SHA256: bytes, MEDIAFLICK_VERIFY_REFUSED_SCHEMA: String(SCHEMA + 1) }, 600)
-      const result = collect(this.id, run, "library-refused.json")
-      rmSync(profile, { recursive: true, force: true })
-      const passed = result.passed && checks.every((check) => check.ok)
-      return { ...result, passed, checks: [...checks, ...(result.checks ?? [])], error: passed ? null : [result.error, ...checks.filter((check) => !check.ok).map((check) => check.message)].filter(Boolean).join("; ") }
-    },
+    title: "A library.db from a newer MediaFlick: refused once, left as it was, the reason on a startup error screen",
+    run: () => refusedStart("4-newer-refused", {
+      schema: SCHEMA + 1,
+      says: "a newer MediaFlick wrote library.db and that it was left as it was",
+      patterns: ["newer MediaFlick", "left as it was"],
+    }),
+  },
+  {
+    id: "5-migration-failed",
+    title: "A schema change that fails and rolls back: refused once, left as it was, the reason on a startup error screen",
+    // No released step from 23 exists yet to fail, so the file claims schema
+    // 0 while it holds 0.2.0's tables: creating the schema fails on the first
+    // table that is already there, and the change rolls back.
+    run: () => refusedStart("5-migration-failed", {
+      schema: 0,
+      says: "the step from schema 0 failed on SQLite's \"table credentials already exists\" and the file was left at schema 0",
+      patterns: [`could not update library\\.db from schema 0 to ${SCHEMA}: table credentials already exists\\. The file was left at schema 0`],
+      leavesOut: { says: "the statement SQLite ran", patterns: ["CREATE TABLE", " at offset \\d"] },
+      logKeeps: { says: "the failed open in full, statement included", patterns: [`the failed open in full: could not update library\\.db from schema 0 to ${SCHEMA}: table credentials already exists in\\s+CREATE TABLE credentials \\(`] },
+    }),
   },
 ]
+
+// This build on a copy of the 0.2.0 profile whose library.db is stamped
+// `schema`, which it must refuse once with a reason matching `patterns`,
+// leave as it was, and show on the startup error screen.
+async function refusedStart(id, { schema, says, patterns, leavesOut, logKeeps }) {
+  const profile = copyProfile(original, path.join(out, id, "profile"))
+  const { data } = appDirs(profile)
+  writeDatabase(data, (db) => {
+    db.exec(`PRAGMA user_version = ${schema}`)
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
+  })
+  const file = path.join(data, "library.db")
+  const bytes = await sha256File(file)
+  const env = { ...process.env, HOME: path.join(profile, "home"), XDG_CONFIG_HOME: path.join(profile, "config"), XDG_DATA_HOME: path.join(profile, "data"), XDG_CACHE_HOME: path.join(profile, "cache"), XDG_STATE_HOME: path.join(profile, "state"), LD_LIBRARY_PATH: path.dirname(staged), ...(existsSync(path.join(path.dirname(staged), "libcef.so")) ? { LD_PRELOAD: path.join(path.dirname(staged), "libcef.so") } : {}) }
+  const stats = spawnSync(staged, ["--library-stats"], env)
+  const checks = [
+    { ok: stats.code !== 0, message: "--library-stats refuses the library.db", detail: stats.code },
+    { ok: patterns.every((pattern) => new RegExp(pattern).test(stats.stderr)), message: `the refusal says ${says}`, detail: stats.stderr.trim() },
+    { ok: !/remove library\.db|delete library\.db/i.test(stats.stderr), message: "the refusal does not tell the user to remove library.db" },
+    { ok: (await sha256File(file)) === bytes, message: "library.db is byte for byte as it was" },
+  ]
+  const run = await session(id, "library-refused", ["--services-down", "--seed-data", data], { MEDIAFLICK_VERIFY_REFUSED_SHA256: bytes, MEDIAFLICK_VERIFY_REFUSED_SCHEMA: String(schema), MEDIAFLICK_VERIFY_REFUSED_REASON: JSON.stringify({ says, patterns, leavesOut, logKeeps }) }, 600)
+  const result = collect(id, run, "library-refused.json")
+  rmSync(profile, { recursive: true, force: true })
+  const passed = result.passed && checks.every((check) => check.ok)
+  return { ...result, passed, checks: [...checks, ...(result.checks ?? [])], error: passed ? null : [result.error, ...checks.filter((check) => !check.ok).map((check) => check.message)].filter(Boolean).join("; ") }
+}
 
 const unknown = only ? [...only].filter((id) => !SCENARIOS.some((scenario) => scenario.id === id)) : []
 if (unknown.length) throw new Error(`--only names no scenario ${unknown.join(", ")}; the scenarios are ${SCENARIOS.map((scenario) => scenario.id).join(", ")}`)

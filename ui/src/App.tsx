@@ -4,9 +4,11 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { AppShell } from "@/components/AppShell"
 import { BootstrapRetry } from "@/components/BootstrapRetry"
 import { LoadingScreen } from "@/components/LoadingScreen"
+import { StartupFailure } from "@/components/StartupFailure"
 import { SeerrGate } from "@/components/seerr/SeerrGate"
 import { WhatsNewDialog } from "@/components/WhatsNewDialog"
 import { WindowTitleSync } from "@/components/WindowTitleSync"
+import { ApiError } from "@/lib/api"
 import { RatingsProvider } from "@/lib/ratings"
 import { TechnicalProvider } from "@/lib/technical"
 import { useLibraryMetadataBridge } from "@/lib/library-events"
@@ -39,7 +41,8 @@ import { AppearanceSync } from "@/components/AppearanceSync"
 import Settings from "@/routes/Settings"
 
 export default function App() {
-  const { data: status, isPending } = useStatusPulse()
+  const { data: status, isPending, error } = useStatusPulse()
+  const startupFailure = error instanceof ApiError && error.startupFailed ? error.message : null
   const settings = useSettings()
   const viewing = useViewing()
   const location = useLocation()
@@ -66,7 +69,9 @@ export default function App() {
 
   return (
     <ViewingContext value={viewing.data ?? null}>
-      {isPending || (catalogLoading && !showingSettings) ? (
+      {startupFailure !== null ? (
+        <StartupFailure reason={startupFailure} />
+      ) : isPending || (catalogLoading && !showingSettings) ? (
         <div className="h-full bg-background" aria-hidden />
       ) : bootstrap?.state === "retrying" && !showingSettings ? (
         <BootstrapRetry retry={bootstrap} attempting={Boolean(status?.syncing)} />

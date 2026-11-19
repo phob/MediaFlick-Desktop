@@ -43,12 +43,18 @@ export class ApiError extends Error {
    * does not carry the route's own meaning of a 409.
    */
   readonly accountChanged: boolean
-  constructor(message: string, status: number, expired: boolean, accountChanged: boolean) {
+  /**
+   * The services failed to open at startup, so every request answers this
+   * and the message says why. It is final until the app restarts.
+   */
+  readonly startupFailed: boolean
+  constructor(message: string, status: number, flags: ApiErrorFlags = {}) {
     super(message)
     this.name = "ApiError"
     this.status = status
-    this.expired = expired
-    this.accountChanged = accountChanged
+    this.expired = flags.expired ?? false
+    this.accountChanged = flags.accountChanged ?? false
+    this.startupFailed = flags.startupFailed ?? false
   }
 }
 
@@ -81,16 +87,19 @@ type Answers = { [K in RouteOf<"json">]: Extract<Routes[K], { kind: "json" }>["r
 type JsonRoute = keyof Answers
 
 type ApiErrorEnvelope = Partial<Wire.ErrorBody>
+type ApiErrorFlags = Omit<ApiErrorEnvelope, "error">
 
 function readApiErrorEnvelope(value: JsonValue): ApiErrorEnvelope | null {
   if (!isJsonObject(value)) return null
   const error = jsonString(value.error)
   const expired = jsonBoolean(value.expired)
   const accountChanged = jsonBoolean(value.accountChanged)
+  const startupFailed = jsonBoolean(value.startupFailed)
   return {
     error: error ?? undefined,
     expired: expired ?? undefined,
     accountChanged: accountChanged ?? undefined,
+    startupFailed: startupFailed ?? undefined,
   }
 }
 
@@ -103,13 +112,8 @@ async function readJson(response: Response): Promise<JsonValue> {
 }
 
 export async function responseError(response: Response): Promise<ApiError> {
-  const envelope = readApiErrorEnvelope(await readJson(response))
-  return new ApiError(
-    envelope?.error ?? `request failed (${response.status})`,
-    response.status,
-    Boolean(envelope?.expired),
-    Boolean(envelope?.accountChanged),
-  )
+  const { error, ...flags } = readApiErrorEnvelope(await readJson(response)) ?? {}
+  return new ApiError(error ?? `request failed (${response.status})`, response.status, flags)
 }
 
 /** Sends a call to a JSON or relay route and reads its answer. */

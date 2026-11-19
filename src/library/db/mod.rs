@@ -26,17 +26,28 @@ pub enum OpenError {
     NewerSchema {
         found: i32,
     },
-    /// A schema change failed and was rolled back.
+    /// A schema change failed and was rolled back: the file is still at
+    /// `from`. `step` is the change that failed, from schema to schema: one
+    /// migration step, or the whole range when the check after them failed.
     Migration {
         from: i32,
+        step: std::ops::Range<i32>,
         error: rusqlite::Error,
     },
 }
 
+/// The user reads this on the startup error screen, so a SQLite error is
+/// shown without the statement it ran, which can be the whole schema. The
+/// alternate form (`{:#}`), which goes to the log, keeps the statement.
 impl fmt::Display for OpenError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let full = formatter.alternate();
+        let sqlite = |error: &rusqlite::Error| match error {
+            rusqlite::Error::SqlInputError { msg, .. } if !full => msg.clone(),
+            error => error.to_string(),
+        };
         match self {
-            Self::Sqlite(error) => write!(formatter, "{error}"),
+            Self::Sqlite(error) => write!(formatter, "{}", sqlite(error)),
             Self::NewerSchema { found } => write!(
                 formatter,
                 "library.db is at schema {found}, which a newer MediaFlick wrote; this version reads \
@@ -44,11 +55,13 @@ impl fmt::Display for OpenError {
                  again to keep using it",
                 migrate::SCHEMA_VERSION
             ),
-            Self::Migration { from, error } => write!(
+            Self::Migration { from, step, error } => write!(
                 formatter,
-                "could not update library.db from schema {from} to {}: {error}. The file was left \
-                 at schema {from}",
-                migrate::SCHEMA_VERSION
+                "could not update library.db from schema {} to {}: {}. The file was left at \
+                 schema {from}",
+                step.start,
+                step.end,
+                sqlite(error)
             ),
         }
     }
