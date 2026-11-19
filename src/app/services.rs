@@ -317,20 +317,39 @@ fn open_library() -> Result<Arc<Library>, StartupFailure> {
         Ok(library) => return Ok(Arc::new(library)),
         Err(error) => error,
     };
-    let message = format!("could not open {}: {error}", path.display());
+    let refusal = library_refusal(&error);
+    let message = match refusal {
+        Some(_) => format!("could not open {}: {error}", path.display()),
+        None => format!(
+            "could not open {}: {error}. Another program is using library.db: close it, then \
+             restart MediaFlick",
+            path.display()
+        ),
+    };
     tracing::error!(target: "library.db", "{message}");
     let full = format!("{error:#}");
     if full != error.to_string() {
         tracing::error!(target: "library.db", "the failed open in full: {full}");
     }
-    let refusal = match error {
-        OpenError::NewerSchema { .. } => LibraryRefusal::NewerSchema,
-        OpenError::Sqlite(_) | OpenError::Migration { .. } => LibraryRefusal::Unusable,
-    };
     Err(StartupFailure {
         reason: message,
-        library: Some(refusal),
+        library: refusal,
     })
+}
+
+/// How a failed open refused `library.db`, for Recreate library. `None` when
+/// another program holds the file (SQLite's BUSY or LOCKED): moving a
+/// database another connection has open can corrupt it, so that one is only
+/// explained.
+fn library_refusal(error: &OpenError) -> Option<LibraryRefusal> {
+    let sqlite = match error {
+        OpenError::NewerSchema { .. } => return Some(LibraryRefusal::NewerSchema),
+        OpenError::Sqlite(error) | OpenError::Migration { error, .. } => error,
+    };
+    match sqlite.sqlite_error_code() {
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) => None,
+        _ => Some(LibraryRefusal::Unusable),
+    }
 }
 
 pub fn start(_: &InitPermit, services: &Arc<Services>) {
@@ -604,5 +623,61 @@ pub(crate) mod test_support {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.directory);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A failure with SQLite's result code `code`, as rusqlite reports one.
+    fn sqlite(code: i32) -> rusqlite::Error {
+        rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None)
+    }
+
+    /// The codes are SQLite's documented result codes
+    /// (https://sqlite.org/rescode.html): SQLITE_BUSY 5, SQLITE_LOCKED 6 and
+    /// their extended codes SQLITE_BUSY_RECOVERY 261, SQLITE_BUSY_SNAPSHOT
+    /// 517, SQLITE_BUSY_TIMEOUT 773 and SQLITE_LOCKED_SHAREDCACHE 262 mean
+    /// another connection holds the file; SQLITE_ERROR 1, SQLITE_CANTOPEN 14,
+    /// SQLITE_CORRUPT 11 and SQLITE_NOTADB 26 do not.
+    #[test]
+    fn a_library_another_program_holds_is_never_offered_for_recreation() {
+        for code in [5, 6, 261, 517, 773, 262] {
+            assert_eq!(
+                library_refusal(&OpenError::Sqlite(sqlite(code))),
+                None,
+                "{code}"
+            );
+            assert_eq!(
+                library_refusal(&OpenError::Migration {
+                    from: 23,
+                    step: 23..24,
+                    error: sqlite(code),
+                }),
+                None,
+                "{code} during a migration"
+            );
+        }
+        for code in [1, 14, 11, 26] {
+            assert_eq!(
+                library_refusal(&OpenError::Sqlite(sqlite(code))),
+                Some(LibraryRefusal::Unusable),
+                "{code}"
+            );
+            assert_eq!(
+                library_refusal(&OpenError::Migration {
+                    from: 0,
+                    step: 0..23,
+                    error: sqlite(code),
+                }),
+                Some(LibraryRefusal::Unusable),
+                "{code} during a migration"
+            );
+        }
+        assert_eq!(
+            library_refusal(&OpenError::NewerSchema { found: 24 }),
+            Some(LibraryRefusal::NewerSchema)
+        );
     }
 }
