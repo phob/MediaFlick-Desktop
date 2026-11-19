@@ -83,6 +83,7 @@ pub(super) fn migrate_with(
     })
     .map_err(|error| OpenError::Migration {
         from: version,
+        to: target,
         error,
     })?;
     tracing::debug!(target: "library.db", version = target, "library schema ready");
@@ -104,7 +105,7 @@ fn upgrade(
     change_schema(connection, to, |transaction| {
         steps.iter().try_for_each(|step| step(transaction))
     })
-    .map_err(|error| OpenError::Migration { from, error })?;
+    .map_err(|error| OpenError::Migration { from, to, error })?;
     tracing::info!(target: "library.db", from, to, "library schema migrated {from} → {to}");
     Ok(())
 }

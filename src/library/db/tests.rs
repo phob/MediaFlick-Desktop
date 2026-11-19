@@ -499,6 +499,36 @@ fn a_failed_migration_leaves_the_released_database_as_it_was() {
     }
 }
 
+fn create_the_credentials_table_again(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch("CREATE TABLE credentials (id INTEGER PRIMARY KEY);")
+}
+
+/// The reason the startup error screen shows for a failed step (the
+/// operator's rule on PR #369): the step, from schema to schema, and SQLite's
+/// own error, without the statement it ran; the alternate form keeps the
+/// statement for `app.log`. "table credentials already exists" is SQLite's
+/// wording for creating a table that is there.
+#[test]
+fn a_failed_migration_names_its_step_and_the_sqlite_error_without_the_statement() {
+    let (_scratch, result, _reopened) = upgrade_released(&[create_the_credentials_table_again]);
+    let Err(error) = result else {
+        panic!("creating a table that is there fails the migration");
+    };
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "could not update library.db from schema {FIRST_RELEASED_SCHEMA} to {}: table \
+             credentials already exists. The file was left at schema {FIRST_RELEASED_SCHEMA}",
+            FIRST_RELEASED_SCHEMA + 1
+        )
+    );
+    let full = format!("{error:#}");
+    assert!(
+        full.contains("CREATE TABLE credentials (id INTEGER PRIMARY KEY);"),
+        "the alternate form keeps the statement for the log: {full}"
+    );
+}
+
 #[test]
 fn a_migration_that_rebuilds_a_parent_table_keeps_its_children() {
     let scratch = Scratch::new();

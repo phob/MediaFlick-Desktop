@@ -8,19 +8,25 @@
 //   --services-down --seed-data DIR
 //   MEDIAFLICK_VERIFY_REFUSED_SHA256   the seeded library.db's SHA-256
 //   MEDIAFLICK_VERIFY_REFUSED_SCHEMA   its PRAGMA user_version
-//   MEDIAFLICK_VERIFY_REFUSED_REASON   JSON { says, patterns }: what the reason
-//                                      must say, as regular expression sources
+//   MEDIAFLICK_VERIFY_REFUSED_REASON   JSON { says, patterns, leavesOut?, logKeeps? }:
+//                                      what the reason must say, as regular
+//                                      expression sources; what it must not
+//                                      say, and what app.log keeps in full,
+//                                      each as { says, patterns }
 //
 // The services stay down, so every API call answers 503 marked
 // `startupFailed`, with the reason app.log gave. Several calls later app.log
 // still has one `could not open` line: a failed open is not retried on each
 // request. The main window is shown with the startup error screen holding
 // that reason and no sign-in form, and library.db keeps its bytes and its
-// version. Every check is in library-refused.json.
+// version. The reason stays short enough to read: at most
+// REASON_LIMIT characters, the profile's path included. Every check is in library-refused.json.
 import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
+
+const REASON_LIMIT = 600
 
 function required(name) {
   const value = process.env[name]
@@ -49,7 +55,15 @@ export default async function libraryRefused(ctx) {
     // lines.
     const logged = ctx.appLog().match(/could not open [^\r\n]*?library\.db: [\s\S]*?(?=\n\d{4}-\d\d-\d\dT|\n?$)/)?.[0] ?? null
     const reason = answers[0].body?.error ?? ""
-    record(expectedReason.patterns.every((pattern) => new RegExp(pattern).test(reason)), `the 503 says ${expectedReason.says}`, answers[0].body)
+    const matches = (patterns, text) => patterns.every((pattern) => new RegExp(pattern).test(text))
+    record(matches(expectedReason.patterns, reason), `the 503 says ${expectedReason.says}`, answers[0].body)
+    record(reason.length <= REASON_LIMIT, `the reason is at most ${REASON_LIMIT} characters`, reason.length)
+    if (expectedReason.leavesOut) {
+      record(!expectedReason.leavesOut.patterns.some((pattern) => new RegExp(pattern).test(reason)), `the reason leaves out ${expectedReason.leavesOut.says}`)
+    }
+    if (expectedReason.logKeeps) {
+      record(matches(expectedReason.logKeeps.patterns, ctx.appLog()), `app.log keeps ${expectedReason.logKeeps.says}`)
+    }
     record(answers.every((answer) => answer.body?.startupFailed === true), "every 503 is marked as a failed startup", answers.map((answer) => answer.body?.startupFailed))
     record(logged !== null && reason === logged, "the 503 carries the reason app.log gave", logged)
     await ctx.until(() => ctx.windowShown(), "the main window to be shown", 30000)

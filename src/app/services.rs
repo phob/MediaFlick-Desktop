@@ -199,6 +199,10 @@ pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Service
         Err(error) => {
             let message = format!("could not open {}: {error}", path.display());
             tracing::error!(target: "library.db", "{message}");
+            let full = format!("{error:#}");
+            if full != error.to_string() {
+                tracing::error!(target: "library.db", "the failed open in full: {full}");
+            }
             return Err(message);
         }
     };

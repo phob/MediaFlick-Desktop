@@ -125,8 +125,10 @@ const SCENARIOS = [
     // table that is already there, and the change rolls back.
     run: () => refusedStart("5-migration-failed", {
       schema: 0,
-      says: "library.db could not be updated from schema 0 and was left at schema 0",
-      patterns: ["could not update library\\.db from schema 0 ", "left at schema 0"],
+      says: "the step from schema 0 failed on SQLite's \"table credentials already exists\" and the file was left at schema 0",
+      patterns: [`could not update library\\.db from schema 0 to ${SCHEMA}: table credentials already exists\\. The file was left at schema 0`],
+      leavesOut: { says: "the statement SQLite ran", patterns: ["CREATE TABLE", " at offset \\d"] },
+      logKeeps: { says: "the failed open in full, statement included", patterns: [`the failed open in full: could not update library\\.db from schema 0 to ${SCHEMA}: table credentials already exists in\\s+CREATE TABLE credentials \\(`] },
     }),
   },
 ]
@@ -134,7 +136,7 @@ const SCENARIOS = [
 // This build on a copy of the 0.2.0 profile whose library.db is stamped
 // `schema`, which it must refuse once with a reason matching `patterns`,
 // leave as it was, and show on the startup error screen.
-async function refusedStart(id, { schema, says, patterns }) {
+async function refusedStart(id, { schema, says, patterns, leavesOut, logKeeps }) {
   const profile = copyProfile(original, path.join(out, id, "profile"))
   const { data } = appDirs(profile)
   writeDatabase(data, (db) => {
@@ -151,7 +153,7 @@ async function refusedStart(id, { schema, says, patterns }) {
     { ok: !/remove library\.db|delete library\.db/i.test(stats.stderr), message: "the refusal does not tell the user to remove library.db" },
     { ok: (await sha256File(file)) === bytes, message: "library.db is byte for byte as it was" },
   ]
-  const run = await session(id, "library-refused", ["--services-down", "--seed-data", data], { MEDIAFLICK_VERIFY_REFUSED_SHA256: bytes, MEDIAFLICK_VERIFY_REFUSED_SCHEMA: String(schema), MEDIAFLICK_VERIFY_REFUSED_REASON: JSON.stringify({ says, patterns }) }, 600)
+  const run = await session(id, "library-refused", ["--services-down", "--seed-data", data], { MEDIAFLICK_VERIFY_REFUSED_SHA256: bytes, MEDIAFLICK_VERIFY_REFUSED_SCHEMA: String(schema), MEDIAFLICK_VERIFY_REFUSED_REASON: JSON.stringify({ says, patterns, leavesOut, logKeeps }) }, 600)
   const result = collect(id, run, "library-refused.json")
   rmSync(profile, { recursive: true, force: true })
   const passed = result.passed && checks.every((check) => check.ok)
