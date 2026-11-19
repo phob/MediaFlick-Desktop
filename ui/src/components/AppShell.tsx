@@ -129,7 +129,10 @@ function IntegratedPlayerOverlay({ paused }: { paused: boolean }) {
         inert={!chromeVisible}
         onPointerEnter={() => setPointerOverBar(true)}
         onPointerLeave={() => setPointerOverBar(false)}
-        onFocus={(event) => setKeyboardFocusInBar(event.target.matches(":focus-visible"))}
+        onFocus={(event) => {
+          // Focus inside a menu's portal bubbles here too; the open menu holds the bar then.
+          setKeyboardFocusInBar(event.currentTarget.contains(event.target) && event.target.matches(":focus-visible"))
+        }}
         onBlur={(event) => {
           if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) {
             setKeyboardFocusInBar(false)

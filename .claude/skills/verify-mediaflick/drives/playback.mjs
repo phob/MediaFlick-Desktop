@@ -128,6 +128,8 @@ async function checkBarReveal(ctx) {
   await moveTo(ctx, away)
   ctx.check(!(await ctx.app.evaluate(`document.querySelectorAll(".libmpv-overlay-chrome")[1]?.matches(":hover")`)), "the pointer left the bar")
   await ctx.sleep(HOLD_MS)
+  reveal.focusInMenu = await ctx.app.evaluate(`({ role: document.activeElement?.getAttribute("role"), focusVisible: document.activeElement?.matches(":focus-visible"), inBarDom: document.querySelectorAll(".libmpv-overlay-chrome")[1]?.contains(document.activeElement) })`)
+  ctx.step(`focus while the menu is open: ${JSON.stringify(reveal.focusInMenu)}`)
   ctx.check(await ctx.exists(menu), "the Playback settings menu is still open")
   await barShown(ctx, true, `the bar stays while one of its menus is open (${HOLD_MS} ms, pointer off the bar)`, { menuOpen: true })
   await ctx.screenshot("02d-bar-held-by-menu")
