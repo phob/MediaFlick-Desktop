@@ -117,7 +117,7 @@ async function fetchRange(itemId: string, start: number, end: number, signal: Ab
   const total = Number(/\/(\d+)$/.exec(response.headers.get("Content-Range") ?? "")?.[1])
   const bytes = new Uint8Array(await response.arrayBuffer())
   if (response.status !== 206 || !Number.isSafeInteger(total) || bytes.length !== Math.min(end, total - 1) - start + 1) {
-    throw new ApiError(`the book's bytes ${start}-${end} came back incomplete`, response.status, false, false)
+    throw new ApiError(`the book's bytes ${start}-${end} came back incomplete`, response.status)
   }
   return { bytes, total }
 }

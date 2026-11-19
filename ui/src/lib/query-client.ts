@@ -22,8 +22,9 @@ export function createQueryClient() {
         refetchOnReconnect: true,
         retry: (failureCount, error) => {
           // An expired token will not resolve itself by retrying — the shell
-          // needs to fall back to sign-in instead.
-          if (error instanceof ApiError && (error.expired || error.status === 401)) return false
+          // needs to fall back to sign-in instead. A failed startup is final
+          // until the app restarts.
+          if (error instanceof ApiError && (error.expired || error.status === 401 || error.startupFailed)) return false
           return failureCount < 1
         },
       },
