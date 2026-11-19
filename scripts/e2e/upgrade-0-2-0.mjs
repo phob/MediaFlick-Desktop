@@ -26,14 +26,18 @@
 // Scenarios: 1-update (this build on the 0.2.0 profile), 2-back (the real
 // 0.2.0 on what 1-update left), 3-forward (this build again on what 2-back
 // left), 4-newer-refused (this build on the profile stamped with a newer
-// schema, with real WAL frames beside it) and 5-migration-failed (stamped
-// with schema 0, so the schema change fails and rolls back): this build must
+// schema, with real WAL frames beside it), 5-migration-failed (stamped
+// with schema 0, so the schema change fails and rolls back) and 6-in-use (the
+// profile as 0.2.0 left it, with another process holding a write lock on
+// library.db, so the open fails with SQLite's BUSY): this build must
 // refuse the file once, leave it as it was, and show the reason on a startup
 // error screen instead of sign-in; Open data folder must reach xdg-open (a
 // stand-in first on PATH records what it is given), and Recreate library must
 // move the file aside, open the services on a new one in the same window and
 // sync it from --account's server after a Quick Connect sign-in, as a new
-// device the session revokes afterwards. Every expectation comes from the profile as the previous app
+// device the session revokes afterwards. For 6-in-use it must offer no
+// Recreate library and refuse one asked for, because moving a database
+// another program has open can corrupt it. Every expectation comes from the profile as the previous app
 // left it (before.json), never from the code under test. The artifact is
 // build/e2e/upgrade-0-2-0/report.json, with each scenario's snapshots,
 // screenshots and logs next to it. Exits non-zero when a scenario fails.
@@ -139,6 +143,19 @@ const SCENARIOS = [
       logKeeps: { says: "the failed open in full, statement included", patterns: [`the failed open in full: could not update library\\.db from schema 0 to ${SCHEMA}: table credentials already exists in\\s+CREATE TABLE credentials \\(`] },
     }),
   },
+  {
+    id: "6-in-use",
+    title: "A library.db another program holds: refused once, left as it was, the reason says so, and no Recreate library",
+    run: () => refusedStart("6-in-use", {
+      schema: RELEASED.schema,
+      kind: "inUse",
+      held: true,
+      says: "SQLite's \"database is locked\", that another program is using library.db, and to restart MediaFlick once it is closed",
+      patterns: ["library\\.db: database is locked\\. Another program is using library\\.db: close it, then restart MediaFlick"],
+      // --library-stats is not the startup screen: it gives SQLite's reason alone.
+      stats: { says: "SQLite's \"database is locked\"", patterns: ["library\\.db: database is locked"] },
+    }),
+  },
 ]
 
 // This build on a copy of the 0.2.0 profile whose library.db is stamped
@@ -148,7 +165,9 @@ const SCENARIOS = [
 // library.db-wal, as a crash would, so the move has sidecars to carry. Only a
 // refusal before the open writes can keep it: the failed schema change's
 // writable connection merges the WAL when it closes.
-async function refusedStart(id, { schema, kind, unmergedWal = false, says, patterns, leavesOut, logKeeps }) {
+// `held` runs the app, and its --library-stats check, beside
+// hold-library-lock.mjs, which holds library.db with a write lock.
+async function refusedStart(id, { schema, kind, unmergedWal = false, held = false, says, patterns, stats: statsReason = { says, patterns }, leavesOut, logKeeps }) {
   const profile = copyProfile(original, path.join(out, id, "profile"))
   const { config, data } = appDirs(profile)
   writeDatabase(data, (db) => {
@@ -162,10 +181,11 @@ async function refusedStart(id, { schema, kind, unmergedWal = false, says, patte
   const file = path.join(data, "library.db")
   const bytes = await sha256File(file)
   const env = { ...process.env, HOME: path.join(profile, "home"), XDG_CONFIG_HOME: path.join(profile, "config"), XDG_DATA_HOME: path.join(profile, "data"), XDG_CACHE_HOME: path.join(profile, "cache"), XDG_STATE_HOME: path.join(profile, "state"), LD_LIBRARY_PATH: path.dirname(staged), ...(existsSync(path.join(path.dirname(staged), "libcef.so")) ? { LD_PRELOAD: path.join(path.dirname(staged), "libcef.so") } : {}) }
-  const stats = spawnSync(staged, ["--library-stats"], env)
+  const hold = held ? holdLock(path.join(out, id, "hold")) : null
+  const stats = hold ? await hold.around(env, () => spawnSync(staged, ["--library-stats"], env)) : spawnSync(staged, ["--library-stats"], env)
   const checks = [
     { ok: stats.code !== 0, message: "--library-stats refuses the library.db", detail: stats.code },
-    { ok: patterns.every((pattern) => new RegExp(pattern).test(stats.stderr)), message: `the refusal says ${says}`, detail: stats.stderr.trim() },
+    { ok: statsReason.patterns.every((pattern) => new RegExp(pattern).test(stats.stderr)), message: `the refusal says ${statsReason.says}`, detail: stats.stderr.trim() },
     { ok: !/remove library\.db|delete library\.db/i.test(stats.stderr), message: "the refusal does not tell the user to remove library.db" },
     { ok: (await sha256File(file)) === bytes, message: "library.db is byte for byte as it was" },
   ]
@@ -177,6 +197,7 @@ async function refusedStart(id, { schema, kind, unmergedWal = false, says, patte
     MEDIAFLICK_VERIFY_SCHEMA: String(SCHEMA),
     MEDIAFLICK_VERIFY_OPENED_LOG: path.join(opener, "opened.log"),
     PATH: [opener, process.env.PATH].join(":"),
+    ...(hold ? hold.session : {}),
   }, 900)
   const result = collect(id, run, "library-refused.json")
   rmSync(profile, { recursive: true, force: true })
@@ -207,6 +228,48 @@ async function releasedAppImage() {
   }
   execFileSync("chmod", ["+x", file])
   return file
+}
+
+// A write lock on library.db from another process, as another program would
+// hold it. `around` holds it on the script's copy while `work` runs; `session`
+// is the environment that starts the app through a wrapper which takes the
+// lock on the session's own copy first and lets go when the app is gone or
+// the drive writes MEDIAFLICK_VERIFY_HOLD_RELEASE.
+function holdLock(dir) {
+  mkdirSync(dir, { recursive: true })
+  const holder = path.join(root, "scripts/e2e/hold-library-lock.mjs")
+  const files = (name) => ({ MEDIAFLICK_VERIFY_HOLD_READY: path.join(dir, `${name}.ready`), MEDIAFLICK_VERIFY_HOLD_RELEASE: path.join(dir, `${name}.release`) })
+  const build = path.dirname(staged)
+  const wrapper = path.join(dir, "mediaflick-desktop-beside-a-lock")
+  writeFileSync(wrapper, [
+    "#!/bin/sh",
+    "rm -f \"$MEDIAFLICK_VERIFY_HOLD_READY\" \"$MEDIAFLICK_VERIFY_HOLD_RELEASE\"",
+    `node ${JSON.stringify(holder)} &`,
+    "tries=0",
+    "while [ ! -e \"$MEDIAFLICK_VERIFY_HOLD_READY\" ]; do tries=$((tries + 1)); [ $tries -gt 100 ] && exit 1; sleep 0.1; done",
+    `export LD_LIBRARY_PATH=${JSON.stringify(build)}\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}`,
+    `if [ -e ${JSON.stringify(path.join(build, "libcef.so"))} ]; then export MEDIAFLICK_DESKTOP_CEF_PRELOAD=${JSON.stringify(path.join(build, "libcef.so"))} LD_PRELOAD=${JSON.stringify(path.join(build, "libcef.so"))}\${LD_PRELOAD:+ $LD_PRELOAD}; fi`,
+    `exec ${JSON.stringify(staged)} "$@"`,
+    "",
+  ].join("\n"), { mode: 0o755 })
+  return {
+    session: { MEDIAFLICK_DESKTOP_EXE: wrapper, ...files("session") },
+    async around(env, work) {
+      const paths = files("stats")
+      const child = spawn(process.execPath, [holder], { env: { ...env, ...paths }, stdio: "ignore" })
+      const exited = new Promise((resolve) => child.once("exit", resolve))
+      for (let tries = 0; !existsSync(paths.MEDIAFLICK_VERIFY_HOLD_READY); tries++) {
+        if (tries > 100) throw new Error("hold-library-lock.mjs did not take the lock")
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      try {
+        return work()
+      } finally {
+        writeFileSync(paths.MEDIAFLICK_VERIFY_HOLD_RELEASE, "release\n")
+        await exited
+      }
+    },
+  }
 }
 
 // Leaves one committed transaction in library.db-wal, unmerged, with its

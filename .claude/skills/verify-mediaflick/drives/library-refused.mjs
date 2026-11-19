@@ -3,15 +3,18 @@
 // sign-in screen; the user can then open the folder holding it, or move it
 // aside and start on a new one. `scripts/e2e/upgrade-0-2-0.mjs` runs it on a
 // copy of a 0.2.0 profile, stamped with the next schema (scenario
-// 4-newer-refused, which also leaves real WAL frames beside it) or with
+// 4-newer-refused, which also leaves real WAL frames beside it), with
 // schema 0 so the schema change fails and rolls back (scenario
-// 5-migration-failed), with
+// 5-migration-failed), or as 0.2.0 left it while another process holds a
+// write lock on it (scenario 6-in-use, through MEDIAFLICK_DESKTOP_EXE), with
 //
 //   --account SERVER --signed-out --services-down --seed DIR --seed-data DIR
 //   MEDIAFLICK_VERIFY_REFUSED_SHA256   the seeded library.db's SHA-256
 //   MEDIAFLICK_VERIFY_REFUSED_SCHEMA   its PRAGMA user_version
-//   MEDIAFLICK_VERIFY_REFUSED_KIND     newerSchema or unusable: which refusal
-//                                      the scenario stages
+//   MEDIAFLICK_VERIFY_REFUSED_KIND     newerSchema, unusable or inUse: which
+//                                      refusal the scenario stages
+//   MEDIAFLICK_VERIFY_HOLD_RELEASE     inUse only: the file that makes the
+//                                      lock holder let go
 //   MEDIAFLICK_VERIFY_REFUSED_REASON   JSON { says, patterns, leavesOut?, logKeeps? }:
 //                                      what the reason must say, as regular
 //                                      expression sources; what it must not
@@ -39,9 +42,13 @@
 // this build's schema, without a second failed open; the JSON files and
 // custom posters are as they were; the sign-in screen shows, Quick Connect
 // signs in as a new device, and a sync fills the library from the server.
-// Every check is in library-refused.json.
+// The dialog is opened and confirmed in a 1280x500 viewport, where it must
+// fit and both its actions must be reachable. A library.db another program
+// holds (inUse) gets neither button, and a Recreate library asked for
+// directly is refused and moves nothing, since moving a database another
+// connection has open can corrupt it. Every check is in library-refused.json.
 import { createHash } from "node:crypto"
-import { existsSync, readFileSync, readdirSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { readDatabaseCopy, userFileDigests } from "../scripts/profile-state.mjs"
@@ -59,6 +66,9 @@ const escaped = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 function databaseFiles(dir, name) {
   return Object.fromEntries(SIDECARS.filter((suffix) => existsSync(path.join(dir, `${name}${suffix}`))).map((suffix) => [suffix || "db", sha256(readFileSync(path.join(dir, `${name}${suffix}`)))]))
 }
+
+// A POST from the page, as the UI sends it.
+const post = (ctx, apiPath, body) => ctx.app.evaluate(`fetch(${JSON.stringify(apiPath)}, { method: "POST", headers: { "Content-Type": "application/json" }, body: ${JSON.stringify(JSON.stringify(body))} }).then(async (response) => ({ status: response.status, body: await response.json().catch(() => null) }))`)
 
 // The user's files the recreate must leave alone: the JSON stores, reader.json
 // and the custom posters.
@@ -130,7 +140,8 @@ export default async function libraryRefused(ctx) {
     } finally {
       db.close()
     }
-    await recover(ctx, record, report, { opens, deviceId, dataDir: path.dirname(file) })
+    if (required("MEDIAFLICK_VERIFY_REFUSED_KIND") === "inUse") await inUse(ctx, record, { dataDir: path.dirname(file) })
+    else await recover(ctx, record, report, { opens, deviceId, dataDir: path.dirname(file) })
   } finally {
     ctx.writeEvidence("library-refused.json", report)
   }
@@ -161,6 +172,14 @@ async function recover(ctx, record, report, { opens, deviceId, dataDir }) {
   })
   const dialog = { role: "alertdialog", name: "Recreate the library?" }
   const openDialog = async () => (await pressed(recreate)) && ctx.find(dialog).then(() => true, () => false)
+  // A short window: the dialog is taller than 500 px, so it must scroll.
+  const SHORT = { width: 1280, height: 500 }
+  const fits = () => ctx.app.evaluate(`(() => {
+    const dialog = document.querySelector('[role="alertdialog"]')
+    if (!dialog) return null
+    const box = dialog.getBoundingClientRect()
+    return { top: box.top, bottom: box.bottom, viewport: innerHeight, scrolls: dialog.scrollHeight > dialog.clientHeight }
+  })()`)
 
   if (offersFolder) await pressed(openFolder)
   const opened = offersFolder ? await ctx.until(() => existsSync(openedLog) && readFileSync(openedLog, "utf8").trim(), "xdg-open to be called", 15000).catch(() => null) : null
@@ -168,9 +187,12 @@ async function recover(ctx, record, report, { opens, deviceId, dataDir }) {
   record(ctx.appLog().includes(`opening folder in the file manager folder=${path.resolve(dataDir)}`), "app.log names the folder it opened")
 
   const beforeCancel = databaseFiles(dataDir, "library.db")
+  await ctx.app.send("Emulation.setDeviceMetricsOverride", { ...SHORT, deviceScaleFactor: 1, mobile: false })
   const shown = await openDialog()
   const text = collapsed(await ctx.app.evaluate(`document.querySelector('[role="alertdialog"]')?.innerText ?? ""`))
   report.dialog = text
+  const fit = await fits()
+  record(fit !== null && fit.top >= 0 && fit.bottom <= fit.viewport && fit.scrolls, `in a ${SHORT.width}x${SHORT.height} window the dialog fits on screen and scrolls`, fit)
   await ctx.screenshot("03-recreate-dialog")
   const says = [
     ["the user signs in again and Jellyfin sees a new device", /You sign in again, and Jellyfin lists MediaFlick as a new device\./],
@@ -182,10 +204,12 @@ async function recover(ctx, record, report, { opens, deviceId, dataDir }) {
   for (const [what, pattern] of says) record(pattern.test(text), `the dialog says ${what}`)
   const newer = /written by a newer MediaFlick\. Recreating replaces that version's library too: installed again, it opens the new one\. To keep using its library instead, cancel and install that newer MediaFlick again\./.test(text)
   record(kind === "newerSchema" ? newer : !/newer MediaFlick/.test(text), kind === "newerSchema" ? "the dialog says the newer MediaFlick's library is replaced too, and that installing it again is the alternative" : "the dialog does not speak of a newer MediaFlick")
-  if (shown) {
-    await ctx.press({ role: "button", name: "Cancel", within: dialog })
-    await ctx.until(async () => !(await ctx.exists(dialog)), "the dialog to close", 10000)
-  }
+  const cancel = { role: "button", name: "Cancel", within: dialog }
+  if (shown) await ctx.app.evaluate(`document.querySelector('[role="alertdialog"]')?.scrollTo({ top: 1e6 })`)
+  if (shown) await ctx.screenshot("03-recreate-dialog-end")
+  const cancelled = shown && await pressed(cancel)
+  record(cancelled, `in a ${SHORT.width}x${SHORT.height} window the dialog's Cancel is reachable`)
+  if (cancelled) await ctx.until(async () => !(await ctx.exists(dialog)), "the dialog to close", 10000)
   // A recreate that Cancel set off would be done by now.
   await ctx.sleep(2000)
   const afterCancel = databaseFiles(dataDir, "library.db")
@@ -196,15 +220,16 @@ async function recover(ctx, record, report, { opens, deviceId, dataDir }) {
   const moved = databaseFiles(dataDir, "library.db")
   report.moved = moved
   const recreatedAfter = Math.floor(Date.now() / 1000)
-  if (await openDialog()) await pressed({ role: "button", name: "Recreate library", within: dialog })
+  const confirmed = (await openDialog()) && await pressed({ role: "button", name: "Recreate library", within: dialog })
+  record(confirmed, `in a ${SHORT.width}x${SHORT.height} window the dialog's Recreate library is reachable`)
+  await ctx.app.send("Emulation.clearDeviceMetricsOverride")
   const up = await ctx.until(async () => (await ctx.api("/api/status")).status === 200, "the services to open", 30000).then(() => true, () => false)
   record(up, "after Recreate library /api/status answers 200")
   // The window was made while the services were down, so it gets its player
   // and its shell-request queue only when they open.
-  const post = (apiPath, body) => ctx.app.evaluate(`fetch(${JSON.stringify(apiPath)}, { method: "POST", headers: { "Content-Type": "application/json" }, body: ${JSON.stringify(JSON.stringify(body))} }).then(async (response) => ({ status: response.status, body: await response.json().catch(() => null) }))`)
-  const player = await post("/api/player/command", { command: "set-mute", mute: false })
+  const player = await post(ctx, "/api/player/command", { command: "set-mute", mute: false })
   record(player.status === 200, "the window's player is attached to the services that opened", player)
-  const ready = await post("/api/shell/window/ready", {})
+  const ready = await post(ctx, "/api/shell/window/ready", {})
   record(ready.status === 200 && ready.body?.queued === true, "the window serves the shell requests of the services that opened", ready)
   const backups = readdirSync(dataDir).filter((name) => name.startsWith("library-replaced-") && name.endsWith(".db"))
   report.backups = readdirSync(dataDir).filter((name) => name.startsWith("library-replaced-"))
@@ -245,4 +270,24 @@ async function recover(ctx, record, report, { opens, deviceId, dataDir }) {
   if (!signedIn) return
   await ctx.find({ role: "link", name: "Settings" }, { timeout: 30000 })
   await ctx.screenshot("05-home-after-resync")
+}
+
+// Another program holds library.db: no way to recreate it is offered, and
+// one asked for directly moves nothing. Then the holder lets go.
+async function inUse(ctx, record, { dataDir }) {
+  try {
+    const recovery = await ctx.api("/api/recovery")
+    record(recovery.status === 200 && recovery.body?.library === null, "/api/recovery offers nothing to recreate", recovery)
+    await ctx.sleep(2000)
+    const offered = (await ctx.exists({ role: "button", name: "Recreate library" })) || (await ctx.exists({ role: "button", name: "Open data folder" }))
+    await ctx.screenshot("02-in-use")
+    record(!offered, "the startup error screen offers no Recreate library while another program holds library.db")
+    const before = databaseFiles(dataDir, "library.db")
+    const asked = await post(ctx, "/api/recovery/library/recreate", {})
+    record(asked.status === 409, "a Recreate library asked for directly is refused", asked)
+    const after = databaseFiles(dataDir, "library.db")
+    record(JSON.stringify(after) === JSON.stringify(before) && !readdirSync(dataDir).some((name) => name.startsWith("library-replaced-")), "library.db and its sidecars stay where they were, byte for byte", { before, after, files: readdirSync(dataDir) })
+  } finally {
+    writeFileSync(required("MEDIAFLICK_VERIFY_HOLD_RELEASE"), "release\n")
+  }
 }
