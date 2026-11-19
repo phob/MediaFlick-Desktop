@@ -40,7 +40,7 @@
     "@vitejs/plugin-react": "^6.0.5",
     "jscpd": "5.4.3",
     "jsdom": "31.0.1",
-    "knip": "6.45.1",
+    "knip": "6.46.0",
     "oxlint": "^1.78.0",
     "typescript": "~7.0.2",
     "vite": "^8.2.0",
