@@ -26,10 +26,12 @@ pub enum OpenError {
     NewerSchema {
         found: i32,
     },
-    /// A schema change from `from` to `to` failed and was rolled back.
+    /// A schema change failed and was rolled back: the file is still at
+    /// `from`. `step` is the change that failed, from schema to schema: one
+    /// migration step, or the whole range when the check after them failed.
     Migration {
         from: i32,
-        to: i32,
+        step: std::ops::Range<i32>,
         error: rusqlite::Error,
     },
 }
@@ -53,10 +55,12 @@ impl fmt::Display for OpenError {
                  again to keep using it",
                 migrate::SCHEMA_VERSION
             ),
-            Self::Migration { from, to, error } => write!(
+            Self::Migration { from, step, error } => write!(
                 formatter,
-                "could not update library.db from schema {from} to {to}: {}. The file was left at \
+                "could not update library.db from schema {} to {}: {}. The file was left at \
                  schema {from}",
+                step.start,
+                step.end,
                 sqlite(error)
             ),
         }

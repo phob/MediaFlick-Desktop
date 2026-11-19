@@ -529,6 +529,26 @@ fn a_failed_migration_names_its_step_and_the_sqlite_error_without_the_statement(
     );
 }
 
+/// The reason names the failing step's own range, and the schema the file
+/// was left at is where it started (the operator's rule on PR #369). "no such
+/// table: a_table_no_schema_has" is SQLite's wording for `fail`'s query.
+#[test]
+fn a_failed_second_step_names_its_own_range_and_where_the_file_was_left() {
+    let (_scratch, result, _reopened) = upgrade_released(&[add_a_column, fail]);
+    let Err(error) = result else {
+        panic!("the failing second step fails the migration");
+    };
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "could not update library.db from schema {} to {}: no such table: \
+             a_table_no_schema_has. The file was left at schema {FIRST_RELEASED_SCHEMA}",
+            FIRST_RELEASED_SCHEMA + 1,
+            FIRST_RELEASED_SCHEMA + 2
+        )
+    );
+}
+
 #[test]
 fn a_migration_that_rebuilds_a_parent_table_keeps_its_children() {
     let scratch = Scratch::new();
