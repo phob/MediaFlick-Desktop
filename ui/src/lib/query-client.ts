@@ -23,7 +23,7 @@ export function createQueryClient() {
         retry: (failureCount, error) => {
           // An expired token will not resolve itself by retrying — the shell
           // needs to fall back to sign-in instead. A failed startup is final
-          // until the app restarts.
+          // until the app restarts or the user recreates the library.
           if (error instanceof ApiError && (error.expired || error.status === 401 || error.startupFailed)) return false
           return failureCount < 1
         },
@@ -73,6 +73,7 @@ export const queryKeys = {
   seerrScope: (scope: "requests" | "search" | "person" | "discover" | "media") => key("seerr", scope),
   collectionsOf: (account: string) => key("collections", account),
   status: key("status"),
+  recovery: key("recovery"),
   companion: key("companion"),
   calendar: (start: string, end: string) => key("calendar", start, end),
   settings: key("settings"),

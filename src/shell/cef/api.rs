@@ -160,20 +160,46 @@ pub fn handle(request: &ApiRequest) -> ApiResponse {
     dispatch(request, locator::init)
 }
 
-fn dispatch(request: &ApiRequest, services: impl FnOnce() -> Option<Arc<Services>>) -> ApiResponse {
+/// Serves an asset, or routes an API request: first to the routes that need
+/// no services, then, once `services` opened them, to the rest. While the
+/// services are down, every other request answers why.
+fn dispatch(
+    request: &ApiRequest,
+    services: impl FnOnce() -> Result<Arc<Services>, String>,
+) -> ApiResponse {
     if let Some(response) = assets::static_asset(&request.path) {
         return response;
     }
-    let Some(api_path) = request.path.strip_prefix("/api/") else {
+    let Some(path) = request.path.strip_prefix("/api/") else {
         return assets::index_html();
     };
-
-    let Some(services) = services() else {
-        return ApiResponse::startup_failed(
-            locator::init_error().unwrap_or("the library database is unavailable"),
-        );
+    let item_id: String;
+    let mut segments = path.split('/').collect::<Vec<_>>();
+    if let ["item", id, ..] = segments.as_slice() {
+        item_id = percent_decode(id);
+        if !valid_opaque_id(&item_id) {
+            return ApiResponse::error(400, "invalid item id");
+        }
+        segments[1] = &item_id;
+    }
+    let without_services = MODULES.iter().find_map(|routes| match routes.serve {
+        Serve::WithoutServices(serve) => serve(&segments, request),
+        Serve::WithServices(_) => None,
+    });
+    if let Some(response) = without_services {
+        return response;
+    }
+    let services = match services() {
+        Ok(services) => services,
+        Err(reason) => return ApiResponse::startup_failed(&reason),
     };
-    route(&services, api_path, request)
+    MODULES
+        .iter()
+        .find_map(|routes| match routes.serve {
+            Serve::WithServices(serve) => serve(&services, &segments, request),
+            Serve::WithoutServices(_) => None,
+        })
+        .unwrap_or_else(|| unrouted(path, &segments))
 }
 
 mod assets;
@@ -187,6 +213,7 @@ mod libraries;
 mod media;
 mod playback;
 mod ratings;
+mod recovery;
 mod routes;
 mod seerr;
 mod settings;
@@ -194,13 +221,14 @@ mod shell;
 mod wire;
 
 pub use routes::RawBody;
-use routes::{Binary, BinaryAnswer, Body, Bytes, Relay, routes};
+use routes::{Binary, BinaryAnswer, Body, Bytes, Relay, Serve, routes};
 pub(super) use wire::Wire;
 
 /// Every module's routes, in the order a request tries them. Each module
 /// declares its own with [`routes::routes!`]; their tables also answer which
 /// methods a known path accepts, for a 405 and its `Allow` header.
 const MODULES: &[&routes::Routes] = &[
+    &recovery::ROUTES,
     &ROUTES,
     &settings::ROUTES,
     &ratings::ROUTES,
@@ -216,22 +244,6 @@ const MODULES: &[&routes::Routes] = &[
     &playback::ROUTES,
     &books::ROUTES,
 ];
-
-fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiResponse {
-    let item_id: String;
-    let mut segments = path.split('/').collect::<Vec<_>>();
-    if let ["item", id, ..] = segments.as_slice() {
-        item_id = percent_decode(id);
-        if !valid_opaque_id(&item_id) {
-            return ApiResponse::error(400, "invalid item id");
-        }
-        segments[1] = &item_id;
-    }
-    MODULES
-        .iter()
-        .find_map(|routes| (routes.serve)(services, &segments, request))
-        .unwrap_or_else(|| unrouted(path, &segments))
-}
 
 fn unrouted(path: &str, segments: &[&str]) -> ApiResponse {
     let allowed = MODULES
@@ -419,7 +431,7 @@ mod tests {
     }
 
     fn send(fixture: &TestServices, request: &ApiRequest) -> ApiResponse {
-        dispatch(request, || Some(fixture.services.clone()))
+        dispatch(request, || Ok(fixture.services.clone()))
     }
 
     #[test]
@@ -628,7 +640,7 @@ mod tests {
                     "/api/item/f9e8d7c6b5a4938271605f4e3d2c1b0a/played",
                     br#"{"played":true}"#,
                 ),
-                || Some(services.clone()),
+                || Ok(services.clone()),
             )
         });
         reached_rx
@@ -696,7 +708,7 @@ mod tests {
                 method: "GET".to_string(),
                 ..post("/api/item/f9e8d7c6b5a4938271605f4e3d2c1b0a/trailer", b"")
             };
-            dispatch(&request, || Some(services.clone()))
+            dispatch(&request, || Ok(services.clone()))
         });
         reached_rx
             .recv_timeout(std::time::Duration::from_secs(10))

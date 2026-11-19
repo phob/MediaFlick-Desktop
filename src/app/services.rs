@@ -13,6 +13,7 @@ use crate::jellyfin::socket::{self, SocketHandle};
 use crate::library::Library;
 use crate::library::LibraryChangeBatch;
 use crate::library::browse::ChildrenSources;
+use crate::library::db::OpenError;
 use crate::library::sync::{self, SyncHandle};
 use crate::playback::PlaybackCoordinator;
 use crate::preferences::{
@@ -190,22 +191,38 @@ impl Services {
     }
 }
 
+/// Why the services did not open: the reason the user reads and, when
+/// `library.db` was what failed, how it was refused.
+pub struct StartupFailure {
+    pub reason: String,
+    pub library: Option<LibraryRefusal>,
+}
+
+/// How `library.db` was refused. Either way the file was left as it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibraryRefusal {
+    /// A newer MediaFlick wrote it.
+    NewerSchema,
+    /// SQLite could not open it, or its schema change failed and rolled back.
+    Unusable,
+}
+
+impl From<String> for StartupFailure {
+    fn from(reason: String) -> Self {
+        Self {
+            reason,
+            library: None,
+        }
+    }
+}
+
 /// Builds the services and resumes interrupted account deletions. The caller
 /// publishes them before `start` lets background work reach the shell.
-pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Services>, String> {
-    let path = paths::library_db_path();
-    let library = match Library::open(&path) {
-        Ok(library) => Arc::new(library),
-        Err(error) => {
-            let message = format!("could not open {}: {error}", path.display());
-            tracing::error!(target: "library.db", "{message}");
-            let full = format!("{error:#}");
-            if full != error.to_string() {
-                tracing::error!(target: "library.db", "the failed open in full: {full}");
-            }
-            return Err(message);
-        }
-    };
+pub fn open(
+    _: &InitPermit,
+    initial_settings: AppSettings,
+) -> Result<Arc<Services>, StartupFailure> {
+    let library = open_library()?;
     let restored = library.credentials().is_authenticated();
     let shell = Arc::new(ShellBridge::default());
     let session = Arc::new(Session::restore(library.clone(), shell.clone()));
@@ -217,14 +234,15 @@ pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Service
     {
         return Err(initialization_failure(format!(
             "could not import legacy appearance settings: {error}"
-        )));
+        ))
+        .into());
     }
     let collections_path = collections_file_path();
     let collections = open_configuration(&collections_path, CollectionConfigurationService::open)?;
     let playback_path = playback_preferences_file_path();
     let playback_preferences = open_configuration(&playback_path, PlaybackPreferenceService::open)?;
     if let Err(error) = import_legacy_account_data(&library, &accounts, &playback_preferences) {
-        return Err(initialization_failure(error));
+        return Err(initialization_failure(error).into());
     }
     let reader = open_configuration(&reader_file_path(), ReaderStore::open)?;
     let preferences = Arc::new(PreferencesService::new(
@@ -289,6 +307,30 @@ pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Service
     connect_app_hooks(&services);
     let _ = finish_pending_deletions(&services);
     Ok(services)
+}
+
+/// Opens `library.db`, or says how it was refused. A refused file was left
+/// as it was; its reason goes to the log in full.
+fn open_library() -> Result<Arc<Library>, StartupFailure> {
+    let path = paths::library_db_path();
+    let error = match Library::open(&path) {
+        Ok(library) => return Ok(Arc::new(library)),
+        Err(error) => error,
+    };
+    let message = format!("could not open {}: {error}", path.display());
+    tracing::error!(target: "library.db", "{message}");
+    let full = format!("{error:#}");
+    if full != error.to_string() {
+        tracing::error!(target: "library.db", "the failed open in full: {full}");
+    }
+    let refusal = match error {
+        OpenError::NewerSchema { .. } => LibraryRefusal::NewerSchema,
+        OpenError::Sqlite(_) | OpenError::Migration { .. } => LibraryRefusal::Unusable,
+    };
+    Err(StartupFailure {
+        reason: message,
+        library: Some(refusal),
+    })
 }
 
 pub fn start(_: &InitPermit, services: &Arc<Services>) {

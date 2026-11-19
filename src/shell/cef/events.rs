@@ -130,10 +130,7 @@ fn playback_event_needs_log(
 /// Settings are persisted from an app-scheme background thread.  CEF's player
 /// and frame APIs are UI-thread-only, so relay its apply plan before touching
 /// either of them.
-pub(super) fn start_preferences_event_bridge(state: &BrowserState) {
-    let Some(services) = locator::services() else {
-        return;
-    };
+pub(super) fn start_preferences_event_bridge(state: &BrowserState, services: &Services) {
     let receiver = services.preferences.subscribe();
     let state = Arc::downgrade(state);
     spawn_named("preference-bridge", move || {
@@ -149,10 +146,7 @@ pub(super) fn start_preferences_event_bridge(state: &BrowserState) {
     });
 }
 
-pub(super) fn start_shell_request_bridge(state: &BrowserState) {
-    let Some(services) = locator::services() else {
-        return;
-    };
+pub(super) fn start_shell_request_bridge(state: &BrowserState, services: &Services) {
     let receiver = services.shell.subscribe();
     let state = Arc::downgrade(state);
     spawn_named("shell-request-bridge", move || {

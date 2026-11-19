@@ -102,9 +102,15 @@ pub(super) fn open_external_link(url: &str) {
         return;
     }
     tracing::info!(target: "app", url, "opening link in default browser");
-    if let Err(error) = open_url_in_default_browser(url) {
+    if let Err(error) = open_with_default_handler(url.as_ref()) {
         tracing::warn!(target: "app", url, "failed to open link in default browser: {error}");
     }
+}
+
+/// Shows `folder` in the system's file manager.
+pub(super) fn open_folder(folder: &std::path::Path) -> std::io::Result<()> {
+    tracing::info!(target: "app", folder = %folder.display(), "opening folder in the file manager");
+    open_with_default_handler(folder.as_os_str())
 }
 
 fn open_update_release_page() {
@@ -131,14 +137,17 @@ fn url_scheme(url: &str) -> Option<String> {
     Some(scheme.to_ascii_lowercase())
 }
 
+/// Hands a URL or a path to what the system opens it with: the default
+/// browser for a link, the file manager for a folder.
 #[cfg(target_os = "windows")]
-fn open_url_in_default_browser(url: &str) -> std::io::Result<()> {
+fn open_with_default_handler(target: &std::ffi::OsStr) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
     let verb: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
-    let file: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+    let file: Vec<u16> = target.encode_wide().chain(std::iter::once(0)).collect();
     // SAFETY: `verb` and `file` are NUL-terminated wide strings that outlive the
     // call; the null window, parameters and directory are all allowed.
     let result = unsafe {
@@ -159,14 +168,14 @@ fn open_url_in_default_browser(url: &str) -> std::io::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn open_url_in_default_browser(url: &str) -> std::io::Result<()> {
-    std::process::Command::new("open").arg(url).spawn()?;
+fn open_with_default_handler(target: &std::ffi::OsStr) -> std::io::Result<()> {
+    std::process::Command::new("open").arg(target).spawn()?;
     Ok(())
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn open_url_in_default_browser(url: &str) -> std::io::Result<()> {
-    std::process::Command::new("xdg-open").arg(url).spawn()?;
+fn open_with_default_handler(target: &std::ffi::OsStr) -> std::io::Result<()> {
+    std::process::Command::new("xdg-open").arg(target).spawn()?;
     Ok(())
 }
 

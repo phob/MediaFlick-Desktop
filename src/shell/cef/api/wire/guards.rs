@@ -755,15 +755,18 @@ fn past_generics(mut cursor: syn::buffer::Cursor<'_>) -> syn::buffer::Cursor<'_>
 }
 
 /// A `routes!` table's request bodies, answers and calls, so the checks on
-/// ordinary code run on them too.
+/// ordinary code run on them too. A table names `|services, request|`, or
+/// `|request|` for routes that need no services.
 struct RouteTable(Vec<(Option<syn::Type>, syn::Type, syn::Expr)>);
 
 impl syn::parse::Parse for RouteTable {
     fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
         input.parse::<syn::Token![|]>()?;
         input.parse::<syn::Ident>()?;
-        input.parse::<syn::Token![,]>()?;
-        input.parse::<syn::Ident>()?;
+        if input.peek(syn::Token![,]) {
+            input.parse::<syn::Token![,]>()?;
+            input.parse::<syn::Ident>()?;
+        }
         input.parse::<syn::Token![|]>()?;
         let mut rows = Vec::new();
         while !input.is_empty() {
