@@ -42,7 +42,7 @@
 // this build's schema, without a second failed open; the JSON files and
 // custom posters are as they were; the sign-in screen shows, Quick Connect
 // signs in as a new device, and a sync fills the library from the server.
-// The dialog is opened and confirmed in a 1280x500 viewport, where it must
+// The dialog is opened and confirmed in a 1280x400 viewport, where it must
 // fit and both its actions must be reachable. A library.db another program
 // holds (inUse) gets neither button, and a Recreate library asked for
 // directly is refused and moves nothing, since moving a database another
@@ -172,8 +172,9 @@ async function recover(ctx, record, report, { opens, deviceId, dataDir }) {
   })
   const dialog = { role: "alertdialog", name: "Recreate the library?" }
   const openDialog = async () => (await pressed(recreate)) && ctx.find(dialog).then(() => true, () => false)
-  // A short window: the dialog is taller than 500 px, so it must scroll.
-  const SHORT = { width: 1280, height: 500 }
+  // A short window. Uncapped, the dialog is about 536 px tall here; at 400 px
+  // its footer would be off screen.
+  const SHORT = { width: 1280, height: 400 }
   const fits = () => ctx.app.evaluate(`(() => {
     const dialog = document.querySelector('[role="alertdialog"]')
     if (!dialog) return null
