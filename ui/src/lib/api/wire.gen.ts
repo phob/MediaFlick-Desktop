@@ -17,6 +17,7 @@ export type * from "./wire/api.libraries.gen.ts"
 export type * from "./wire/api.media.gen.ts"
 export type * from "./wire/api.playback.gen.ts"
 export type * from "./wire/api.ratings.gen.ts"
+export type * from "./wire/api.recovery.gen.ts"
 export type * from "./wire/api.seerr.gen.ts"
 export type * from "./wire/api.settings.gen.ts"
 export type * from "./wire/api.shell.gen.ts"
@@ -50,6 +51,7 @@ export type * from "./wire/preferences.service.gen.ts"
 export type * from "./wire/preferences.viewing.gen.ts"
 export type * from "./wire/ui_events.gen.ts"
 
+import type { ApiRecoveryRoutes } from "./wire/api.recovery.gen.ts"
 import type { ApiRoutes } from "./wire/api.gen.ts"
 import type { ApiSettingsRoutes } from "./wire/api.settings.gen.ts"
 import type { ApiRatingsRoutes } from "./wire/api.ratings.gen.ts"
@@ -67,6 +69,7 @@ import type { ApiBooksRoutes } from "./wire/api.books.gen.ts"
 
 /** Every route the native app serves, by method and path. */
 export type Routes =
+  & ApiRecoveryRoutes
   & ApiRoutes
   & ApiSettingsRoutes
   & ApiRatingsRoutes

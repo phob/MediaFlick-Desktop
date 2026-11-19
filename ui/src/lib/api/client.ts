@@ -45,7 +45,8 @@ export class ApiError extends Error {
   readonly accountChanged: boolean
   /**
    * The services failed to open at startup, so every request answers this
-   * and the message says why. It is final until the app restarts.
+   * and the message says why. It is final until the app restarts, or until
+   * a Recreate library opens them on a new `library.db`.
    */
   readonly startupFailed: boolean
   constructor(message: string, status: number, flags: ApiErrorFlags = {}) {
@@ -143,6 +144,11 @@ export const api = {
   browsing: () => request("GET /api/settings/browsing"),
   saveBrowsing: (page: BrowsingPage, route: string) => request("PATCH /api/settings/browsing", { body: { page, route } }),
   status: () => request("GET /api/status"),
+  recovery: {
+    status: () => request("GET /api/recovery"),
+    recreateLibrary: () => request("POST /api/recovery/library/recreate"),
+    openDataFolder: () => request("POST /api/recovery/data-folder/open"),
+  },
   startup: (home: boolean) => request("GET /api/startup", { query: { home: home ? 1 : undefined } }),
   companion: {
     info: () => request("GET /api/companion/info"),

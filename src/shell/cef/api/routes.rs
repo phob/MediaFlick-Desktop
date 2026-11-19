@@ -29,10 +29,18 @@ use crate::app::services::Services;
 /// One module's routes: the dispatcher [`routes!`] generates and the
 /// declarations it was generated from.
 pub(in crate::shell::cef) struct Routes {
-    pub(super) serve: fn(&Arc<Services>, &[&str], &ApiRequest) -> Option<ApiResponse>,
+    pub(super) serve: Serve,
     pub(super) table: &'static [Route],
     #[cfg(test)]
     pub(super) module: &'static str,
+}
+
+/// A module's dispatcher, by what its routes need.
+pub(in crate::shell::cef) enum Serve {
+    WithServices(fn(&Arc<Services>, &[&str], &ApiRequest) -> Option<ApiResponse>),
+    /// Routes that also answer while the services are down, such as the
+    /// startup error screen's.
+    WithoutServices(fn(&[&str], &ApiRequest) -> Option<ApiResponse>),
 }
 
 /// One declaration: the method and path it takes, and, for the generated
@@ -255,17 +263,19 @@ pub(super) enum AnswerSpec {
 /// names given in `|services, request|` and must return
 /// `Result<Answer::Value, ApiResponse>`: the wire type itself, a JSON
 /// [`Value`] for [`Relay`], a [`BinaryAnswer`] for [`Binary`]. Routes are
-/// tried in the order written.
+/// tried in the order written. A module whose routes need no services
+/// declares `|request|` instead; they are tried before the services open,
+/// so they also answer while the services are down.
 macro_rules! routes {
     (
-        |$services:ident, $request:ident|
+        @build ($($services:ident)?) $request:ident, $kind:ident;
         $(
             $method:ident [$($segment:tt),*] $(($body:ident: $body_type:ty))?
                 -> $answer:ty = $call:expr
         ),* $(,)?
     ) => {
         fn serve(
-            $services: &std::sync::Arc<$crate::app::services::Services>,
+            $($services: &std::sync::Arc<$crate::app::services::Services>,)?
             segments: &[&str],
             $request: &$crate::shell::cef::api::ApiRequest,
         ) -> Option<$crate::shell::cef::api::ApiResponse> {
@@ -284,7 +294,7 @@ macro_rules! routes {
         pub(super) const ROUTES: $crate::shell::cef::api::routes::Routes = {
             use $crate::shell::cef::api::routes;
             routes::Routes {
-                serve,
+                serve: routes::Serve::$kind(serve),
                 table: &[$(
                     routes::Route {
                         method: routes::method!($method),
@@ -299,6 +309,12 @@ macro_rules! routes {
                 module: module_path!(),
             }
         };
+    };
+    (|$services:ident, $request:ident| $($routes:tt)*) => {
+        $crate::shell::cef::api::routes::routes!(@build ($services) $request, WithServices; $($routes)*);
+    };
+    (|$request:ident| $($routes:tt)*) => {
+        $crate::shell::cef::api::routes::routes!(@build () $request, WithoutServices; $($routes)*);
     };
 }
 

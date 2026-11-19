@@ -13,6 +13,7 @@ use crate::jellyfin::socket::{self, SocketHandle};
 use crate::library::Library;
 use crate::library::LibraryChangeBatch;
 use crate::library::browse::ChildrenSources;
+use crate::library::db::OpenError;
 use crate::library::sync::{self, SyncHandle};
 use crate::playback::PlaybackCoordinator;
 use crate::preferences::{
@@ -190,22 +191,38 @@ impl Services {
     }
 }
 
+/// Why the services did not open: the reason the user reads and, when
+/// `library.db` was what failed, how it was refused.
+pub struct StartupFailure {
+    pub reason: String,
+    pub library: Option<LibraryRefusal>,
+}
+
+/// How `library.db` was refused. Either way the file was left as it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibraryRefusal {
+    /// A newer MediaFlick wrote it.
+    NewerSchema,
+    /// SQLite could not open it, or its schema change failed and rolled back.
+    Unusable,
+}
+
+impl From<String> for StartupFailure {
+    fn from(reason: String) -> Self {
+        Self {
+            reason,
+            library: None,
+        }
+    }
+}
+
 /// Builds the services and resumes interrupted account deletions. The caller
 /// publishes them before `start` lets background work reach the shell.
-pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Services>, String> {
-    let path = paths::library_db_path();
-    let library = match Library::open(&path) {
-        Ok(library) => Arc::new(library),
-        Err(error) => {
-            let message = format!("could not open {}: {error}", path.display());
-            tracing::error!(target: "library.db", "{message}");
-            let full = format!("{error:#}");
-            if full != error.to_string() {
-                tracing::error!(target: "library.db", "the failed open in full: {full}");
-            }
-            return Err(message);
-        }
-    };
+pub fn open(
+    _: &InitPermit,
+    initial_settings: AppSettings,
+) -> Result<Arc<Services>, StartupFailure> {
+    let library = open_library()?;
     let restored = library.credentials().is_authenticated();
     let shell = Arc::new(ShellBridge::default());
     let session = Arc::new(Session::restore(library.clone(), shell.clone()));
@@ -217,14 +234,15 @@ pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Service
     {
         return Err(initialization_failure(format!(
             "could not import legacy appearance settings: {error}"
-        )));
+        ))
+        .into());
     }
     let collections_path = collections_file_path();
     let collections = open_configuration(&collections_path, CollectionConfigurationService::open)?;
     let playback_path = playback_preferences_file_path();
     let playback_preferences = open_configuration(&playback_path, PlaybackPreferenceService::open)?;
     if let Err(error) = import_legacy_account_data(&library, &accounts, &playback_preferences) {
-        return Err(initialization_failure(error));
+        return Err(initialization_failure(error).into());
     }
     let reader = open_configuration(&reader_file_path(), ReaderStore::open)?;
     let preferences = Arc::new(PreferencesService::new(
@@ -289,6 +307,49 @@ pub fn open(_: &InitPermit, initial_settings: AppSettings) -> Result<Arc<Service
     connect_app_hooks(&services);
     let _ = finish_pending_deletions(&services);
     Ok(services)
+}
+
+/// Opens `library.db`, or says how it was refused. A refused file was left
+/// as it was; its reason goes to the log in full.
+fn open_library() -> Result<Arc<Library>, StartupFailure> {
+    let path = paths::library_db_path();
+    let error = match Library::open(&path) {
+        Ok(library) => return Ok(Arc::new(library)),
+        Err(error) => error,
+    };
+    let refusal = library_refusal(&error);
+    let message = match refusal {
+        Some(_) => format!("could not open {}: {error}", path.display()),
+        None => format!(
+            "could not open {}: {error}. Another program is using library.db: close it, then \
+             restart MediaFlick",
+            path.display()
+        ),
+    };
+    tracing::error!(target: "library.db", "{message}");
+    let full = format!("{error:#}");
+    if full != error.to_string() {
+        tracing::error!(target: "library.db", "the failed open in full: {full}");
+    }
+    Err(StartupFailure {
+        reason: message,
+        library: refusal,
+    })
+}
+
+/// How a failed open refused `library.db`, for Recreate library. `None` when
+/// another program holds the file (SQLite's BUSY or LOCKED): moving a
+/// database another connection has open can corrupt it, so that one is only
+/// explained.
+fn library_refusal(error: &OpenError) -> Option<LibraryRefusal> {
+    let sqlite = match error {
+        OpenError::NewerSchema { .. } => return Some(LibraryRefusal::NewerSchema),
+        OpenError::Sqlite(error) | OpenError::Migration { error, .. } => error,
+    };
+    match sqlite.sqlite_error_code() {
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) => None,
+        _ => Some(LibraryRefusal::Unusable),
+    }
 }
 
 pub fn start(_: &InitPermit, services: &Arc<Services>) {
@@ -562,5 +623,61 @@ pub(crate) mod test_support {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.directory);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A failure with SQLite's result code `code`, as rusqlite reports one.
+    fn sqlite(code: i32) -> rusqlite::Error {
+        rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None)
+    }
+
+    /// The codes are SQLite's documented result codes
+    /// (https://sqlite.org/rescode.html): SQLITE_BUSY 5, SQLITE_LOCKED 6 and
+    /// their extended codes SQLITE_BUSY_RECOVERY 261, SQLITE_BUSY_SNAPSHOT
+    /// 517, SQLITE_BUSY_TIMEOUT 773 and SQLITE_LOCKED_SHAREDCACHE 262 mean
+    /// another connection holds the file; SQLITE_ERROR 1, SQLITE_CANTOPEN 14,
+    /// SQLITE_CORRUPT 11 and SQLITE_NOTADB 26 do not.
+    #[test]
+    fn a_library_another_program_holds_is_never_offered_for_recreation() {
+        for code in [5, 6, 261, 517, 773, 262] {
+            assert_eq!(
+                library_refusal(&OpenError::Sqlite(sqlite(code))),
+                None,
+                "{code}"
+            );
+            assert_eq!(
+                library_refusal(&OpenError::Migration {
+                    from: 23,
+                    step: 23..24,
+                    error: sqlite(code),
+                }),
+                None,
+                "{code} during a migration"
+            );
+        }
+        for code in [1, 14, 11, 26] {
+            assert_eq!(
+                library_refusal(&OpenError::Sqlite(sqlite(code))),
+                Some(LibraryRefusal::Unusable),
+                "{code}"
+            );
+            assert_eq!(
+                library_refusal(&OpenError::Migration {
+                    from: 0,
+                    step: 0..23,
+                    error: sqlite(code),
+                }),
+                Some(LibraryRefusal::Unusable),
+                "{code} during a migration"
+            );
+        }
+        assert_eq!(
+            library_refusal(&OpenError::NewerSchema { found: 24 }),
+            Some(LibraryRefusal::NewerSchema)
+        );
     }
 }

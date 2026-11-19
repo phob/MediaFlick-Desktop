@@ -12,6 +12,8 @@ use rusqlite::{Connection, OpenFlags};
 mod development;
 mod migrate;
 mod schema;
+mod set_aside;
+pub use set_aside::{set_aside, set_aside_path};
 #[cfg(test)]
 mod tests;
 

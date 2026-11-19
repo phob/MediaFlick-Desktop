@@ -58,6 +58,7 @@ use super::playback::{
     PlayerCommandBody, SyncRequested,
 };
 use super::ratings::RatingsBatchBody;
+use super::recovery::{DataFolderOpened, LibraryRecreated, StartupRecovery};
 use super::seerr::{SeerrRequestBody, SeerrRequestCancelled};
 use super::settings::{
     BrowsingBody, BrowsingRoutes, BrowsingSaved, SettingsView, ViewingSettingsWrite, ViewingView,
@@ -116,6 +117,7 @@ wire_types! {
     CommittedProfile,
     CompanionStatus,
     ConfirmationBody,
+    DataFolderOpened,
     DetailView,
     EnabledBody,
     ErrorToast,
@@ -145,6 +147,7 @@ wire_types! {
     LetterboxdProfiles,
     LibrariesResponse,
     LibraryLatest,
+    LibraryRecreated,
     LoginBody,
     LogoutBody,
     MediaInfoResponse,
@@ -195,6 +198,7 @@ wire_types! {
     ShellRequestBody,
     ShellRequestQueued,
     SimilarItems,
+    StartupRecovery,
     StartupResponse,
     Studios,
     SyncRequested,

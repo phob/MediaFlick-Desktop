@@ -8,7 +8,7 @@ use std::time::Duration;
 use cef::*;
 
 use crate::app::paths::app_data_dir;
-use crate::app::services::ShellRequest;
+use crate::app::services::{Services, ShellRequest};
 use crate::app::{build_info, logger, urls};
 use crate::jellyfin::api::items;
 use crate::jellyfin::bridge as jellyfin_bridge;
@@ -397,9 +397,6 @@ fn new_browser_state(
     let playback = Arc::new(PlaybackCoordinator::new(playback_event_tx, |events| {
         build_backend(&settings, events)
     }));
-    if let Some(services) = locator::services() {
-        services.attach_playback(playback.clone());
-    }
     let state = Arc::new(Mutex::new(BrowserStateInner {
         title,
         settings,
@@ -408,7 +405,7 @@ fn new_browser_state(
         initial_show_state,
         main_window_reveal_requested: false,
         main_window_revealed: false,
-        playback,
+        playback: playback.clone(),
         update_available: None,
         update_download_started: false,
         mpv_setup_started: false,
@@ -416,10 +413,30 @@ fn new_browser_state(
         player_warmed: false,
     }));
     start_playback_event_bridge(&state, playback_event_rx);
-    start_preferences_event_bridge(&state);
-    start_shell_request_bridge(&state);
+    // The services are down when `library.db` was refused, and open in this
+    // window after a Recreate library.
+    let weak = Arc::downgrade(&state);
+    locator::on_services(move |services| {
+        if let Some(state) = weak.upgrade() {
+            connect_services(&state, services, playback);
+        }
+    });
     start_update_check_bridge(state.clone());
     state
+}
+
+/// What the window needs from the services: its player, the preference
+/// changes it applies and the shell requests it serves. Nothing here needs
+/// the UI thread. The sync's startup hold needs no release after a Recreate
+/// library: a new `library.db` holds no session, so no first cycle is held.
+fn connect_services(
+    state: &BrowserState,
+    services: &Arc<Services>,
+    playback: Arc<PlaybackCoordinator>,
+) {
+    services.attach_playback(playback);
+    start_preferences_event_bridge(state, services);
+    start_shell_request_bridge(state, services);
 }
 
 fn prepare_player_for_window(state: &BrowserState) {
