@@ -7,7 +7,7 @@
 // schema 0 so the schema change fails and rolls back (scenario
 // 5-migration-failed), with
 //
-//   --account SERVER --signed-out --services-down --seed-data DIR
+//   --account SERVER --signed-out --services-down --seed DIR --seed-data DIR
 //   MEDIAFLICK_VERIFY_REFUSED_SHA256   the seeded library.db's SHA-256
 //   MEDIAFLICK_VERIFY_REFUSED_SCHEMA   its PRAGMA user_version
 //   MEDIAFLICK_VERIFY_REFUSED_KIND     newerSchema or unusable: which refusal

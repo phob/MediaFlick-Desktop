@@ -150,7 +150,7 @@ const SCENARIOS = [
 // writable connection merges the WAL when it closes.
 async function refusedStart(id, { schema, kind, unmergedWal = false, says, patterns, leavesOut, logKeeps }) {
   const profile = copyProfile(original, path.join(out, id, "profile"))
-  const { data } = appDirs(profile)
+  const { config, data } = appDirs(profile)
   writeDatabase(data, (db) => {
     db.exec(`PRAGMA user_version = ${schema}`)
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -169,7 +169,7 @@ async function refusedStart(id, { schema, kind, unmergedWal = false, says, patte
     { ok: !/remove library\.db|delete library\.db/i.test(stats.stderr), message: "the refusal does not tell the user to remove library.db" },
     { ok: (await sha256File(file)) === bytes, message: "library.db is byte for byte as it was" },
   ]
-  const run = await session(id, "library-refused", ["--account", options.account, "--signed-out", "--services-down", "--seed-data", data], {
+  const run = await session(id, "library-refused", ["--account", options.account, "--signed-out", "--services-down", "--seed", config, "--seed-data", data], {
     MEDIAFLICK_VERIFY_REFUSED_SHA256: bytes,
     MEDIAFLICK_VERIFY_REFUSED_SCHEMA: String(schema),
     MEDIAFLICK_VERIFY_REFUSED_KIND: kind,
