@@ -26,9 +26,14 @@
 // Scenarios: 1-update (this build on the 0.2.0 profile), 2-back (the real
 // 0.2.0 on what 1-update left), 3-forward (this build again on what 2-back
 // left), 4-newer-refused (this build on the profile stamped with a newer
-// schema) and 5-migration-failed (stamped with schema 0, so the schema change
-// fails and rolls back): this build must refuse the file once, leave it as it
-// was, and show the reason on a startup error screen instead of sign-in. Every expectation comes from the profile as the previous app
+// schema, with real WAL frames beside it) and 5-migration-failed (stamped
+// with schema 0, so the schema change fails and rolls back): this build must
+// refuse the file once, leave it as it was, and show the reason on a startup
+// error screen instead of sign-in; Open data folder must reach xdg-open (a
+// stand-in first on PATH records what it is given), and Recreate library must
+// move the file aside, open the services on a new one in the same window and
+// sync it from --account's server after a Quick Connect sign-in, as a new
+// device the session revokes afterwards. Every expectation comes from the profile as the previous app
 // left it (before.json), never from the code under test. The artifact is
 // build/e2e/upgrade-0-2-0/report.json, with each scenario's snapshots,
 // screenshots and logs next to it. Exits non-zero when a scenario fails.
@@ -113,6 +118,8 @@ const SCENARIOS = [
     title: "A library.db from a newer MediaFlick: refused once, left as it was, the reason on a startup error screen",
     run: () => refusedStart("4-newer-refused", {
       schema: SCHEMA + 1,
+      kind: "newerSchema",
+      unmergedWal: true,
       says: "a newer MediaFlick wrote library.db and that it was left as it was",
       patterns: ["newer MediaFlick", "left as it was"],
     }),
@@ -125,6 +132,7 @@ const SCENARIOS = [
     // table that is already there, and the change rolls back.
     run: () => refusedStart("5-migration-failed", {
       schema: 0,
+      kind: "unusable",
       says: "the step from schema 0 failed on SQLite's \"table credentials already exists\" and the file was left at schema 0",
       patterns: [`could not update library\\.db from schema 0 to ${SCHEMA}: table credentials already exists\\. The file was left at schema 0`],
       leavesOut: { says: "the statement SQLite ran", patterns: ["CREATE TABLE", " at offset \\d"] },
@@ -135,14 +143,22 @@ const SCENARIOS = [
 
 // This build on a copy of the 0.2.0 profile whose library.db is stamped
 // `schema`, which it must refuse once with a reason matching `patterns`,
-// leave as it was, and show on the startup error screen.
-async function refusedStart(id, { schema, says, patterns, leavesOut, logKeeps }) {
+// leave as it was, and show on the startup error screen, refused as `kind`;
+// then the user's way out of it. `unmergedWal` leaves a transaction in
+// library.db-wal, as a crash would, so the move has sidecars to carry. Only a
+// refusal before the open writes can keep it: the failed schema change's
+// writable connection merges the WAL when it closes.
+async function refusedStart(id, { schema, kind, unmergedWal = false, says, patterns, leavesOut, logKeeps }) {
   const profile = copyProfile(original, path.join(out, id, "profile"))
   const { data } = appDirs(profile)
   writeDatabase(data, (db) => {
     db.exec(`PRAGMA user_version = ${schema}`)
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
   })
+  if (unmergedWal) leaveUnmergedWal(data, path.join(out, id, "wal"))
+  const opener = path.join(out, id, "opener")
+  mkdirSync(opener, { recursive: true })
+  writeFileSync(path.join(opener, "xdg-open"), "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$MEDIAFLICK_VERIFY_OPENED_LOG\"\n", { mode: 0o755 })
   const file = path.join(data, "library.db")
   const bytes = await sha256File(file)
   const env = { ...process.env, HOME: path.join(profile, "home"), XDG_CONFIG_HOME: path.join(profile, "config"), XDG_DATA_HOME: path.join(profile, "data"), XDG_CACHE_HOME: path.join(profile, "cache"), XDG_STATE_HOME: path.join(profile, "state"), LD_LIBRARY_PATH: path.dirname(staged), ...(existsSync(path.join(path.dirname(staged), "libcef.so")) ? { LD_PRELOAD: path.join(path.dirname(staged), "libcef.so") } : {}) }
@@ -153,7 +169,15 @@ async function refusedStart(id, { schema, says, patterns, leavesOut, logKeeps })
     { ok: !/remove library\.db|delete library\.db/i.test(stats.stderr), message: "the refusal does not tell the user to remove library.db" },
     { ok: (await sha256File(file)) === bytes, message: "library.db is byte for byte as it was" },
   ]
-  const run = await session(id, "library-refused", ["--services-down", "--seed-data", data], { MEDIAFLICK_VERIFY_REFUSED_SHA256: bytes, MEDIAFLICK_VERIFY_REFUSED_SCHEMA: String(schema), MEDIAFLICK_VERIFY_REFUSED_REASON: JSON.stringify({ says, patterns, leavesOut, logKeeps }) }, 600)
+  const run = await session(id, "library-refused", ["--account", options.account, "--signed-out", "--services-down", "--seed-data", data], {
+    MEDIAFLICK_VERIFY_REFUSED_SHA256: bytes,
+    MEDIAFLICK_VERIFY_REFUSED_SCHEMA: String(schema),
+    MEDIAFLICK_VERIFY_REFUSED_KIND: kind,
+    MEDIAFLICK_VERIFY_REFUSED_REASON: JSON.stringify({ says, patterns, leavesOut, logKeeps }),
+    MEDIAFLICK_VERIFY_SCHEMA: String(SCHEMA),
+    MEDIAFLICK_VERIFY_OPENED_LOG: path.join(opener, "opened.log"),
+    PATH: [opener, process.env.PATH].join(":"),
+  }, 900)
   const result = collect(id, run, "library-refused.json")
   rmSync(profile, { recursive: true, force: true })
   const passed = result.passed && checks.every((check) => check.ok)
@@ -183,6 +207,25 @@ async function releasedAppImage() {
   }
   execFileSync("chmod", ["+x", file])
   return file
+}
+
+// Leaves one committed transaction in library.db-wal, unmerged, with its
+// -shm: written with automatic checkpoints off, and the three files copied
+// while the writer is still open, since closing it merges the WAL. `staging`
+// holds the copies.
+function leaveUnmergedWal(dataDir, staging) {
+  const files = ["library.db", "library.db-wal", "library.db-shm"]
+  mkdirSync(staging, { recursive: true })
+  const db = new DatabaseSync(path.join(dataDir, "library.db"))
+  try {
+    db.exec("PRAGMA wal_autocheckpoint = 0")
+    db.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('verify.unmerged_wal', 'kept in library.db-wal')")
+    for (const name of files) copyFileSync(path.join(dataDir, name), path.join(staging, name))
+  } finally {
+    db.close()
+  }
+  for (const name of files) copyFileSync(path.join(staging, name), path.join(dataDir, name))
+  rmSync(staging, { recursive: true, force: true })
 }
 
 // Opens library.db in place, to change a copy the script owns.
