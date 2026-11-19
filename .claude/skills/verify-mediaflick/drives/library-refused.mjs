@@ -44,9 +44,10 @@ export default async function libraryRefused(ctx) {
     for (let index = 0; index < 6; index += 1) answers.push(await ctx.api("/api/status"))
     report.answers = answers.map((answer) => ({ status: answer.status, body: answer.body }))
     record(answers.every((answer) => answer.status === 503), "every /api/status answers 503 while the services are down", answers.map((answer) => answer.status))
-    // The reason runs to the next log line: a failed schema change quotes
-    // its SQL over several lines.
-    const logged = ctx.appLog().match(/could not open \S*library\.db: [\s\S]*?(?=\n\d{4}-\d\d-\d\dT|\n?$)/)?.[0] ?? null
+    // The path may hold spaces (it lives under TMPDIR). The reason runs to
+    // the next log line: a failed schema change quotes its SQL over several
+    // lines.
+    const logged = ctx.appLog().match(/could not open [^\r\n]*?library\.db: [\s\S]*?(?=\n\d{4}-\d\d-\d\dT|\n?$)/)?.[0] ?? null
     const reason = answers[0].body?.error ?? ""
     record(expectedReason.patterns.every((pattern) => new RegExp(pattern).test(reason)), `the 503 says ${expectedReason.says}`, answers[0].body)
     record(answers.every((answer) => answer.body?.startupFailed === true), "every 503 is marked as a failed startup", answers.map((answer) => answer.body?.startupFailed))
