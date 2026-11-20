@@ -91,11 +91,11 @@ On first launch, enter your Jellyfin server address and sign in. Right-click any
 
 macOS support is an **untested alpha**. Every macOS build through 0.2.0 crashed at startup. Builds now start, but have only run on GitHub-hosted Apple silicon VMs without a GPU, where sign-in, browsing, detail pages, and playback in external mpv with software video passed.
 
-Download `MediaFlickDesktop-v<version>-macos-arm64.dmg` (Apple silicon) or `-macos-x86_64.dmg` (Intel) from [Releases](https://github.com/phob/mediaflick-desktop/releases/latest). Playback needs an external mpv, for example `brew install mpv`; the built-in player is not available on macOS.
+macOS needs the first release after 0.2.0; 0.2.0 and earlier crash at startup. Download `MediaFlickDesktop-v<version>-macos-arm64.dmg` (Apple silicon) or `-macos-x86_64.dmg` (Intel) from [Releases](https://github.com/phob/mediaflick-desktop/releases). Playback needs an external mpv, for example `brew install mpv`; the built-in player is not available on macOS.
 
 Known limitations and what is not yet tested:
 
-- Builds are ad-hoc signed, not notarized, so Gatekeeper blocks the first launch.
+- Builds are ad-hoc signed, not notarized, so Gatekeeper blocks the first launch. The standard macOS way past this, not yet observed on a real Mac: after the blocked launch, open **System Settings → Privacy & Security** and choose **Open Anyway** (Control-click → Open no longer bypasses it on macOS 15 and later), or run `xattr -dr com.apple.quarantine "/Applications/MediaFlick Desktop.app"`.
 - Playback on a real Mac with a GPU is unproven: mpv's default video output crashed on the test VMs' virtual GPU.
 - Intel (x86_64) builds have never been run.
 - Audio, the update notice, and updating over an earlier install are untested.
