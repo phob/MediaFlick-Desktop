@@ -177,8 +177,8 @@ jobs:
       - name: Test
         run: cargo test --locked --all-targets
 
-      # Guard integrity reads the untyped-body count as text. This proves a
-      # test still runs under its path, which a wrapped or cfg'd module fails.
+      # The untyped-body ratchet holds only while its test runs. This proves it
+      # still runs under its path, which a wrapped or cfg'd module fails.
       - name: Check that the untyped-body count runs
         shell: bash
         run: |

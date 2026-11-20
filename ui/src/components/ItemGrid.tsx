@@ -131,8 +131,8 @@ export function ItemGrid({
 
   const rows = total === null ? 0 : Math.ceil(total / columns)
   // TanStack Virtual is intentionally outside compiler memoization above. Its
-  // known diagnostic does not honor `use no memo`: TanStack/virtual#1119.
-  // oxlint-disable-next-line react/incompatible-library -- upstream false positive after explicit compiler opt-out
+  // known diagnostic does not honor `use no memo` (TanStack/virtual#1119), so
+  // `react/incompatible-library` is off for this file in .oxlintrc.json.
   const virtualizer = useVirtualizer({
     count: rows,
     getScrollElement: () => scroller,

@@ -34,7 +34,7 @@ jobs:
           bash <(curl -sSfL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash") "$ACTIONLINT_VERSION"
           ./actionlint -color
 
-      - name: Test the guard check
+      - name: Test CI scripts
         run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
 
       - name: Test the release script

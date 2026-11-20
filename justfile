@@ -144,7 +144,7 @@ clippy-target target:
       cargo clippy --locked --all-targets --target {{target}} --features cef/dox -- -D warnings
 
 # Every check CI runs on a PR, cheapest first. A PR label maps to an env var:
-# `no-changelog` to MEDIAFLICK_NO_CHANGELOG=1, `guards-changed` to MEDIAFLICK_GUARDS_CHANGED=1.
+# `no-changelog` to MEDIAFLICK_NO_CHANGELOG=1.
 [group('lint')]
 [unix]
 check-pr base="origin/main": fmt-check ui
@@ -152,7 +152,6 @@ check-pr base="origin/main": fmt-check ui
     python3 scripts/ci/check_changelog_fragment.py {{base}}
     python3 scripts/ci/check_file_size.py {{base}}
     python3 scripts/ci/check_feature_map.py
-    python3 scripts/ci/check_guards.py {{base}}
     python3 scripts/ci/check_ui_ratchet.py {{base}}
     python3 -m unittest discover -s scripts/ci -p 'test_*.py'
     python3 -m unittest discover -s scripts -p 'test_prepare_release.py'

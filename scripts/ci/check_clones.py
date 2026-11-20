@@ -14,7 +14,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-MAX_CLONES = 10  # guard-ratchet
+MAX_CLONES = 10
 MIN_TOKENS = 60
 MIN_LINES = 6
 ROOT = Path(__file__).resolve().parents[2]

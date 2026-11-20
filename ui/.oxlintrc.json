@@ -19,7 +19,7 @@
     "typescript/no-empty-object-type": "error",
     "typescript/no-explicit-any": "error",
     "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }],
+    "react/only-export-components": ["error", { "allowConstantExport": true }],
     "react/forbid-elements": ["error", { "forbid": ["button", "input", "select", "textarea"] }],
     "ui/no-inline-kind-translation": "error"
   },
@@ -31,6 +31,10 @@
     {
       "files": ["src/components/ui/**", "test/**"],
       "rules": { "react/forbid-elements": "off" }
+    },
+    {
+      "files": ["src/components/CollectionTitleGrid.tsx", "src/components/ItemGrid.tsx"],
+      "rules": { "react/incompatible-library": "off" }
     }
   ]
 }

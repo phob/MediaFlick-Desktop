@@ -64,7 +64,8 @@ export function CollectionTitleGrid<T>({
 
   const rows = Math.ceil(items.length / layout.columns)
   const ready = scroller !== null && scrollMargin !== null
-  // oxlint-disable-next-line react/incompatible-library -- upstream false positive after explicit compiler opt-out
+  // `react/incompatible-library` is off for this file in .oxlintrc.json: its
+  // TanStack Virtual diagnostic ignores `use no memo` (TanStack/virtual#1119).
   const virtualizer = useVirtualizer({
     count: rows,
     getScrollElement: () => scroller,
