@@ -247,7 +247,7 @@ jobs:
 
   build-libmpv-windows:
     name: Build bundled Windows libmpv
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
 
     env:
       MEDIAFLICK_LIBMPV_WORK_DIR: ${{ github.workspace }}/../mediaflick-cache/libmpv-windows-x64
@@ -323,7 +323,7 @@ jobs:
 
   build-linux:
     name: Build Linux AppImage
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: prepare
 
     env:
