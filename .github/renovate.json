@@ -64,6 +64,19 @@
         "Jellyfin.Model"
       ],
       "groupName": "Jellyfin packages"
+    },
+    {
+      "description": "build-linux builds the Linux AppImage on the runner itself and stays on ubuntu-24.04 so its glibc baseline runs on Ubuntu 24.04 (distribution/libmpv/linux/README.md). Move the pinned ubuntu runner image by hand.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchDatasources": [
+        "github-runners"
+      ],
+      "matchPackageNames": [
+        "ubuntu"
+      ],
+      "enabled": false
     }
   ]
 }
