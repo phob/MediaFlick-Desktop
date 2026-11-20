@@ -16,6 +16,7 @@
 ## Product decisions and supported targets
 
 - MediaFlick is a desktop app only: Windows, macOS and Linux.
+- macOS is an untested alpha, proven only on GitHub-hosted arm64 VMs without a GPU (external mpv, software video). Never claim macOS works; report macOS runtime verification as outstanding.
 - Segment-skip `Never` still shows the Skip button and only never skips by itself; `Don't show` hides that segment type.
 - On Linux, playback targets Vulkan rendering and NVDEC hardware decoding.
 - The desktop supports Jellyfin 10.11.0 and newer (`DESKTOP_MINIMUM` in `src/jellyfin/version.rs`). The Companion needs Jellyfin 12.0.0 (`MINIMUM_SERVER` in `src/companion/mod.rs`).

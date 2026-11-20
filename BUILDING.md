@@ -232,7 +232,8 @@ AppImage. To rebuild only libmpv, use `just libmpv`. To package the release
 app that `just release` already staged in `build/`, run
 `bash distribution/linux/build-appimage.sh`.
 
-macOS DMG packaging creates an unsigned/ad-hoc signed `.app` bundle:
+macOS DMG packaging creates an ad-hoc signed, unnotarized `.app` bundle. macOS
+is an untested alpha; see [README.md](README.md#macos-untested-alpha).
 
 ```sh
 just macos-dmg

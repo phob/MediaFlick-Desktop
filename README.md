@@ -44,7 +44,7 @@ The catch with playing outside the browser is usually that Jellyfin loses track 
 - **Server administration in your browser.** Anything the app deliberately doesn't rebuild (dashboard, users, metadata editing) opens in your default browser from the right-click menu.
 - **Optional external-player setup.** One-click mpv download on Windows; Linux and macOS auto-detect a system `mpv`.
 - **Automatic in-app updates** from GitHub Releases (Windows).
-- **Cross-platform.** Windows, Linux, and macOS.
+- **Cross-platform.** Windows, Linux, and macOS ([untested alpha](#macos-untested-alpha)).
 
 ## Viewing preferences
 
@@ -85,7 +85,21 @@ playback; manually starting a title begins a new session, and explicit Next acti
 
 On first launch, enter your Jellyfin server address and sign in. Right-click anywhere for **Client Settings**, **Open Jellyfin dashboard**, and **About**.
 
-**Linux / macOS.** Grab the release archive and run `mediaflick-desktop`. mpv isn't bundled; a system `mpv` is auto-detected.
+**Linux.** Grab the release archive and run `mediaflick-desktop`. mpv isn't bundled; a system `mpv` is auto-detected.
+
+### macOS (untested alpha)
+
+macOS support is an **untested alpha**. Every macOS build through 0.2.0 crashed at startup. Builds now start, but have only run on GitHub-hosted Apple silicon VMs without a GPU, where sign-in, browsing, detail pages, and playback in external mpv with software video passed.
+
+Download `MediaFlickDesktop-v<version>-macos-arm64.dmg` (Apple silicon) or `-macos-x86_64.dmg` (Intel) from [Releases](https://github.com/phob/mediaflick-desktop/releases/latest). Playback needs an external mpv, for example `brew install mpv`; the built-in player is not available on macOS.
+
+Known limitations and what is not yet tested:
+
+- Builds are ad-hoc signed, not notarized, so Gatekeeper blocks the first launch.
+- Playback on a real Mac with a GPU is unproven: mpv's default video output crashed on the test VMs' virtual GPU.
+- Intel (x86_64) builds have never been run.
+- Audio, the update notice, and updating over an earlier install are untested.
+- Keychain-backed cookies and staying signed in across restarts are untested.
 
 ## Build it yourself
 
