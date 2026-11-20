@@ -645,8 +645,6 @@ fn apply_settings_snapshot_preserving_live_window(
 fn handle_shell_request(state: &BrowserState, request: ShellRequest) {
     match request {
         ShellRequest::MainWindowReady => reveal_main_window(state),
-        #[cfg(target_os = "macos")]
-        ShellRequest::Quit => initiate_app_exit(state),
         ShellRequest::FilePicker { request_id } => open_settings_file_dialog(state, request_id),
         ShellRequest::InstallMpv { request_id } => start_mpv_download(state, request_id),
         ShellRequest::LibraryChanged {

@@ -135,6 +135,8 @@ wrap_browser_process_handler! {
                 settings.clone(),
                 show_state,
             );
+            #[cfg(target_os = "macos")]
+            mac::quit_through(&handler_state);
             let url = CefString::from(app_scheme::APP_URL);
             let runtime_style = RuntimeStyle::ALLOY;
 

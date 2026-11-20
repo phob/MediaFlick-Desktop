@@ -88,10 +88,6 @@ pub enum ShellRequest {
     /// longer reports its membership pending; its titles may not have changed.
     LibraryMembershipsSettled,
     SessionExpired,
-    /// The system asked the app to quit (on macOS: Cmd+Q, the Dock's Quit, or
-    /// logout), so it exits the way the window's Exit does.
-    #[cfg(target_os = "macos")]
-    Quit,
 }
 
 /// The queue from background work to the CEF UI thread. The services that

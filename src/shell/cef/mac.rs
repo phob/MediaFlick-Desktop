@@ -4,7 +4,7 @@
 //! `NSApplication` that speaks its `CrAppProtocol`. That `NSApp` also turns
 //! the system's quit requests into MediaFlick's orderly exit.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -18,11 +18,23 @@ use objc2::{
 use objc2_app_kit::{NSApplication, NSEvent, NSMenu, NSMenuItem};
 use objc2_foundation::ns_string;
 
-use crate::app::services::ShellRequest;
-use crate::shell::locator;
+use super::BrowserState;
+use super::bridge::initiate_app_exit;
 
 const FRAMEWORK: &str = "Chromium Embedded Framework.framework";
 const HELPER: &str = "MediaFlick Desktop Helper";
+
+thread_local! {
+    /// The main window's state, set on CEF's UI thread, which on macOS is the
+    /// main thread that receives `terminate:`. Set whether or not the services
+    /// opened, so the startup error screen's window closes the same way.
+    static EXIT_STATE: RefCell<Option<BrowserState>> = const { RefCell::new(None) };
+}
+
+/// Makes the system's quit requests close the app through `state`.
+pub(super) fn quit_through(state: &BrowserState) {
+    EXIT_STATE.with(|slot| *slot.borrow_mut() = Some(state.clone()));
+}
 
 /// Where the framework sits for the given executable. The app's own binary
 /// (`Contents/MacOS/`) finds it in `Contents/Frameworks/`; a helper's binary
@@ -102,13 +114,13 @@ define_class!(
         /// save that closing the browsers runs.
         #[unsafe(method(terminate:))]
         fn terminate(&self, _sender: Option<&AnyObject>) {
-            let request = locator::services()
-                .ok_or("the services are not running")
-                .and_then(|services| services.shell.request(ShellRequest::Quit));
-            if let Err(error) = request {
-                // No window exists yet, so there is nothing to flush or save.
-                tracing::info!(target: "app", "quit before the shell was ready ({error})");
-                cef::quit_message_loop();
+            match EXIT_STATE.with(|slot| slot.borrow().clone()) {
+                Some(state) => initiate_app_exit(&state),
+                None => {
+                    // No window exists yet, so there is nothing to flush or save.
+                    tracing::info!(target: "app", "quit before the main window was created");
+                    cef::quit_message_loop();
+                }
             }
         }
     }
