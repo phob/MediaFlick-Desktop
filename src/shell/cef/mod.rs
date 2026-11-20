@@ -38,6 +38,18 @@ pub struct AppConfig {
 }
 
 pub fn run(config: &AppConfig) -> i32 {
+    #[cfg(target_os = "macos")]
+    let _framework = match current_exe_path()
+        .ok_or_else(|| "could not resolve the executable path".to_string())
+        .and_then(|exe| mac::load_framework(&exe))
+    {
+        Ok(framework) => framework,
+        Err(error) => {
+            eprintln!("Failed to load CEF: {error}");
+            return 1;
+        }
+    };
+
     // CEF requires this API hash initialization before most other API calls.
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
 
@@ -67,6 +79,12 @@ pub fn run(config: &AppConfig) -> i32 {
     );
     if exit_code >= 0 {
         return exit_code;
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Err(error) = mac::install_application() {
+        eprintln!("Failed to start CEF: {error}");
+        return 1;
     }
 
     let paths = RuntimePaths::new();
@@ -142,16 +160,24 @@ struct RuntimePaths {
 impl RuntimePaths {
     fn new() -> Self {
         let base = app_data_dir();
-        let browser_subprocess_path = current_exe_path();
-        let app_dir = browser_subprocess_path
+        let exe = current_exe_path();
+        let app_dir = exe
             .as_ref()
             .and_then(|path| path.parent())
             .map(PathBuf::from);
 
         #[cfg(target_os = "macos")]
-        let bundle_contents_dir = browser_subprocess_path
+        let bundle_contents_dir = exe.as_deref().and_then(macos_bundle_contents_dir);
+
+        // Outside an app bundle (a development build) the executable is its
+        // own subprocess, as on Windows and Linux.
+        #[cfg(target_os = "macos")]
+        let browser_subprocess_path = bundle_contents_dir
             .as_deref()
-            .and_then(macos_bundle_contents_dir);
+            .map(mac::helper_executable)
+            .or(exe);
+        #[cfg(not(target_os = "macos"))]
+        let browser_subprocess_path = exe;
 
         #[cfg(target_os = "macos")]
         let resources_dir_path = bundle_contents_dir
@@ -164,10 +190,7 @@ impl RuntimePaths {
         let locales_dir_path = resources_dir_path.as_ref().map(|path| path.join("locales"));
 
         #[cfg(target_os = "macos")]
-        let framework_dir_path = bundle_contents_dir.map(|path| {
-            path.join("Frameworks")
-                .join("Chromium Embedded Framework.framework")
-        });
+        let framework_dir_path = current_exe_path().as_deref().and_then(mac::framework_dir);
         #[cfg(not(target_os = "macos"))]
         let framework_dir_path = None;
 
@@ -227,6 +250,8 @@ mod document;
 mod events;
 mod handlers;
 mod libmpv_overlay;
+#[cfg(target_os = "macos")]
+mod mac;
 mod runtime;
 mod ui_events;
 
