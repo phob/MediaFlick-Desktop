@@ -357,6 +357,13 @@ wrap_window_delegate! {
             update_webui_window_settings(self.state.as_ref(), window.as_deref(), new_bounds);
         }
 
+        /// macOS only: the title bar's close, minimize and zoom buttons. CEF's
+        /// own default gives a framed window these, but cef-rs answers 0 for
+        /// every callback a delegate leaves out.
+        fn with_standard_window_buttons(&self, _window: Option<&mut Window>) -> i32 {
+            1
+        }
+
         fn can_resize(&self, _window: Option<&mut Window>) -> i32 {
             1
         }
