@@ -3,11 +3,12 @@
   "extends": [
     "config:recommended"
   ],
-  "platformAutomerge": false,
+  "platformAutomerge": true,
+  "automergeStrategy": "squash",
   "minimumReleaseAge": "1 day",
   "lockFileMaintenance": {
     "enabled": true,
-    "automerge": false
+    "automerge": true
   },
   "packageRules": [
     {
@@ -18,7 +19,7 @@
         "pin",
         "digest"
       ],
-      "automerge": false
+      "automerge": true
     },
     {
       "description": "The Jellyfin packages set the Companion's minimum server version (targetAbi). Raise it by hand when a newer API is needed; only new major versions are proposed.",

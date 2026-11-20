@@ -1,0 +1,55 @@
+name: Auto-merge
+
+# Turns on GitHub's squash auto-merge for a trivial PR, which then merges once
+# the required checks pass: one labeled `automerge`, or one that changes only
+# Markdown or the Renovate config. Renovate auto-merges its own non-major
+# updates (.github/renovate.json).
+#
+# A merge that GITHUB_TOKEN enabled triggers no workflows, so a PR that changes
+# release.toml, which releases on merge, is never auto-merged here. A push or
+# label removal that makes a PR no longer qualify turns this workflow's
+# auto-merge off again; auto-merge a person turned on is left alone.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    name: Enable auto-merge
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable or withdraw squash auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          LABELED: ${{ contains(github.event.pull_request.labels.*.name, 'automerge') }}
+        run: |
+          files=$(gh pr diff "$PR" --name-only)
+          qualifies=true
+          if grep -qx 'release.toml' <<<"$files"; then
+            echo "release.toml changed; a release is merged by hand."
+            qualifies=false
+          elif [ "$LABELED" != true ] && grep -Ev '\.md$|^\.github/renovate\.json$' <<<"$files" | grep -q .; then
+            echo "Not labeled automerge, and changes more than Markdown or the Renovate config."
+            qualifies=false
+          fi
+
+          enabled_by=$(gh pr view "$PR" --json autoMergeRequest --jq '.autoMergeRequest.enabledBy.login // ""')
+          if [ "$qualifies" = true ]; then
+            gh pr merge "$PR" --auto --squash
+          else
+            # GraphQL names the Actions bot `github-actions`, REST `github-actions[bot]`.
+            case "$enabled_by" in
+              github-actions | 'github-actions[bot]') gh pr merge "$PR" --disable-auto ;;
+            esac
+          fi

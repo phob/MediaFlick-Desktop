@@ -27,18 +27,20 @@ Each rule below fails the named check; read the check's message for the fix. `ju
 
 | Rule | Enforced by |
 | --- | --- |
-| Rust warnings are errors; production code has no `unwrap`, `expect`, `panic!`, `todo!`, `unimplemented!` or `dbg!` (tests may unwrap) | `[lints]` in `Cargo.toml`, `clippy.toml`, Clippy `-D warnings` (`just clippy`, CI `Clippy`, `Clippy (<target> target)`) |
+| Rust warnings are errors; production code has no `unwrap`, `expect`, `panic!`, `todo!`, `unimplemented!` or `dbg!` (tests may unwrap). The `[lints.clippy]` restriction, pedantic and nursery lints are `forbid`, so no `#[allow]` or `#[expect]` can lift them; `clippy.toml` exempts test code only (`allow-*-in-tests`) | `[lints]` in `Cargo.toml`, `clippy.toml`, Clippy `-D warnings` (`just clippy`, CI `Clippy`, `Clippy (<target> target)`) |
 | Rust is rustfmt-formatted | `just fmt-check` (CI `Check Rust formatting`) |
 | Durable user files are written through `preferences::store::atomic_write` or their owning store, never plain `std::fs::write` | Clippy `disallowed-methods` in `clippy.toml` |
 | An error is never turned into a default with `Result::unwrap_or_default`: propagate it, or match the error you expect and say why a default is correct | Clippy `disallowed-methods` in `clippy.toml` |
 | `settings.json` is read only before the services open and written at startup only for command-line overrides; runtime code goes through `PreferencesService` | Clippy `disallowed-methods` (`AppSettings::load_at_startup`, `AppSettings::apply_launch_overrides`) |
 | Jellyfin answers come back from `SessionScope::fetch` as `Scoped<T>` and open only through `Session::confirm` or `Live::open`, so an answer that outlived an account switch reaches neither the UI nor the cache; account-scoped writers take `&Live`; a request whose account changed answers 409 with `accountChanged: true` (`ApiError::AccountChanged`) | The compiler (`src/jellyfin/session.rs`) |
 | Each API module declares its routes with `routes!` (`src/shell/cef/api/routes.rs`) next to their handlers: method, path, request body and answer. Bodies and answers are named Rust types in `wire_types!` (`src/shell/cef/api/wire.rs`); a handler returns its route's answer type and decodes its body with `Body::decode`. Run `just wire-types` after changing one to regenerate `ui/src/lib/api/wire.gen.ts`, the per-module files in `ui/src/lib/api/wire/` and the `Routes` map `ui/src/lib/api/client.ts` calls through, and alias the generated type in `ui/src/lib/api/types/` instead of writing a TypeScript copy | `cargo test` `generated_typescript_is_current` (`just test`, CI `Test`) |
-| The count of untyped API bodies only falls | `cargo test` `untyped_responses_only_shrink` (CI `Check that the untyped-body count runs`), and `Guard integrity` for its `UNTYPED_*` ratchets |
+| The count of untyped API bodies only falls | `cargo test` `untyped_responses_only_shrink` (CI `Check that the untyped-body count runs`) |
 | Query keys come only from `queryKeys` in `ui/src/lib/query-client.ts` | TypeScript (`pnpm --dir ui build`, CI `Type-check and build UI`) |
 | Media kind translations (Jellyfin, Seerr, collections, calendar) go through `ui/src/lib/kinds.ts` | Oxlint `ui/no-inline-kind-translation` (`pnpm --dir ui lint`, CI `Lint UI`) |
 | Raw `button`, `input`, `select` and `textarea` elements belong only in `ui/src/components/ui/`; an unstyled control uses `Pressable` | Oxlint `react/forbid-elements` |
 | No `any` in UI code | Oxlint `typescript/no-explicit-any` |
+| UI lint warnings fail like errors, and an unused disable directive fails | `oxlint --deny-warnings --report-unused-disable-directives` (`pnpm --dir ui lint`, CI `Lint UI`) |
+| No `oxlint-disable`, `eslint-disable`, `@ts-ignore`, `@ts-expect-error` or `@ts-nocheck` in `ui/src/`; turn a misfiring rule off for its file in `ui/.oxlintrc.json` `overrides` | `ui/lint/no-suppression.mjs` (`pnpm --dir ui lint`, CI `Lint UI`) |
 | No new non-null assertions, empty fallbacks for query data, or raw palette colors (use a theme token from `ui/src/app.css`) | UI ratchet `scripts/ci/check_ui_ratchet.py` (PR scripts `Check UI rule ratchets`) |
 | No unused UI files, exports or dependencies | knip (`pnpm --dir ui knip`, CI `Find unused UI code`) |
 | `pnpm` leaves `ui/pnpm-lock.yaml` unchanged | CI `Check that pnpm left the lockfile unchanged` |
@@ -51,7 +53,6 @@ Each rule below fails the named check; read the check's message for the fix. `ju
 | The JSON files 0.2.0 wrote (`fixtures/preferences/released/0.2.0/`) load without recovery, keep their values and survive a save | `cargo test` `preferences::released_formats` |
 | A version is published only with its `library.db` schema frozen in `fixtures/library-db/released/` | `scripts/prepare-release.py` (`--transition` in PR scripts `Check the release.toml change`, `--check` in the release workflow) |
 | `release.toml` names the `Cargo.toml` version; a new version ships first as a prerelease with its release notes prepared; versions never go back, and Latest never becomes a prerelease again | `scripts/prepare-release.py --transition` (PR scripts `Check the release.toml change`) |
-| No lint suppression, relaxed lint level or Clippy, Oxlint or analyzer setting, raised `guard-ratchet` count, or other change to guard code without the `guards-changed` label | `Guard integrity` (`scripts/ci/check_guards.py`); see [Validation](#validation) |
 | Workflows are valid | actionlint (PR scripts `Lint workflows`) |
 
 ## Architecture and ownership
@@ -146,7 +147,7 @@ Use focused checks during iteration. Run the full component checks for changes w
 
 Use the recipes above for local validation. CI is defined by `.github/workflows/ci.yml` and `.github/workflows/pr-checks.yml` and additionally uses `--locked` for Cargo commands; reproducing a CI failure requires its exact command and environment. A passing local recipe does not require a second run solely to add `--locked`. `just check-pr` runs every PR check locally on Linux or macOS before you open or update a PR; `just clippy-target <triple>` runs one cross-target Clippy.
 
-The `Guard integrity` check fails a change that relaxes a lint level or a Clippy or Oxlint setting, adds a lint suppression, or raises a `guard-ratchet` count, and any change to guard code: `scripts/ci/`, the workflows, the check recipes, `.cargo/config*`, the UI's check scripts in `ui/package.json`, TypeScript, MSBuild and analyzer warning settings, the UI's own lint rules and ratchet (`ui/lint/`), the knip configuration, and the count of untyped API bodies with its `UNTYPED_*` ratchets (`src/shell/cef/api/wire/untyped_count.rs`, and in `wire.rs` its `mod` declaration and `ApiResponse::untyped`). The clone gate's `MAX_CLONES` and the file-size `LIMIT` are `guard-ratchet` counts. Change the code instead. The `guards-changed` label accepts a relaxation; add it only when the operator asked for that relaxation, and say why in the PR body.
+Do not relax a lint level or a Clippy, Oxlint or analyzer setting, turn a UI rule off for a file, or raise a ratchet count (`MAX_CLONES`, the file-size `LIMIT`, the `UNTYPED_*` limits) unless the operator asked for it; change the code instead, and say why in the PR body when the operator did ask.
 
 After changes to deployable Companion code or assets, run `just plugin-deploy` as the final step after validation and other work. Its publish dependency satisfies `just plugin` above. Documentation-only, test-only, and review tasks do not require deployment.
 

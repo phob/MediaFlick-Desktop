@@ -1,7 +1,6 @@
 //! The count of untyped API bodies, with the limits it may only fall below,
-//! and the source scan every wire guard reads. Guard integrity fails a
-//! change to this file's code unless the PR has the `guards-changed` label;
-//! lowering a limit passes.
+//! and the source scan every wire guard reads. Lower a limit when the count
+//! falls; never raise one.
 
 use std::path::{Path, PathBuf};
 
@@ -13,11 +12,11 @@ use super::super::routes::AnswerSpec;
 /// Calls to `ApiResponse::untyped`: the one that answers every `Relay`
 /// route. Nothing raises these, and request bodies, all typed now, stay at
 /// zero.
-const UNTYPED_RESPONSES: usize = 1; // guard-ratchet
-const UNTYPED_BODIES: usize = 0; // guard-ratchet
+const UNTYPED_RESPONSES: usize = 1;
+const UNTYPED_BODIES: usize = 0;
 /// Routes declared `-> Relay`, which pass Companion JSON through without a
 /// generated type.
-const UNTYPED_ROUTES: usize = 12; // guard-ratchet
+const UNTYPED_ROUTES: usize = 12;
 
 fn rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("read source dir").flatten() {

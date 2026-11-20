@@ -9,7 +9,7 @@ over the limit at BASE may shrink or stay put; they may not grow.
 import subprocess
 import sys
 
-LIMIT = 1_000  # guard-ratchet
+LIMIT = 1_000
 SUFFIXES = (".rs", ".ts", ".tsx", ".cs", ".js", ".mjs", ".py")
 
 

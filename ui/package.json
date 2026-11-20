@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "oxlint",
+    "lint": "oxlint --deny-warnings --report-unused-disable-directives && node lint/no-suppression.mjs",
     "knip": "knip",
     "test": "pnpm test:unit && pnpm test:ui",
     "test:unit": "node --experimental-strip-types --test test/*.test.mjs",

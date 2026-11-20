@@ -15,8 +15,6 @@ mod seerr;
 mod shell;
 mod windows;
 
-use clap::Parser;
-
 use crate::app::cli::Cli;
 use crate::app::logger;
 use crate::preferences::AppSettings;
