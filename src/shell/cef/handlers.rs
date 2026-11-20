@@ -347,6 +347,9 @@ wrap_life_span_handler! {
             };
 
             if should_quit {
+                // Every way out ends here: the window's close button, Exit,
+                // Cmd+Q and the quit Apple event.
+                tracing::info!(target: "app", "last window closed; shutting down");
                 if let Some(surface) = &self.overlay_surface {
                     surface.destroy();
                 }
