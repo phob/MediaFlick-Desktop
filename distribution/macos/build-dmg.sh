@@ -67,6 +67,39 @@ mkdir -p "$macos_dir" "$frameworks_dir" "$licenses_dir" "$dmg_root"
 
 install -m 0755 "$binary" "$macos_dir/mediaflick-desktop"
 cp -R "$cef_framework" "$frameworks_dir/"
+
+# CEF starts every subprocess from a helper app beside the framework, and
+# Chromium finds the GPU, Renderer, Plugin and Alerts variants by name from
+# the plain one (src/shell/cef/mac.rs names it). Each runs MediaFlick's own
+# binary, which takes CEF's subprocess path when it sees --type.
+helper="MediaFlick Desktop Helper"
+for variant in "" " (GPU)" " (Renderer)" " (Plugin)" " (Alerts)"; do
+    name="$helper$variant"
+    helper_contents="$frameworks_dir/$name.app/Contents"
+    mkdir -p "$helper_contents/MacOS"
+    install -m 0755 "$binary" "$helper_contents/MacOS/$name"
+    python3 - "$helper_contents/Info.plist" "$name" "$variant" "$version" <<'HELPER_PLIST'
+import plistlib
+import re
+import sys
+from pathlib import Path
+path, name, variant, version = sys.argv[1:]
+suffix = re.sub(r'[^a-z]', '', variant.lower())
+Path(path).write_bytes(plistlib.dumps({
+    'CFBundleDevelopmentRegion': 'en',
+    'CFBundleExecutable': name,
+    'CFBundleIdentifier': 'io.github.phob.mediaflick-desktop.helper' + (f'.{suffix}' if suffix else ''),
+    'CFBundleInfoDictionaryVersion': '6.0',
+    'CFBundleName': name,
+    'CFBundlePackageType': 'APPL',
+    'CFBundleShortVersionString': version,
+    'CFBundleVersion': version,
+    'LSMinimumSystemVersion': '11.0',
+    'LSUIElement': True,
+    'NSSupportsAutomaticGraphicsSwitching': True,
+}))
+HELPER_PLIST
+done
 cp distribution/macos/AppIcon.icns "$resources_dir/AppIcon.icns"
 cef_credits=""
 # Unlike Windows/Linux, cef-dll-sys leaves macOS assets in its framework cache.
