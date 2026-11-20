@@ -1,16 +1,22 @@
 import { execFileSync } from "node:child_process"
 
-// Off Home the sidebar is collapsed and expands under the pointer. Moving the
-// real X11 pointer slowly down its entries, and back up over their labels,
-// must keep it expanded the whole way: it collapses only once the pointer
-// leaves it. Linux only (xdotool on the session's Xvfb display); CDP's Input
-// domain would skip the native window's own mouse handling.
+// Off Home the sidebar is collapsed and expands under the pointer. It must
+// stay expanded while the real X11 pointer moves slowly down its entries and
+// back up over their labels, and also when each step first leaves the window
+// and comes back 10 ms later: macOS Screen Sharing delivers every pointer move
+// that way (a leave, then the entry at the real position), which collapsed
+// and re-expanded the sidebar on each move (mediaflick-mac-test run
+// 44769479069). It still collapses once the pointer really leaves it. Linux
+// only (xdotool on the session's Xvfb display); CDP's Input domain would skip
+// the native window's own mouse handling.
 //   just verify sidebar-hover
 // Writes sidebar-hover.json: each pass's expand and collapse transitions and
 // the pointer events around them.
 const DEMO = "https://demo.jellyfin.org/stable"
 const LIBRARY_ROUTE = /^\/library\/[0-9a-f]+$/
 const STEP_MS = 20
+const AWAY_MS = 10
+const BOUNCE_STEP_PX = 4
 
 const xdotool = (...args) => execFileSync("xdotool", args.map(String), { encoding: "utf8" })
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -92,6 +98,8 @@ export default async function sidebarHover(ctx) {
   const last = rows.at(-1)
   const icons = { x: Math.round(first.x + first.width / 2), top: Math.round(first.y + first.height / 2), bottom: Math.round(last.y + last.height / 2) }
   const labels = { x: icons.x + 90 }
+  const [innerWidth] = await ctx.app.evaluate("[innerWidth, innerHeight]")
+  const outside = { x: innerWidth + 200, y: 300 }
   await ctx.app.evaluate(PROBE)
   await ctx.screenshot("01-collapsed")
 
@@ -105,15 +113,25 @@ export default async function sidebarHover(ctx) {
       await glide(window, { x: icons.x, y: icons.bottom }, { x: labels.x, y: icons.bottom })
       await glide(window, { x: labels.x, y: icons.bottom }, { x: labels.x, y: icons.top })
     }),
+    // Each step leaves the window and comes back AWAY_MS later, as a pointer
+    // move over macOS Screen Sharing arrives.
+    await pass(ctx, "down-icons-leaving-the-window", async () => {
+      for (let y = icons.top; y <= icons.bottom; y += BOUNCE_STEP_PX) {
+        xdotool("mousemove", "--window", window, outside.x, outside.y)
+        await pause(AWAY_MS)
+        xdotool("mousemove", "--window", window, icons.x, y)
+        await pause(STEP_MS)
+      }
+    }),
   ]
   await ctx.screenshot("03-still-expanded")
   await glide(window, { x: labels.x, y: icons.top }, away)
   await ctx.until(async () => (await sidebarState(ctx)) === "collapsed", "the sidebar collapsed once the pointer left it")
   await ctx.screenshot("04-collapsed-again")
 
-  ctx.writeEvidence("sidebar-hover.json", { rows, icons, labels, stepMs: STEP_MS, passes })
+  ctx.writeEvidence("sidebar-hover.json", { rows, icons, labels, outside, stepMs: STEP_MS, awayMs: AWAY_MS, passes })
   ctx.check(
     passes.every((entry) => entry.collapses === 0),
-    `the sidebar stays expanded while the pointer moves down its icons and up its labels (${passes.map((entry) => `${entry.pass}: ${entry.collapses} collapses`).join(", ")})`,
+    `the sidebar stays expanded while the pointer moves down its icons, up its labels, and down again leaving the window for ${AWAY_MS} ms each step (${passes.map((entry) => `${entry.pass}: ${entry.collapses} collapses`).join(", ")})`,
   )
 }

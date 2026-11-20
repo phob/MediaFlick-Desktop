@@ -6,6 +6,7 @@ import { PlayerBar } from "@/components/PlayerBar"
 import { PreviewProvider } from "@/components/PreviewCard"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useSidebarHover } from "@/hooks/use-sidebar-hover"
 import { usePlaybackEventsBridge } from "@/lib/playback-events"
 import { usePlaybackKeys } from "@/lib/playback-keys"
 import { usePlayerState } from "@/lib/playback-queries"
@@ -148,7 +149,7 @@ function IntegratedPlayerOverlay({ paused }: { paused: boolean }) {
 export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const isMobile = useIsMobile()
-  const [pointerIsOverSidebar, setPointerIsOverSidebar] = useState(false)
+  const { pointerIsOverSidebar, onPointerEnter, onPointerLeave } = useSidebarHover()
   const [userMenuIsOpen, setUserMenuIsOpen] = useState(false)
   const sidebarOpen = isMobile || sidebarShouldBeOpen(location.pathname, pointerIsOverSidebar, userMenuIsOpen)
   const settings = useSettings()
@@ -183,14 +184,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       className="app-experience h-full min-w-0 overflow-hidden"
     >
       <AppSidebar
-        onPointerEnter={(event) => {
-          // React also bubbles enter from the portalled user menu, whose
-          // unmount under the pointer never sends the matching leave.
-          if (event.target instanceof Node && event.currentTarget.contains(event.target)) {
-            setPointerIsOverSidebar(true)
-          }
-        }}
-        onPointerLeave={() => setPointerIsOverSidebar(false)}
+        onPointerEnter={onPointerEnter}
+        onPointerLeave={onPointerLeave}
         onUserMenuOpenChange={setUserMenuIsOpen}
       />
       <SidebarInset className="isolate min-h-0 min-w-0 overflow-hidden">
