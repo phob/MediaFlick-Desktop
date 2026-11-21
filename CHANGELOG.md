@@ -13,6 +13,33 @@
 ### Removed
 
 
+## [0.2.1] - 2026-11-21
+
+MediaFlick 0.2.1 keeps your library database across updates, explains a startup failure instead of showing the sign-in screen, and is the first version that starts on macOS, as an untested alpha.
+
+This is a prerelease. The in-app updater and flick.media keep offering 0.2.0 until 0.2.1 becomes the Latest release, so install it by hand from the 0.2.1 release assets on GitHub.
+
+### Added
+
+- When MediaFlick cannot open its library at startup, for example because a newer MediaFlick moved `library.db` to a newer schema or a schema update failed and was rolled back, the window now shows a **MediaFlick could not start** screen with the reason instead of the sign-in screen, and leaves the file as it was. The screen offers **Open data folder**, which shows the folder holding `library.db` in your file manager, and **Recreate library**, which asks first and says what you lose and keep. Confirming it renames `library.db`, `library.db-wal` and `library.db-shm` to `library-replaced-<date>-<time>Z.db` (and `-wal`, `-shm`) in the same folder, with one UTC date and time for all three, without deleting anything. MediaFlick then continues in the same window on a new, empty library: you sign in again, Jellyfin lists MediaFlick as a new device, and the library syncs again. Your settings, Letterboxd profiles, collections and their posters, audio and subtitle choices, and reading positions are kept. Cached ratings and the titles in your collections refill through the Companion, which spends MDBList and TMDB requests, and a collection set to refresh manually stays empty until you refresh it. Cancel changes nothing, and MediaFlick never recreates the library on its own. When another program is using `library.db`, the screen offers neither button and asks you to close that program and restart MediaFlick, since moving a database another program has open can damage it.
+
+### Changed
+
+- A library database that a newer MediaFlick moved to a newer schema is left as it was instead of being opened by an older version: install that newer version again to keep using it. Before, an older version ran on it anyway.
+- When MediaFlick cannot open its files at startup, it tries once instead of again on every request until you restart it.
+- The Built-in player's control bar, with Pause and Stop, now shows when you move the mouse anywhere over the video, not only near the bottom edge. A small nudge of 10 pixels or less leaves it hidden, and it hides again 3 seconds after the mouse stops. It stays while the pointer is on it, one of its menus is open, or you are using it with the keyboard.
+- MediaFlick now runs on CEF 156.7.0 (Chromium 156) instead of CEF 154.5.0 (Chromium 154), and uses rusqlite 0.43. The bundled SQLite is unchanged.
+- The README is rewritten: a tighter structure, corrected Linux install and interface details, and the 0.2.0 features it was missing, including music, audiobooks, the built-in book reader and public Letterboxd profiles.
+
+### Fixed
+
+- Updating MediaFlick keeps your library database. From the database MediaFlick 0.2.0 created on, a later version adds what it needs to it and never deletes and rebuilds it, so you stay signed in on the same Jellyfin device and keep your library, franchises, collections and ratings without waiting for a new sync. Going back to 0.2.0 after an update keeps working.
+- A failed schema update now names the step it failed on (from schema X to Y) and SQLite's error, without the statement text that made the message several kilobytes long; the log keeps the full error.
+- Custom collection posters are no longer deleted at startup when `collections.json` is missing.
+- Ratings cached under a different cache format are now fetched again from the Companion instead of being relabelled as current and shown as they were. If that fetch fails, those ratings are left out rather than shown, and the cached row is left untouched.
+- MediaFlick Desktop now starts on macOS. Every earlier macOS build, 0.2.0 included, crashed at startup before a window opened, because the app never loaded the Chromium Embedded Framework. The app now loads it and ships the helper apps that Chromium runs its processes in. Cmd+Q, the app menu's Quit and the Dock's Quit close MediaFlick the way the window's Exit does, so it saves the playback position and settings first. The window has its close, minimize and zoom buttons: Close quits in the same orderly way, or minimizes the window when Close behavior is set to Minimize window, the green button takes the window full screen and back, and the window reopens at the size and position it was left at.
+- macOS support is an untested alpha. It has only run on GitHub-hosted Apple silicon VMs without a GPU, where sign-in, browsing, detail pages, and playback in external mpv with software video worked. Playback on a real Mac with a GPU, Intel builds, audio, the update notice, and staying signed in are untested. Playback needs an external mpv such as Homebrew's; the built-in player is not available on macOS. Builds are ad-hoc signed, not notarized.
+- The side menu off Home no longer collapses and re-expands with every pointer move when MediaFlick is used over macOS Screen Sharing. It now collapses a quarter of a second after the pointer leaves it.
 ## [0.2.0] - 2026-11-17
 
 MediaFlick 0.2.0 replaces the embedded Jellyfin Web client with MediaFlick's own interface. Your library is kept on this device, so browsing and search answer as you type. A built-in player is now the default on Windows and Linux, and the optional MediaFlick Companion plugin adds Seerr discovery and requests, Sonarr and Radarr releases, MDBList ratings and TMDB movie franchises.
