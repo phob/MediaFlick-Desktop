@@ -20,60 +20,60 @@
 
 ## Playback
 
-MediaFlick uses mpv in two modes, and reports playback start, progress, watched state, and resume points back to Jellyfin in both:
+MediaFlick runs mpv in two modes and reports playback start, progress, watched state, and resume points back to Jellyfin in both:
 
-- **Built-in player (default on Windows and Linux).** Windows releases and Linux AppImages bundle a focused `libmpv` runtime that renders native video directly inside the app window under MediaFlick's own controls. No separate player install is needed. On Windows it automatically detects SVP 4; on Linux it renders via Vulkan with an OpenGL fallback over X11 or XWayland (unpackaged builds can load system `libmpv.so.2`; see [Linux setup](docs/libmpv-integration.md#integrated-linux-rendering)).
-- **External mpv.** Point MediaFlick at your own `mpv` binary to keep your full `mpv.conf`, GLSL shaders, Lua scripts, HDR profiles, SVP 4 pipeline, and `input.conf` bindings untouched. Windows has a one-click mpv download in Settings; Linux and macOS ([untested alpha](#macos-untested-alpha)) auto-detect a system `mpv`.
+- **Built-in player (default on Windows and Linux).** Windows releases and Linux AppImages bundle a focused `libmpv` runtime, so nothing else needs to be installed. Video renders natively inside the app window under MediaFlick's own controls. Windows auto-detects SVP 4. Linux renders over X11 or XWayland via Vulkan with an OpenGL fallback; unpackaged builds can also load system `libmpv.so.2`. See [Linux setup](docs/libmpv-integration.md#integrated-linux-rendering).
+- **External mpv.** Point MediaFlick at your own `mpv` executable to keep your `mpv.conf`, GLSL shaders, Lua scripts, HDR profiles, SVP 4 setup, and `input.conf` bindings intact. Windows offers a one-click mpv download in Settings. Linux and macOS ([untested alpha](#macos-untested-alpha)) auto-detect a system `mpv`.
 
-Both modes default to original-quality direct playback, with optional automatic connection limits or fixed bitrate caps from 1.5 to 120 Mbps (falling back to Jellyfin server transcoding when needed). MediaFlick also acts as a Jellyfin cast target, so **Play On** from other Jellyfin apps can start and control movies, episodes, music, and audiobooks.
+Both modes default to original-quality direct playback. You can also choose Jellyfin's automatic quality limit or cap streams from 1.5 to 120 Mbps with server transcoding fallback. MediaFlick also registers as a Jellyfin cast target, so **Play On** from other Jellyfin apps can start and control movies, episodes, music, and audiobooks.
 
-**Segment skipping** handles intros, credits, recaps, and commercials per type: **Always skip** (with a countdown), **Ask me**, **Never** (keeps the Skip button visible without auto-skipping), or **Don't show** (removes the prompt, Skip button, and timeline markers entirely). Active segment markers are merged into the seek bar alongside the file's own chapters.
+**Segment skipping** can be configured independently for intros, credits, recaps, and commercials: **Always skip** with a countdown, **Ask me**, **Never**, or **Don't show**. **Never** still shows the Skip button and only turns off automatic skipping. **Don't show** hides the prompt, Skip button, and timeline markers altogether. Active markers appear on the seek bar alongside the file's own chapters.
 
 ## Library, browsing & media
 
-Browsing does not wait on round trips to Jellyfin for every keystroke. MediaFlick mirrors your catalog into a local SQLite database kept current by live server updates and background sync, so type-ahead search across titles, overviews, genres, and cast answers immediately and cached posters stay responsive even when the server is busy.
+Browsing does not wait on Jellyfin for every keystroke. MediaFlick mirrors your catalog into a local SQLite database kept current by live server updates and background sync. Type-ahead search runs locally across titles, overviews, genres, and cast, and cached posters stay responsive even when the server is slow.
 
-- **Native interface.** Sign in with a password or Quick Connect. Home includes a rotating billboard, Continue Watching / Next Up, Recently Added Movies & Shows, Latest Movies & Shows, per-library shelves, Favorites, Releases, and custom collection shelves. Library views use virtualized poster grids with Jellyfin-style sorting, remembered filters, hover previews, and an A–Z jump rail; title pages show cast, crew, seasons, episodes, and full stream/track details.
-- **Releases.** Agenda and month views for upcoming episodes and films, plus a Home **Releases** shelf centered on today. Works from Jellyfin metadata alone; with the [Companion](#mediaflick-companion), it pulls monitored/on-disk truth from Sonarr and Radarr and leads the Home shelf with the past 30 days marked downloaded or missing.
-- **Collections.** Use exact TMDB movie franchises (split into owned and missing films) alongside personal collections built from templates or public MDBList lists with custom posters, or stick to your existing Jellyfin BoxSets unchanged.
-- **Letterboxd.** Add public Letterboxd profiles (no account or API key needed) to show friends' stars and reviews on movie pages.
-- **Music, audiobooks & books.** Albums, tracks, and audiobooks play through the built-in player or External mpv with a now-playing bar, queue, shuffle, and media keys while you browse. Books open in a sandboxed full-window reader supporting EPUB, MOBI, AZW, AZW3, PDF, CBZ, CBR (RAR 4 and 5), CB7, and CBT, controlled by keyboard, TV remote, or mouse, with exact reading progress saved per account and synced to Jellyfin.
-- **Server admin in your browser.** Anything MediaFlick deliberately leaves to Jellyfin (dashboard, users, metadata editing) opens in your default browser via right-click → **Open Jellyfin dashboard**.
+- **Home & libraries.** Sign in with a password or Quick Connect. Home pairs a rotating billboard with Continue Watching / Next Up, Recently Added and Latest rows for Movies and Shows, per-library shelves, Favorites, Releases, and custom collection shelves. Libraries use virtualized poster grids with Jellyfin-style sorting, remembered filters, hover previews, and an A–Z jump rail. Title pages show cast, crew, seasons, episodes, and full stream details.
+- **Releases.** Agenda and month views track upcoming episodes and films, backed by a Home **Releases** shelf centered on today. It works from Jellyfin metadata alone. With the [Companion](#mediaflick-companion), Sonarr and Radarr add monitored and on-disk status, and the Home shelf leads with the past 30 days marked downloaded or missing.
+- **Collections.** Browse exact TMDB movie franchises split into owned and missing films, and build personal collections from templates or public MDBList lists with your own posters. If you prefer your existing Jellyfin BoxSets, switch to Jellyfin mode to view them untouched.
+- **Letterboxd.** Link public Letterboxd profiles to display friends' star ratings and reviews on movie pages. No Letterboxd account or API key is required.
+- **Music & audiobooks.** Play albums, tracks, and audiobooks through the built-in player or External mpv with a now-playing bar, queue, shuffle, and media keys while you keep browsing.
+- **Built-in book reader.** Open books in a sandboxed full-window reader with scripts disabled. Supports EPUB, MOBI, AZW, AZW3, PDF, CBZ, CBR (RAR 4 and 5), CB7, and CBT. Navigate by keyboard, TV remote, or mouse; exact reading progress is saved per account and synced to Jellyfin.
+- **Server admin in your browser.** Anything MediaFlick deliberately leaves to Jellyfin—the server dashboard, users, and metadata editing—opens in your default browser via right-click → **Open Jellyfin dashboard**.
 
 ## MediaFlick Companion
 
-The optional server plugin lives in [`plugin/`](plugin/README.md) and runs on **Jellyfin 12.0.0 and later 12.x releases**. On Jellyfin 10.11, Desktop works fully without it; **Settings → MediaFlick Companion** notes when a server is below 12.0.0.
+The optional server plugin lives in [`plugin/`](plugin/README.md) and runs on **Jellyfin 12.0.0 and later 12.x releases**. On Jellyfin 10.11, Desktop works fully without it, and **Settings → MediaFlick Companion** notes that the plugin requires Jellyfin 12.0.0.
 
-MediaFlick Desktop never holds provider URLs or API keys, and the plugin does not expose a generic proxy. Everything goes through typed, Jellyfin-authenticated endpoints so one administrator setup serves every client:
+Provider URLs and API keys stay encrypted on the Jellyfin server. Desktop never sees credentials and there is no generic proxy—only typed, Jellyfin-authenticated endpoints so one administrator setup serves every client:
 
-- **Discover & requests (Seerr, Sonarr, Radarr).** Browse, filter (genre, decade, score, studio, network), and request movies, individual seasons, or 4K. With Sonarr and Radarr configured, Seerr's generic "Processing" status resolves to concrete states (Downloading, Searching, In cinemas, Unreleased, Awaiting episodes).
-- **Shared ratings cache (MDBList).** Displays review scores (IMDb, Rotten Tomatoes, Metacritic, Letterboxd, and more) across cards and details through a single server-wide, quota-aware cache with stale-while-revalidate, batched lookups, and durable rate-limit backoff.
-- **Franchises & template collections (TMDB, MDBList).** Resolves exact TMDB franchises with request buttons on missing entries, plus auto-updating personal collections.
+- **Discover & requests (Seerr, Sonarr, Radarr).** Browse and filter by genre, decade, score, studio, or network, and request films, individual seasons, or 4K. With Sonarr and Radarr connected, Seerr's generic "Processing" label resolves into concrete states: Downloading, Searching, In cinemas, Unreleased, or Awaiting episodes.
+- **Shared ratings cache (MDBList).** Show scores from IMDb, Rotten Tomatoes, Metacritic, Letterboxd, and other sources on cards and detail pages. One server-wide, quota-aware cache uses stale-while-revalidate, batched lookups, and durable rate-limit backoff so a single admin key serves all users safely.
+- **Franchises & template collections (TMDB, MDBList).** Resolve exact TMDB franchises with Request buttons on missing titles, plus auto-updating personal collections.
 
-Install the plugin from its Jellyfin plugin repository using the guide at [flick.media/companion](https://flick.media/companion/), then configure services in Jellyfin's plugin dashboard. Desktop discovers it automatically and reports service status under **Settings → MediaFlick Companion**.
+Install the plugin from its Jellyfin repository by following [flick.media/companion](https://flick.media/companion/), then configure services in Jellyfin's plugin dashboard. Desktop detects it automatically and shows service availability under **Settings → MediaFlick Companion**.
 
 ## Settings & shortcuts
 
-Settings are split into **Account** preferences (per signed-in user) and **Client** preferences (local to this machine and available before sign-in). Every page edits a draft with explicit **Save**, **Restore defaults**, and **Discard** buttons and prompts before leaving unsaved changes.
+Settings are divided into **Client** (this machine, available before sign-in), **Account** (per signed-in user), and **Integrations** (MediaFlick Companion and Letterboxd). Every settings page edits a draft with **Save**, **Discard**, and **Restore defaults** (**Undo changes** on Collections), and prompts before leaving unsaved changes.
 
 **Account (Viewing, Home, Appearance, Collections):**
 
-- **Viewing** covers spoiler protection (hiding unwatched episode thumbnails, names, and summaries behind a Reveal button, plus conservative hiding on upcoming calendar entries), next-episode behavior (off, cancellable countdown, or automatic), and continuous-playback episode limits (manual starts begin a new session and explicit Next stays available).
-- Audio and subtitle defaults use ordered language codes, an original-audio option (for tracks explicitly labeled original), subtitle rules, and a 0/5/10/30-second resume rewind. Valid per-title track choices always take priority.
-- Layout and navigation options set text size, preset poster widths, startup destination (Home, any library, Releases, or last browsing page), and remembered per-library filters (overridden by explicit filtered links).
-- **Appearance** sets accent color, density, artwork and backdrop intensity, reduced motion, rating sources, and **Cards** hover previews with configurable hover delay (disabled when previews are off; draft timing previews live).
+- **Spoiler protection & up-next.** Viewing hides unwatched episode thumbnails, names, and summaries behind a Reveal button, and conceals upcoming calendar episode titles conservatively. Next-episode playback can be off, a cancellable countdown, or automatic, with an optional episode limit for continuous playback (starting a title manually begins a new session, and explicit Next stays available).
+- **Languages & resume.** Set ordered audio and subtitle language codes, prefer tracks explicitly labeled original, choose subtitle rules, and pick a 0, 5, 10, or 30-second resume rewind. Valid per-title track choices take priority.
+- **Browsing & appearance.** Viewing sets text size, preset poster widths, startup page (Home, any library, Releases, or last browsing page), and remembered per-library filters (overridden by explicit filtered links). Appearance controls accent color, density, artwork and backdrop intensity, reduced motion, rating sources, and **Cards** hover previews with a live-previewed hover delay.
 
 **Client (Player, Playback, Application):**
 
-- **Player** chooses between the built-in player and External mpv. For the built-in player, it includes subtitle size, outline, background, and vertical position with a live preview (applied on the next playback; bitmap or authored subtitle styles may limit the effect), custom seek intervals, and a conflict-checked shortcut recorder for pause, mute, fullscreen, seeking, stop, subtitle visibility, and mark-watched-and-play-next (`W` by default). Clearing a binding disables it; `Space` always pauses and `Left`/`Right` always use your saved seek intervals.
-- With **External mpv**, mpv keeps its own subtitle styling and native bindings; Settings shows only the mark-watched-and-play-next shortcut (marks a movie watched, or marks an episode watched and starts the next available item).
-- **Playback** holds default streaming quality and per-type segment-skipping rules; **Application** controls window close behavior, scrollbars, and log level.
+- **Built-in player controls.** Player sets subtitle size, outline, background, and vertical position with a live preview. Subtitle appearance takes effect on the next playback, though bitmap or authored styles may limit it. You can also tune seek intervals and record conflict-checked shortcuts for pause, mute, fullscreen, seeking, stop, subtitle visibility, and mark-watched-and-play-next (`W` by default). Clearing a shortcut disables it; `Space` always pauses, and `Left` and `Right` always use your saved seek intervals.
+- **External mpv controls.** External mpv keeps its own subtitle styling and native key bindings. Settings shows only the mark-watched-and-play-next binding, which marks a movie watched or marks an episode watched and starts the next available item.
+- **Playback & Application.** Playback holds default streaming quality and per-type segment-skipping rules. Application controls window close behavior, scrollbars, and log level.
 
 ## Install
 
 **Jellyfin server.** MediaFlick Desktop requires **Jellyfin 10.11.0 or newer** and tells you on the sign-in screen if a server is too old before sending credentials. The optional [MediaFlick Companion](#mediaflick-companion) requires **Jellyfin 12.0.0 or newer**; on Jellyfin 10.11 the app works fully without it.
 
-**Windows.** Download `MediaFlickDesktop-Setup-<version>.exe` (or the portable `MediaFlickDesktop-v<version>-windows-x64.zip`) from [Releases](https://github.com/phob/mediaflick-desktop/releases/latest). The built-in player works immediately; installing external mpv is optional. Installed copies update automatically from GitHub Releases (portable copies update by replacing the folder with the next zip).
+**Windows.** Download `MediaFlickDesktop-Setup-<version>.exe` or the portable `MediaFlickDesktop-v<version>-windows-x64.zip` from [Releases](https://github.com/phob/mediaflick-desktop/releases/latest). The built-in player works immediately; external mpv is optional. Installed copies update automatically from GitHub Releases, while portable copies update by replacing the folder with the next zip.
 
 **Linux.** Download `MediaFlickDesktop-v<version>-linux-x86_64.AppImage` from [Releases](https://github.com/phob/mediaflick-desktop/releases/latest), make it executable, and run it. The AppImage bundles its own `libmpv` runtime and uses X11 or XWayland. If you switch to External mpv, MediaFlick auto-detects your system `mpv`.
 
