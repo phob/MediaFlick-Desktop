@@ -4,11 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Install the MediaFlick Companion</title>
-    <meta name="description" content="Install the MediaFlick Companion Jellyfin plugin from its repository: add the repository, install the plugin from the catalog, and restart Jellyfin. Needs Jellyfin 12.0.0 or newer." />
+    <meta name="description" content="Install the MediaFlick Companion Jellyfin plugin from its repository: add the URL, install from the catalog, and restart Jellyfin. Requires Jellyfin 12.0.0 or newer." />
     <meta name="theme-color" content="#070b09" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Install the MediaFlick Companion" />
-    <meta property="og:description" content="Add one repository URL to Jellyfin 12 and install the MediaFlick Companion from the plugin catalog." />
+    <meta property="og:description" content="Add one plugin repository URL to Jellyfin 12.0+ and install the MediaFlick Companion from the catalog." />
     <meta property="og:url" content="https://flick.media/companion/" />
     <link rel="canonical" href="https://flick.media/companion/" />
     <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
@@ -40,16 +40,38 @@
           <div class="section-head">
             <h1>Install the MediaFlick Companion.</h1>
             <p>
-              The Companion is an optional Jellyfin plugin. It brings Sonarr, Radarr, Seerr,
-              MDBList and TMDB into MediaFlick Desktop, and keeps their addresses and API keys
-              on your server. A Jellyfin administrator installs it once for everyone.
+              The Companion is an optional Jellyfin server plugin. A server admin sets it up
+              once to connect Seerr, Sonarr, Radarr, MDBList, and TMDB — and every MediaFlick
+              Desktop user on the server gets those features without ever seeing an API key or
+              internal service address.
             </p>
           </div>
 
           <p class="install-requires">
             <span class="data">Requires</span>
-            <span><b>Jellyfin 12.0.0 or newer.</b> Older servers don't offer the Companion in their catalog.</span>
+            <span><b>Jellyfin 12.0.0 or newer.</b> Older servers won't list the Companion in their plugin catalog (MediaFlick Desktop still works fully on Jellyfin 10.11+ without it).</span>
           </p>
+
+          <div class="install-split">
+            <div class="install-card">
+              <p class="data">Stays on your server</p>
+              <ul>
+                <li>Encrypted provider credentials (ASP.NET Data Protection)</li>
+                <li>Internal URLs for Seerr, Sonarr, Radarr, MDBList, and TMDB</li>
+                <li>Shared, quota-aware MDBList rating cache across all users</li>
+                <li>Typed, Jellyfin-authenticated endpoints — no generic proxy</li>
+              </ul>
+            </div>
+            <div class="install-card install-card-accent">
+              <p class="data">Unlocks in MediaFlick Desktop</p>
+              <ul>
+                <li>Live Sonarr &amp; Radarr status on Requests and the Home Timeline</li>
+                <li>Seerr Discover, movie requests, and missing-season requests</li>
+                <li>TMDB movie franchises split into owned and missing</li>
+                <li>Up to twelve rating sources on cards, previews, and details</li>
+              </ul>
+            </div>
+          </div>
 
           <ol class="install-steps">
             <li class="install-step">
@@ -57,7 +79,7 @@
               <div>
                 <h2>Add the plugin repository</h2>
                 <p>
-                  In Jellyfin, open <b>Dashboard → Plugins → Repositories</b>, add a repository
+                  In Jellyfin, go to <b>Dashboard → Plugins → Repositories</b>, add a repository
                   named <b>MediaFlick Companion</b> with this URL, and save.
                 </p>
                 <div class="repo-url">
@@ -74,8 +96,8 @@
               <div>
                 <h2>Install MediaFlick Companion from the catalog</h2>
                 <p>
-                  Open <b>Dashboard → Plugins → Catalog</b>, find <b>MediaFlick Companion</b>
-                  under General, and install the newest version.
+                  Open <b>Dashboard → Plugins → Catalog</b>, pick <b>MediaFlick Companion</b>
+                  under General, and install the latest version.
                 </p>
               </div>
             </li>
@@ -84,24 +106,25 @@
               <div>
                 <h2>Restart Jellyfin</h2>
                 <p>
-                  Jellyfin loads a new plugin when it starts. Restart it from the
-                  <b>Dashboard</b>, or restart its service or container.
+                  Jellyfin loads newly installed plugins on startup. Restart from the
+                  <b>Dashboard</b>, or restart the Jellyfin service or container.
                 </p>
               </div>
             </li>
           </ol>
 
           <div class="install-after">
-            <h2>Then</h2>
+            <h2>Configure only what you run</h2>
             <p>
-              Open <b>Dashboard → Plugins → MediaFlick Companion</b> to connect Seerr, Sonarr,
-              Radarr, MDBList and TMDB. Each is optional. In MediaFlick Desktop,
-              <b>Settings → MediaFlick Companion</b> shows the plugin and which features it
-              offers. Updates arrive through the same repository.
+              Open <b>Dashboard → Plugins → MediaFlick Companion</b> to hook up Seerr, Sonarr,
+              Radarr, MDBList, or TMDB — every integration is optional and has its own connection
+              test. MediaFlick Desktop discovers the plugin automatically and reports which
+              features are active under <b>Settings → MediaFlick Companion</b>. Future plugin
+              updates arrive through the same repository.
             </p>
             <p>
-              The <a href="https://github.com/phob/MediaFlick-Desktop/blob/main/plugin/README.md" rel="noreferrer">administrator guide</a>
-              covers each service, the shared rating quota and what Desktop can see.
+              See the <a href="https://github.com/phob/MediaFlick-Desktop/blob/main/plugin/README.md" rel="noreferrer">administrator guide</a>
+              for credential storage, Seerr user mapping, and MDBList quota details.
             </p>
           </div>
         </div>
@@ -115,7 +138,7 @@
             <img class="brand-icon" src="/app-icon.svg" alt="" width="26" height="26" />
             <span class="wordmark">Media<b>Flick</b></span>
           </a>
-          <p class="footer-note">A Jellyfin client for people who care what plays the video. Not affiliated with the Jellyfin project.</p>
+          <p class="footer-note">A native Jellyfin desktop client for people who care how their library feels and what plays the video. Not affiliated with the Jellyfin project.</p>
         </div>
         <nav class="footer-links" aria-label="Footer">
           <a href="https://github.com/phob/MediaFlick-Desktop" rel="noreferrer">GitHub</a>
