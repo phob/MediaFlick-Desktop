@@ -63,9 +63,9 @@ impl RatingsService {
         let refresh = targets
             .iter()
             .filter(|target| {
-                cache.get(&target.item_id).is_none_or(|cached| {
-                    cached.schema_version != CACHE_SCHEMA_VERSION || cached.stale_at <= now
-                })
+                cache
+                    .get(&target.item_id)
+                    .is_none_or(|cached| cached.stale_at <= now)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -112,11 +112,15 @@ impl RatingsService {
         })
     }
 
+    /// Drops the rows another cache schema version wrote, so they count as
+    /// misses and are refetched without being rewritten here, and stores the
+    /// rest back through the current rating schema where that changes them.
     fn sanitize_cached(
         &self,
         targets: &[RatingTarget],
         cache: &mut HashMap<String, CachedRatings>,
     ) -> rusqlite::Result<()> {
+        cache.retain(|_, cached| cached.schema_version == CACHE_SCHEMA_VERSION);
         let mut replacements = Vec::new();
         for target in targets {
             let Some(cached) = cache.get_mut(&target.item_id) else {
@@ -130,7 +134,7 @@ impl RatingsService {
                 fetched_at: cached.fetched_at.max(0),
                 stale_at: cached.stale_at.max(0),
                 expires_at: cached.expires_at.max(0),
-                schema_version: CACHE_SCHEMA_VERSION,
+                schema_version: cached.schema_version,
             };
             if *cached != sanitized {
                 *cached = sanitized.clone();
@@ -439,5 +443,174 @@ mod tests {
         });
         assert!(!diagnostic.contains(SERVER_MDBLIST_KEY));
         assert!(!diagnostic.contains(SERVER_TMDB_KEY));
+    }
+
+    /// A Companion on loopback that advertises `ratings-v1` and answers every
+    /// ratings batch with `ratings_answer` (`"<status line>"`, `<body>`).
+    /// Returns its URL and the bodies of the ratings batches it received.
+    fn loopback_companion(
+        ratings_answer: (&'static str, &'static str),
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Value>>>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let batches = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = batches.clone();
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().map_while(Result::ok) {
+                let mut reader = BufReader::new(&mut stream);
+                let mut request_line = String::new();
+                reader.read_line(&mut request_line).expect("request line");
+                let mut length = 0;
+                let mut header = String::new();
+                while reader.read_line(&mut header).expect("header") > 2 {
+                    if let Some(value) = header.to_ascii_lowercase().strip_prefix("content-length:")
+                    {
+                        length = value.trim().parse().expect("content length");
+                    }
+                    header.clear();
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).expect("body");
+                let (status, answer) = if request_line.contains(" /MediaFlick/info") {
+                    (
+                        "200 OK",
+                        r#"{"pluginVersion":"0.2.2","apiVersion":1,"capabilities":["ratings-v1"]}"#,
+                    )
+                } else if request_line.contains(" /MediaFlick/ratings/v1/batch") {
+                    recorded
+                        .lock()
+                        .expect("batches")
+                        .push(serde_json::from_slice(&body).expect("batch body"));
+                    ratings_answer
+                } else {
+                    ("404 Not Found", "{}")
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
+                    answer.len()
+                )
+                .expect("answer");
+            }
+        });
+        (url, batches)
+    }
+
+    /// Fresh cache rows for The Matrix (603) at schema 0, Reloaded (604) at a
+    /// newer schema, and Revolutions (605) at the current one, all rated 5.
+    fn seed_three_schemas(library: &Library) -> Vec<RatingTarget> {
+        let now = now_unix();
+        let entries = [
+            (603, 0),
+            (604, CACHE_SCHEMA_VERSION + 1),
+            (605, CACHE_SCHEMA_VERSION),
+        ]
+        .map(|(id, schema_version)| {
+            (
+                discovery_target(&format!("tmdb:movie:{id}")).expect("target"),
+                CachedRatings {
+                    ratings: rating_cache_value(&normalize_rating_array(
+                        &json!([{ "sourceId": "imdb", "value": 5 }]),
+                    )),
+                    source_updated_at: None,
+                    fetched_at: now,
+                    stale_at: now + 3600,
+                    expires_at: now + 86_400,
+                    schema_version,
+                },
+            )
+        });
+        library.save_rating_cache(&entries).expect("seed");
+        entries.map(|(target, _)| target).to_vec()
+    }
+
+    fn imdb_value(ratings: &[NormalizedRating]) -> Value {
+        let ratings = serde_json::to_value(ratings).expect("ratings");
+        ratings[0]["value"].clone()
+    }
+
+    /// Issue #356: a cache row written under another schema version must be
+    /// refetched, not restamped to the current one and served as if fresh.
+    /// Failure modes: the row is served without a refetch; the row is
+    /// rewritten at the current schema without a refetch, so it is never
+    /// refetched later; a failed refetch serves the other schema's row as
+    /// current data; a fresh row at the current schema is refetched too.
+    #[test]
+    fn rows_at_another_schema_version_are_refetched_not_restamped() {
+        const NINE: &str = r#"{"boundaryVersion":1,"items":[
+            {"itemId":"tmdb:movie:603","ratings":[{"sourceId":"imdb","value":9}]},
+            {"itemId":"tmdb:movie:604","ratings":[{"sourceId":"imdb","value":9}]},
+            {"itemId":"tmdb:movie:605","ratings":[{"sourceId":"imdb","value":9}]}]}"#;
+        let (url, batches) = loopback_companion(("200 OK", NINE));
+        let fixture = crate::app::services::test_support::TestServices::signed_in(&url);
+        let targets = seed_three_schemas(&fixture.services.library);
+        let ids = targets
+            .iter()
+            .map(|target| target.item_id.clone())
+            .collect::<Vec<_>>();
+
+        let response = fixture.services.ratings.batch(&ids).expect("batch");
+
+        let batches = batches.lock().expect("batches").clone();
+        assert_eq!(batches.len(), 1, "{batches:?}");
+        let requested = batches[0]["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|item| item["itemId"].as_str().expect("itemId"))
+            .collect::<Vec<_>>();
+        assert_eq!(requested, ["tmdb:movie:603", "tmdb:movie:604"]);
+        let served = response
+            .items
+            .iter()
+            .map(|item| {
+                (
+                    item.id.as_str(),
+                    imdb_value(&item.ratings),
+                    item.schema_version,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            served,
+            [
+                ("tmdb:movie:603", json!(9.0), CACHE_SCHEMA_VERSION),
+                ("tmdb:movie:604", json!(9.0), CACHE_SCHEMA_VERSION),
+                ("tmdb:movie:605", json!(5.0), CACHE_SCHEMA_VERSION),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_refetch_neither_serves_nor_restamps_another_schemas_rows() {
+        let (url, batches) = loopback_companion(("503 Service Unavailable", "{}"));
+        let fixture = crate::app::services::test_support::TestServices::signed_in(&url);
+        let targets = seed_three_schemas(&fixture.services.library);
+        let ids = targets
+            .iter()
+            .map(|target| target.item_id.clone())
+            .collect::<Vec<_>>();
+
+        let response = fixture.services.ratings.batch(&ids).expect("batch");
+
+        assert_eq!(batches.lock().expect("batches").len(), 1);
+        let served = response
+            .items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(served, ["tmdb:movie:605"]);
+        let stored = fixture
+            .services
+            .library
+            .cached_ratings(&targets)
+            .expect("read cache");
+        assert_eq!(stored["tmdb:movie:603"].schema_version, 0);
+        assert_eq!(
+            stored["tmdb:movie:604"].schema_version,
+            CACHE_SCHEMA_VERSION + 1
+        );
     }
 }
