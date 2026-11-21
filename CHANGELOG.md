@@ -17,7 +17,7 @@
 
 MediaFlick 0.2.1 keeps your library database across updates, explains a startup failure instead of showing the sign-in screen, and is the first version that starts on macOS, as an untested alpha.
 
-This is a prerelease. The in-app updater and flick.media keep offering 0.2.0 until 0.2.1 becomes the Latest release, so install it by hand from the downloads below.
+This is a prerelease. The in-app updater and flick.media keep offering 0.2.0 until 0.2.1 becomes the Latest release, so install it by hand from the 0.2.1 release assets on GitHub.
 
 ### Added
 
@@ -29,6 +29,7 @@ This is a prerelease. The in-app updater and flick.media keep offering 0.2.0 unt
 - When MediaFlick cannot open its files at startup, it tries once instead of again on every request until you restart it.
 - The Built-in player's control bar, with Pause and Stop, now shows when you move the mouse anywhere over the video, not only near the bottom edge. A small nudge of 10 pixels or less leaves it hidden, and it hides again 3 seconds after the mouse stops. It stays while the pointer is on it, one of its menus is open, or you are using it with the keyboard.
 - MediaFlick now runs on CEF 156.7.0 (Chromium 156) instead of CEF 154.5.0 (Chromium 154), and uses rusqlite 0.43. The bundled SQLite is unchanged.
+- The README is rewritten: a tighter structure, corrected Linux install and interface details, and the 0.2.0 features it was missing, including music, audiobooks, the built-in book reader and public Letterboxd profiles.
 
 ### Fixed
 
