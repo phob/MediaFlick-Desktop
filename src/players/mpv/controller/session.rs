@@ -186,7 +186,11 @@ impl ControllerState {
             Err(first_error @ IpcCommandFailure::Rejected(_)) => Err(first_error),
             Err(first_error @ IpcCommandFailure::Transport(_)) => {
                 tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command; restarting session and retrying once: {first_error}");
-                self.reset_mpv();
+                if self.can_recycle_library_ipc() {
+                    self.reset_library_ipc();
+                } else {
+                    self.reset_mpv();
+                }
                 if !self.ensure_mpv(mpv_path, fullscreen) {
                     return Err(first_error);
                 }
@@ -209,43 +213,63 @@ impl ControllerState {
             .and_then(serde_json::Value::as_i64))
     }
 
-    pub(super) fn ensure_mpv(&mut self, mpv_path: &str, fullscreen: FullscreenBehavior) -> bool {
-        if self.shutdown_requested.load(Ordering::SeqCst) {
-            tracing::debug!(target: "mpv.ipc", "skipping mpv start because shutdown is requested");
-            return false;
+    fn reuse_live_runtime(&mut self, mpv_path: &str) -> Option<bool> {
+        if !self.runtime_is_alive() {
+            self.reset_mpv();
+            return None;
         }
-
-        if self.runtime_is_alive() {
-            if !self.current_mpv_path_matches(mpv_path) {
-                tracing::info!(
-                    target: "mpv.ipc",
-                    previous = %self.current_mpv_path.as_deref().unwrap_or("unknown"),
-                    next = %mpv_path,
-                    "restarting mpv because the configured executable changed"
-                );
-                self.finish_active(Some(StopReason::Quit));
-                self.reset_mpv();
-            } else if self
+        if self.runtime_kind == super::MpvRuntimeKind::Library {
+            if self
                 .ipc
                 .worker
                 .as_ref()
                 .is_some_and(IpcWorker::is_writer_alive)
             {
-                tracing::trace!(
-                    target: "mpv.ipc",
-                    "reusing existing mpv process"
-                );
-                return true;
-            } else {
-                tracing::warn!(
-                    target: "mpv.ipc",
-                    "restarting mpv because the tracked process has no live IPC worker"
-                );
-                self.finish_active(Some(StopReason::Quit));
-                self.reset_mpv();
+                tracing::trace!(target: "mpv.ipc", "reusing existing mpv process");
+                return Some(true);
             }
-        } else {
+            tracing::warn!(
+                target: "mpv.ipc",
+                "reconnecting built-in libmpv IPC because the live runtime has no live IPC worker"
+            );
+            return Some(self.reconnect_library_ipc());
+        }
+        if !self.current_mpv_path_matches(mpv_path) {
+            tracing::info!(
+                target: "mpv.ipc",
+                previous = %self.current_mpv_path.as_deref().unwrap_or("unknown"),
+                next = %mpv_path,
+                "restarting mpv because the configured executable changed"
+            );
+            self.finish_active(Some(StopReason::Quit));
             self.reset_mpv();
+            return None;
+        }
+        if self
+            .ipc
+            .worker
+            .as_ref()
+            .is_some_and(IpcWorker::is_writer_alive)
+        {
+            tracing::trace!(target: "mpv.ipc", "reusing existing mpv process");
+            return Some(true);
+        }
+        tracing::warn!(
+            target: "mpv.ipc",
+            "restarting mpv because the tracked process has no live IPC worker"
+        );
+        self.finish_active(Some(StopReason::Quit));
+        self.reset_mpv();
+        None
+    }
+
+    pub(super) fn ensure_mpv(&mut self, mpv_path: &str, fullscreen: FullscreenBehavior) -> bool {
+        if self.shutdown_requested.load(Ordering::SeqCst) {
+            tracing::debug!(target: "mpv.ipc", "skipping mpv start because shutdown is requested");
+            return false;
+        }
+        if let Some(ready) = self.reuse_live_runtime(mpv_path) {
+            return ready;
         }
         let ipc_path = self.next_ipc_path();
         tracing::info!(
@@ -467,7 +491,8 @@ impl ControllerState {
 
     fn configured_mpv_session_ready(&mut self, config: &ConfiguredMpv) -> bool {
         self.runtime_is_alive()
-            && self.current_mpv_path_matches(&config.mpv_path)
+            && (self.runtime_kind == super::MpvRuntimeKind::Library
+                || self.current_mpv_path_matches(&config.mpv_path))
             && self
                 .ipc
                 .worker
@@ -475,8 +500,94 @@ impl ControllerState {
                 .is_some_and(IpcWorker::is_writer_alive)
     }
 
+    fn can_recycle_library_ipc(&mut self) -> bool {
+        self.runtime_kind == super::MpvRuntimeKind::Library
+            && self.ipc.path.is_some()
+            && self.runtime_is_alive()
+    }
+
+    fn disconnect_ipc_worker(&mut self) {
+        self.ipc.active_id = None;
+        if let Some(worker) = self.ipc.worker.take() {
+            worker.disconnect();
+        }
+    }
+
+    fn reset_library_ipc(&mut self) {
+        tracing::debug!(
+            target: "mpv.ipc",
+            "resetting built-in libmpv IPC without stopping runtime"
+        );
+        self.clear_playback_session_state();
+        self.disconnect_ipc_worker();
+        self.publish_snapshot();
+    }
+
+    fn reconnect_library_ipc(&mut self) -> bool {
+        let Some(ipc_path) = self.ipc.path.clone() else {
+            return false;
+        };
+        self.disconnect_ipc_worker();
+        let Some(runtime) = self.runtime.as_mut() else {
+            return false;
+        };
+        let (ipc_worker, event_rx) = match start_ipc_worker(
+            &ipc_path,
+            IPC_CONNECT_TIMEOUT,
+            &self.shutdown_requested,
+            || runtime.is_alive(),
+        ) {
+            Ok(worker) => worker,
+            Err(error) => {
+                tracing::warn!(
+                    target: "mpv.ipc",
+                    ipc_path = %ipc_path,
+                    "failed to reconnect built-in libmpv IPC: {error}"
+                );
+                return false;
+            }
+        };
+        if self.shutdown_requested.load(Ordering::SeqCst) {
+            tracing::debug!(
+                target: "mpv.ipc",
+                "closing reconnected libmpv IPC because shutdown is requested"
+            );
+            ipc_worker.disconnect();
+            return false;
+        }
+        let session_id = self.ipc.next_id;
+        self.ipc.next_id = self.ipc.next_id.wrapping_add(1).max(1);
+        self.start_event_relay(session_id, event_rx);
+        self.ipc.worker = Some(ipc_worker);
+        self.ipc.active_id = Some(session_id);
+        tracing::info!(
+            target: "mpv.ipc",
+            ipc_path = %ipc_path,
+            session_id,
+            "reconnected built-in libmpv IPC"
+        );
+        self.install_input_bindings();
+        true
+    }
+
     pub(super) fn handle_mpv_session_lost(&mut self, reason: &'static str) {
+        let had_playback = self.mpv_playback_active || !self.phase.is_idle();
         self.finish_active(Some(StopReason::Quit));
+        if self.can_recycle_library_ipc() {
+            tracing::warn!(
+                target: "mpv.ipc",
+                reason,
+                "recycling built-in libmpv IPC without restarting its native window"
+            );
+            self.reset_library_ipc();
+            if !self.shutdown_requested.load(Ordering::SeqCst)
+                && self.reconnect_library_ipc()
+                && had_playback
+            {
+                self.stop_mpv(reason);
+            }
+            return;
+        }
         self.reset_mpv();
         self.restart_configured_mpv(reason);
     }
@@ -580,7 +691,7 @@ impl ControllerState {
         }
     }
 
-    fn runtime_is_alive(&mut self) -> bool {
+    pub(super) fn runtime_is_alive(&mut self) -> bool {
         self.runtime
             .as_mut()
             .is_some_and(|runtime| runtime.is_alive().unwrap_or(false))
@@ -646,14 +757,13 @@ impl ControllerState {
         }
     }
 
-    pub(super) fn reset_mpv(&mut self) {
+    pub(super) fn clear_playback_session_state(&mut self) {
         #[cfg(target_os = "linux")]
         {
             self.fullscreen_gate.pending = false;
             self.fullscreen_gate.video_ready = false;
             self.fullscreen_gate.waiting_seek_event = false;
         }
-        tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
         self.startup_seek = None;
         self.pending_external_subtitle_url = None;
         self.pending_raise_pulse_reset_at = None;
@@ -666,6 +776,12 @@ impl ControllerState {
             self.playback_runtime_ticks = None;
             self.mpv_playback_active = false;
         }
+        self.last_position_log_bucket = None;
+    }
+
+    pub(super) fn reset_mpv(&mut self) {
+        tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
+        self.clear_playback_session_state();
         if let Some(mut runtime) = self.runtime.take() {
             tracing::debug!(target: "mpv.ipc", "stopping live mpv runtime during reset");
             runtime.stop();
@@ -679,7 +795,6 @@ impl ControllerState {
         if let Some(worker) = self.ipc.worker.take() {
             worker.shutdown();
         }
-        self.last_position_log_bucket = None;
         self.publish_snapshot();
     }
 

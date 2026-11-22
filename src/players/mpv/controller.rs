@@ -846,12 +846,21 @@ impl ControllerState {
         self.mpv_playback_active = false;
         let load_id = identity.playback_id;
         if replacing_active_file {
-            tracing::warn!(
-                target: "mpv.ipc",
-                "resetting mpv after rejected replacement loadfile command"
-            );
             self.playback_identity = Some(identity);
-            self.reset_mpv();
+            if self.runtime_kind == MpvRuntimeKind::Library && self.runtime_is_alive() {
+                tracing::warn!(
+                    target: "mpv.ipc",
+                    "stopping built-in libmpv playback after rejected replacement loadfile command"
+                );
+                self.clear_playback_session_state();
+                self.stop_mpv("rejected replacement loadfile");
+            } else {
+                tracing::warn!(
+                    target: "mpv.ipc",
+                    "resetting mpv after rejected replacement loadfile command"
+                );
+                self.reset_mpv();
+            }
             let snapshot = self.publish_snapshot_with_stop_reason(Some(StopReason::Error));
             self.notify_playback_stopped(snapshot);
         }

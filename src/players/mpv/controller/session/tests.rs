@@ -351,3 +351,304 @@ fn a_rejected_startup_seek_is_retried_without_resetting_mpv() {
     );
     fake.finish(state.ipc.worker.take().expect("worker"));
 }
+
+fn library_controller_with_fake_mpv(
+    fake: &FakeMpv,
+) -> (
+    ControllerState,
+    Arc<AtomicBool>,
+    crate::playback::NativeWindowHandle,
+    mpsc::Receiver<BackendEvent>,
+) {
+    let (tx, rx) = mpsc::channel();
+    let (event_tx, event_rx) = mpsc::channel();
+    let mut state = ControllerState::new(
+        tx,
+        rx,
+        Arc::new(Mutex::new(Default::default())),
+        Some(event_tx),
+        Arc::new(AtomicBool::new(false)),
+        crate::preferences::AppSettings::default().player_preferences(),
+        RuntimeSelection {
+            kind: crate::players::mpv::runtime::MpvRuntimeKind::Library,
+            libmpv_profile: crate::players::mpv::runtime::LibmpvProfile::Standard,
+        },
+    );
+    let alive = Arc::new(AtomicBool::new(true));
+    let stopped = Arc::new(AtomicBool::new(false));
+    let handle = crate::playback::NativeWindowHandle::test_handle(42);
+    let (worker, event_stream) = fake.connect();
+    state.runtime = Some(crate::players::mpv::runtime::MpvRuntime::TestRuntime {
+        alive,
+        stopped: Arc::clone(&stopped),
+        native_window: Some(handle),
+    });
+    state.current_mpv_path = Some("bundled-libmpv".to_string());
+    state.remember_configured_mpv(
+        "bundled-libmpv",
+        crate::preferences::FullscreenBehavior::Windowed,
+    );
+    state.ipc.path = Some(fake.path().to_string());
+    state.ipc.worker = Some(worker);
+    state.ipc.active_id = Some(1);
+    state.ipc.next_id = 2;
+    state.start_event_relay(1, event_stream);
+    (state, stopped, handle, event_rx)
+}
+
+#[test]
+fn library_ensure_mpv_recycles_ipc_without_stopping_host_runtime() {
+    let stall_first = Arc::new(AtomicBool::new(true));
+    let stall_flag = Arc::clone(&stall_first);
+    let fake = FakeMpv::start(move |command| {
+        if command["command"][0] == "get_property"
+            && stall_flag.swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+        vec![json!({
+            "request_id": command["request_id"].clone(),
+            "error": "success",
+        })]
+    });
+    let (mut state, stopped, handle, _event_rx) = library_controller_with_fake_mpv(&fake);
+
+    let timed_out = state
+        .ipc
+        .worker
+        .as_ref()
+        .expect("worker")
+        .send_with_timeout(
+            json!({ "command": ["get_property", "chapter-list"], "request_id": 99 }),
+            std::time::Duration::from_millis(20),
+        );
+    assert!(timed_out.is_err());
+    assert!(!state.ipc.worker.as_ref().expect("worker").is_writer_alive());
+
+    assert!(state.ensure_mpv(
+        "bundled-libmpv",
+        crate::preferences::FullscreenBehavior::Windowed
+    ));
+    assert!(!stopped.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        state
+            .runtime
+            .as_ref()
+            .and_then(crate::players::mpv::runtime::MpvRuntime::native_window),
+        Some(handle)
+    );
+    assert!(
+        state
+            .ipc
+            .worker
+            .as_ref()
+            .is_some_and(crate::players::mpv::ipc::IpcWorker::is_writer_alive)
+    );
+    assert_ne!(state.ipc.active_id, Some(1));
+    assert_eq!(fake.session_count(), 2);
+    assert!(
+        state
+            .send_mpv_command(json!({ "command": ["get_property", "pause"], "request_id": 100 }))
+            .is_ok()
+    );
+
+    if let Some(worker) = state.ipc.worker.take() {
+        fake.finish(worker);
+    } else {
+        fake.stop();
+    }
+}
+
+#[test]
+fn library_session_lost_recycles_ipc_without_stopping_host_runtime_and_stops_playback() {
+    let fake = scripted_mpv(false);
+    let (mut state, stopped, handle, event_rx) = library_controller_with_fake_mpv(&fake);
+    let launch = PlaybackRequest::new("https://example.test/video.mkv");
+    state.phase = PlaybackPhase::loading(PendingPlayback {
+        key: "k".to_string(),
+        identity: PlaybackIdentity::from_launch(7, &launch),
+        launch,
+        reporter: None,
+        requested_at: Instant::now(),
+    });
+    state.activate_pending();
+
+    state.handle_mpv_session_lost("mpv control command transport failed");
+
+    assert!(!stopped.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        state
+            .runtime
+            .as_ref()
+            .and_then(crate::players::mpv::runtime::MpvRuntime::native_window),
+        Some(handle)
+    );
+    assert!(!state.mpv_playback_active);
+    assert!(
+        state
+            .ipc
+            .worker
+            .as_ref()
+            .is_some_and(crate::players::mpv::ipc::IpcWorker::is_writer_alive)
+    );
+    assert_eq!(fake.session_count(), 2);
+    assert!(matches!(
+        next_terminal_event(&event_rx),
+        BackendEvent::Stopped(snapshot) if snapshot.stop_reason == Some(StopReason::Quit)
+    ));
+    let mut saw_stop = false;
+    for _ in 0..32 {
+        let command = fake.next_command_on(COMMAND_CONNECTION);
+        if command["command"][0] == "stop" {
+            saw_stop = true;
+            break;
+        }
+    }
+    assert!(saw_stop, "expected stop command after IPC recycle");
+
+    if let Some(worker) = state.ipc.worker.take() {
+        fake.finish(worker);
+    } else {
+        fake.stop();
+    }
+}
+
+#[test]
+fn library_loadfile_transport_failure_recycles_ipc_and_retries_without_stopping_host_runtime() {
+    let fake = FakeMpv::start(|command| {
+        if command["command"][0] == "loadfile" {
+            vec![json!({
+                "request_id": command["request_id"].clone(),
+                "error": "success",
+                "data": { "playlist_entry_id": 7 },
+            })]
+        } else {
+            vec![json!({
+                "request_id": command["request_id"].clone(),
+                "error": "success",
+            })]
+        }
+    });
+    let (mut state, stopped, handle, _event_rx) = library_controller_with_fake_mpv(&fake);
+    state.ipc.worker.take().expect("worker");
+    let launch = PlaybackRequest::new("https://example.test/video.mkv");
+
+    let entry = state
+        .send_loadfile_with_reconnect(
+            "bundled-libmpv",
+            crate::preferences::FullscreenBehavior::Windowed,
+            &launch,
+        )
+        .expect("loadfile retry succeeds on recycled IPC");
+
+    assert_eq!(entry, Some(7));
+    assert!(!stopped.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        state
+            .runtime
+            .as_ref()
+            .and_then(crate::players::mpv::runtime::MpvRuntime::native_window),
+        Some(handle)
+    );
+    assert_eq!(fake.session_count(), 2);
+
+    if let Some(worker) = state.ipc.worker.take() {
+        fake.finish(worker);
+    } else {
+        fake.stop();
+    }
+}
+
+#[test]
+fn library_rejected_replacement_loadfile_preserves_host_runtime() {
+    let fake = scripted_mpv(false);
+    let (mut state, stopped, handle, event_rx) = library_controller_with_fake_mpv(&fake);
+    let launch = PlaybackRequest::new("https://example.test/video.mkv");
+    let identity = PlaybackIdentity::from_launch(9, &launch);
+
+    state.handle_rejected_loadfile(true, identity);
+
+    assert!(!stopped.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        state
+            .runtime
+            .as_ref()
+            .and_then(crate::players::mpv::runtime::MpvRuntime::native_window),
+        Some(handle)
+    );
+    assert!(matches!(
+        next_terminal_event(&event_rx),
+        BackendEvent::Stopped(snapshot) if snapshot.stop_reason == Some(StopReason::Error)
+    ));
+    assert!(matches!(
+        next_terminal_event(&event_rx),
+        BackendEvent::Failed { load_id: 9, .. }
+    ));
+
+    if let Some(worker) = state.ipc.worker.take() {
+        fake.finish(worker);
+    } else {
+        fake.stop();
+    }
+}
+
+#[test]
+fn library_shutdown_stops_host_runtime() {
+    let fake = scripted_mpv(false);
+    let (mut state, stopped, _handle, _event_rx) = library_controller_with_fake_mpv(&fake);
+    state.ipc.worker.take().expect("worker");
+
+    state.shutdown();
+
+    assert!(stopped.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(state.runtime.is_none());
+    fake.stop();
+}
+
+#[test]
+fn library_event_stream_disconnect_recycles_ipc_without_stopping_host_runtime() {
+    let fake = scripted_mpv(false);
+    let (mut state, stopped, handle, _event_rx) = library_controller_with_fake_mpv(&fake);
+
+    state.handle_event_stream_disconnected(1);
+
+    assert!(!stopped.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        state
+            .runtime
+            .as_ref()
+            .and_then(crate::players::mpv::runtime::MpvRuntime::native_window),
+        Some(handle)
+    );
+    assert_eq!(fake.session_count(), 2);
+    let new_id = state.ipc.active_id.expect("reconnected session id");
+    assert_ne!(new_id, 1);
+
+    state.handle_event_stream_disconnected(1);
+    assert_eq!(
+        fake.session_count(),
+        2,
+        "stale disconnect from previous session must be ignored"
+    );
+
+    if let Some(worker) = state.ipc.worker.take() {
+        fake.finish(worker);
+    } else {
+        fake.stop();
+    }
+}
+
+#[test]
+fn external_session_lost_still_stops_and_resets_runtime() {
+    let fake = scripted_mpv(false);
+    let (mut state, stopped, _handle, _event_rx) = library_controller_with_fake_mpv(&fake);
+    state.runtime_kind = crate::players::mpv::runtime::MpvRuntimeKind::External;
+    state.configured_mpv = None;
+
+    state.handle_mpv_session_lost("external control transport failed");
+
+    assert!(stopped.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(state.runtime.is_none());
+    assert!(state.ipc.worker.is_none());
+    fake.stop();
+}

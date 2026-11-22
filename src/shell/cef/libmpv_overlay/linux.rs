@@ -51,6 +51,18 @@ struct Geometry {
     maximized: bool,
 }
 
+struct InFlightOverlay {
+    reply: crate::playback::NativeOverlayReply,
+    return_to_frame: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OverlaySlotState {
+    Ready,
+    Busy,
+    Failed,
+}
+
 pub(crate) struct LibmpvOverlaySurface {
     state: BrowserState,
     playback: Arc<PlaybackCoordinator>,
@@ -70,6 +82,9 @@ pub(crate) struct LibmpvOverlaySurface {
     pressed: RefCell<HashSet<u8>>,
     last_click: Cell<(u8, u32, i16, i16, i32)>,
     placement_invalidated: Cell<bool>,
+    in_flight: RefCell<Option<InFlightOverlay>>,
+    deferred_present: Cell<bool>,
+    present_timeout: Cell<std::time::Duration>,
 }
 
 impl LibmpvOverlaySurface {
@@ -105,6 +120,9 @@ impl LibmpvOverlaySurface {
             pressed: RefCell::new(HashSet::new()),
             last_click: Cell::new((0, 0, 0, 0, 0)),
             placement_invalidated: Cell::new(true),
+            in_flight: RefCell::new(None),
+            deferred_present: Cell::new(false),
+            present_timeout: Cell::new(std::time::Duration::from_secs(5)),
         }))
     }
 
@@ -203,6 +221,8 @@ impl LibmpvOverlaySurface {
 
     pub(crate) fn destroy(&self) {
         self.closing.set(true);
+        self.in_flight.borrow_mut().take();
+        self.deferred_present.set(false);
         self.browser.borrow_mut().take();
         self.window.borrow_mut().take();
         if let Some(services) = crate::shell::locator::services()
@@ -351,6 +371,9 @@ impl LibmpvOverlaySurface {
 
     fn tick(&self) -> bool {
         if self.closing.get() {
+            return false;
+        }
+        if !self.flush_in_flight_overlay() {
             return false;
         }
         if crate::players::mpv::take_window_close_request() {
@@ -603,7 +626,71 @@ impl LibmpvOverlaySurface {
         }]);
     }
 
+    fn poll_in_flight_overlay(&self) -> OverlaySlotState {
+        let poll = {
+            let in_flight = self.in_flight.borrow();
+            let Some(pending) = in_flight.as_ref() else {
+                return OverlaySlotState::Ready;
+            };
+            match pending.reply.try_recv() {
+                Ok(result) => Some(Ok(result)),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(
+                    "native UI presentation did not complete: channel disconnected".to_string(),
+                )),
+            }
+        };
+        let Some(completed) = poll else {
+            return OverlaySlotState::Busy;
+        };
+        let return_to_frame = self
+            .in_flight
+            .borrow_mut()
+            .take()
+            .is_some_and(|pending| pending.return_to_frame);
+        match completed {
+            Ok(Ok(frame)) => {
+                if return_to_frame {
+                    let mut current = self.frame.borrow_mut();
+                    if current.is_empty() && self.frame_size.get() == (frame.width, frame.height) {
+                        *current = frame.pixels;
+                    }
+                }
+                OverlaySlotState::Ready
+            }
+            Ok(Err(error)) | Err(error) => {
+                tracing::error!(target: "cef.osr", "native UI composition failed: {error}");
+                self.close();
+                OverlaySlotState::Failed
+            }
+        }
+    }
+
+    fn flush_in_flight_overlay(&self) -> bool {
+        match self.poll_in_flight_overlay() {
+            OverlaySlotState::Ready => {
+                if self.deferred_present.replace(false) {
+                    self.present();
+                }
+                !self.closing.get()
+            }
+            OverlaySlotState::Busy => true,
+            OverlaySlotState::Failed => false,
+        }
+    }
+
     fn present_regions(&self, _dirty: &[Rect]) {
+        if self.closing.get() {
+            return;
+        }
+        match self.poll_in_flight_overlay() {
+            OverlaySlotState::Ready => {}
+            OverlaySlotState::Busy => {
+                self.deferred_present.set(true);
+                return;
+            }
+            OverlaySlotState::Failed => return,
+        }
         let (width, height) = self.frame_size.get();
         let frame = std::mem::take(&mut *self.frame.borrow_mut());
         if width == 0 || height == 0 || frame.len() != usize::from(width) * usize::from(height) * 4
@@ -626,15 +713,32 @@ impl LibmpvOverlaySurface {
         } else {
             frame
         };
-        match self
-            .playback
-            .present_overlay(crate::playback::NativeOverlayFrame {
+        match self.playback.present_overlay(
+            crate::playback::NativeOverlayFrame {
                 pixels,
                 width,
                 height,
-            }) {
-            Ok(frame) if !popup_visible => *self.frame.borrow_mut() = frame.pixels,
-            Ok(_) => {}
+            },
+            self.present_timeout.get(),
+        ) {
+            Ok(crate::playback::OverlayPresentation::Presented(frame)) => {
+                if !popup_visible {
+                    *self.frame.borrow_mut() = frame.pixels;
+                }
+                self.deferred_present.set(false);
+            }
+            Ok(crate::playback::OverlayPresentation::TimedOut(reply)) => {
+                tracing::warn!(
+                    target: "cef.osr",
+                    width,
+                    height,
+                    "timed out waiting for native UI presentation; skipping frame"
+                );
+                *self.in_flight.borrow_mut() = Some(InFlightOverlay {
+                    reply,
+                    return_to_frame: !popup_visible,
+                });
+            }
             Err(error) => {
                 tracing::error!(target: "cef.osr", "native UI composition failed: {error}");
                 self.close();
@@ -731,34 +835,4 @@ wrap_render_handler! {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn dirty_updates_clip_to_the_view_and_preserve_unchanged_pixels() {
-        let mut frame = vec![0; 24];
-        let pixels = vec![255; 24];
-        update_regions(
-            &mut frame,
-            &pixels,
-            3,
-            2,
-            &[
-                Rect {
-                    x: 1,
-                    y: -1,
-                    width: 4,
-                    height: 2,
-                },
-                Rect {
-                    x: i32::MAX,
-                    y: 0,
-                    width: i32::MAX,
-                    height: 1,
-                },
-            ],
-        );
-        assert_eq!(&frame[..4], &[0; 4]);
-        assert_eq!(&frame[4..12], &[255; 8]);
-        assert_eq!(&frame[12..], &[0; 12]);
-    }
-}
+mod tests;
