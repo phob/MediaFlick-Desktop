@@ -25,6 +25,7 @@ use super::{
 };
 
 mod events;
+mod library_ipc;
 
 impl ControllerState {
     pub(super) fn warm(&mut self, mpv_path: &str, fullscreen: FullscreenBehavior) {
@@ -191,7 +192,7 @@ impl ControllerState {
                 } else {
                     self.reset_mpv();
                 }
-                if !self.ensure_mpv(mpv_path, fullscreen) {
+                if !self.ensure_mpv_for_load(mpv_path, fullscreen) {
                     return Err(first_error);
                 }
                 if !launch.content.is_audio() {
@@ -213,26 +214,17 @@ impl ControllerState {
             .and_then(serde_json::Value::as_i64))
     }
 
-    fn reuse_live_runtime(&mut self, mpv_path: &str) -> Option<bool> {
+    fn reuse_live_runtime(
+        &mut self,
+        mpv_path: &str,
+        allow_backed_off_reconnect: bool,
+    ) -> Option<bool> {
         if !self.runtime_is_alive() {
             self.reset_mpv();
             return None;
         }
         if self.runtime_kind == super::MpvRuntimeKind::Library {
-            if self
-                .ipc
-                .worker
-                .as_ref()
-                .is_some_and(IpcWorker::is_writer_alive)
-            {
-                tracing::trace!(target: "mpv.ipc", "reusing existing mpv process");
-                return Some(true);
-            }
-            tracing::warn!(
-                target: "mpv.ipc",
-                "reconnecting built-in libmpv IPC because the live runtime has no live IPC worker"
-            );
-            return Some(self.reconnect_library_ipc());
+            return Some(self.ensure_live_library_ipc(allow_backed_off_reconnect));
         }
         if !self.current_mpv_path_matches(mpv_path) {
             tracing::info!(
@@ -264,11 +256,28 @@ impl ControllerState {
     }
 
     pub(super) fn ensure_mpv(&mut self, mpv_path: &str, fullscreen: FullscreenBehavior) -> bool {
+        self.ensure_mpv_with_reconnect(mpv_path, fullscreen, false)
+    }
+
+    pub(super) fn ensure_mpv_for_load(
+        &mut self,
+        mpv_path: &str,
+        fullscreen: FullscreenBehavior,
+    ) -> bool {
+        self.ensure_mpv_with_reconnect(mpv_path, fullscreen, true)
+    }
+
+    fn ensure_mpv_with_reconnect(
+        &mut self,
+        mpv_path: &str,
+        fullscreen: FullscreenBehavior,
+        allow_backed_off_reconnect: bool,
+    ) -> bool {
         if self.shutdown_requested.load(Ordering::SeqCst) {
             tracing::debug!(target: "mpv.ipc", "skipping mpv start because shutdown is requested");
             return false;
         }
-        if let Some(ready) = self.reuse_live_runtime(mpv_path) {
+        if let Some(ready) = self.reuse_live_runtime(mpv_path, allow_backed_off_reconnect) {
             return ready;
         }
         let ipc_path = self.next_ipc_path();
@@ -491,6 +500,7 @@ impl ControllerState {
 
     fn configured_mpv_session_ready(&mut self, config: &ConfiguredMpv) -> bool {
         self.runtime_is_alive()
+            && !self.ipc.pending_stop
             && (self.runtime_kind == super::MpvRuntimeKind::Library
                 || self.current_mpv_path_matches(&config.mpv_path))
             && self
@@ -498,76 +508,6 @@ impl ControllerState {
                 .worker
                 .as_ref()
                 .is_some_and(IpcWorker::is_writer_alive)
-    }
-
-    fn can_recycle_library_ipc(&mut self) -> bool {
-        self.runtime_kind == super::MpvRuntimeKind::Library
-            && self.ipc.path.is_some()
-            && self.runtime_is_alive()
-    }
-
-    fn disconnect_ipc_worker(&mut self) {
-        self.ipc.active_id = None;
-        if let Some(worker) = self.ipc.worker.take() {
-            worker.disconnect();
-        }
-    }
-
-    fn reset_library_ipc(&mut self) {
-        tracing::debug!(
-            target: "mpv.ipc",
-            "resetting built-in libmpv IPC without stopping runtime"
-        );
-        self.clear_playback_session_state();
-        self.disconnect_ipc_worker();
-        self.publish_snapshot();
-    }
-
-    fn reconnect_library_ipc(&mut self) -> bool {
-        let Some(ipc_path) = self.ipc.path.clone() else {
-            return false;
-        };
-        self.disconnect_ipc_worker();
-        let Some(runtime) = self.runtime.as_mut() else {
-            return false;
-        };
-        let (ipc_worker, event_rx) = match start_ipc_worker(
-            &ipc_path,
-            IPC_CONNECT_TIMEOUT,
-            &self.shutdown_requested,
-            || runtime.is_alive(),
-        ) {
-            Ok(worker) => worker,
-            Err(error) => {
-                tracing::warn!(
-                    target: "mpv.ipc",
-                    ipc_path = %ipc_path,
-                    "failed to reconnect built-in libmpv IPC: {error}"
-                );
-                return false;
-            }
-        };
-        if self.shutdown_requested.load(Ordering::SeqCst) {
-            tracing::debug!(
-                target: "mpv.ipc",
-                "closing reconnected libmpv IPC because shutdown is requested"
-            );
-            ipc_worker.disconnect();
-            return false;
-        }
-        let session_id = self.ipc.next_id;
-        self.ipc.next_id = self.ipc.next_id.wrapping_add(1).max(1);
-        self.start_event_relay(session_id, event_rx);
-        self.ipc.worker = Some(ipc_worker);
-        self.ipc.active_id = Some(session_id);
-        tracing::info!(
-            target: "mpv.ipc",
-            ipc_path = %ipc_path,
-            session_id,
-            "reconnected built-in libmpv IPC"
-        );
-        self.install_input_bindings();
-        true
     }
 
     pub(super) fn handle_mpv_session_lost(&mut self, reason: &'static str) {
@@ -579,12 +519,14 @@ impl ControllerState {
                 reason,
                 "recycling built-in libmpv IPC without restarting its native window"
             );
+            if had_playback {
+                self.ipc.pending_stop = true;
+            }
             self.reset_library_ipc();
             if !self.shutdown_requested.load(Ordering::SeqCst)
-                && self.reconnect_library_ipc()
-                && had_playback
+                && !self.library_ipc_reconnect_blocked()
             {
-                self.stop_mpv(reason);
+                let _ = self.reconnect_library_ipc();
             }
             return;
         }
@@ -792,6 +734,9 @@ impl ControllerState {
             cleanup_ipc_path(&path);
         }
         self.ipc.active_id = None;
+        self.ipc.pending_stop = false;
+        self.ipc.reconnect_failures = 0;
+        self.ipc.next_reconnect_at = None;
         if let Some(worker) = self.ipc.worker.take() {
             worker.shutdown();
         }
@@ -800,13 +745,28 @@ impl ControllerState {
 
     pub(super) fn stop_mpv(&self, why: &str) {
         tracing::info!(target: "playback", "stopping mpv: {why}");
-        if let Err(error) = self.send_mpv_command(json!({ "command": ["stop"] })) {
+        if let Err(error) = self.send_mpv_command(json!({
+            "command": ["stop"],
+            "request_id": next_request_id(),
+        })) {
             tracing::warn!(target: "mpv.ipc", "could not stop mpv: {error}");
         }
     }
 
+    #[cfg(not(test))]
+    const fn ipc_command_timeout(&self) -> Duration {
+        IPC_COMMAND_TIMEOUT
+    }
+
+    #[cfg(test)]
+    fn ipc_command_timeout(&self) -> Duration {
+        self.ipc
+            .command_timeout_override
+            .unwrap_or(IPC_COMMAND_TIMEOUT)
+    }
+
     pub(super) fn send_mpv_command(&self, command: Value) -> Result<(), IpcCommandFailure> {
-        self.send_mpv_command_with_timeout(command, IPC_COMMAND_TIMEOUT)
+        self.send_mpv_command_with_timeout(command, self.ipc_command_timeout())
             .map(drop)
     }
 

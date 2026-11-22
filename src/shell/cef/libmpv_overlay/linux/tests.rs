@@ -55,9 +55,10 @@ fn test_surface() -> (Rc<LibmpvOverlaySurface>, mpsc::Receiver<OverlayRequest>) 
     let state = crate::shell::cef::test_browser_state(Arc::clone(&playback));
     let surface =
         LibmpvOverlaySurface::select(&settings, playback, state).expect("libmpv surface selected");
-    surface.present_timeout.set(Duration::from_millis(25));
     (surface, submissions_rx)
 }
+
+const TEST_PRESENT_TIMEOUT: Duration = Duration::from_millis(25);
 
 fn set_frame(surface: &LibmpvOverlaySurface, fill: u8) {
     surface.frame_size.set((2, 2));
@@ -98,7 +99,7 @@ fn present_regions_timeout_skips_frame_without_closing_the_surface() {
     let (surface, submissions) = test_surface();
     set_frame(&surface, 10);
 
-    surface.present_regions(&[]);
+    surface.present_regions_with_timeout(&[], TEST_PRESENT_TIMEOUT);
 
     assert!(!surface.closing.get(), "timeout must not close the surface");
     let (first_frame, first_reply) = submissions
@@ -107,7 +108,7 @@ fn present_regions_timeout_skips_frame_without_closing_the_surface() {
     assert_eq!(first_frame.pixels[0], 10);
 
     set_frame(&surface, 20);
-    surface.present_regions(&[]);
+    surface.present_regions_with_timeout(&[], TEST_PRESENT_TIMEOUT);
     assert!(
         !surface.closing.get(),
         "busy skip must not close the surface"
@@ -118,7 +119,7 @@ fn present_regions_timeout_skips_frame_without_closing_the_surface() {
     );
 
     first_reply.send(Ok(first_frame)).expect("complete first");
-    surface.present_regions(&[]);
+    surface.present_regions_with_timeout(&[], TEST_PRESENT_TIMEOUT);
     assert!(!surface.closing.get());
     let (second_frame, second_reply) = submissions
         .recv_timeout(Duration::from_secs(1))
@@ -140,7 +141,7 @@ fn present_regions_composition_error_closes_the_surface() {
         let _ = reply.send(Err("overlay-add failed".to_string()));
     });
 
-    surface.present_regions(&[]);
+    surface.present_regions_with_timeout(&[], TEST_PRESENT_TIMEOUT);
     handle.join().expect("responder finished");
 
     assert!(surface.closing.get());
@@ -157,7 +158,7 @@ fn present_regions_disconnected_coordinator_closes_the_surface() {
         drop(reply);
     });
 
-    surface.present_regions(&[]);
+    surface.present_regions_with_timeout(&[], TEST_PRESENT_TIMEOUT);
     handle.join().expect("responder finished");
 
     assert!(surface.closing.get());
@@ -168,7 +169,7 @@ fn in_flight_overlay_flushes_deferred_frame_and_drops_stale_resized_buffer() {
     let (surface, submissions) = test_surface();
     set_frame(&surface, 10);
 
-    surface.present_regions(&[]);
+    surface.present_regions_with_timeout(&[], TEST_PRESENT_TIMEOUT);
     assert!(!surface.closing.get());
     let (first_frame, first_reply) = submissions
         .recv_timeout(Duration::from_secs(1))
@@ -184,12 +185,12 @@ fn in_flight_overlay_flushes_deferred_frame_and_drops_stale_resized_buffer() {
     );
 
     set_frame(&surface, 30);
-    surface.present_regions(&[]);
+    surface.present_regions_with_timeout(&[], TEST_PRESENT_TIMEOUT);
     let (second_frame, second_reply) = submissions
         .recv_timeout(Duration::from_secs(1))
         .expect("second overlay submitted");
     set_frame(&surface, 40);
-    surface.present_regions(&[]);
+    surface.present_regions_with_timeout(&[], TEST_PRESENT_TIMEOUT);
     assert!(surface.deferred_present.get());
 
     second_reply
@@ -214,7 +215,7 @@ fn in_flight_overlay_error_closes_the_surface_on_poll() {
     let (surface, submissions) = test_surface();
     set_frame(&surface, 10);
 
-    surface.present_regions(&[]);
+    surface.present_regions_with_timeout(&[], TEST_PRESENT_TIMEOUT);
     assert!(!surface.closing.get());
     let (_frame, reply) = submissions
         .recv_timeout(Duration::from_secs(1))

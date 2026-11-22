@@ -21,6 +21,7 @@ use window::OverlayWindow;
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 const SYNC_MS: i64 = 16;
+const PRESENT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
 thread_local! {
     static SURFACE: RefCell<Weak<LibmpvOverlaySurface>> = const { RefCell::new(Weak::new()) };
 }
@@ -84,7 +85,6 @@ pub(crate) struct LibmpvOverlaySurface {
     placement_invalidated: Cell<bool>,
     in_flight: RefCell<Option<InFlightOverlay>>,
     deferred_present: Cell<bool>,
-    present_timeout: Cell<std::time::Duration>,
 }
 
 impl LibmpvOverlaySurface {
@@ -122,7 +122,6 @@ impl LibmpvOverlaySurface {
             placement_invalidated: Cell::new(true),
             in_flight: RefCell::new(None),
             deferred_present: Cell::new(false),
-            present_timeout: Cell::new(std::time::Duration::from_secs(5)),
         }))
     }
 
@@ -679,7 +678,11 @@ impl LibmpvOverlaySurface {
         }
     }
 
-    fn present_regions(&self, _dirty: &[Rect]) {
+    fn present_regions(&self, dirty: &[Rect]) {
+        self.present_regions_with_timeout(dirty, PRESENT_TIMEOUT);
+    }
+
+    fn present_regions_with_timeout(&self, _dirty: &[Rect], timeout: std::time::Duration) {
         if self.closing.get() {
             return;
         }
@@ -719,7 +722,7 @@ impl LibmpvOverlaySurface {
                 width,
                 height,
             },
-            self.present_timeout.get(),
+            timeout,
         ) {
             Ok(crate::playback::OverlayPresentation::Presented(frame)) => {
                 if !popup_visible {

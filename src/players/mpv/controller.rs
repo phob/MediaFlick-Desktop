@@ -28,6 +28,11 @@ mod session;
 mod test_support;
 
 const IPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+#[cfg(not(test))]
+const IPC_RECONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const IPC_RECONNECT_TIMEOUT: Duration = Duration::from_millis(60);
+const LIBRARY_IPC_MAX_RECONNECT_ATTEMPTS: u32 = 5;
 const IPC_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 pub(super) const IPC_COMMAND_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const PENDING_FILE_LOADED_TIMEOUT: Duration = Duration::from_secs(60);
@@ -152,6 +157,11 @@ struct IpcSession {
     worker: Option<IpcWorker>,
     active_id: Option<u64>,
     next_id: u64,
+    pending_stop: bool,
+    reconnect_failures: u32,
+    next_reconnect_at: Option<Instant>,
+    #[cfg(test)]
+    command_timeout_override: Option<Duration>,
 }
 
 impl Default for IpcSession {
@@ -161,6 +171,11 @@ impl Default for IpcSession {
             worker: None,
             active_id: None,
             next_id: 1,
+            pending_stop: false,
+            reconnect_failures: 0,
+            next_reconnect_at: None,
+            #[cfg(test)]
+            command_timeout_override: None,
         }
     }
 }
@@ -730,7 +745,7 @@ impl ControllerState {
             return;
         }
 
-        if !self.ensure_mpv(mpv_path, fullscreen) {
+        if !self.ensure_mpv_for_load(mpv_path, fullscreen) {
             tracing::warn!(
                 target: "playback",
                 mpv_path = %mpv_path,
@@ -764,6 +779,7 @@ impl ControllerState {
 
         match self.send_loadfile_with_reconnect(mpv_path, fullscreen, &launch) {
             Ok(entry) => {
+                self.ipc.pending_stop = false;
                 self.tracked_entry = entry;
                 tracing::info!(
                     target: "playback",

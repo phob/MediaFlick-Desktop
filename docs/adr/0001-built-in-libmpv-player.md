@@ -26,7 +26,11 @@ scripts and switches hardware decoding for SVP.
 Switching to or from the built-in player takes effect after a restart, because
 the backend selects the native window and CEF composition model
 ([0002](0002-native-video-composition.md)). Switching between external mpv
-paths rebuilds the player in place.
+paths rebuilds the player in place. When JSON IPC fails or disconnects while
+built-in libmpv is still alive, MediaFlick recycles only the IPC worker against
+the running instance's IPC endpoint rather than restarting libmpv, preserving
+the host window that owns the CEF overlay; external mpv continues to restart
+its child process on IPC loss.
 
 ## Rejected alternatives
 
@@ -37,6 +41,11 @@ paths rebuilds the player in place.
   running: CEF's windowless rendering setting and, on Linux, its X11 and
   GPU-compositing switches are fixed when CEF initializes, so a switch would
   need a new process anyway.
+- Rebinding the CEF overlay to a recreated libmpv window on IPC loss: CEF
+  windowless parent binding, DirectComposition/X11 input windows, and platform
+  close hooks are established once at startup, and tearing down the host window
+  would close the app or flicker visibly when recycling the IPC connection alone
+  recovers transport errors.
 - Making the built-in player honor the user's mpv configuration and scripts:
   it would make zero-setup playback depend on files MediaFlick does not
   control. External mpv is the path for full mpv customization.

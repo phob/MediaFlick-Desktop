@@ -18,11 +18,16 @@ Jellyfin reporting and next-episode handoff all use that JSON IPC. The libmpv
 client API is used only to create, configure, initialize, poll and destroy the
 handle.
 
-IPC keeps a separate event reader and one persistent command writer, opened
-while mpv is idle and reused for every command. Media loads without a start
-position; resume is a delayed absolute seek after `file-loaded`, and the
-reported Jellyfin position is held until mpv reaches the seek target. The
-operative rules are in [AGENTS.md](../../AGENTS.md#playback-invariants).
+IPC keeps a separate event reader and one persistent command writer per IPC
+session, opened while mpv is idle and reused for every command. If the
+transport fails or times out while built-in libmpv remains alive, MediaFlick
+disconnects the poisoned worker and connects a fresh reader and persistent
+command writer to the same `input-ipc-server` endpoint (with bounded reconnect
+backoff and deferred `stop` delivery when playback was active) instead of
+tearing down libmpv and its host window ([0001](0001-built-in-libmpv-player.md)).
+Media loads without a start position; resume is a delayed absolute seek after
+`file-loaded`, and the reported Jellyfin position is held until mpv reaches the
+seek target. The operative rules are in [AGENTS.md](../../AGENTS.md#playback-invariants).
 
 ## Rejected alternatives
 
