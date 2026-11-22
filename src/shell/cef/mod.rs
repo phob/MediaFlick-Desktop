@@ -239,6 +239,7 @@ mod handlers;
 mod libmpv_overlay;
 #[cfg(target_os = "macos")]
 mod mac;
+mod recovery;
 mod runtime;
 mod ui_events;
 
@@ -313,6 +314,7 @@ pub(super) struct BeforeUnloadDecision {
 pub(super) struct WindowCloseState {
     force_close_requested: bool,
     close_pending: bool,
+    shutting_down: bool,
 }
 
 impl WindowCloseState {
@@ -323,6 +325,7 @@ impl WindowCloseState {
     pub(super) fn request_force_close(&mut self) {
         self.force_close_requested = true;
         self.close_pending = false;
+        self.shutting_down = true;
     }
 
     pub(super) fn begin_close(&mut self) {
@@ -334,7 +337,16 @@ impl WindowCloseState {
     pub(super) fn finish_close_attempt(&mut self, closed: bool) {
         if closed {
             self.close_pending = false;
+            self.shutting_down = true;
         }
+    }
+
+    pub(super) fn mark_shutting_down(&mut self) {
+        self.shutting_down = true;
+    }
+
+    pub(super) const fn is_exiting(&self) -> bool {
+        self.force_close_requested || self.shutting_down
     }
 
     pub(super) fn on_before_unload(&mut self, is_reload: bool) -> BeforeUnloadDecision {
@@ -408,8 +420,8 @@ struct BrowserStateInner {
     browsers: Vec<Browser>,
     main_window: Option<Window>,
     initial_show_state: ShowState,
-    main_window_reveal_requested: bool,
-    main_window_revealed: bool,
+    reveal: recovery::WindowRevealState,
+    renderer_recovery: recovery::RendererRecoveryState,
     playback: Arc<PlaybackCoordinator>,
     update_available: Option<UpdateRelease>,
     update_download_started: bool,
@@ -420,14 +432,27 @@ struct BrowserStateInner {
 
 type BrowserState = Arc<Mutex<BrowserStateInner>>;
 
-fn register_main_window(state: &BrowserState, window: &Window) {
-    let reveal_requested = state.lock().is_ok_and(|mut state| {
-        state.main_window = Some(window.clone());
-        state.main_window_reveal_requested
-    });
-    if reveal_requested {
-        reveal_main_window(state);
+fn show_views_window(window: &Window, show_state: ShowState) {
+    if show_state == ShowState::MAXIMIZED {
+        window.maximize();
     }
+    window.show();
+    window.activate();
+}
+
+fn register_main_window(state: &BrowserState, window: &Window) {
+    let show_state = {
+        let Ok(mut state) = state.lock() else {
+            return;
+        };
+        state.main_window = Some(window.clone());
+        let exiting = state.close.is_exiting();
+        if state.reveal.on_target_ready(exiting) != recovery::RevealAction::RevealNow {
+            return;
+        }
+        state.initial_show_state
+    };
+    show_views_window(window, show_state);
 }
 
 fn clear_main_window(state: &BrowserState) {
@@ -439,34 +464,117 @@ fn clear_main_window(state: &BrowserState) {
 fn reveal_main_window(state: &BrowserState) {
     debug_assert_ne!(currently_on(ThreadId::UI), 0);
 
-    let (window, show_state) = {
+    let overlay_active = libmpv_overlay::is_active();
+    let views_target = {
         let Ok(mut state) = state.lock() else {
             tracing::warn!(target: "shell", "failed to read main window state before reveal");
             return;
         };
-        state.main_window_reveal_requested = true;
-        if state.main_window_revealed || state.initial_show_state == ShowState::HIDDEN {
+        let exiting = state.close.is_exiting();
+        let target_available = overlay_active || state.main_window.is_some();
+        if state.reveal.request_reveal(target_available, exiting)
+            != recovery::RevealAction::RevealNow
+        {
             return;
         }
-        #[cfg(target_os = "linux")]
-        if libmpv_overlay::is_active() {
-            state.main_window_revealed = true;
-            drop(state);
-            libmpv_overlay::reveal();
-            return;
+        if overlay_active {
+            None
+        } else {
+            state
+                .main_window
+                .clone()
+                .map(|window| (window, state.initial_show_state))
         }
-        let Some(window) = state.main_window.clone() else {
-            return;
-        };
-        state.main_window_revealed = true;
-        (window, state.initial_show_state)
     };
 
-    if show_state == ShowState::MAXIMIZED {
-        window.maximize();
+    #[cfg(target_os = "linux")]
+    if overlay_active {
+        libmpv_overlay::reveal();
+        return;
     }
-    window.show();
-    window.activate();
+
+    if let Some((window, show_state)) = views_target {
+        show_views_window(&window, show_state);
+    }
+}
+
+wrap_task! {
+    struct RevealDeadlineTask {
+        state: std::sync::Weak<Mutex<BrowserStateInner>>,
+        generation: u64,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            if let Some(state) = self.state.upgrade() {
+                handle_reveal_deadline(&state, self.generation);
+            }
+        }
+    }
+}
+
+fn schedule_reveal_deadline(state: &BrowserState) {
+    let generation = state.lock().ok().and_then(|mut state| {
+        let exiting = state.close.is_exiting();
+        state.reveal.arm_deadline(exiting)
+    });
+    let Some(generation) = generation else {
+        return;
+    };
+    let mut task = RevealDeadlineTask::new(Arc::downgrade(state), generation);
+    if post_delayed_task(ThreadId::UI, Some(&mut task), recovery::REVEAL_DEADLINE_MS) == 0 {
+        tracing::warn!(target: "shell", "failed to schedule main window reveal deadline");
+    }
+}
+
+fn handle_reveal_deadline(state: &BrowserState, generation: u64) {
+    debug_assert_ne!(currently_on(ThreadId::UI), 0);
+
+    let overlay_active = libmpv_overlay::is_active();
+    let (action, views_target) = {
+        let Ok(mut state) = state.lock() else {
+            return;
+        };
+        let exiting = state.close.is_exiting();
+        let target_available = overlay_active || state.main_window.is_some();
+        let action = state
+            .reveal
+            .on_deadline(generation, target_available, exiting);
+        if action == recovery::RevealAction::Skip {
+            return;
+        }
+        let views_target = if action == recovery::RevealAction::RevealNow && !overlay_active {
+            state
+                .main_window
+                .clone()
+                .map(|window| (window, state.initial_show_state))
+        } else {
+            None
+        };
+        (action, views_target)
+    };
+
+    tracing::warn!(
+        target: "shell",
+        deadline_ms = recovery::REVEAL_DEADLINE_MS,
+        "main window did not signal ready before the reveal deadline; revealing now"
+    );
+    if let Some(services) = locator::services() {
+        services.sync.release_startup_hold();
+    }
+    if action != recovery::RevealAction::RevealNow {
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
+    if overlay_active {
+        libmpv_overlay::reveal();
+        return;
+    }
+
+    if let Some((window, show_state)) = views_target {
+        show_views_window(&window, show_state);
+    }
 }
 
 fn new_browser_state(
@@ -484,8 +592,8 @@ fn new_browser_state(
         browsers: Vec::new(),
         main_window: None,
         initial_show_state,
-        main_window_reveal_requested: false,
-        main_window_revealed: false,
+        reveal: recovery::WindowRevealState::new(initial_show_state == ShowState::HIDDEN),
+        renderer_recovery: recovery::RendererRecoveryState::default(),
         playback: playback.clone(),
         update_available: None,
         update_download_started: false,
@@ -544,8 +652,8 @@ fn test_browser_state(playback: Arc<PlaybackCoordinator>) -> BrowserState {
         browsers: Vec::new(),
         main_window: None,
         initial_show_state: ShowState::NORMAL,
-        main_window_reveal_requested: false,
-        main_window_revealed: false,
+        reveal: recovery::WindowRevealState::new(false),
+        renderer_recovery: recovery::RendererRecoveryState::default(),
         playback,
         update_available: None,
         update_download_started: false,
@@ -574,8 +682,8 @@ mod tests {
             browsers: Vec::new(),
             main_window: None,
             initial_show_state: ShowState::NORMAL,
-            main_window_reveal_requested: false,
-            main_window_revealed: false,
+            reveal: recovery::WindowRevealState::new(false),
+            renderer_recovery: recovery::RendererRecoveryState::default(),
             playback,
             update_available: None,
             update_download_started: false,
@@ -704,6 +812,7 @@ mod tests {
         let mut close = WindowCloseState::default();
         close.begin_close();
         close.request_force_close();
+        assert!(close.is_exiting());
         assert_eq!(
             close.on_before_unload(false),
             BeforeUnloadDecision {
@@ -718,5 +827,21 @@ mod tests {
                 notify_window_close_blocked: false,
             }
         );
+    }
+
+    #[test]
+    fn exiting_tracks_accepted_and_forced_closes_but_not_blocked_or_minimized_closes() {
+        let mut close = WindowCloseState::default();
+        assert!(!close.is_exiting());
+        close.begin_close();
+        close.finish_close_attempt(false);
+        assert!(!close.is_exiting());
+        close.begin_close();
+        close.finish_close_attempt(true);
+        assert!(close.is_exiting());
+
+        let mut shutdown = WindowCloseState::default();
+        shutdown.mark_shutting_down();
+        assert!(shutdown.is_exiting());
     }
 }

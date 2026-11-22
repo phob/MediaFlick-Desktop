@@ -157,6 +157,7 @@ wrap_browser_process_handler! {
                             if surface.create_browser(&mut client).is_some() {
                                 *self.client.borrow_mut() = Some(client);
                                 surface.show();
+                                schedule_reveal_deadline(&handler_state);
                                 return;
                             }
                             tracing::error!(target: "cef.osr", "failed to create the windowless React browser");
@@ -199,9 +200,10 @@ wrap_browser_process_handler! {
                     title: self.config.title.clone(),
                     settings: settings.webui_window,
                 },
-                Some(handler_state),
+                Some(handler_state.clone()),
             );
             window_create_top_level(Some(&mut window_delegate));
+            schedule_reveal_deadline(&handler_state);
         }
 
         fn default_client(&self) -> Option<Client> {

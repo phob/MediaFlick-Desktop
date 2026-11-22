@@ -172,9 +172,11 @@ function within(promise, ms, onTimeout) {
 }
 let child
 let app
+let currentPort
 
 async function launch() {
   const port = await freePort()
+  currentPort = port
   const args = ["--remote-debugging-port", String(port), "--log-level", options["log-level"]]
   const url = options.url ?? login ?? (signedOut ? account.serverUrl : null)
   if (url) args.push("--url", url)
@@ -308,6 +310,42 @@ async function relaunch() {
   return app
 }
 
+async function reconnectCdp(accept = (target) => target.url.startsWith("mediaflick-desktop://app"), { timeout = 20000 } = {}) {
+  app?.close()
+  app = null
+  const deadline = Date.now() + timeout
+  let lastError
+  while (Date.now() < deadline) {
+    let candidate = null
+    try {
+      const targets = await (await fetch(`http://127.0.0.1:${currentPort}/json/list`)).json()
+      const page = targets.find((target) => target.type === "page" && accept(target))
+      if (page) {
+        candidate = await connect(currentPort, (target) => target.id === page.id && accept(target))
+        const ready = await within(
+          (async () => {
+            for (const domain of ["Page", "Runtime", "DOM", "Accessibility"]) await candidate.send(`${domain}.enable`)
+            return await candidate.evaluate("document.readyState")
+          })(),
+          3000,
+          () => null,
+        )
+        if (ready) {
+          app = candidate
+          if ((account && !signedOut) || login) await guardSignOut()
+          return app
+        }
+        candidate.close()
+      }
+    } catch (error) {
+      candidate?.close()
+      lastError = error instanceof Error ? error.message : String(error)
+    }
+    await sleep(250)
+  }
+  throw new Error(`timed out after ${timeout} ms reconnecting CDP${lastError ? ` (last: ${lastError})` : ""}`)
+}
+
 async function failureEvidence(harness) {
   if (!harness) return
   await within(harness.screenshot("failure"), 10000, () => log("failure screenshot timed out")).catch(() => {})
@@ -337,6 +375,7 @@ try {
     dataDir,
     log,
     relaunchApp: relaunch,
+    reconnectApp: reconnectCdp,
     windowShown: () => mainWindowShown(child.pid),
     account: account ? { server: account.server, userName: account.userName, userId: account.userId, login: false, signedOut } : login ? { server: login, login: true } : null,
     cachedAccount: account,

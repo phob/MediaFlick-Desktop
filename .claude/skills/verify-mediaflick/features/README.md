@@ -50,6 +50,7 @@ A proof claim in this map names the drive that proves it, and any evidence it ci
 - [Collections](./collections.md): Movie Franchises, My Collections from a template, Jellyfin mode with BoxSets and the route guard, and custom posters kept while a damaged `collections.json` is set aside. Proven by `collections` and `poster-cleanup`.
 - [Updating from MediaFlick 0.2.0](./upgrades.md): the first start on a 0.2.0 profile keeps `library.db` row for row before any sync, the session and device, every file and choice; the way back to the real 0.2.0 and forward again; a newer `library.db`, or one whose schema change failed, refused once, left as it was, and its reason shown on a startup error screen instead of sign-in, which offers Open data folder and a confirmed Recreate library that moves the file aside and continues in the same window, except while another program holds the file. Proven by `upgrade-0-2-0` and `library-refused`, which `scripts/e2e/upgrade-0-2-0.mjs` runs on your own server.
 - [Account settings and integrations](./account-settings.md): Viewing, Appearance, the leave guard between account shelves, Letterboxd. Proven by `account-settings`.
+- [Shell crash recovery](./crash-recovery.md): bounded renderer auto-reload on crash, fallback to the native error page after repeated crashes, and recovery via `Try again`. Proven by `renderer-crash` (`renderer-crash.json`, `01-after-auto-reload.png`, `02-error-page.png`, `03-recovered-after-retry.png`).
 
 ## Unmapped surfaces
 

@@ -12,7 +12,7 @@ import { startProxy } from "./proxy.mjs"
 const SKIPPED_ROLES = new Set(["InlineTextBox", "LineBreak", "none", "generic", "ignored"])
 const STATE_PROPERTIES = ["focused", "disabled", "checked", "pressed", "expanded", "selected", "invalid", "required", "readonly"]
 
-export function createHarness({ app: firstApp, currentChild, evidence, configDir, dataDir, log, relaunchApp, windowShown, account = null, cachedAccount = null, signOutBlocked = () => false, rememberSecret = () => {} }) {
+export function createHarness({ app: firstApp, currentChild, evidence, configDir, dataDir, log, relaunchApp, reconnectApp, windowShown, account = null, cachedAccount = null, signOutBlocked = () => false, rememberSecret = () => {} }) {
   let app = firstApp
   const proxies = []
   let sink = null
@@ -601,6 +601,10 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     app = await relaunchApp()
   }
 
+  async function reconnect(accept, options) {
+    app = await reconnectApp(accept, options)
+  }
+
   async function proxy({ upstream, fail, answer, delay }) {
     const started = await startProxy({ upstream, fail, answer, delay, log })
     proxies.push(started)
@@ -682,6 +686,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     wmClose,
     appExit,
     relaunch,
+    reconnect,
     windowShown,
     proxy,
     remoteCommand,

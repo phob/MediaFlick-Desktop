@@ -11,9 +11,10 @@ import { listenForLibrariesChangedBeforeBridge } from "./lib/library-events"
 import { listenForOpenSettingsBeforeBridge } from "./lib/shell-navigation"
 import { primeStartupQueries } from "./lib/startup-queries"
 import { createQueryClient } from "./lib/query-client"
+import { createAppRoutes } from "./router"
 
 installAppSurfaceGuard()
-const router = createBrowserRouter([{ path: "*", element: <NavigationHistory><App /></NavigationHistory> }])
+const router = createBrowserRouter(createAppRoutes(<NavigationHistory><App /></NavigationHistory>))
 const queryClient = createQueryClient()
 listenForLibrariesChangedBeforeBridge()
 listenForOpenSettingsBeforeBridge()
