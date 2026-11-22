@@ -363,23 +363,32 @@ public sealed class CollectionExperienceController : ControllerBase
 public sealed class AdminController : ControllerBase
 {
     private readonly CompanionHttpClient _http;
+    private readonly Func<PluginConfiguration> _getConfiguration;
 
     public AdminController(CompanionHttpClient http)
+        : this(http, static () => Plugin.Instance?.Configuration ?? new PluginConfiguration())
+    {
+    }
+
+    internal AdminController(
+        CompanionHttpClient http,
+        Func<PluginConfiguration> getConfiguration)
     {
         _http = http;
+        _getConfiguration = getConfiguration;
     }
 
     [HttpGet("config")]
-    public IActionResult GetConfiguration()
+    [ProducesResponseType<CompanionConfigurationResponse>(StatusCodes.Status200OK)]
+    public ActionResult<CompanionConfigurationResponse> GetConfiguration()
     {
-        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        return Ok(new
-        {
-            sonarr = Redact(configuration.Sonarr),
-            radarr = Redact(configuration.Radarr),
-            seerr = Redact(configuration.Seerr),
-            autoImportSeerrUsers = configuration.AutoImportSeerrUsers
-        });
+        var configuration = _getConfiguration();
+        var response = new CompanionConfigurationResponse(
+            Redact(configuration.Sonarr),
+            Redact(configuration.Radarr),
+            Redact(configuration.Seerr),
+            configuration.AutoImportSeerrUsers);
+        return new JsonResult(response, CompanionJson.CamelCase);
     }
 
     [HttpPost("config")]
@@ -409,7 +418,7 @@ public sealed class AdminController : ControllerBase
         [FromBody] ServiceConfigurationUpdate? candidate,
         CancellationToken cancellationToken)
     {
-        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var configuration = _getConfiguration();
         var service = serviceName.ToLowerInvariant() switch
         {
             "sonarr" => configuration.Sonarr,
@@ -442,13 +451,11 @@ public sealed class AdminController : ControllerBase
         }
     }
 
-    private static object Redact(ServiceConfiguration service)
-        => new
-        {
-            enabled = service.Enabled,
-            baseUrl = service.BaseUrl,
-            hasApiKey = !string.IsNullOrWhiteSpace(service.ApiKey)
-        };
+    private static ServiceConfigurationResponse Redact(ServiceConfiguration service)
+        => new(
+            service.Enabled,
+            service.BaseUrl,
+            !string.IsNullOrWhiteSpace(service.ApiKey));
 
     private static ServiceConfiguration Merge(
         ServiceConfiguration previous,
