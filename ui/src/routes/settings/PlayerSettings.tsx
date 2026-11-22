@@ -16,8 +16,6 @@ import { useSettings } from "@/lib/settings-queries"
 import { queryKeys } from "@/lib/query-client"
 import { isSettingsNumberValid } from "@/lib/settings-numbers"
 import type { ShellEvent } from "@/lib/shell-events"
-import { DEFAULT_COMFORT } from "@/lib/viewing"
-import { defaultPlayerSettings } from "./defaults"
 import { requestId, same, saveSettings, useShellEvents } from "./helpers"
 import { PageTitle, Section, SelectField, SettingsError, SettingsLoading, SettingsRow } from "./shared"
 
@@ -34,10 +32,10 @@ const COMFORT_NUMBERS = [
 
 type InstallState = { state: string; message?: string; downloaded?: number; total?: number | null }
 
-function previewComfort(comfort: PlayerComfort): PlayerComfort {
+function previewComfort(comfort: PlayerComfort, defaults: PlayerComfort): PlayerComfort {
   const valid = COMFORT_NUMBERS.map(([key, , min, max]) => [
     key,
-    isSettingsNumberValid(comfort[key], min, max) ? comfort[key] : DEFAULT_COMFORT[key],
+    isSettingsNumberValid(comfort[key], min, max) ? comfort[key] : defaults[key],
   ])
   return { ...comfort, ...Object.fromEntries(valid) }
 }
@@ -127,8 +125,9 @@ export default function PlayerSettings() {
   if (!settings || !draft) return <SettingsLoading />
 
   const saved = settings.client.player
+  const playerDefaults = settings.defaults.client.player
   const dirty = !same(draft, saved)
-  const comfort = draft.comfort ?? DEFAULT_COMFORT
+  const comfort = draft.comfort ?? playerDefaults.comfort
   const keysError = draft.playerBackend === "libmpv" ? shortcutError(comfort, draft.markWatchedNext) : null
   const validNumbers = COMFORT_NUMBERS.every(([key, , min, max]) => isSettingsNumberValid(comfort[key], min, max))
   const backendChanged = draft.playerBackend !== saved.playerBackend
@@ -275,7 +274,7 @@ export default function PlayerSettings() {
           title="Built-in player comfort"
           description="Subtitle changes apply to the next playback. Styled bitmap subtitles may keep their own appearance."
         >
-          <SubtitlePreview comfort={previewComfort(comfort)} />
+          <SubtitlePreview comfort={previewComfort(comfort, playerDefaults.comfort)} />
           {COMFORT_NUMBERS.map(([key, label, min, max]) => (
             <SettingsRow key={key} controlId={`comfort-${key}`} title={label}>
               <SettingsNumberField
@@ -326,7 +325,11 @@ export default function PlayerSettings() {
         saving={mutation.isPending}
         onSave={() => mutation.mutate(draft)}
         onDiscard={() => setDraft(saved)}
-        onReset={() => setDraft(defaultPlayerSettings(saved, settings.capabilities.libmpv))}
+        onReset={() => setDraft({
+          ...saved,
+          ...playerDefaults,
+          comfort: { ...playerDefaults.comfort },
+        })}
         restartMessage={restartMessage}
       />
     </div>

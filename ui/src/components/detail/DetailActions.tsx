@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/select"
 import {
   STREAMING_QUALITIES,
-  externalLinksFor,
   progressFraction,
   qualityLabel,
   type ItemDetail,
@@ -65,9 +64,8 @@ function QualityPicker() {
 
 function ExternalLinks({ item }: { item: ItemDetail }) {
   const open = useOpenExternal()
-  const links = externalLinksFor(item)
   return <ExternalLinksMenu
-    links={links}
+    links={item.externalLinks}
     onSelect={(provider) => open.mutate({ id: item.id, provider })}
   />
 }

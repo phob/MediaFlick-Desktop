@@ -1,11 +1,12 @@
 import { api } from "@/lib/api"
-import { DEFAULT_COMFORT, DEFAULT_VIEWING } from "@/lib/viewing"
+import { DEFAULT_VIEWING } from "@/lib/viewing"
 import { act, fireEvent, render, screen, within, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import type { ClientSettings, RatingsIntegrationStatus } from "@/lib/api"
 import { queryKeys } from "@/lib/query-client"
 import { Appearance } from "@/routes/settings/AppearanceSettings"
 import { appStatus, itemSummary, requireElement } from "./support/fixtures"
+import { clientSettingsFixture } from "./support/settings"
 import { testQueryClient } from "./test-query-client"
 import { TestProviders } from "./test-utils"
 
@@ -20,29 +21,31 @@ const appearance = (cardPreviews: boolean): ClientSettings["appearance"] => ({
   ratingSources: [],
 })
 
-const settings = (cardPreviews: boolean): ClientSettings => ({
-  client: {
-    player: {
-      playerBackend: "mpv",
-      mpvPath: null,
-      defaultFullscreen: "windowed",
-      markWatchedNext: null,
-      playerConfigured: true, comfort: DEFAULT_COMFORT,
+const settings = (cardPreviews: boolean): ClientSettings => {
+  const base = clientSettingsFixture()
+  return {
+    ...base,
+    client: {
+      player: {
+        ...base.client.player,
+        playerBackend: "mpv",
+        defaultFullscreen: "windowed",
+        markWatchedNext: null,
+      },
+      playback: {
+        streamingQuality: "original",
+        skipIntro: "disabled",
+        skipCredits: "disabled",
+        skipRecap: "disabled",
+        skipCommercial: "disabled",
+      },
+      application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "info" },
     },
-    playback: {
-      streamingQuality: "original",
-      skipIntro: "disabled",
-      skipCredits: "disabled",
-      skipRecap: "disabled",
-      skipCommercial: "disabled",
-    },
-    application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "info" },
-  },
-  appearance: appearance(cardPreviews),
-  capabilities: { platform: "windows", libmpv: true, integratedLibmpvOverlay: false, mpvInstaller: false },
-  recoveries: [],
-  serverUrl: null,
-})
+    appearance: appearance(cardPreviews),
+    capabilities: { ...base.capabilities, mpvInstaller: false },
+    serverUrl: null,
+  }
+}
 
 const ratingsStatus: RatingsIntegrationStatus = {
   boundaryVersion: 1,

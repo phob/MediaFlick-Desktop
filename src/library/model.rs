@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, MediaStream, UserItemDataDto};
 use crate::playback::non_empty;
 
+use super::external::{ExternalLink, external_links_for_item};
 use super::libraries::LibraryId;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -624,6 +625,18 @@ pub struct TitleDetail {
     #[serde(flatten)]
     pub item: ItemDetail,
     pub library_id: Option<LibraryId>,
+    pub external_links: Vec<ExternalLink>,
+}
+
+impl TitleDetail {
+    pub fn new(item: ItemDetail, library_id: Option<LibraryId>) -> Self {
+        let external_links = external_links_for_item(&item);
+        Self {
+            item,
+            library_id,
+            external_links,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]

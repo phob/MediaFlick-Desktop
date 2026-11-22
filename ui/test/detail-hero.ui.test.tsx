@@ -31,6 +31,7 @@ function detailItem(overrides: Partial<ItemDetail>): ItemDetail {
     genres: [],
     originalTitle: null,
     providerIds: { tmdb: null, imdb: null, tvdb: null },
+    externalLinks: [],
     parentId: null,
     dateCreated: null,
     libraryId: null,

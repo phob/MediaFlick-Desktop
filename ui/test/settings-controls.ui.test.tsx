@@ -16,7 +16,11 @@ afterEach(() => { vi.restoreAllMocks(); queryClient.clear() })
 function page(route: string, platform: "windows" | "macos" = "windows", cached: (settings: ClientSettings) => ClientSettings = (settings) => settings) {
   const settings = clientSettingsFixture()
   settings.capabilities.platform = platform
-  if (platform === "macos") { settings.capabilities.libmpv = false; settings.client.player.playerBackend = "mpv" }
+  if (platform === "macos") {
+    settings.capabilities.libmpv = false
+    settings.client.player.playerBackend = "mpv"
+    settings.defaults.client.player.playerBackend = "mpv"
+  }
   queryClient.setQueryData(queryKeys.status, appStatus({ authenticated: true, serverUrl: "https://jellyfin.example", userId: "user" }))
   queryClient.setQueryData(queryKeys.settings, cached(settings))
   queryClient.setQueryData(queryKeys.viewing("https://jellyfin.example:user"), { ...DEFAULT_VIEWING })
@@ -166,4 +170,125 @@ test("Playback Reset restores original streaming quality and saves it", async ()
   expect(save).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole("button", { name: "Save" }))
   await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ streamingQuality: "original" })))
+})
+
+test("Player Reset loads server-provided defaults rather than hardcoded constants", async () => {
+  const settings = page("/settings/client/player", "windows", (cached) => ({
+    ...cached,
+    defaults: {
+      ...cached.defaults,
+      client: {
+        ...cached.defaults.client,
+        player: {
+          ...cached.defaults.client.player,
+          defaultFullscreen: "windowed",
+          markWatchedNext: "n",
+          comfort: { ...cached.defaults.client.player.comfort, stopKey: "z" },
+        },
+      },
+    },
+  }))
+  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({
+    ...settings,
+    client: { ...settings.client, player: { ...settings.client.player, ...player } },
+  }))
+  fireEvent.click(screen.getByRole("button", { name: "Restore defaults" }))
+  expect(save).not.toHaveBeenCalled()
+  expect(screen.getByRole("button", { name: "Mark watched key" }).textContent).toBe("N")
+  expect(screen.getByRole("button", { name: "Stop playback key" }).textContent).toBe("Z")
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
+    defaultFullscreen: "windowed",
+    markWatchedNext: "n",
+    comfort: expect.objectContaining({ stopKey: "z" }),
+  })))
+})
+
+test("Playback Reset loads server-provided defaults rather than hardcoded constants", async () => {
+  const settings = page("/settings/client/playback", "windows", (cached) => ({
+    ...cached,
+    defaults: {
+      ...cached.defaults,
+      client: {
+        ...cached.defaults.client,
+        playback: {
+          ...cached.defaults.client.playback,
+          streamingQuality: "10_mbps",
+          skipIntro: "always",
+        },
+      },
+    },
+  }))
+  const save = vi.spyOn(api.settingsPatch, "playback").mockImplementation(async (playback) => ({
+    ...settings,
+    client: { ...settings.client, playback: { ...settings.client.playback, ...playback } },
+  }))
+  fireEvent.click(screen.getByRole("button", { name: "Restore defaults" }))
+  expect(save).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
+    streamingQuality: "10_mbps",
+    skipIntro: "always",
+  })))
+})
+
+test("Application Reset loads server-provided defaults rather than hardcoded constants", async () => {
+  const settings = page("/settings/client/application", "windows", (cached) => ({
+    ...cached,
+    defaults: {
+      ...cached.defaults,
+      client: {
+        ...cached.defaults.client,
+        application: {
+          closeBehavior: "minimize_window",
+          showScrollbars: true,
+          logLevel: "warn",
+        },
+      },
+    },
+  }))
+  const save = vi.spyOn(api.settingsPatch, "application").mockImplementation(async (application) => ({
+    ...settings,
+    client: { ...settings.client, application: { ...settings.client.application, ...application } },
+  }))
+  fireEvent.click(screen.getByRole("button", { name: "Restore defaults" }))
+  expect(save).not.toHaveBeenCalled()
+  expect(screen.getByRole("switch", { name: "Show scrollbars" }).getAttribute("aria-checked")).toBe("true")
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(save).toHaveBeenCalledWith({
+    closeBehavior: "minimize_window",
+    showScrollbars: true,
+    logLevel: "warn",
+  }))
+})
+
+test("Appearance Reset loads server-provided defaults rather than hardcoded constants", async () => {
+  const settings = page("/settings/appearance", "windows", (cached) => ({
+    ...cached,
+    defaults: {
+      ...cached.defaults,
+      appearance: {
+        ...cached.defaults.appearance,
+        accent: "amber",
+        density: "compact",
+        artworkIntensity: 75,
+        reducedMotion: true,
+      },
+    },
+  }))
+  const save = vi.spyOn(api.settingsPatch, "appearance").mockImplementation(async (appearance) => ({
+    ...settings,
+    appearance: { ...settings.appearance, ...appearance },
+  }))
+  fireEvent.click(screen.getByRole("button", { name: "Restore defaults" }))
+  expect(save).not.toHaveBeenCalled()
+  expect((screen.getByRole("spinbutton", { name: "Artwork intensity" }) as HTMLInputElement).value).toBe("75")
+  expect(screen.getByRole("switch", { name: "Reduce motion" }).getAttribute("aria-checked")).toBe("true")
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
+    accent: "amber",
+    density: "compact",
+    artworkIntensity: 75,
+    reducedMotion: true,
+  })))
 })

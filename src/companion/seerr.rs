@@ -3,7 +3,8 @@ use serde_json::{Value, json};
 
 use crate::jellyfin::api::ApiError;
 use crate::jellyfin::session::SessionScope;
-use crate::library::{CatalogKind, Library, TitleKind};
+use crate::library::external::external_links_for_discovery;
+use crate::library::{CatalogKind, Library, ProviderIds, TitleKind};
 use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
 
 use super::CompanionSession;
@@ -169,6 +170,7 @@ impl CompanionSession {
             &[],
         )?;
         join_seerr_item(&self.library, &mut value)?;
+        attach_discovery_external_links(&mut value);
         Ok(value)
     }
 
@@ -318,11 +320,48 @@ fn join_seerr_item(library: &Library, value: &mut Value) -> Result<(), ApiError>
     Ok(())
 }
 
+fn attach_discovery_external_links(value: &mut Value) {
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    let kind = match map.get("mediaType").and_then(Value::as_str) {
+        Some("movie") => "Movie",
+        Some("tv") => "Series",
+        _ => {
+            map.insert("externalLinks".to_string(), json!([]));
+            return;
+        }
+    };
+    let title = map.get("title").and_then(Value::as_str).unwrap_or_default();
+    let year = map.get("year").and_then(Value::as_i64);
+    let tmdb = map
+        .get("tmdbId")
+        .and_then(Value::as_i64)
+        .filter(|id| *id > 0)
+        .map(|id| id.to_string());
+    let external_ids = map.get("externalIds");
+    let imdb = external_ids
+        .and_then(|ids| ids.get("imdb"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let tvdb = external_ids.and_then(|ids| ids.get("tvdb")).and_then(|id| {
+        id.as_i64()
+            .filter(|number| *number > 0)
+            .map(|number| number.to_string())
+            .or_else(|| id.as_str().map(str::to_string))
+    });
+    let ids = ProviderIds { tmdb, imdb, tvdb };
+    map.insert(
+        "externalLinks".to_string(),
+        json!(external_links_for_discovery(kind, title, year, &ids)),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{OtherKinds, join_seerr_results};
+    use super::{OtherKinds, attach_discovery_external_links, join_seerr_results};
     use crate::jellyfin::api::model::BaseItemDto;
     use crate::jellyfin::session::Live;
     use crate::library::{Library, UserDataRecord};
@@ -375,5 +414,68 @@ mod tests {
         assert!(page["results"][2]["libraryItemId"].is_null());
         assert_eq!(page["results"][2]["played"], false);
         assert_eq!(page["results"][3]["libraryItemId"], "s1");
+    }
+
+    #[test]
+    fn seerr_media_attaches_canonical_external_links_and_handles_missing_external_ids() {
+        let mut series = json!({
+            "mediaType": "tv",
+            "tmdbId": 95396,
+            "title": "Severance",
+            "year": 2022,
+            "externalIds": { "imdb": "tt11280740", "tvdb": 371980 }
+        });
+        attach_discovery_external_links(&mut series);
+        assert_eq!(
+            series["externalLinks"],
+            json!([
+                { "kind": "url", "id": "imdb", "label": "IMDb", "href": "https://www.imdb.com/title/tt11280740/" },
+                { "kind": "url", "id": "tmdb", "label": "TMDB", "href": "https://www.themoviedb.org/tv/95396" },
+                { "kind": "url", "id": "tvdb", "label": "TVDB", "href": "https://thetvdb.com/dereferrer/series/371980" },
+                { "kind": "url", "id": "trakt", "label": "Trakt", "href": "https://trakt.tv/shows/tt11280740" },
+                {
+                    "kind": "url",
+                    "id": "rotten-tomatoes-search",
+                    "label": "Rotten Tomatoes",
+                    "actionLabel": "Search Rotten Tomatoes",
+                    "href": "https://www.rottentomatoes.com/search?search=Severance%202022"
+                }
+            ])
+        );
+
+        let mut legacy = json!({
+            "mediaType": "tv",
+            "tmdbId": 95396,
+            "title": "Severance",
+            "year": null
+        });
+        attach_discovery_external_links(&mut legacy);
+        assert_eq!(
+            legacy["externalLinks"],
+            json!([
+                { "kind": "url", "id": "tmdb", "label": "TMDB", "href": "https://www.themoviedb.org/tv/95396" },
+                {
+                    "kind": "url",
+                    "id": "rotten-tomatoes-search",
+                    "label": "Rotten Tomatoes",
+                    "actionLabel": "Search Rotten Tomatoes",
+                    "href": "https://www.rottentomatoes.com/search?search=Severance"
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn seerr_media_external_links_ignore_non_object_payloads_without_panicking() {
+        for original in [
+            json!([1, 2]),
+            json!("text"),
+            json!(42),
+            serde_json::Value::Null,
+        ] {
+            let mut payload = original.clone();
+            attach_discovery_external_links(&mut payload);
+            assert_eq!(payload, original);
+        }
     }
 }

@@ -97,9 +97,34 @@ fn push_recovery(
 pub(super) struct SettingsView {
     client: ClientView,
     appearance: AppearanceView,
+    defaults: SettingsDefaults,
     capabilities: Capabilities,
     recoveries: Vec<Recovery>,
     server_url: Option<String>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct SettingsDefaults {
+    client: ClientDefaults,
+    appearance: AppearanceView,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+struct ClientDefaults {
+    player: PlayerDefaults,
+    playback: PlaybackView,
+    application: ApplicationView,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct PlayerDefaults {
+    player_backend: crate::preferences::PlayerBackend,
+    mpv_path: Option<String>,
+    default_fullscreen: crate::preferences::FullscreenBehavior,
+    mark_watched_next: Option<String>,
+    comfort: crate::preferences::PlayerComfort,
 }
 
 #[derive(Serialize, ts_rs::TS)]
@@ -167,8 +192,61 @@ struct Recovery {
     restored_backup: bool,
 }
 
+fn playback_view(settings: &AppSettings) -> PlaybackView {
+    PlaybackView {
+        streaming_quality: settings.streaming_quality,
+        skip_intro: settings.skip_intro,
+        skip_credits: settings.skip_credits,
+        skip_recap: settings.skip_recap,
+        skip_commercial: settings.skip_commercial,
+    }
+}
+
+fn application_view(settings: &AppSettings) -> ApplicationView {
+    ApplicationView {
+        close_behavior: settings.close_behavior,
+        show_scrollbars: settings.show_scrollbars,
+        log_level: settings.log_level.clone(),
+    }
+}
+
+fn appearance_view(appearance: &crate::preferences::AppearanceSettings) -> AppearanceView {
+    AppearanceView {
+        accent: appearance.accent,
+        density: appearance.density,
+        artwork_intensity: appearance.artwork_intensity,
+        backdrop_intensity: appearance.backdrop_intensity,
+        reduced_motion: appearance.reduced_motion,
+        card_previews: appearance.card_previews,
+        show_media_info: appearance.show_media_info,
+        rating_sources: appearance.rating_sources.clone(),
+    }
+}
+
+fn settings_defaults(libmpv: bool) -> SettingsDefaults {
+    let defaults = AppSettings::default();
+    SettingsDefaults {
+        client: ClientDefaults {
+            player: PlayerDefaults {
+                player_backend: if libmpv {
+                    crate::preferences::PlayerBackend::Libmpv
+                } else {
+                    crate::preferences::PlayerBackend::Mpv
+                },
+                mpv_path: defaults.mpv_path.clone(),
+                default_fullscreen: defaults.default_fullscreen,
+                mark_watched_next: defaults.mark_watched_next.clone(),
+                comfort: defaults.comfort.clone(),
+            },
+            playback: playback_view(&defaults),
+            application: application_view(&defaults),
+        },
+        appearance: appearance_view(&defaults.appearance),
+    }
+}
+
 fn settings_view(settings: &AppSettings, recoveries: Vec<Recovery>) -> SettingsView {
-    let appearance = &settings.appearance;
+    let libmpv = crate::players::bundled_libmpv_path().is_some();
     SettingsView {
         client: ClientView {
             player: PlayerView {
@@ -179,32 +257,14 @@ fn settings_view(settings: &AppSettings, recoveries: Vec<Recovery>) -> SettingsV
                 comfort: settings.comfort.clone(),
                 player_configured: crate::players::configured_player_path(settings).is_some(),
             },
-            playback: PlaybackView {
-                streaming_quality: settings.streaming_quality,
-                skip_intro: settings.skip_intro,
-                skip_credits: settings.skip_credits,
-                skip_recap: settings.skip_recap,
-                skip_commercial: settings.skip_commercial,
-            },
-            application: ApplicationView {
-                close_behavior: settings.close_behavior,
-                show_scrollbars: settings.show_scrollbars,
-                log_level: settings.log_level.clone(),
-            },
+            playback: playback_view(settings),
+            application: application_view(settings),
         },
-        appearance: AppearanceView {
-            accent: appearance.accent,
-            density: appearance.density,
-            artwork_intensity: appearance.artwork_intensity,
-            backdrop_intensity: appearance.backdrop_intensity,
-            reduced_motion: appearance.reduced_motion,
-            card_previews: appearance.card_previews,
-            show_media_info: appearance.show_media_info,
-            rating_sources: appearance.rating_sources.clone(),
-        },
+        appearance: appearance_view(&settings.appearance),
+        defaults: settings_defaults(libmpv),
         capabilities: Capabilities {
             platform: player_setup::platform(),
-            libmpv: crate::players::bundled_libmpv_path().is_some(),
+            libmpv,
             integrated_libmpv_overlay: crate::shell::cef::libmpv_overlay::is_active(),
             mpv_installer: player_setup::supported(),
         },
@@ -418,6 +478,7 @@ mod tests {
                 "appearance",
                 "capabilities",
                 "client",
+                "defaults",
                 "recoveries",
                 "serverUrl",
             ],
@@ -446,6 +507,90 @@ mod tests {
         assert_eq!(
             body["recoveries"],
             serde_json::json!([{ "area": "Account settings", "restoredBackup": true }])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn settings_expose_canonical_app_settings_defaults_regardless_of_saved_overrides()
+    -> Result<(), serde_json::Error> {
+        let customized = crate::preferences::AppSettings {
+            streaming_quality: crate::preferences::StreamingQuality::Mbps20,
+            skip_intro: crate::preferences::SegmentSkipMode::Always,
+            close_behavior: crate::preferences::CloseBehavior::MinimizeWindow,
+            show_scrollbars: true,
+            log_level: "warn".to_string(),
+            default_fullscreen: crate::preferences::FullscreenBehavior::Windowed,
+            mpv_path: Some("/usr/bin/mpv".to_string()),
+            mark_watched_next: None,
+            appearance: crate::preferences::AppearanceSettings {
+                accent: crate::preferences::AppearanceAccent::Violet,
+                density: crate::preferences::AppearanceDensity::Compact,
+                artwork_intensity: 40,
+                ..crate::preferences::AppearanceSettings::default()
+            },
+            comfort: crate::preferences::PlayerComfort {
+                stop_key: "x".to_string(),
+                ..crate::preferences::PlayerComfort::default()
+            },
+            ..crate::preferences::AppSettings::default()
+        };
+
+        let body = serde_json::to_value(super::settings_view(&customized, Vec::new()))?;
+        let canonical = crate::preferences::AppSettings::default();
+        assert_eq!(
+            body["defaults"]["client"]["playback"],
+            serde_json::json!({
+                "streamingQuality": canonical.streaming_quality,
+                "skipIntro": canonical.skip_intro,
+                "skipCredits": canonical.skip_credits,
+                "skipRecap": canonical.skip_recap,
+                "skipCommercial": canonical.skip_commercial,
+            })
+        );
+        assert_eq!(
+            body["defaults"]["client"]["application"],
+            serde_json::json!({
+                "closeBehavior": canonical.close_behavior,
+                "showScrollbars": canonical.show_scrollbars,
+                "logLevel": canonical.log_level,
+            })
+        );
+        assert_eq!(
+            body["defaults"]["appearance"],
+            serde_json::json!({
+                "accent": canonical.appearance.accent,
+                "density": canonical.appearance.density,
+                "artworkIntensity": canonical.appearance.artwork_intensity,
+                "backdropIntensity": canonical.appearance.backdrop_intensity,
+                "reducedMotion": canonical.appearance.reduced_motion,
+                "cardPreviews": canonical.appearance.card_previews,
+                "showMediaInfo": canonical.appearance.show_media_info,
+                "ratingSources": canonical.appearance.rating_sources,
+            })
+        );
+        let expected_backend = if body["capabilities"]["libmpv"] == serde_json::json!(true) {
+            "libmpv"
+        } else {
+            "mpv"
+        };
+        assert_eq!(
+            body["defaults"]["client"]["player"],
+            serde_json::json!({
+                "playerBackend": expected_backend,
+                "mpvPath": canonical.mpv_path,
+                "defaultFullscreen": canonical.default_fullscreen,
+                "markWatchedNext": canonical.mark_watched_next,
+                "comfort": canonical.comfort,
+            })
+        );
+        assert_eq!(
+            super::settings_defaults(true).client.player.player_backend,
+            crate::preferences::PlayerBackend::Libmpv
+        );
+        assert_eq!(
+            super::settings_defaults(false).client.player.player_backend,
+            crate::preferences::PlayerBackend::Mpv
         );
         Ok(())
     }

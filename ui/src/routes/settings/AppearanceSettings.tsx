@@ -25,7 +25,6 @@ import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 import { isSettingsNumberValid } from "@/lib/settings-numbers"
 import type { CSSVariableProperties } from "@/lib/style"
 import { DEFAULT_VIEWING, useViewing } from "@/lib/viewing"
-import { DEFAULT_APPEARANCE } from "./defaults"
 import { same } from "./helpers"
 import {
   PageTitle,
@@ -475,7 +474,7 @@ export function Appearance() {
         }}
         onReset={() => {
           if (previewDelay !== undefined) setPreviewDelay(DEFAULT_VIEWING.previewDelayMs)
-          setDraft(DEFAULT_APPEARANCE)
+          setDraft(settings.defaults.appearance)
         }}
       />
     </div>

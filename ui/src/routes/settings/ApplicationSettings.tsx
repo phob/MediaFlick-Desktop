@@ -23,7 +23,6 @@ import { toastFailure } from "@/lib/failure-toast"
 import { useStatus } from "@/lib/session-queries"
 import { useSettings } from "@/lib/settings-queries"
 import { queryKeys, removeAccountQueryData } from "@/lib/query-client"
-import { DEFAULT_APPLICATION_SETTINGS } from "./defaults"
 import { same, saveSettings } from "./helpers"
 import {
   PageTitle,
@@ -211,7 +210,7 @@ export default function ApplicationSettings() {
         saving={saving}
         onSave={() => mutation.mutate(draft)}
         onDiscard={() => setDraft(settings.client.application)}
-        onReset={() => setDraft(DEFAULT_APPLICATION_SETTINGS)}
+        onReset={() => setDraft(settings.defaults.client.application)}
         restartMessage={draft.logLevel !== settings.client.application.logLevel
           ? "Log-level changes apply after restarting MediaFlick."
           : undefined}

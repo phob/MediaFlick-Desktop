@@ -4,7 +4,6 @@ import { useSourceDraft } from "@/hooks/use-source-draft"
 import { api, STREAMING_QUALITIES, type ClientSettings } from "@/lib/api"
 import { toastFailure } from "@/lib/failure-toast"
 import { useSettings } from "@/lib/settings-queries"
-import { DEFAULT_PLAYBACK_SETTINGS } from "./defaults"
 import { same, saveSettings } from "./helpers"
 import { PageTitle, Section, SelectField, SettingsError, SettingsLoading, SettingsRow } from "./shared"
 
@@ -114,7 +113,7 @@ export default function PlaybackSettings() {
         saving={mutation.isPending}
         onSave={() => mutation.mutate(draft)}
         onDiscard={() => setDraft(settings.client.playback)}
-        onReset={() => setDraft(DEFAULT_PLAYBACK_SETTINGS)}
+        onReset={() => setDraft(settings.defaults.client.playback)}
       />
     </div>
   )

@@ -40,6 +40,12 @@ export type Capabilities = {
   mpvInstaller: boolean,
 };
 
+export type ClientDefaults = {
+  player: PlayerDefaults,
+  playback: PlaybackView,
+  application: ApplicationView,
+};
+
 export type ClientView = {
   player: PlayerView,
   playback: PlaybackView,
@@ -52,6 +58,14 @@ export type PlaybackView = {
   skipCredits: SegmentSkipMode,
   skipRecap: SegmentSkipMode,
   skipCommercial: SegmentSkipMode,
+};
+
+export type PlayerDefaults = {
+  playerBackend: PlayerBackend,
+  mpvPath: string | null,
+  defaultFullscreen: FullscreenBehavior,
+  markWatchedNext: string | null,
+  comfort: PlayerComfort,
 };
 
 export type PlayerView = {
@@ -68,9 +82,15 @@ export type Recovery = {
   restoredBackup: boolean,
 };
 
+export type SettingsDefaults = {
+  client: ClientDefaults,
+  appearance: AppearanceView,
+};
+
 export type SettingsView = {
   client: ClientView,
   appearance: AppearanceView,
+  defaults: SettingsDefaults,
   capabilities: Capabilities,
   recoveries: Array<Recovery>,
   serverUrl: string | null,

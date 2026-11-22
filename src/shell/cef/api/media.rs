@@ -1,4 +1,5 @@
 use crate::jellyfin::session::Stale;
+use crate::library::ExternalProvider;
 use crate::library::model::ResolvedPlaybackPreference;
 
 use super::*;
@@ -45,7 +46,7 @@ pub(super) struct PlaybackPreferenceBody {
 #[derive(Deserialize, ts_rs::TS)]
 #[ts(rename = "ExternalLinkBody")]
 pub(super) struct ExternalBody {
-    provider: String,
+    provider: ExternalProvider,
 }
 
 #[derive(Deserialize, ts_rs::TS)]
@@ -560,70 +561,12 @@ fn similar_items(services: &Arc<Services>, item_id: &str) -> Result<SimilarItems
     Ok(SimilarItems { items })
 }
 
-#[derive(Clone, Copy)]
-enum ExternalProvider {
-    Imdb,
-    Tmdb,
-    Tvdb,
-    Letterboxd,
-    Trakt,
-}
-
-impl ExternalProvider {
-    fn parse(value: &str) -> Option<Self> {
-        Some(match value {
-            "imdb" => Self::Imdb,
-            "tmdb" => Self::Tmdb,
-            "tvdb" => Self::Tvdb,
-            "letterboxd" => Self::Letterboxd,
-            "trakt" => Self::Trakt,
-            _ => return None,
-        })
-    }
-
-    const fn id_field(self) -> &'static str {
-        match self {
-            Self::Imdb | Self::Trakt => "imdb",
-            Self::Tmdb | Self::Letterboxd => "tmdb",
-            Self::Tvdb => "tvdb",
-        }
-    }
-
-    fn url(self, id: &str, kind: &str) -> Option<String> {
-        if !valid_external_id(self.id_field(), id) {
-            return None;
-        }
-        Some(match (self, kind) {
-            (Self::Imdb, "Movie" | "Series" | "Episode") => {
-                format!("https://www.imdb.com/title/{id}/")
-            }
-            (Self::Tmdb, "Movie") => format!("https://www.themoviedb.org/movie/{id}"),
-            (Self::Tmdb, "Series") => format!("https://www.themoviedb.org/tv/{id}"),
-            (Self::Tvdb, "Movie") => format!("https://thetvdb.com/dereferrer/movie/{id}"),
-            (Self::Tvdb, "Series") => format!("https://thetvdb.com/dereferrer/series/{id}"),
-            (Self::Tvdb, "Episode") => {
-                format!("https://thetvdb.com/dereferrer/episode/{id}")
-            }
-            (Self::Letterboxd, "Movie") => format!("https://letterboxd.com/tmdb/{id}"),
-            (Self::Trakt, "Movie") => format!("https://trakt.tv/movies/{id}"),
-            (Self::Trakt, "Series") => format!("https://trakt.tv/shows/{id}"),
-            _ => return None,
-        })
-    }
-}
-
 fn open_external(
     services: &Arc<Services>,
     item_id: &str,
     body: Body<'_, ExternalBody>,
 ) -> Result<ExternalLinkOpened, ApiResponse> {
-    let body = body.decode()?;
-    let Some(provider) = ExternalProvider::parse(&body.provider) else {
-        return Err(ApiResponse::error(
-            404,
-            "unknown external information provider",
-        ));
-    };
+    let provider = body.decode()?.provider;
     let item = match services.library.item(item_id) {
         Ok(Some(item)) => item,
         Ok(None) => return Err(ApiResponse::error(404, "no cached item with that id")),
@@ -639,21 +582,6 @@ fn open_external(
     };
     super::super::bridge::open_external_link(&url);
     Ok(ExternalLinkOpened { opened: true, url })
-}
-
-fn valid_external_id(source: &str, id: &str) -> bool {
-    if id.is_empty() || id.len() > 32 {
-        return false;
-    }
-    match source {
-        "imdb" => id.strip_prefix("tt").is_some_and(|number| {
-            !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
-        }),
-        "tmdb" | "tvdb" => {
-            id.bytes().all(|byte| byte.is_ascii_digit()) && id.bytes().any(|byte| byte != b'0')
-        }
-        _ => false,
-    }
 }
 
 fn set_played(
@@ -715,10 +643,6 @@ fn user_data_write(
 mod tests {
     use super::*;
 
-    fn external_url(provider: &str, id: &str, kind: &str) -> Option<String> {
-        ExternalProvider::parse(provider)?.url(id, kind)
-    }
-
     #[test]
     fn trailer_ranges_are_bounded_and_malformed_ranges_fall_back() {
         assert_eq!(
@@ -759,60 +683,6 @@ mod tests {
         assert!(youtube_embed_url("http://www.youtube.com/watch?v=dQw4w9WgXcQ").is_none());
         assert!(youtube_embed_url("https://example.com/embed/dQw4w9WgXcQ").is_none());
         assert!(youtube_embed_url("https://youtu.be/not-valid").is_none());
-    }
-
-    #[test]
-    fn external_links_are_built_per_provider_and_kind() {
-        assert_eq!(
-            external_url("imdb", "tt0133093", "Movie").as_deref(),
-            Some("https://www.imdb.com/title/tt0133093/")
-        );
-        assert_eq!(
-            external_url("tmdb", "603", "Movie").as_deref(),
-            Some("https://www.themoviedb.org/movie/603")
-        );
-        assert_eq!(
-            external_url("tmdb", "95396", "Series").as_deref(),
-            Some("https://www.themoviedb.org/tv/95396")
-        );
-        assert_eq!(
-            external_url("tvdb", "371980", "Episode").as_deref(),
-            Some("https://thetvdb.com/dereferrer/episode/371980")
-        );
-        assert_eq!(
-            external_url("letterboxd", "603", "Movie").as_deref(),
-            Some("https://letterboxd.com/tmdb/603")
-        );
-        assert_eq!(
-            external_url("trakt", "tt0133093", "Movie").as_deref(),
-            Some("https://trakt.tv/movies/tt0133093")
-        );
-        assert_eq!(
-            external_url("trakt", "tt11280740", "Series").as_deref(),
-            Some("https://trakt.tv/shows/tt11280740")
-        );
-    }
-
-    #[test]
-    fn external_links_are_absent_where_the_id_does_not_address_a_page() {
-        assert_eq!(external_url("tmdb", "12345", "Episode"), None);
-        assert_eq!(external_url("tmdb", "12345", "Season"), None);
-        assert_eq!(external_url("tvdb", "12345", "Season"), None);
-        assert_eq!(external_url("letterboxd", "95396", "Series"), None);
-        assert_eq!(external_url("trakt", "tt0133093", "Episode"), None);
-        assert_eq!(external_url("imdb", "", "Movie"), None);
-        assert_eq!(external_url("trakt", "12345", "Movie"), None);
-    }
-
-    #[test]
-    fn external_links_reject_ids_that_are_not_plain_tokens() {
-        let too_long = "a".repeat(33);
-        for id in ["tt1/../evil", "603?x=1", "603#f", "603 604", &too_long] {
-            assert_eq!(external_url("imdb", id, "Movie"), None, "id {id}");
-        }
-        assert_eq!(external_url("imdb", "603", "Movie"), None);
-        assert_eq!(external_url("tmdb", "tt0133093", "Movie"), None);
-        assert_eq!(external_url("tmdb", "000", "Movie"), None);
     }
 
     #[test]

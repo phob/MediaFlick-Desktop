@@ -7,7 +7,7 @@ import type { TitleKind } from "../kinds.ts"
 import type { CollectionProfileDraft, PublicCollectionList } from "./types/collections.ts"
 import type { HomeSettingsWrite } from "./types/home.ts"
 import type { BrowsingPage, LibraryQuery } from "./types/libraries.ts"
-import type { PlaybackTrackPreferenceWrite } from "./types/media.ts"
+import type { ExternalProvider, PlaybackTrackPreferenceWrite } from "./types/media.ts"
 import type { PlayerCommand, PlayQueueBody } from "./types/playback.ts"
 import type {
   SeerrDiscoverFilters,
@@ -31,7 +31,6 @@ import type {
   ViewingSettingsWrite,
 } from "./types/settings.ts"
 import { link, target, type CallArgs, type RouteOf } from "./routes.ts"
-import type { ExternalProvider } from "./urls.ts"
 
 export const PAGE_SIZE = 60
 

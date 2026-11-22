@@ -26,7 +26,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   api,
-  discoveryExternalLinksFor,
   seerrImageUrl,
   type NormalizedCollectionTitle,
   type SeerrCapabilities,
@@ -281,7 +280,6 @@ export default function DiscoverDetail() {
   const releaseFallback = releases.length ? null : formatDate(item.releaseDate)
   const language = formatLanguage(item.originalLanguage)
   const homepage = safeHttpUrl(item.homepage)
-  const externalLinks = discoveryExternalLinksFor(item)
   const details: { label: string; value: ReactNode }[] = [
     item.originalTitle && item.originalTitle !== item.title
       ? { label: "Original title", value: item.originalTitle }
@@ -434,7 +432,7 @@ export default function DiscoverDetail() {
               Request options
             </Button>
           )}
-          <ExternalLinksMenu links={externalLinks} />
+          <ExternalLinksMenu links={item.externalLinks} />
         </div>
       </DetailHeroLayout>
 

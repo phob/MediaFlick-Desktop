@@ -1,5 +1,6 @@
 pub mod browse;
 pub mod db;
+pub mod external;
 pub mod headless;
 pub mod libraries;
 pub mod model;
@@ -22,6 +23,7 @@ use crate::app::ids::new_device_id;
 use crate::jellyfin::session::Live;
 use libraries::LibraryId;
 
+pub use external::ExternalProvider;
 pub use model::{
     AudioDetail, CatalogKind, DetailView, GenericItemDetail, ItemDetail, ItemPlaybackPreference,
     ItemRecord, ItemSummary, KindFilter, LibraryStats, ProviderIds, TitleDetail, TitleKind,
