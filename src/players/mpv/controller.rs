@@ -130,6 +130,7 @@ struct ControllerState {
     phase: PlaybackPhase,
     playback_identity: Option<PlaybackIdentity>,
     startup_seek: Option<StartupSeek>,
+    playback_restarted: bool,
     #[cfg(target_os = "linux")]
     fullscreen_gate: FullscreenGate,
     mpv_playback_active: bool,
@@ -485,6 +486,7 @@ impl ControllerState {
             phase: PlaybackPhase::Idle,
             playback_identity: None,
             startup_seek: None,
+            playback_restarted: false,
             #[cfg(target_os = "linux")]
             fullscreen_gate: FullscreenGate::default(),
             mpv_playback_active: false,
@@ -723,6 +725,8 @@ impl ControllerState {
                         self.fullscreen_gate.video_ready = false;
                         self.fullscreen_gate.waiting_seek_event = true;
                     }
+                    self.playback_restarted = false;
+                    self.seek_started_at_ticks = None;
                     if let Some(startup_seek) = &mut self.startup_seek {
                         startup_seek.sent_at = Some(now);
                         startup_seek.due_at = now + STARTUP_SEEK_RETRY_DELAY;

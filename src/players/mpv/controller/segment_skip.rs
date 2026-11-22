@@ -270,7 +270,20 @@ impl ControllerState {
         self.skip_segment(index, "web forward seek accepted segment skip prompt")
     }
 
+    const fn allows_native_prompt_seek(&self) -> bool {
+        self.playback_restarted && self.startup_seek.is_none()
+    }
+
     pub(super) fn handle_seek_event(&mut self) {
+        if !self.allows_native_prompt_seek() {
+            tracing::trace!(
+                target: "playback",
+                playback_restarted = self.playback_restarted,
+                startup_seek_pending = self.startup_seek.is_some(),
+                "ignored native seek event during startup"
+            );
+            return;
+        }
         let current_ticks = self.last_state.position_ticks;
         if segments::prompt_segment_at(
             &self.skip_segments,
@@ -290,7 +303,7 @@ impl ControllerState {
 
     pub(super) fn handle_seeking_property(&mut self, seeking: bool) {
         if seeking {
-            if self.seek_started_at_ticks.is_none() {
+            if self.allows_native_prompt_seek() && self.seek_started_at_ticks.is_none() {
                 self.seek_started_at_ticks = Some(self.last_state.position_ticks);
             }
             return;

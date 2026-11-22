@@ -311,26 +311,39 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return mpvClient
   }
 
-  async function mpv(property) {
+  async function mpvSend(command) {
     const socketPath = [...appLog().matchAll(/mpv IPC connected ipc_path=(\S+)/g)].at(-1)?.[1]
     if (!socketPath) throw new Error("app.log has no `mpv IPC connected` line yet")
     const { socket, pending } = mpvConnection(socketPath)
     const requestId = Math.floor(Math.random() * 1e9)
-    const message = await new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(requestId)
         socket.destroy()
-        reject(new Error(`mpv did not answer get_property ${property} within 5 s`))
+        reject(new Error(`mpv did not answer ${command.join(" ")} within 5 s`))
       }, 5000)
       pending.set(requestId, {
         resolve: (reply) => { clearTimeout(timer); resolve(reply) },
         reject: (error) => { clearTimeout(timer); reject(error) },
       })
-      socket.write(`${JSON.stringify({ command: ["get_property", property], request_id: requestId })}\n`)
+      socket.write(`${JSON.stringify({ command, request_id: requestId })}\n`)
     })
+  }
+
+  async function mpv(property) {
+    const message = await mpvSend(["get_property", property])
     if (message.error === "success") return message.data
     if (message.error === "property unavailable") return null
     throw new Error(`mpv get_property ${property}: ${message.error}`)
+  }
+
+  async function mpvCommand(command) {
+    const message = await mpvSend(command)
+    if (message.error === "success") {
+      log(`mpv command ${JSON.stringify(command)}`)
+      return message.data
+    }
+    throw new Error(`mpv command ${JSON.stringify(command)}: ${message.error}`)
   }
 
   function playstates() {
@@ -661,6 +674,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     runAfterRun,
     player,
     mpv,
+    mpvCommand,
     playstates,
     revealPlayer,
     displayCapture,

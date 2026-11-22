@@ -786,6 +786,7 @@ impl ControllerState {
             self.fullscreen_gate.waiting_seek_event = false;
         }
         self.startup_seek = None;
+        self.playback_restarted = false;
         self.pending_external_subtitle_url = None;
         self.pending_raise_pulse_reset_at = None;
         self.playback_tracks.clear();

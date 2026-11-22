@@ -11,10 +11,12 @@ const SELECTS = [
   { label: "Commercial skipping", key: "skipCommercial" },
 ]
 const INTRO = { startS: 6.25, endS: 97.5 }
+const RESUME_S = 30
 const OUTRO_BEFORE_END = { startS: 87.5, endS: 12.5 }
 const all = (mode) => [mode, mode, mode, mode]
 
 const CASES = [
+  { name: "resume-ask", baseline: true, episode: "chapters", selects: all(ASK), show: { intro: true, outro: true }, prompt: true, resumeS: RESUME_S, nativeSeekSkip: true },
   { name: "intro-ask", baseline: true, episode: "chapters", selects: all(ASK), show: { intro: true, outro: true }, prompt: true, pressSkip: true },
   { name: "intro-never", baseline: true, episode: "chapters", selects: [NEVER, ASK, ASK, ASK], show: { intro: true, outro: true }, prompt: false },
   { name: "plain-ask", baseline: true, episode: "plain", selects: all(ASK), show: { intro: true, outro: true }, prompt: true },
@@ -111,6 +113,13 @@ async function openEpisode(ctx, episode) {
   await ctx.until(async () => (await ctx.pathname()) === `/item/${episode.id}`, "the episode page")
 }
 
+async function muteMpv(ctx) {
+  if ((await ctx.mpv("mute")) !== true) {
+    await ctx.key("m", { code: "KeyM", keyCode: 77 })
+    await ctx.until(async () => (await ctx.mpv("mute")) === true, "mpv muted by the m key")
+  }
+}
+
 async function startFromBeginning(ctx, episode) {
   const fromStart = { role: "button", name: "From start" }
   await ctx.until(async () => (await ctx.exists(fromStart)) || (await ctx.exists({ role: "button", name: "Play" })), "Play or From start")
@@ -119,10 +128,18 @@ async function startFromBeginning(ctx, episode) {
     const now = await ctx.player()
     return now?.active && now.itemId === episode.id && now.positionMs > (INTRO.startS + 2) * 1000
   }, "playback inside the intro", 90000)
-  if ((await ctx.mpv("mute")) !== true) {
-    await ctx.key("m", { code: "KeyM", keyCode: 77 })
-    await ctx.until(async () => (await ctx.mpv("mute")) === true, "mpv muted by the m key")
-  }
+  await muteMpv(ctx)
+}
+
+async function startResumed(ctx, episode, resumeS, marker) {
+  const resume = { role: "button", name: "Resume" }
+  await ctx.find(resume, { timeout: 30000 })
+  await ctx.press(resume)
+  await ctx.until(async () => {
+    const now = await ctx.player()
+    return now?.active && now.itemId === episode.id && /mpv startup seek reached resume range/.test(logSince(ctx, marker)) && now.positionMs >= (resumeS - 3) * 1000
+  }, "resumed playback after startup seek", 90000)
+  await muteMpv(ctx)
 }
 
 async function stopFromBar(ctx) {
@@ -148,6 +165,15 @@ async function skipButtonShown(ctx) {
   return ctx.exists({ role: "button", name: "Skip Intro" })
 }
 
+async function serverPositionPastIntro(ctx, episode, description) {
+  const { deviceId } = await status(ctx)
+  return settle(ctx, async () => {
+    const live = (await ctx.jellyfin(`/Sessions?deviceId=${encodeURIComponent(deviceId)}`)).find((entry) => entry.NowPlayingItem?.Id === episode.id)
+    const positionS = ticksToS(live?.PlayState?.PositionTicks ?? 0)
+    return positionS >= INTRO.endS - 1 ? positionS : null
+  }, description, 30000)
+}
+
 async function runCase(ctx, spec, { episode, integrated, proxy, report }) {
   const result = { name: spec.name, episode: episode.id, selects: spec.selects, checks: [] }
   report.cases.push(result)
@@ -157,10 +183,12 @@ async function runCase(ctx, spec, { episode, integrated, proxy, report }) {
   }
   await openSettingsShelf(ctx)
   result.stored = await saveSelects(ctx, spec.selects)
+  if (spec.resumeS) await ctx.setResumeOnServer(episode.id, Math.round(spec.resumeS * 1e7))
   await openEpisode(ctx, episode)
   const marker = ctx.appLog().length
   const answeredBefore = proxy.stats.answered.length
-  await startFromBeginning(ctx, episode)
+  if (spec.resumeS) await startResumed(ctx, episode, spec.resumeS, marker)
+  else await startFromBeginning(ctx, episode)
 
   const wanted = Object.keys(spec.show).filter((type) => spec.show[type]).sort()
   const present = wanted.flatMap((type) => markersFor(episode, type))
@@ -195,10 +223,28 @@ async function runCase(ctx, spec, { episode, integrated, proxy, report }) {
     samples.push((await ctx.player()).positionMs)
   }
   result.positionsMs = samples
+  if (spec.resumeS) {
+    expect(samples[0] >= (spec.resumeS - 3) * 1000, `playback resumed inside the intro near ${spec.resumeS} s (started at ${(samples[0] / 1000).toFixed(1)} s)`)
+  }
   const steps = samples.slice(1).map((value, n) => value - samples[n])
   expect(steps.every((step) => step > 0 && step < 3000) && samples.at(-1) < INTRO.endS * 1000, `the position runs on through the intro without a skip (${samples.map((value) => (value / 1000).toFixed(1)).join(" → ")} s)`)
   result.prompt = promptShown(logSince(ctx, marker))
   expect(result.prompt === spec.prompt, `mpv ${result.prompt ? "showed" : "did not show"} the OSD prompt Seek to Skip Intro, expected ${spec.prompt ? "shown" : "none"}`)
+
+  if (spec.nativeSeekSkip && result.button && samples.at(-1) < INTRO.endS * 1000) {
+    const nativeMarker = ctx.appLog().length
+    await ctx.mpvCommand(["seek", 10, "relative"])
+    result.nativeSkippedToMs = await settle(ctx, async () => {
+      const now = (await ctx.player()).positionMs
+      return now >= INTRO.endS * 1000 - 1000 ? now : null
+    }, "the position at the end of the intro after native forward seek", 15000)
+    const nativeLog = logSince(ctx, nativeMarker)
+    result.nativeSeekSkipLogged = /skipped Jellyfin media segment/.test(nativeLog) && /native forward seek accepted segment skip prompt/.test(nativeLog)
+    expect(result.nativeSkippedToMs !== null && !(await skipButtonShown(ctx)), `native forward seek skipped the intro to ${((result.nativeSkippedToMs ?? NaN) / 1000).toFixed(1)} s and cleared Skip Intro`)
+    expect(result.nativeSeekSkipLogged, "app.log recorded native forward seek accepting the segment skip prompt")
+    result.serverAfterSkipS = await serverPositionPastIntro(ctx, episode, "Jellyfin's session past the end of the intro after native seek skip")
+    expect(result.serverAfterSkipS !== null, `Jellyfin's session follows the native seek skip (${result.serverAfterSkipS?.toFixed(1) ?? "still inside the intro"} s, intro ends at ${INTRO.endS} s)`)
+  }
 
   if (spec.pressSkip && result.button) {
     await ctx.revealPlayer()
@@ -208,12 +254,7 @@ async function runCase(ctx, spec, { episode, integrated, proxy, report }) {
       return now >= INTRO.endS * 1000 - 1000 ? now : null
     }, "the position at the end of the intro", 15000)
     expect(result.skippedToMs !== null && !(await skipButtonShown(ctx)), `Skip Intro jumped to ${((result.skippedToMs ?? NaN) / 1000).toFixed(1)} s and left the bar`)
-    const { deviceId } = await status(ctx)
-    result.serverAfterSkipS = await settle(ctx, async () => {
-      const live = (await ctx.jellyfin(`/Sessions?deviceId=${encodeURIComponent(deviceId)}`)).find((entry) => entry.NowPlayingItem?.Id === episode.id)
-      const positionS = ticksToS(live?.PlayState?.PositionTicks ?? 0)
-      return positionS >= INTRO.endS - 1 ? positionS : null
-    }, "Jellyfin's session past the end of the intro", 30000)
+    result.serverAfterSkipS = await serverPositionPastIntro(ctx, episode, "Jellyfin's session past the end of the intro")
     expect(result.serverAfterSkipS !== null, `Jellyfin's session follows the skip (${result.serverAfterSkipS?.toFixed(1) ?? "still inside the intro"} s, intro ends at ${INTRO.endS} s)`)
   }
 

@@ -137,6 +137,7 @@ impl ControllerState {
             self.fullscreen_gate.video_ready = false;
             self.fullscreen_gate.waiting_seek_event = false;
         }
+        self.playback_restarted = false;
         let Some(pending) = self.phase.pending() else {
             tracing::debug!(target: "playback", "no pending playback state to prepare");
             return;
@@ -210,6 +211,8 @@ impl ControllerState {
         self.last_state.duration_ticks = None;
         self.last_state.eof_reached = false;
         self.last_position_log_bucket = None;
+        self.playback_restarted = false;
+        self.seek_started_at_ticks = None;
         let launch = pending.launch.clone();
         let identity = pending.identity.clone();
         let playback_id = identity.playback_id;
@@ -311,6 +314,7 @@ impl ControllerState {
         self.pending_external_subtitle_url = None;
         self.replacement_end_file_pending = false;
         self.tracked_entry = None;
+        self.playback_restarted = false;
         self.clear_skip_segment_state();
         if let Some(pending) = self.phase.take_pending() {
             self.next_playback_handoff_until = None;
