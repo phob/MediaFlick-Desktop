@@ -655,3 +655,164 @@ fn a_requested_cycle_reconciles_server_deletions() {
 
     server.requests();
 }
+
+fn identity_page(ids: &[String], total: usize) -> Reply {
+    let items = ids.iter().map(|id| json!({ "Id": id })).collect::<Vec<_>>();
+    ok(&json!({ "Items": items, "TotalRecordCount": total }).to_string())
+}
+
+fn id_range(range: std::ops::Range<usize>) -> Vec<String> {
+    range.map(|index| format!("t{index:04}")).collect()
+}
+
+#[test]
+fn a_short_or_shifted_identity_sweep_keeps_live_titles_and_uses_sort_name_tiebreak() {
+    let page_size = IDENTITY_PAGE_SIZE as usize;
+    let first_page = id_range(0..page_size);
+    let library = settled_library(&[
+        ("t0000", "Movie"),
+        ("t1000", "Movie"),
+        ("t1001", "Movie"),
+        ("t1400", "Movie"),
+        ("early", "Movie"),
+    ]);
+    sync_libraries(&library, &[(MOVIES, "movies", &["t0000", "t1000"])]);
+    let listing = || views(&[(MOVIES, "movies")]);
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Requested,
+        vec![
+            listing(),
+            ok(EMPTY_PAGE),
+            identity_page(&first_page, page_size + 2),
+            identity_page(&["t1001".to_string()], page_size + 1),
+            members(&["t0000", "t1000"], 2),
+        ],
+    );
+    let report = result.expect("deletion before offset leaves page two short");
+    assert!(
+        requests[2].contains("SortBy=DateCreated%2CSortName"),
+        "{}",
+        requests[2]
+    );
+    assert_eq!(report.deleted, 0);
+    assert_eq!(
+        cached(&library, &["t0000", "t1000", "t1001", "t1400", "early"]),
+        ["t0000", "t1000", "t1001", "t1400", "early"]
+    );
+
+    let (result, _) = cycle(
+        &library,
+        Trigger::Requested,
+        vec![
+            listing(),
+            ok(EMPTY_PAGE),
+            identity_page(&first_page, page_size + 1),
+            identity_page(&[], page_size),
+            members(&["t0000", "t1000"], 2),
+        ],
+    );
+    let report = result.expect("deletion before offset empties page two");
+    assert_eq!(report.deleted, 0);
+    assert!(library.item("t1000").expect("query").is_some());
+
+    let overlap_second = id_range((page_size - 100)..(page_size + 400));
+    let (result, _) = cycle(
+        &library,
+        Trigger::Requested,
+        vec![
+            listing(),
+            ok(EMPTY_PAGE),
+            identity_page(&first_page, page_size + 500),
+            identity_page(&overlap_second, page_size + 500),
+            members(&["t0000", "t1000"], 2),
+        ],
+    );
+    let report = result.expect("overlapping pages deduplicate below total");
+    assert_eq!(report.deleted, 0);
+    assert!(library.item("t1400").expect("query").is_some());
+
+    let (result, _) = cycle(
+        &library,
+        Trigger::Requested,
+        vec![
+            listing(),
+            ok(EMPTY_PAGE),
+            identity_page(&first_page, page_size + 1),
+            identity_page(&["t0999".to_string(), "t1000".to_string()], page_size + 2),
+            members(&["t0000", "t1000"], 2),
+        ],
+    );
+    let report = result.expect("insert before offset shifts page two forward");
+    assert_eq!(report.deleted, 0);
+    assert!(library.item("early").expect("query").is_some());
+}
+
+#[test]
+fn a_short_identity_sweep_forgets_an_empty_confirmation_and_complete_boundary_walks_still_delete() {
+    let page_size = IDENTITY_PAGE_SIZE as usize;
+    let first_page = id_range(0..page_size);
+    let library = settled_library(&[
+        ("t0000", "Movie"),
+        ("t1000", "Movie"),
+        ("gone-exact", "Movie"),
+        ("gone-appended", "Movie"),
+    ]);
+    sync_libraries(&library, &[(MOVIES, "movies", &["t0000"])]);
+    let listing = || views(&[(MOVIES, "movies")]);
+
+    assert_eq!(empty_sweep(&library), 0);
+    pass_time(&library, ONE_CYCLE);
+    let report = requested_sweep(
+        &library,
+        vec![
+            identity_page(&first_page, page_size + 2),
+            identity_page(&["t1001".to_string()], page_size + 1),
+        ],
+    )
+    .expect("short sweep");
+    assert_eq!(report.deleted, 0);
+    pass_time(&library, ONE_CYCLE);
+    assert_eq!(
+        empty_sweep(&library),
+        0,
+        "short walk forgot prior empty confirmation"
+    );
+
+    let (result, _) = cycle(
+        &library,
+        Trigger::Requested,
+        vec![
+            listing(),
+            ok(EMPTY_PAGE),
+            identity_page(&first_page, page_size + 1),
+            identity_page(&["t1000".to_string(), "t1001".to_string()], page_size + 2),
+            members(&["t0000"], 1),
+        ],
+    );
+    let report = result.expect("item appended at the end mid-walk");
+    assert_eq!(report.deleted, 2);
+    assert_eq!(cached(&library, &["t0000", "t1000"]), ["t0000", "t1000"]);
+    assert!(library.item("gone-appended").expect("query").is_none());
+
+    seed(
+        &library,
+        &[json!({ "Id": "gone-exact", "Name": "Gone", "Type": "Movie" })],
+    );
+    let (result, _) = cycle(
+        &library,
+        Trigger::Requested,
+        vec![
+            listing(),
+            ok(EMPTY_PAGE),
+            identity_page(&first_page, page_size),
+            identity_page(&[], page_size),
+            members(&["t0000"], 1),
+        ],
+    );
+    let report = result.expect("exact page-size multiple");
+    assert_eq!(report.deleted, 2);
+    assert_eq!(cached(&library, &["t0000"]), ["t0000"]);
+    assert!(library.item("gone-exact").expect("query").is_none());
+}

@@ -90,7 +90,7 @@ pub fn fetch_identity_page(
             ("EnableImages", "false".to_string()),
             ("StartIndex", start_index.to_string()),
             ("Limit", page_size.to_string()),
-            ("SortBy", "DateCreated".to_string()),
+            ("SortBy", "DateCreated,SortName".to_string()),
             ("SortOrder", "Ascending".to_string()),
         ],
     )
