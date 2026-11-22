@@ -520,6 +520,10 @@ pub(crate) mod test_support {
             self.directory.join("accounts.json")
         }
 
+        pub fn collections_path(&self) -> PathBuf {
+            self.directory.join("collections.json")
+        }
+
         fn new(server_url: Option<&str>, user_id: &str) -> Self {
             let directory =
                 std::env::temp_dir().join(format!("mediaflick-api-test-{}", random_hex(8)));

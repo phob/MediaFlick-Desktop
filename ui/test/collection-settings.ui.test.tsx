@@ -1,6 +1,6 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { Route, Routes } from "react-router-dom"
+import { Route, Routes, useNavigate } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import CollectionSettingsPage from "../src/routes/settings/CollectionSettings"
 import type {
@@ -287,6 +287,179 @@ describe("collection settings wizard", () => {
 
     expect(await screen.findByRole("button", { name: /New account template/ })).toBeTruthy()
     expect(screen.queryByRole("button", { name: /Old account template/ })).toBeNull()
+  })
+
+  test("blocks Escape, overlay clicks, and Close while a save is in flight", async () => {
+    const current = profile("a".repeat(16), { title: "Original title" })
+    mockPage({ profiles: [current] })
+    let resolveSave!: (value: CollectionProfile) => void
+    const update = vi.spyOn(api.api.collections, "updateProfile").mockReturnValue(
+      new Promise((resolve) => { resolveSave = resolve }),
+    )
+    page(`/settings/collections?edit=${current.id}`)
+    await screen.findByRole("heading", { name: "Edit collection" })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Saving title" } })
+    fireEvent.click(createButton())
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" })
+    expect(screen.getByRole("heading", { name: "Edit collection" })).toBeTruthy()
+
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]')
+    expect(overlay).toBeTruthy()
+    if (overlay) {
+      fireEvent.pointerDown(overlay, { button: 0, ctrlKey: false, pointerType: "mouse" })
+      fireEvent.click(overlay)
+    }
+    expect(screen.getByRole("heading", { name: "Edit collection" })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }))
+    expect(screen.getByRole("heading", { name: "Edit collection" })).toBeTruthy()
+
+    await act(async () => {
+      resolveSave({ ...current, title: "Saving title" })
+    })
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Edit collection" })).toBeNull())
+  })
+
+  test("blocks Escape, overlay clicks, and Close while a poster upload is in flight", async () => {
+    const current = profile("a".repeat(16), { title: "Poster upload test" })
+    mockPage({ profiles: [current] })
+    let finishUpload!: (value: { id: string }) => void
+    const upload = vi.spyOn(api.api.collections, "uploadArtwork").mockReturnValue(
+      new Promise((resolve) => { finishUpload = resolve }),
+    )
+    page(`/settings/collections?edit=${current.id}`)
+    await screen.findByRole("heading", { name: "Edit collection" })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const file = new File(["poster"], "poster.png", { type: "image/png" })
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new ArrayBuffer(6) })
+    fireEvent.change(screen.getByLabelText("Custom poster file"), { target: { files: [file] } })
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" })
+    expect(screen.getByRole("heading", { name: "Edit collection" })).toBeTruthy()
+    expect(screen.queryByRole("alertdialog")).toBeNull()
+
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]')
+    expect(overlay).toBeTruthy()
+    if (overlay) {
+      fireEvent.pointerDown(overlay, { button: 0, ctrlKey: false, pointerType: "mouse" })
+      fireEvent.click(overlay)
+    }
+    expect(screen.getByRole("heading", { name: "Edit collection" })).toBeTruthy()
+    expect(screen.queryByRole("alertdialog")).toBeNull()
+
+    const closeButton = screen.getByRole("button", { name: "Close" })
+    expect(isDisabled(closeButton)).toBe(true)
+    fireEvent.click(closeButton)
+    expect(screen.getByRole("heading", { name: "Edit collection" })).toBeTruthy()
+    expect(upload.mock.calls[0][1]?.aborted).toBe(false)
+
+    await act(async () => finishUpload({ id: "d".repeat(32) }))
+    expect(isDisabled(screen.getByRole("button", { name: "Close" }))).toBe(false)
+  })
+
+  test("prompts before discarding dirty wizard edits on Escape, overlay click, and Close", async () => {
+    const current = profile("a".repeat(16), { title: "Existing collection" })
+    mockPage({ profiles: [current] })
+    page(`/settings/collections?edit=${current.id}`)
+    await screen.findByRole("heading", { name: "Edit collection" })
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" })
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Edit collection" })).toBeNull())
+    expect(screen.queryByRole("alertdialog")).toBeNull()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Existing collection" }))
+    await screen.findByRole("heading", { name: "Edit collection" })
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Unsaved edit" } })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" })
+    const escapePrompt = await screen.findByRole("alertdialog")
+    fireEvent.click(within(escapePrompt).getByRole("button", { name: "Keep editing" }))
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull())
+    expect((await screen.findByLabelText("Title") as HTMLInputElement).value).toBe("Unsaved edit")
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]')
+    expect(overlay).toBeTruthy()
+    if (overlay) {
+      fireEvent.pointerDown(overlay, { button: 0, ctrlKey: false, pointerType: "mouse" })
+      fireEvent.click(overlay)
+    }
+    const overlayPrompt = await screen.findByRole("alertdialog")
+    fireEvent.click(within(overlayPrompt).getByRole("button", { name: "Keep editing" }))
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull())
+    expect((await screen.findByLabelText("Title") as HTMLInputElement).value).toBe("Unsaved edit")
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }))
+    const closePrompt = await screen.findByRole("alertdialog")
+    fireEvent.click(within(closePrompt).getByRole("button", { name: "Discard changes" }))
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull())
+    expect(screen.queryByRole("heading", { name: "Edit collection" })).toBeNull()
+  })
+
+  test("stale save completion does not close a newly opened wizard", async () => {
+    const first = profile("a".repeat(16), { title: "First collection" })
+    const second = profile("c".repeat(16), { title: "Second collection" })
+    mockPage({ profiles: [first, second] })
+    let resolveFirstSave!: (value: CollectionProfile) => void
+    const update = vi.spyOn(api.api.collections, "updateProfile").mockReturnValue(
+      new Promise((resolve) => { resolveFirstSave = resolve }),
+    )
+    const client = testQueryClient()
+    client.setQueryData(queryKeys.status, appStatus({
+      authenticated: true,
+      serverUrl: "https://jellyfin.example",
+      userId: "user-1",
+      userName: "Neo",
+    }))
+
+    let go!: ReturnType<typeof useNavigate>
+    function Harness() {
+      go = useNavigate()
+      return <CollectionSettingsPage />
+    }
+
+    render(
+      <TestProviders client={client} initialEntries={[`/settings/collections?edit=${first.id}`]}>
+        <Routes><Route path="*" element={<Harness />} /></Routes>
+      </TestProviders>,
+    )
+
+    await screen.findByRole("heading", { name: "Edit collection" })
+    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("First collection")
+
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "First edited" } })
+    fireEvent.click(createButton())
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+
+    await act(async () => {
+      void go(`/settings/collections?edit=${second.id}`)
+    })
+    await waitFor(() => {
+      expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("Second collection")
+    })
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Second edited" } })
+
+    await act(async () => {
+      resolveFirstSave({ ...first, title: "First edited" })
+    })
+
+    expect(screen.getByRole("heading", { name: "Edit collection" })).toBeTruthy()
+    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("Second edited")
   })
 })
 

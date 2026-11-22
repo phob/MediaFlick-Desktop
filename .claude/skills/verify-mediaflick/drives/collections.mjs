@@ -78,6 +78,52 @@ export default async function collections(ctx) {
 
   await ctx.press({ role: "link", name: "Settings" })
   await ctx.press(COLLECTION_SETTINGS)
+
+  const EDIT_DIALOG = { role: "dialog", name: "Edit collection" }
+  const DISCARD_DIALOG = { role: "alertdialog", name: "Discard unsaved changes?" }
+  const unsavedTitle = `${title} (unsaved)`
+  await ctx.press({ role: "button", name: `Edit ${title}` })
+  await ctx.find(EDIT_DIALOG, { timeout: 15000 })
+  await ctx.fill({ role: "textbox", name: "Title", within: EDIT_DIALOG }, unsavedTitle)
+  await ctx.key("Escape")
+  const escapeOutcome = await ctx.until(async () => {
+    if (await ctx.exists(DISCARD_DIALOG)) return "prompt"
+    if (!(await ctx.exists(EDIT_DIALOG))) return "closed"
+    return false
+  }, "Discard unsaved changes? dialog after pressing Escape on a dirty Edit collection wizard", 10000)
+  ctx.check(
+    escapeOutcome === "prompt",
+    "Escape on a dirty Edit collection wizard opens Discard unsaved changes? instead of closing immediately",
+  )
+  await ctx.snapshot("04a-wizard-discard-prompt")
+  await ctx.screenshot("04a-wizard-discard-prompt")
+  await ctx.press({ role: "button", name: "Keep editing", within: DISCARD_DIALOG })
+  await ctx.until(async () => !(await ctx.exists(DISCARD_DIALOG)), "Discard unsaved changes? dialog to close on Keep editing")
+  await ctx.find(EDIT_DIALOG, { timeout: 10000 })
+  const keptTitle = await ctx.app.evaluate(`document.getElementById("collection-title")?.value ?? null`)
+  ctx.check(keptTitle === unsavedTitle, "Keep editing preserves the edited collection title")
+  await ctx.fill({ role: "textbox", name: "Description", within: EDIT_DIALOG }, "Still editable after keeping edits")
+  const keptDescription = await ctx.app.evaluate(`document.getElementById("collection-description")?.value ?? null`)
+  ctx.check(
+    keptDescription === "Still editable after keeping edits",
+    "focus and typing work in the reopened Edit collection wizard after Keep editing",
+  )
+  await ctx.snapshot("04b-wizard-kept-editing")
+  await ctx.screenshot("04b-wizard-kept-editing")
+  await ctx.key("Escape")
+  await ctx.find(DISCARD_DIALOG, { timeout: 10000 })
+  await ctx.press({ role: "button", name: "Discard changes", within: DISCARD_DIALOG })
+  await ctx.until(
+    async () => !(await ctx.exists(DISCARD_DIALOG)) && !(await ctx.exists(EDIT_DIALOG)),
+    "Discard changes to close both dialogs",
+  )
+  ctx.check(
+    profiles(ctx).some((profile) => profile.title === title) && !profiles(ctx).some((profile) => profile.title === unsavedTitle),
+    "discarding dirty wizard edits leaves the saved collection title unchanged in collections.json",
+  )
+  await ctx.screenshot("04c-wizard-discarded")
+  evidence.wizardDiscardGuard = { keptTitle, keptDescription, savedTitles: profiles(ctx).map((profile) => profile.title) }
+
   await ctx.choose({ name: "Collection mode" }, "Jellyfin")
   await ctx.press({ role: "button", name: "Save" })
   await ctx.until(() => ctx.readConfig("collections.json")?.accounts?.some((account) => account.modeSelection === "jellyfin"), "modeSelection jellyfin in collections.json")
