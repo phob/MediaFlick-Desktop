@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { useSourceDraft } from "@/hooks/use-source-draft"
-import { api, type LetterboxdProfile, type Status } from "@/lib/api"
+import { api, ApiError, type LetterboxdProfile, type Status } from "@/lib/api"
 import { toastFailure } from "@/lib/failure-toast"
 import { letterboxdProfilesQueryOptions } from "@/lib/integration-queries"
 import { accountKey, useStatus } from "@/lib/session-queries"
@@ -122,9 +122,17 @@ export default function LetterboxdSettings() {
     onSettled: refresh,
   })
   const verify = useMutation({
-    mutationFn: api.letterboxd.refresh,
+    mutationFn: (id: string) => api.letterboxd.refresh(id),
     onSuccess: refresh,
-    onError: (error: Error) => toastFailure(error),
+    onError: (error: Error, id: string) => {
+      if (!isCurrentAccount()) return
+      if (error instanceof ApiError && error.status === 404) {
+        const listed = cache.getQueryData(profilesKey)?.profiles.some((profile) => profile.id === id) ?? false
+        if (!listed) return
+        refresh()
+      }
+      toastFailure(error)
+    },
   })
   const open = useMutation({ mutationFn: api.letterboxd.open, onError: (error: Error) => toastFailure(error) })
   const queuedAdditions = () => [...new Set([...additions, ...(entry.trim() ? [entry.trim()] : [])])]

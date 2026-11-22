@@ -482,3 +482,80 @@ fn adding_the_same_letterboxd_username_preserves_its_identity() {
     assert_eq!(service.letterboxd_profiles(&alice), vec![updated]);
     cleanup(&path);
 }
+
+#[test]
+fn updating_letterboxd_verification_patches_only_verification_fields_and_ignores_missing_ids() {
+    let path = test_path("profile-verification-patch");
+    let alice = key("server", "alice");
+    let service = AccountConfigurationService::open(path.clone()).expect("open");
+    let mut initial = profile();
+    initial.enabled = false;
+    initial.verification_status = "unverified".to_string();
+    initial.last_checked_at = Some(10);
+    service
+        .save_letterboxd_profile(&alice, &initial)
+        .expect("save initial profile");
+
+    let patched = service
+        .update_letterboxd_profile_verification(
+            &alice,
+            &initial.id,
+            &LetterboxdProfileVerification {
+                canonical_url: "https://letterboxd.com/alice/",
+                display_name: Some("Alice Verified"),
+                verification_status: "verified",
+                checked_at: 42,
+            },
+        )
+        .expect("patch existing")
+        .expect("profile still exists");
+    assert!(!patched.enabled);
+    assert_eq!(patched.id, initial.id);
+    assert_eq!(patched.created_at, initial.created_at);
+    assert_eq!(patched.display_name, "Alice Verified");
+    assert_eq!(patched.verification_status, "verified");
+    assert_eq!(patched.last_checked_at, Some(42));
+    assert_eq!(patched.jellyfin_server_id, "server");
+    assert_eq!(patched.jellyfin_user_id, "alice");
+
+    let unverified = service
+        .update_letterboxd_profile_verification(
+            &alice,
+            &initial.id,
+            &LetterboxdProfileVerification {
+                canonical_url: "https://letterboxd.com/alice/",
+                display_name: None,
+                verification_status: "unverified",
+                checked_at: 99,
+            },
+        )
+        .expect("patch unverified")
+        .expect("profile still exists");
+    assert!(!unverified.enabled);
+    assert_eq!(unverified.display_name, "Alice Verified");
+    assert_eq!(unverified.verification_status, "unverified");
+    assert_eq!(unverified.last_checked_at, Some(99));
+
+    let mut marked = std::fs::read(&path).expect("read accounts");
+    marked.extend_from_slice(b"\n\n");
+    crate::preferences::store::atomic_write(&path, &marked).expect("mark accounts");
+    let missing = service
+        .update_letterboxd_profile_verification(
+            &alice,
+            "fedcba9876543210",
+            &LetterboxdProfileVerification {
+                canonical_url: "https://letterboxd.com/alice/",
+                display_name: Some("Ghost"),
+                verification_status: "verified",
+                checked_at: 123,
+            },
+        )
+        .expect("missing id returns ok none");
+    assert_eq!(missing, None);
+    assert_eq!(
+        std::fs::read(&path).expect("accounts untouched"),
+        marked,
+        "missing profile update must not rewrite accounts.json"
+    );
+    cleanup(&path);
+}

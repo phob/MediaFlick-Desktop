@@ -76,6 +76,13 @@ pub struct Verification {
 }
 
 impl Verification {
+    pub fn new(status: VerificationStatus, display_name: Option<String>) -> Self {
+        Self {
+            status,
+            display_name,
+        }
+    }
+
     pub fn as_str(&self) -> &'static str {
         self.status.as_str()
     }
@@ -276,10 +283,7 @@ pub fn normalize_profile(input: &str) -> Result<Profile, String> {
 
 pub fn verify(profile: &Profile) -> Verification {
     let Ok(xml) = fetch_rss(&profile.username) else {
-        return Verification {
-            status: VerificationStatus::Unverified,
-            display_name: None,
-        };
+        return Verification::new(VerificationStatus::Unverified, None);
     };
     verification_from_xml(&xml)
 }
