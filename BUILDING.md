@@ -172,8 +172,8 @@ SONAME is `libmpv.so.2`), plus working X11 and Vulkan or EGL/OpenGL drivers, usi
 your distribution's package manager. MediaFlick
 loads it dynamically, so headers and link-time libmpv configuration are not required. Built-in player
 is the Linux default; without a usable libmpv, select External mpv in Settings → Player. Wayland sessions need XWayland and a
-valid `DISPLAY`. See
-[the Linux integration notes](docs/libmpv-integration.md#integrated-linux-rendering).
+valid `DISPLAY`; [ADR 0002](docs/adr/0002-native-video-composition.md) explains
+why.
 
 An opt-in runtime test can load a local video through libmpv and its IPC server:
 
