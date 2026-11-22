@@ -45,18 +45,9 @@ async function steps(ctx, report, record) {
 
   await ctx.until("document.title === 'Sign in — MediaFlick'", "the sign-in screen", 30000)
   record((await ctx.count(DIALOG)) === 0, "no What's new on the sign-in screen")
-  if (ctx.account?.signedOut) {
-    await (upgraded ? ctx.quickConnect({ approve: true, timeout: 60000, signedIn: DIALOG }) : ctx.signIn({}))
-    ctx.revokeAppSessionAfterRun()
-  } else if (upgraded) {
-    await ctx.fill({ role: "textbox", name: "Server" }, server)
-    await ctx.fill({ role: "textbox", name: "Username" }, username)
-    if (password) await ctx.fill({ role: "textbox", name: "Password" }, password)
-    await ctx.press({ role: "button", name: "Sign in" })
-    await ctx.find(DIALOG, { timeout: 60000 })
-  } else {
-    await ctx.signIn({ server, username, password })
-  }
+  const signedIn = upgraded ? DIALOG : undefined
+  await ctx.signIn(ctx.account?.signedOut ? { signedIn } : { server, username, password, signedIn })
+  if (ctx.account?.signedOut) ctx.revokeAppSessionAfterRun()
 
   const me = await ctx.jellyfin("/Users/Me")
   const administrator = me.Policy?.IsAdministrator === true

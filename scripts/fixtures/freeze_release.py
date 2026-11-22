@@ -394,7 +394,8 @@ def preferences(config: Path, fakes: Fakes) -> dict[str, str]:
             })
         return {"items": items}
 
-    pretty = lambda value: json.dumps(value, indent=2, ensure_ascii=False)
+    def pretty(value: object) -> str:
+        return json.dumps(value, indent=2, ensure_ascii=False)
     return {
         "settings.json": pretty(load("settings.json")),
         "accounts.json": pretty(accounts(load("accounts.json"), account_settings)),

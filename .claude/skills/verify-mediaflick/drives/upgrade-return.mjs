@@ -30,8 +30,30 @@ async function steps(ctx, report, record) {
   const status = (await ctx.api("/api/status")).body
   report.status = { authenticated: status.authenticated, userName: status.userName, server: status.server ?? null }
   record(status.authenticated === true, "the app starts signed in as before going back", status.userName)
-  const dialog = await ctx.until(async () => (await ctx.count(DIALOG)) > 0, "What's new (it must not open)", 8000).then(() => true, () => false)
-  record(!dialog, "no What's new on the return")
+  const whatsNewQuery = await ctx.until(`(() => {
+    const root = document.getElementById("root")
+    const key = Object.keys(root ?? {}).find((name) => name.startsWith("__reactContainer$"))
+    const stack = key ? [root[key]] : []
+    const seen = new Set()
+    while (stack.length) {
+      const node = stack.pop()
+      if (!node || seen.has(node)) continue
+      seen.add(node)
+      const client = node.memoizedProps?.client
+      if (client && typeof client.getQueryState === "function") {
+        const state = client.getQueryState(["whats-new"])
+        if (!state || state.status === "pending" || state.fetchStatus !== "idle") return null
+        return { status: state.status, fetchStatus: state.fetchStatus, pending: state.data?.pending ?? null }
+      }
+      if (node.child) stack.push(node.child)
+      if (node.sibling) stack.push(node.sibling)
+    }
+    return null
+  })()`, "the whats-new query to settle", 15000)
+  await ctx.app.evaluate(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
+  report.whatsNewQuery = whatsNewQuery
+  record(whatsNewQuery.status === "success" && whatsNewQuery.pending === false, "the whats-new query settled with nothing pending", whatsNewQuery)
+  record((await ctx.count(DIALOG)) === 0, "no What's new on the return")
   record((await ctx.api("/api/settings/whats-new")).body.pending === false, "/api/settings/whats-new has nothing pending")
   await ctx.screenshot("01-home")
 
