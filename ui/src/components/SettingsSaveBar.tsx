@@ -12,7 +12,7 @@ export default function SettingsSaveBar({ dirty, saving, saveDisabled, onSave, o
   resetLabel?: string
   restartMessage?: string
 }) {
-  useSettingsDraftGuard(dirty, saving)
+  useSettingsDraftGuard(dirty, saving, onDiscard)
   return (
     <div className="settings-save-bar" data-dirty={dirty}>
       <div className="flex min-w-0 items-center gap-2 text-sm">

@@ -81,6 +81,8 @@ export default function ApplicationSettings() {
   if (!settings || !draft) return <SettingsLoading />
   const update = <Key extends keyof ApplicationDraft>(key: Key, value: ApplicationDraft[Key]) =>
     setDraft({ ...draft, [key]: value })
+  const dirty = !same(draft, settings.client.application)
+  const saving = mutation.isPending
   const userName = status?.userName ?? "this account"
   const serverUrl = status?.serverUrl ?? "this server"
   const canDelete = deleteConfirmation === DELETE_CONFIRMATION && !deleteAccount.isPending
@@ -178,16 +180,24 @@ export default function ApplicationSettings() {
                     <AlertDialogTitle>Delete local account data?</AlertDialogTitle>
                     <AlertDialogDescription>
                       Remove local data for {userName} on {serverUrl}? {LOCAL_DATA_SCOPE} Nothing is deleted from Jellyfin.
+                      {saving
+                        ? " Wait for the save to finish before deleting local account data."
+                        : dirty
+                          ? " Your unsaved Application settings will also be discarded."
+                          : ""}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogCancel>{dirty || saving ? "Keep editing" : "Cancel"}</AlertDialogCancel>
                     <AlertDialogAction
                       variant="destructive"
-                      disabled={!canDelete}
-                      onClick={() => deleteAccount.mutate()}
+                      disabled={!canDelete || saving}
+                      onClick={() => {
+                        if (dirty) setDraft(settings.client.application)
+                        deleteAccount.mutate()
+                      }}
                     >
-                      Delete local account data
+                      {dirty ? "Discard and delete" : "Delete local account data"}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
@@ -197,8 +207,8 @@ export default function ApplicationSettings() {
         </Section>
       )}
       <SaveBar
-        dirty={!same(draft, settings.client.application)}
-        saving={mutation.isPending}
+        dirty={dirty}
+        saving={saving}
         onSave={() => mutation.mutate(draft)}
         onDiscard={() => setDraft(settings.client.application)}
         onReset={() => setDraft(DEFAULT_APPLICATION_SETTINGS)}

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { afterEach, expect, test, vi } from "vitest"
+import SettingsDraftGuard from "../src/components/SettingsDraftGuard"
 import type { LetterboxdProfile } from "../src/lib/api"
 import * as api from "../src/lib/api"
 import { queryKeys } from "../src/lib/query-client"
@@ -38,7 +39,9 @@ function renderProfiles() {
     profiles: client.getQueryData<{ profiles: LetterboxdProfile[] }>(queryKeys.letterboxdProfiles)?.profiles ?? [],
   }))
   render(<TestProviders client={client} initialEntries={["/settings/client/player", "/settings/integrations/letterboxd"]}>
-    <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
+    <SettingsDraftGuard>
+      <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
+    </SettingsDraftGuard>
     <NavigationProbe />
   </TestProviders>)
   return client

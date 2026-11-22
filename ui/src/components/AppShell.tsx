@@ -4,6 +4,7 @@ import { matchPath, useLocation } from "react-router-dom"
 import { AppSidebar } from "@/components/AppSidebar"
 import { PlayerBar } from "@/components/PlayerBar"
 import { PreviewProvider } from "@/components/PreviewCard"
+import SettingsDraftGuard from "@/components/SettingsDraftGuard"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useSidebarHover } from "@/hooks/use-sidebar-hover"
@@ -167,22 +168,24 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <SidebarProvider
-      open={sidebarOpen}
-      data-sidebar-overlay={sidebarShouldOverlayContent(location.pathname) || undefined}
-      className="app-experience h-full min-w-0 overflow-hidden"
-    >
-      <AppSidebar
-        onPointerEnter={onPointerEnter}
-        onPointerLeave={onPointerLeave}
-        onUserMenuOpenChange={setUserMenuIsOpen}
-      />
-      <SidebarInset className="isolate min-h-0 min-w-0 overflow-hidden">
-        <RouteScrollViewport>
-          <PreviewProvider enabled={cardPreviews} delay={viewing.data?.previewDelayMs}>{children}</PreviewProvider>
-        </RouteScrollViewport>
-        <PlayerBar />
-      </SidebarInset>
-    </SidebarProvider>
+    <SettingsDraftGuard>
+      <SidebarProvider
+        open={sidebarOpen}
+        data-sidebar-overlay={sidebarShouldOverlayContent(location.pathname) || undefined}
+        className="app-experience h-full min-w-0 overflow-hidden"
+      >
+        <AppSidebar
+          onPointerEnter={onPointerEnter}
+          onPointerLeave={onPointerLeave}
+          onUserMenuOpenChange={setUserMenuIsOpen}
+        />
+        <SidebarInset className="isolate min-h-0 min-w-0 overflow-hidden">
+          <RouteScrollViewport>
+            <PreviewProvider enabled={cardPreviews} delay={viewing.data?.previewDelayMs}>{children}</PreviewProvider>
+          </RouteScrollViewport>
+          <PlayerBar />
+        </SidebarInset>
+      </SidebarProvider>
+    </SettingsDraftGuard>
   )
 }
