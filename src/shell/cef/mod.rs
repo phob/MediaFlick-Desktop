@@ -303,7 +303,7 @@ fn save_webui_window_settings(state: Option<&BrowserState>) {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct BeforeUnloadDecision {
     pub(super) proceed: bool,
     pub(super) notify_window_close_blocked: bool,
