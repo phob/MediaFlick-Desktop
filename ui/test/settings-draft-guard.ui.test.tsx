@@ -1,15 +1,24 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { StrictMode, useState } from "react"
 import { createMemoryRouter, Route, RouterProvider, Routes, useLocation } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
+import { AppShell } from "@/components/AppShell"
 import SettingsDraftGuard from "@/components/SettingsDraftGuard"
+import { api, type ClientSettings, type Status } from "@/lib/api"
 import type * as Wire from "@/lib/api/wire.gen"
+import { queryKeys } from "@/lib/query-client"
 import { useSettingsDraftGuard } from "@/lib/settings-drafts"
 import {
   listenForOpenSettingsBeforeBridge,
   SETTINGS_PATH,
   useShellNavigation,
 } from "@/lib/shell-navigation"
+import { DEFAULT_VIEWING } from "@/lib/viewing"
+import Settings from "@/routes/Settings"
+import { appStatus, librariesResponse, playerSnapshot } from "./support/fixtures"
+import { clientSettingsFixture } from "./support/settings"
+import { testQueryClient } from "./test-query-client"
+import { TestProviders } from "./test-utils"
 
 function dispatchShellEvent(detail: Wire.ShellEvent) {
   window.dispatchEvent(new CustomEvent("mediaflick-desktop-shell", { detail }))
@@ -162,5 +171,267 @@ describe("settings draft guard and open-settings shell event", () => {
     const unload = new Event("beforeunload", { cancelable: true })
     window.dispatchEvent(unload)
     expect(unload.defaultPrevented).toBe(false)
+  })
+})
+
+function stubDesktopViewport() {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn(() => ({
+      matches: false,
+      media: "",
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => false,
+    })),
+  )
+  Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+    configurable: true,
+    value() {},
+  })
+}
+
+function seedShellSession(settings: ClientSettings) {
+  const signedIn: Status = appStatus({
+    authenticated: true,
+    serverUrl: "https://jellyfin.example",
+    userId: "user-a",
+    userName: "Alice",
+  })
+  const signedOut: Status = {
+    ...signedIn,
+    authenticated: false,
+    userId: null,
+    userName: null,
+  }
+  const client = testQueryClient()
+  client.setQueryDefaults(queryKeys.status, { staleTime: Infinity })
+  client.setQueryDefaults(queryKeys.settings, { staleTime: Infinity })
+  client.setQueryDefaults(queryKeys.root("viewing"), { staleTime: Infinity })
+  client.setQueryDefaults(queryKeys.libraries, { staleTime: Infinity })
+  client.setQueryDefaults(queryKeys.companion, { staleTime: Infinity })
+  client.setQueryDefaults(queryKeys.playerState, { staleTime: Infinity })
+  client.setQueryDefaults(queryKeys.root("collections"), { staleTime: Infinity })
+  client.setQueryData(queryKeys.status, signedIn)
+  client.setQueryData(queryKeys.settings, settings)
+  client.setQueryData(queryKeys.viewing("https://jellyfin.example:user-a"), DEFAULT_VIEWING)
+  client.setQueryData(queryKeys.libraries, librariesResponse())
+  client.setQueryData(queryKeys.playerState, playerSnapshot())
+  client.setQueryData(queryKeys.companion, {
+    available: false,
+    compatible: false,
+    checked: true,
+    info: null,
+    error: null,
+    supportedApi: { min: 1, max: 1 },
+    serverTooOld: null,
+  })
+  client.setQueryData(queryKeys.collectionSettings("https://jellyfin.example:user-a"), {
+    modeSelection: "jellyfin",
+    effectiveMode: "jellyfin",
+    mediaFlickAvailable: false,
+    franchises: { includeUnreleased: false },
+  })
+  vi.spyOn(api, "settings").mockResolvedValue(settings)
+  return { client, signedIn, signedOut }
+}
+
+async function selectSidebarSignOut() {
+  const trigger = await screen.findByRole("button", { name: /Alice/ })
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: "mouse" })
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Sign out" }))
+}
+
+describe("settings draft guard on sidebar sign-out and account change", () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  test("signing out from the sidebar with a dirty device-level Settings shelf prompts before logging out", async () => {
+    stubDesktopViewport()
+    const settings = clientSettingsFixture()
+    const { client, signedOut } = seedShellSession(settings)
+    const logout = vi.spyOn(api, "logout").mockResolvedValue(signedOut)
+
+    render(
+      <TestProviders client={client} initialEntries={["/settings/client/application"]}>
+        <AppShell>
+          <Routes>
+            <Route path="/settings/*" element={<Settings />} />
+          </Routes>
+        </AppShell>
+      </TestProviders>,
+    )
+
+    const scrollbars = await screen.findByRole("switch", { name: "Show scrollbars" })
+    fireEvent.click(scrollbars)
+    await waitFor(() => expect(scrollbars.getAttribute("aria-checked")).toBe("true"))
+    expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
+
+    await selectSidebarSignOut()
+
+    const dialog = await screen.findByRole("dialog", { name: "Leave without saving?" })
+    expect(logout).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole("button", { name: "Keep editing" }))
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Leave without saving?" })).toBeNull())
+    expect(logout).not.toHaveBeenCalled()
+    expect(screen.getByRole("switch", { name: "Show scrollbars" }).getAttribute("aria-checked")).toBe("true")
+    expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
+
+    await selectSidebarSignOut()
+
+    const dialogAgain = await screen.findByRole("dialog", { name: "Leave without saving?" })
+    fireEvent.click(within(dialogAgain).getByRole("button", { name: "Discard and leave" }))
+
+    await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
+    await screen.findByRole("link", { name: "Back to sign in" })
+    await waitFor(() => {
+      expect(screen.getByRole("switch", { name: "Show scrollbars" }).getAttribute("aria-checked")).toBe("false")
+    })
+    expect(screen.queryByText("You have unsaved changes.")).toBeNull()
+  })
+
+  test("signing out from the sidebar with a dirty account-scoped Settings shelf prompts and discards on confirm", async () => {
+    stubDesktopViewport()
+    const settings = clientSettingsFixture()
+    const { client, signedOut } = seedShellSession(settings)
+    const logout = vi.spyOn(api, "logout").mockResolvedValue(signedOut)
+
+    render(
+      <TestProviders client={client} initialEntries={["/settings/viewing"]}>
+        <AppShell>
+          <Routes>
+            <Route path="/settings/*" element={<Settings />} />
+          </Routes>
+        </AppShell>
+      </TestProviders>,
+    )
+
+    const audioInput = await screen.findByRole("textbox", { name: "Audio languages" })
+    fireEvent.change(audioInput, { target: { value: "ja, en" } })
+    expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
+
+    await selectSidebarSignOut()
+
+    const dialog = await screen.findByRole("dialog", { name: "Leave without saving?" })
+    expect(logout).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole("button", { name: "Keep editing" }))
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Leave without saving?" })).toBeNull())
+    expect(logout).not.toHaveBeenCalled()
+    expect((screen.getByRole("textbox", { name: "Audio languages" }) as HTMLInputElement).value).toBe("ja, en")
+
+    await selectSidebarSignOut()
+
+    const dialogAgain = await screen.findByRole("dialog", { name: "Leave without saving?" })
+    fireEvent.click(within(dialogAgain).getByRole("button", { name: "Discard and leave" }))
+
+    await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
+    await screen.findByText("Sign in required")
+  })
+
+  test("signing out from the sidebar with a clean Settings shelf logs out without prompting", async () => {
+    stubDesktopViewport()
+    const settings = clientSettingsFixture()
+    const { client, signedOut } = seedShellSession(settings)
+    const logout = vi.spyOn(api, "logout").mockResolvedValue(signedOut)
+
+    render(
+      <TestProviders client={client} initialEntries={["/settings/client/application"]}>
+        <AppShell>
+          <Routes>
+            <Route path="/settings/*" element={<Settings />} />
+          </Routes>
+        </AppShell>
+      </TestProviders>,
+    )
+
+    await screen.findByRole("switch", { name: "Show scrollbars" })
+    await selectSidebarSignOut()
+
+    await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole("dialog", { name: "Leave without saving?" })).toBeNull()
+  })
+
+  test("signing out while a Settings shelf is saving waits for the save before proceeding", async () => {
+    stubDesktopViewport()
+    const settings = clientSettingsFixture()
+    const { client, signedOut } = seedShellSession(settings)
+    const logout = vi.spyOn(api, "logout").mockResolvedValue(signedOut)
+    let resolveSave: ((saved: ClientSettings) => void) | null = null
+    vi.spyOn(api.settingsPatch, "application").mockImplementation(
+      () => new Promise<ClientSettings>((resolve) => {
+        resolveSave = resolve
+      }),
+    )
+
+    render(
+      <TestProviders client={client} initialEntries={["/settings/client/application"]}>
+        <AppShell>
+          <Routes>
+            <Route path="/settings/*" element={<Settings />} />
+          </Routes>
+        </AppShell>
+      </TestProviders>,
+    )
+
+    const scrollbars = await screen.findByRole("switch", { name: "Show scrollbars" })
+    fireEvent.click(scrollbars)
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    await screen.findByRole("button", { name: "Saving…" })
+
+    await selectSidebarSignOut()
+
+    const dialog = await screen.findByRole("dialog", { name: "Saving settings…" })
+    expect(logout).not.toHaveBeenCalled()
+    expect(within(dialog).getByRole("button", { name: "Discard and leave" }).hasAttribute("disabled")).toBe(true)
+
+    const savedSettings: ClientSettings = {
+      ...settings,
+      client: {
+        ...settings.client,
+        application: { ...settings.client.application, showScrollbars: true },
+      },
+    }
+    act(() => resolveSave?.(savedSettings))
+
+    const readyDialog = await screen.findByRole("dialog", { name: "Leave settings?" })
+    const proceed = within(readyDialog).getByRole("button", { name: "Leave page" })
+    expect(proceed.hasAttribute("disabled")).toBe(false)
+    fireEvent.click(proceed)
+
+    await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
+  })
+
+  test("account status changes do not remount device-level Settings shelves and drop their unsaved drafts", async () => {
+    const settings = clientSettingsFixture()
+    const { client, signedOut } = seedShellSession(settings)
+
+    render(
+      <TestProviders client={client} initialEntries={["/settings/client/application"]}>
+        <Routes>
+          <Route path="/settings/*" element={<Settings />} />
+        </Routes>
+      </TestProviders>,
+    )
+
+    const scrollbars = await screen.findByRole("switch", { name: "Show scrollbars" })
+    fireEvent.click(scrollbars)
+    await waitFor(() => expect(scrollbars.getAttribute("aria-checked")).toBe("true"))
+    expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
+
+    act(() => {
+      client.setQueryData(queryKeys.status, signedOut)
+    })
+
+    await screen.findByRole("link", { name: "Back to sign in" })
+    expect(screen.getByRole("switch", { name: "Show scrollbars" }).getAttribute("aria-checked")).toBe("true")
+    expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
   })
 })

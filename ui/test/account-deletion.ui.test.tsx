@@ -104,4 +104,52 @@ describe("local account deletion", () => {
     await waitFor(() => expect(queryClient.getQueryData(queryKeys.item("shared-id"))).toBeUndefined())
     expect(remove).toHaveBeenCalledTimes(1)
   })
+
+  test("prompts before deleting local account data when the Application shelf has unsaved changes", async () => {
+    queryClient.setQueryData(queryKeys.status, authenticated)
+    queryClient.setQueryData(queryKeys.settings, settings)
+    queryClient.setQueryData(queryKeys.item("shared-id"), { id: "shared-id", name: "Alice's item" })
+    vi.spyOn(api, "settings").mockResolvedValue(settings)
+    const remove = vi.spyOn(api.collections, "deleteLocalAccount").mockResolvedValue(anonymous)
+
+    render(
+      <TestProviders client={queryClient} initialEntries={["/settings/client/application"]}>
+        <Routes>
+          <Route path="/settings/*" element={<AuthenticatedShell />} />
+        </Routes>
+      </TestProviders>,
+    )
+
+    const scrollbars = await screen.findByRole("switch", { name: "Show scrollbars" })
+    fireEvent.click(scrollbars)
+    await waitFor(() => expect(scrollbars.getAttribute("aria-checked")).toBe("true"))
+    expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
+
+    const confirmation = screen.getByLabelText("Type DELETE to confirm local account deletion")
+    fireEvent.change(confirmation, { target: { value: "DELETE" } })
+    const trigger = screen.getByRole("button", { name: "Delete local account data" })
+    fireEvent.click(trigger)
+    const confirmDialog = await screen.findByRole("alertdialog", { name: "Delete local account data?" })
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: "Delete local account data" }))
+
+    const leaveDialog = await screen.findByRole("dialog", { name: "Leave without saving?" })
+    expect(remove).not.toHaveBeenCalled()
+    fireEvent.click(within(leaveDialog).getByRole("button", { name: "Keep editing" }))
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Leave without saving?" })).toBeNull())
+    expect(remove).not.toHaveBeenCalled()
+    expect(screen.getByRole("switch", { name: "Show scrollbars" }).getAttribute("aria-checked")).toBe("true")
+    expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete local account data" }))
+    const confirmAgain = await screen.findByRole("alertdialog", { name: "Delete local account data?" })
+    fireEvent.click(within(confirmAgain).getByRole("button", { name: "Delete local account data" }))
+
+    const leaveAgain = await screen.findByRole("dialog", { name: "Leave without saving?" })
+    fireEvent.click(within(leaveAgain).getByRole("button", { name: "Discard and leave" }))
+
+    expect(await screen.findByText("Signed out")).toBeTruthy()
+    await waitFor(() => expect(queryClient.getQueryData(queryKeys.item("shared-id"))).toBeUndefined())
+    expect(remove).toHaveBeenCalledTimes(1)
+  })
 })

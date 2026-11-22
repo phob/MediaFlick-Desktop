@@ -55,6 +55,7 @@ import {
 import { useItem } from "@/lib/item-queries"
 import { useLibraries } from "@/lib/library-queries"
 import { accountKey, useLogout, useStatus, useSyncProgress } from "@/lib/session-queries"
+import { useGuardedAction } from "@/lib/settings-drafts"
 import { SYNC_FAILURES } from "@/lib/sync-failure"
 
 const NAV = [
@@ -189,6 +190,7 @@ export function LibrarySyncProgress() {
 function UserMenu({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
   const { data: status } = useStatus()
   const logout = useLogout()
+  const guardAction = useGuardedAction()
   const name = status?.userName ?? "Signed in"
 
   return (
@@ -235,7 +237,10 @@ function UserMenu({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) 
               <RefreshCw />
               {status?.syncing ? "Syncing…" : "Sync library"}
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => logout.mutate()}>
+            <DropdownMenuItem
+              disabled={logout.isPending}
+              onSelect={() => guardAction(() => logout.mutate())}
+            >
               <LogOut />
               Sign out
             </DropdownMenuItem>

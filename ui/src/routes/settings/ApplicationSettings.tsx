@@ -21,6 +21,7 @@ import { useSourceDraft } from "@/hooks/use-source-draft"
 import { api, type ClientSettings } from "@/lib/api"
 import { toastFailure } from "@/lib/failure-toast"
 import { useStatus } from "@/lib/session-queries"
+import { useGuardedAction } from "@/lib/settings-drafts"
 import { useSettings } from "@/lib/settings-queries"
 import { queryKeys, removeAccountQueryData } from "@/lib/query-client"
 import { DEFAULT_APPLICATION_SETTINGS } from "./defaults"
@@ -46,6 +47,7 @@ export default function ApplicationSettings() {
   const settingsQuery = useSettings()
   const { data: settings } = settingsQuery
   const { data: status } = useStatus()
+  const guardAction = useGuardedAction()
   const [draft, setDraft, , acceptSaved] = useSourceDraft(settings?.client.application)
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const mutation = useMutation({
@@ -62,6 +64,7 @@ export default function ApplicationSettings() {
       cache.setQueryData(queryKeys.status, anonymousStatus)
       removeAccountQueryData(cache)
       void cache.resetQueries({ queryKey: queryKeys.settings })
+      setDeleteConfirmation("")
       toast.success("Local account data deleted")
     },
     onError: (error: Error) => {
@@ -185,7 +188,7 @@ export default function ApplicationSettings() {
                     <AlertDialogAction
                       variant="destructive"
                       disabled={!canDelete}
-                      onClick={() => deleteAccount.mutate()}
+                      onClick={() => guardAction(() => deleteAccount.mutate())}
                     >
                       Delete local account data
                     </AlertDialogAction>

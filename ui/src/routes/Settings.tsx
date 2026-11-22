@@ -81,8 +81,9 @@ function SettingsNavigation() {
 
 export default function Settings() {
   const { data: status } = useStatus()
+  const account = accountKey(status)
   return (
-    <SettingsDraftGuard key={accountKey(status)}>
+    <SettingsDraftGuard>
       <div className="settings-layout">
         <SettingsNavigation />
         <main className="settings-main">
@@ -91,12 +92,12 @@ export default function Settings() {
             <Route path="client/player" element={<PlayerSettings />} />
             <Route path="client/playback" element={<PlaybackSettings />} />
             <Route path="client/application" element={<ApplicationSettings />} />
-            <Route path="viewing" element={<ViewingSettings />} />
-            <Route path="home" element={<HomeSettings />} />
-            <Route path="appearance" element={<Appearance />} />
-            <Route path="collections" element={<CollectionSettingsPage />} />
-            <Route path="integrations/companion" element={<CompanionIntegration />} />
-            <Route path="integrations/letterboxd" element={<LetterboxdSettings />} />
+            <Route path="viewing" element={<ViewingSettings key={account} />} />
+            <Route path="home" element={<HomeSettings key={account} />} />
+            <Route path="appearance" element={<Appearance key={account} />} />
+            <Route path="collections" element={<CollectionSettingsPage key={account} />} />
+            <Route path="integrations/companion" element={<CompanionIntegration key={account} />} />
+            <Route path="integrations/letterboxd" element={<LetterboxdSettings key={account} />} />
             <Route path="*" element={<Navigate to="/settings" replace />} />
           </Routes>
         </main>
