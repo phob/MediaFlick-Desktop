@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { api, ApiError, type MediaStream } from "./api"
-import { COALESCE_MS, useCardBatches } from "./card-batches"
+import { useCardBatches } from "./card-batches"
 import { useSettings } from "./settings-queries"
 import { readShellEvent } from "./shell-events"
 import { TechnicalContext } from "./technical-context"
@@ -34,7 +34,7 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
     load: async (ids, signal) => {
       try {
         const response = await api.technical.batch(ids, signal)
-        if (signal.aborted) return COALESCE_MS
+        if (signal.aborted) return
         const returned = new Map(response.items.map((item) => [item.id, item.mediaStreams]))
         setItems((current) => {
           const next = new Map(current)
@@ -49,7 +49,6 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
           markChecked(ids)
         }
       }
-      return COALESCE_MS
     },
   })
 
