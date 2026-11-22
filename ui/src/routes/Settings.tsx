@@ -12,7 +12,6 @@ import {
 } from "lucide-react"
 import { Fragment } from "react"
 import { Link as RouterLink, Navigate, Route, Routes, useLocation } from "react-router-dom"
-import SettingsDraftGuard from "@/components/SettingsDraftGuard"
 import { accountKey, useStatus } from "@/lib/session-queries"
 import CollectionSettingsPage from "./settings/CollectionSettings"
 import ApplicationSettings from "./settings/ApplicationSettings"
@@ -83,25 +82,23 @@ export default function Settings() {
   const { data: status } = useStatus()
   const account = accountKey(status)
   return (
-    <SettingsDraftGuard>
-      <div className="settings-layout">
-        <SettingsNavigation />
-        <main className="settings-main">
-          <Routes>
-            <Route index element={<Navigate to="/settings/client/player" replace />} />
-            <Route path="client/player" element={<PlayerSettings />} />
-            <Route path="client/playback" element={<PlaybackSettings />} />
-            <Route path="client/application" element={<ApplicationSettings />} />
-            <Route path="viewing" element={<ViewingSettings key={account} />} />
-            <Route path="home" element={<HomeSettings key={account} />} />
-            <Route path="appearance" element={<Appearance key={account} />} />
-            <Route path="collections" element={<CollectionSettingsPage key={account} />} />
-            <Route path="integrations/companion" element={<CompanionIntegration key={account} />} />
-            <Route path="integrations/letterboxd" element={<LetterboxdSettings key={account} />} />
-            <Route path="*" element={<Navigate to="/settings" replace />} />
-          </Routes>
-        </main>
-      </div>
-    </SettingsDraftGuard>
+    <div className="settings-layout">
+      <SettingsNavigation />
+      <main className="settings-main">
+        <Routes>
+          <Route index element={<Navigate to="/settings/client/player" replace />} />
+          <Route path="client/player" element={<PlayerSettings />} />
+          <Route path="client/playback" element={<PlaybackSettings />} />
+          <Route path="client/application" element={<ApplicationSettings />} />
+          <Route path="viewing" element={<ViewingSettings key={account} />} />
+          <Route path="home" element={<HomeSettings key={account} />} />
+          <Route path="appearance" element={<Appearance key={account} />} />
+          <Route path="collections" element={<CollectionSettingsPage key={account} />} />
+          <Route path="integrations/companion" element={<CompanionIntegration key={account} />} />
+          <Route path="integrations/letterboxd" element={<LetterboxdSettings key={account} />} />
+          <Route path="*" element={<Navigate to="/settings" replace />} />
+        </Routes>
+      </main>
+    </div>
   )
 }

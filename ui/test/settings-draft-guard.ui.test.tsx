@@ -275,19 +275,19 @@ describe("settings draft guard on sidebar sign-out and account change", () => {
 
     await selectSidebarSignOut()
 
-    const dialog = await screen.findByRole("dialog", { name: "Leave without saving?" })
+    const dialog = await screen.findByRole("dialog", { name: "Sign out without saving?" })
     expect(logout).not.toHaveBeenCalled()
     fireEvent.click(within(dialog).getByRole("button", { name: "Keep editing" }))
 
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Leave without saving?" })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Sign out without saving?" })).toBeNull())
     expect(logout).not.toHaveBeenCalled()
     expect(screen.getByRole("switch", { name: "Show scrollbars" }).getAttribute("aria-checked")).toBe("true")
     expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
 
     await selectSidebarSignOut()
 
-    const dialogAgain = await screen.findByRole("dialog", { name: "Leave without saving?" })
-    fireEvent.click(within(dialogAgain).getByRole("button", { name: "Discard and leave" }))
+    const dialogAgain = await screen.findByRole("dialog", { name: "Sign out without saving?" })
+    fireEvent.click(within(dialogAgain).getByRole("button", { name: "Discard and sign out" }))
 
     await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
     await screen.findByRole("link", { name: "Back to sign in" })
@@ -319,18 +319,18 @@ describe("settings draft guard on sidebar sign-out and account change", () => {
 
     await selectSidebarSignOut()
 
-    const dialog = await screen.findByRole("dialog", { name: "Leave without saving?" })
+    const dialog = await screen.findByRole("dialog", { name: "Sign out without saving?" })
     expect(logout).not.toHaveBeenCalled()
     fireEvent.click(within(dialog).getByRole("button", { name: "Keep editing" }))
 
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Leave without saving?" })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Sign out without saving?" })).toBeNull())
     expect(logout).not.toHaveBeenCalled()
     expect((screen.getByRole("textbox", { name: "Audio languages" }) as HTMLInputElement).value).toBe("ja, en")
 
     await selectSidebarSignOut()
 
-    const dialogAgain = await screen.findByRole("dialog", { name: "Leave without saving?" })
-    fireEvent.click(within(dialogAgain).getByRole("button", { name: "Discard and leave" }))
+    const dialogAgain = await screen.findByRole("dialog", { name: "Sign out without saving?" })
+    fireEvent.click(within(dialogAgain).getByRole("button", { name: "Discard and sign out" }))
 
     await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
     await screen.findByText("Sign in required")
@@ -356,7 +356,7 @@ describe("settings draft guard on sidebar sign-out and account change", () => {
     await selectSidebarSignOut()
 
     await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
-    expect(screen.queryByRole("dialog", { name: "Leave without saving?" })).toBeNull()
+    expect(screen.queryByRole("dialog", { name: "Sign out without saving?" })).toBeNull()
   })
 
   test("signing out while a Settings shelf is saving waits for the save before proceeding", async () => {
@@ -389,8 +389,9 @@ describe("settings draft guard on sidebar sign-out and account change", () => {
     await selectSidebarSignOut()
 
     const dialog = await screen.findByRole("dialog", { name: "Saving settings…" })
+    expect(dialog.textContent).toContain("Wait for the save to finish before signing out.")
     expect(logout).not.toHaveBeenCalled()
-    expect(within(dialog).getByRole("button", { name: "Discard and leave" }).hasAttribute("disabled")).toBe(true)
+    expect(within(dialog).getByRole("button", { name: "Discard and sign out" }).hasAttribute("disabled")).toBe(true)
 
     const savedSettings: ClientSettings = {
       ...settings,
@@ -401,8 +402,8 @@ describe("settings draft guard on sidebar sign-out and account change", () => {
     }
     act(() => resolveSave?.(savedSettings))
 
-    const readyDialog = await screen.findByRole("dialog", { name: "Leave settings?" })
-    const proceed = within(readyDialog).getByRole("button", { name: "Leave page" })
+    const readyDialog = await screen.findByRole("dialog", { name: "Sign out?" })
+    const proceed = within(readyDialog).getByRole("button", { name: "Sign out" })
     expect(proceed.hasAttribute("disabled")).toBe(false)
     fireEvent.click(proceed)
 
@@ -415,9 +416,11 @@ describe("settings draft guard on sidebar sign-out and account change", () => {
 
     render(
       <TestProviders client={client} initialEntries={["/settings/client/application"]}>
-        <Routes>
-          <Route path="/settings/*" element={<Settings />} />
-        </Routes>
+        <SettingsDraftGuard>
+          <Routes>
+            <Route path="/settings/*" element={<Settings />} />
+          </Routes>
+        </SettingsDraftGuard>
       </TestProviders>,
     )
 

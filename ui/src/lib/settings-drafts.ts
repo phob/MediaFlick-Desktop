@@ -1,8 +1,16 @@
 import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef } from "react"
 
+export type GuardedActionCopy = {
+  dirtyTitle: string
+  cleanTitle: string
+  savingDescription: string
+  discardLabel: string
+  proceedLabel: string
+}
+
 export type SettingsDraftsController = {
   register: (id: string, dirty: boolean, saving: boolean, onDiscard?: () => void) => void
-  confirmAction: (action: () => void) => void
+  confirmAction: (action: () => void, copy: GuardedActionCopy) => void
 }
 
 export const SettingsDraftsContext = createContext<SettingsDraftsController | null>(null)
@@ -26,8 +34,8 @@ export function useSettingsDraftGuard(dirty: boolean, saving: boolean, onDiscard
 export function useGuardedAction() {
   const controller = useContext(SettingsDraftsContext)
   return useCallback(
-    (action: () => void) => {
-      if (controller) controller.confirmAction(action)
+    (action: () => void, copy: GuardedActionCopy) => {
+      if (controller) controller.confirmAction(action, copy)
       else action()
     },
     [controller],

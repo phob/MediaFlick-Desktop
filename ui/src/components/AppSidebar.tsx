@@ -55,7 +55,7 @@ import {
 import { useItem } from "@/lib/item-queries"
 import { useLibraries } from "@/lib/library-queries"
 import { accountKey, useLogout, useStatus, useSyncProgress } from "@/lib/session-queries"
-import { useGuardedAction } from "@/lib/settings-drafts"
+import { useGuardedAction, type GuardedActionCopy } from "@/lib/settings-drafts"
 import { SYNC_FAILURES } from "@/lib/sync-failure"
 
 const NAV = [
@@ -187,6 +187,14 @@ export function LibrarySyncProgress() {
   )
 }
 
+const SIGN_OUT_GUARD: GuardedActionCopy = {
+  dirtyTitle: "Sign out without saving?",
+  cleanTitle: "Sign out?",
+  savingDescription: "Wait for the save to finish before signing out.",
+  discardLabel: "Discard and sign out",
+  proceedLabel: "Sign out",
+}
+
 function UserMenu({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
   const { data: status } = useStatus()
   const logout = useLogout()
@@ -239,7 +247,7 @@ function UserMenu({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) 
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={logout.isPending}
-              onSelect={() => guardAction(() => logout.mutate())}
+              onSelect={() => guardAction(() => logout.mutate(), SIGN_OUT_GUARD)}
             >
               <LogOut />
               Sign out
