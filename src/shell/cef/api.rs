@@ -384,7 +384,7 @@ mod tests {
         assert!(get("/app.css").content_type.starts_with("text/css"));
     }
 
-    fn post(path: &str, body: &[u8]) -> ApiRequest {
+    pub(super) fn post(path: &str, body: &[u8]) -> ApiRequest {
         ApiRequest {
             method: "POST".to_string(),
             path: path.to_string(),
@@ -395,7 +395,7 @@ mod tests {
         }
     }
 
-    fn send(fixture: &TestServices, request: &ApiRequest) -> ApiResponse {
+    pub(super) fn send(fixture: &TestServices, request: &ApiRequest) -> ApiResponse {
         dispatch(request, || Ok(fixture.services.clone()))
     }
 
@@ -433,18 +433,18 @@ mod tests {
         assert_eq!(body["authenticated"], false);
     }
 
-    fn error_of(response: &ApiResponse) -> String {
+    pub(super) fn error_of(response: &ApiResponse) -> String {
         let body: Value = serde_json::from_slice(&response.body).expect("json error");
         body["error"].as_str().unwrap_or_default().to_string()
     }
 
-    fn silent_server() -> std::net::TcpListener {
+    pub(super) fn silent_server() -> std::net::TcpListener {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
         listener.set_nonblocking(true).expect("nonblocking");
         listener
     }
 
-    fn server_url(listener: &std::net::TcpListener) -> String {
+    pub(super) fn server_url(listener: &std::net::TcpListener) -> String {
         format!("http://{}", listener.local_addr().expect("address"))
     }
 
@@ -540,12 +540,13 @@ mod tests {
         );
     }
 
-    fn read_request(stream: &mut std::net::TcpStream) -> String {
+    pub(super) fn read_request_with_headers(stream: &mut std::net::TcpStream) -> (String, String) {
         use std::io::{BufRead, BufReader, Read};
 
         let mut reader = BufReader::new(stream);
         let mut request_line = String::new();
         let _ = reader.read_line(&mut request_line);
+        let mut headers = String::new();
         let mut length = 0;
         loop {
             let mut line = String::new();
@@ -556,15 +557,20 @@ mod tests {
                     if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
                         length = value.trim().parse().unwrap_or(0);
                     }
+                    headers.push_str(&line);
                 }
             }
         }
         let mut body = vec![0; length];
         let _ = reader.read_exact(&mut body);
-        request_line
+        (request_line, headers)
     }
 
-    fn respond(stream: &mut std::net::TcpStream, status: &str, body: &str) {
+    fn read_request(stream: &mut std::net::TcpStream) -> String {
+        read_request_with_headers(stream).0
+    }
+
+    pub(super) fn respond(stream: &mut std::net::TcpStream, status: &str, body: &str) {
         use std::io::Write;
         let _ = write!(
             stream,
