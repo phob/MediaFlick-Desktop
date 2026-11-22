@@ -290,7 +290,7 @@ impl LibmpvOverlaySurface {
             && let Some(host) = self.browser_host()
         {
             if let Ok(mut state) = self.state.lock() {
-                state.force_close_requested = true;
+                state.close.request_force_close();
             }
             host.close_browser(1);
         }

@@ -69,15 +69,25 @@ wrap_jsdialog_handler! {
             is_reload: i32,
             callback: Option<&mut JsdialogCallback>,
         ) -> i32 {
-            let forced = self
+            let decision = self
                 .state
                 .lock()
-                .is_ok_and(|state| state.force_close_requested);
-            tracing::info!(target: "app", forced, is_reload, "page asked to confirm leaving");
+                .map(|mut state| state.close.on_before_unload(is_reload != 0))
+                .unwrap_or(BeforeUnloadDecision {
+                    proceed: false,
+                    notify_window_close_blocked: false,
+                });
+            tracing::info!(
+                target: "app",
+                forced = decision.proceed,
+                is_reload,
+                notify_window_close_blocked = decision.notify_window_close_blocked,
+                "page asked to confirm leaving"
+            );
             if let Some(callback) = callback {
-                callback.cont(i32::from(forced), None);
+                callback.cont(i32::from(decision.proceed), None);
             }
-            if !forced {
+            if decision.notify_window_close_blocked {
                 SHELL_EVENTS.broadcast(&self.state, &ShellEvent::WindowCloseBlocked {});
             }
             1

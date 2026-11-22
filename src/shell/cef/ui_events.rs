@@ -115,6 +115,7 @@ pub(super) enum ShellEvent {
     LibraryMembershipsSettled {},
     JellyfinSessionExpired {},
     WindowCloseBlocked {},
+    OpenSettings {},
     MpvInstallProgress(MpvInstallProgress),
     FilePickerCompleted(FilePickerCompleted),
 }
