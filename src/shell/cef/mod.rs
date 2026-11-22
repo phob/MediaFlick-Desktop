@@ -303,25 +303,103 @@ fn save_webui_window_settings(state: Option<&BrowserState>) {
     }
 }
 
-fn request_main_window_close(
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct BeforeUnloadDecision {
+    pub(super) proceed: bool,
+    pub(super) notify_window_close_blocked: bool,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct WindowCloseState {
+    force_close_requested: bool,
+    close_pending: bool,
+}
+
+impl WindowCloseState {
+    pub(super) fn should_minimize(&self, behavior: CloseBehavior) -> bool {
+        !self.force_close_requested && behavior == CloseBehavior::MinimizeWindow
+    }
+
+    pub(super) fn request_force_close(&mut self) {
+        self.force_close_requested = true;
+        self.close_pending = false;
+    }
+
+    pub(super) fn begin_close(&mut self) {
+        if !self.force_close_requested {
+            self.close_pending = true;
+        }
+    }
+
+    pub(super) fn finish_close_attempt(&mut self, closed: bool) {
+        if closed {
+            self.close_pending = false;
+        }
+    }
+
+    pub(super) fn on_before_unload(&mut self, is_reload: bool) -> BeforeUnloadDecision {
+        if self.force_close_requested {
+            self.close_pending = false;
+            return BeforeUnloadDecision {
+                proceed: true,
+                notify_window_close_blocked: false,
+            };
+        }
+        if is_reload {
+            return BeforeUnloadDecision {
+                proceed: false,
+                notify_window_close_blocked: false,
+            };
+        }
+        let notify_window_close_blocked = std::mem::replace(&mut self.close_pending, false);
+        BeforeUnloadDecision {
+            proceed: false,
+            notify_window_close_blocked,
+        }
+    }
+}
+
+fn request_main_window_close_with(
     state: Option<&BrowserState>,
-    browser: Option<Browser>,
+    try_close: impl FnOnce() -> bool,
     minimize: impl FnOnce(),
 ) -> bool {
     let minimize_instead = state
         .and_then(|state| state.lock().ok())
-        .is_some_and(|state| {
-            !state.force_close_requested
-                && state.settings.close_behavior == CloseBehavior::MinimizeWindow
-        });
+        .is_some_and(|state| state.close.should_minimize(state.settings.close_behavior));
     if minimize_instead {
         minimize();
         tracing::info!(target: "app", "close request minimized the window");
         return false;
     }
-    browser
-        .and_then(|browser| browser.host())
-        .is_none_or(|host| host.try_close_browser() != 0)
+    if let Some(state) = state
+        && let Ok(mut state) = state.lock()
+    {
+        state.close.begin_close();
+    }
+    let closed = try_close();
+    if let Some(state) = state
+        && let Ok(mut state) = state.lock()
+    {
+        state.close.finish_close_attempt(closed);
+    }
+    closed
+}
+
+fn request_main_window_close(
+    state: Option<&BrowserState>,
+    browser: Option<Browser>,
+    minimize: impl FnOnce(),
+) -> bool {
+    request_main_window_close_with(
+        state,
+        || {
+            browser
+                .and_then(|browser| browser.host())
+                .is_none_or(|host| host.try_close_browser() != 0)
+        },
+        minimize,
+    )
 }
 
 struct BrowserStateInner {
@@ -336,7 +414,7 @@ struct BrowserStateInner {
     update_available: Option<UpdateRelease>,
     update_download_started: bool,
     mpv_setup_started: bool,
-    force_close_requested: bool,
+    close: WindowCloseState,
     player_warmed: bool,
 }
 
@@ -412,7 +490,7 @@ fn new_browser_state(
         update_available: None,
         update_download_started: false,
         mpv_setup_started: false,
-        force_close_requested: false,
+        close: WindowCloseState::default(),
         player_warmed: false,
     }));
     start_playback_event_bridge(&state, playback_event_rx);
@@ -456,4 +534,170 @@ fn configured_player_native_window(
 ) -> Option<crate::playback::NativeWindowHandle> {
     let playback = state.lock().ok().map(|state| state.playback.clone())?;
     playback.native_window(timeout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_state(close_behavior: CloseBehavior) -> BrowserState {
+        let settings = AppSettings {
+            close_behavior,
+            ..AppSettings::default()
+        };
+        let (tx, _rx) = mpsc::channel();
+        let playback = Arc::new(PlaybackCoordinator::new(tx, |events| {
+            build_backend(&settings, events)
+        }));
+        Arc::new(Mutex::new(BrowserStateInner {
+            title: "MediaFlick Desktop".to_string(),
+            settings,
+            browsers: Vec::new(),
+            main_window: None,
+            initial_show_state: ShowState::NORMAL,
+            main_window_reveal_requested: false,
+            main_window_revealed: false,
+            playback,
+            update_available: None,
+            update_download_started: false,
+            mpv_setup_started: false,
+            close: WindowCloseState::default(),
+            player_warmed: false,
+        }))
+    }
+
+    #[test]
+    fn non_close_before_unload_does_not_notify_window_close_blocked() {
+        let mut close = WindowCloseState::default();
+        assert_eq!(
+            close.on_before_unload(false),
+            BeforeUnloadDecision {
+                proceed: false,
+                notify_window_close_blocked: false,
+            }
+        );
+        assert_eq!(
+            close.on_before_unload(true),
+            BeforeUnloadDecision {
+                proceed: false,
+                notify_window_close_blocked: false,
+            }
+        );
+    }
+
+    #[test]
+    fn pending_window_close_notifies_once_and_does_not_leak_to_later_navigation() {
+        let state = test_state(CloseBehavior::ExitApp);
+        let closed = request_main_window_close_with(
+            Some(&state),
+            || false,
+            || {
+                panic!("Exit close behavior must not minimize");
+            },
+        );
+        assert!(!closed);
+
+        let first = state.lock().unwrap().close.on_before_unload(false);
+        assert_eq!(
+            first,
+            BeforeUnloadDecision {
+                proceed: false,
+                notify_window_close_blocked: true,
+            }
+        );
+
+        let later_navigation = state.lock().unwrap().close.on_before_unload(false);
+        assert_eq!(
+            later_navigation,
+            BeforeUnloadDecision {
+                proceed: false,
+                notify_window_close_blocked: false,
+            }
+        );
+
+        let second_attempt = request_main_window_close_with(
+            Some(&state),
+            || false,
+            || {
+                panic!("Exit close behavior must not minimize");
+            },
+        );
+        assert!(!second_attempt);
+        assert_eq!(
+            state.lock().unwrap().close.on_before_unload(false),
+            BeforeUnloadDecision {
+                proceed: false,
+                notify_window_close_blocked: true,
+            }
+        );
+    }
+
+    #[test]
+    fn minimize_close_behavior_does_not_arm_window_close_blocked() {
+        let state = test_state(CloseBehavior::MinimizeWindow);
+        let mut minimized = false;
+        let closed = request_main_window_close_with(
+            Some(&state),
+            || panic!("MinimizeWindow must not call try_close"),
+            || minimized = true,
+        );
+        assert!(!closed);
+        assert!(minimized);
+        assert_eq!(
+            state.lock().unwrap().close.on_before_unload(false),
+            BeforeUnloadDecision {
+                proceed: false,
+                notify_window_close_blocked: false,
+            }
+        );
+    }
+
+    #[test]
+    fn completed_close_attempt_clears_pending_flag() {
+        let state = test_state(CloseBehavior::ExitApp);
+        let closed = request_main_window_close_with(Some(&state), || true, || {});
+        assert!(closed);
+        assert_eq!(
+            state.lock().unwrap().close.on_before_unload(false),
+            BeforeUnloadDecision {
+                proceed: false,
+                notify_window_close_blocked: false,
+            }
+        );
+    }
+
+    #[test]
+    fn reload_during_pending_close_does_not_notify_window_close_blocked() {
+        let state = test_state(CloseBehavior::ExitApp);
+        let closed = request_main_window_close_with(Some(&state), || false, || {});
+        assert!(!closed);
+        assert_eq!(
+            state.lock().unwrap().close.on_before_unload(true),
+            BeforeUnloadDecision {
+                proceed: false,
+                notify_window_close_blocked: false,
+            }
+        );
+    }
+
+    #[test]
+    fn force_close_allows_unload_without_window_close_blocked() {
+        let mut close = WindowCloseState::default();
+        close.begin_close();
+        close.request_force_close();
+        assert_eq!(
+            close.on_before_unload(false),
+            BeforeUnloadDecision {
+                proceed: true,
+                notify_window_close_blocked: false,
+            }
+        );
+        assert_eq!(
+            close.on_before_unload(true),
+            BeforeUnloadDecision {
+                proceed: true,
+                notify_window_close_blocked: false,
+            }
+        );
+    }
 }

@@ -8,6 +8,7 @@ import "./app.css"
 import { Toaster } from "./components/ui/sonner"
 import { installAppSurfaceGuard } from "./lib/app-surface"
 import { listenForLibrariesChangedBeforeBridge } from "./lib/library-events"
+import { listenForOpenSettingsBeforeBridge } from "./lib/shell-navigation"
 import { primeStartupQueries } from "./lib/startup-queries"
 import { createQueryClient } from "./lib/query-client"
 
@@ -15,6 +16,7 @@ installAppSurfaceGuard()
 const router = createBrowserRouter([{ path: "*", element: <NavigationHistory><App /></NavigationHistory> }])
 const queryClient = createQueryClient()
 listenForLibrariesChangedBeforeBridge()
+listenForOpenSettingsBeforeBridge()
 const root = document.getElementById("root")
 if (!root) throw new Error("index.html has no #root element")
 void primeStartupQueries(queryClient, window.location.pathname).finally(() => {

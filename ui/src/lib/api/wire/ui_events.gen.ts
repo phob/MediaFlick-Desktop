@@ -60,6 +60,7 @@ export type ShellEvent =
   | { "type": "library-memberships-settled", "payload": Record<symbol, never> }
   | { "type": "jellyfin-session-expired", "payload": Record<symbol, never> }
   | { "type": "window-close-blocked", "payload": Record<symbol, never> }
+  | { "type": "open-settings", "payload": Record<symbol, never> }
   | { "type": "mpv-install-progress", "payload": MpvInstallProgress }
   | { "type": "file-picker-completed", "payload": FilePickerCompleted };
 

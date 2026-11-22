@@ -12,6 +12,7 @@ import { ApiError } from "@/lib/api"
 import { RatingsProvider } from "@/lib/ratings"
 import { TechnicalProvider } from "@/lib/technical"
 import { useLibraryMetadataBridge } from "@/lib/library-events"
+import { useShellNavigation } from "@/lib/shell-navigation"
 import { useBillboard, useHome } from "@/lib/home-queries"
 import { useStatusPulse } from "@/lib/session-queries"
 import { useSettings } from "@/lib/settings-queries"
@@ -47,6 +48,7 @@ export default function App() {
   const viewing = useViewing()
   const location = useLocation()
   useLibraryMetadataBridge()
+  useShellNavigation()
   const bootstrap = status?.authenticated ? status.bootstrap : null
   const catalogLoading = bootstrap?.state === "loading"
   const showingSettings = location.pathname === "/settings" || location.pathname.startsWith("/settings/")

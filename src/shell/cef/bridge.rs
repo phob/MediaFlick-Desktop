@@ -204,14 +204,37 @@ pub(super) fn show_about_dialog(browser: Option<&mut Browser>, frame: Option<&mu
     }
 }
 
+const SETTINGS_URL: &str = "mediaflick-desktop://app/settings/client/player";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenSettingsStrategy {
+    ShellEvent,
+    LoadUrl,
+}
+
+fn open_settings_strategy(frame_url: &str) -> OpenSettingsStrategy {
+    if app_scheme::is_app_url(frame_url) {
+        OpenSettingsStrategy::ShellEvent
+    } else {
+        OpenSettingsStrategy::LoadUrl
+    }
+}
+
 pub(super) fn open_settings_page(browser: Option<&mut Browser>, frame: Option<&mut Frame>) {
     let target_frame = browser
         .and_then(|browser| browser.main_frame())
         .or_else(|| frame.map(|frame| frame.clone()));
-    if let Some(frame) = target_frame {
-        frame.load_url(Some(&CefString::from(
-            "mediaflick-desktop://app/settings/client/player",
-        )));
+    let Some(frame) = target_frame else {
+        return;
+    };
+    let frame_url = CefString::from(&frame.url()).to_string();
+    match open_settings_strategy(&frame_url) {
+        OpenSettingsStrategy::ShellEvent => {
+            SHELL_EVENTS.send(&frame, &ShellEvent::OpenSettings {});
+        }
+        OpenSettingsStrategy::LoadUrl => {
+            frame.load_url(Some(&CefString::from(SETTINGS_URL)));
+        }
     }
 }
 
@@ -222,7 +245,7 @@ pub(super) fn initiate_app_exit(state: &BrowserState) {
         let mut state = state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.force_close_requested = true;
+        state.close.request_force_close();
         state.browsers.clone()
     };
 
@@ -492,5 +515,30 @@ mod tests {
             "mediaflick-desktop://update-download?version=1"
         ));
         assert!(!bridge_token_is_valid("mediaflick-desktop://app-exit"));
+    }
+
+    #[test]
+    fn open_settings_uses_shell_event_on_app_urls_and_load_url_otherwise() {
+        assert_eq!(
+            open_settings_strategy("mediaflick-desktop://app/"),
+            OpenSettingsStrategy::ShellEvent
+        );
+        assert_eq!(
+            open_settings_strategy("mediaflick-desktop://app/settings/client/application"),
+            OpenSettingsStrategy::ShellEvent
+        );
+        assert_eq!(
+            open_settings_strategy("mediaflick-desktop://app/settings/client/player"),
+            OpenSettingsStrategy::ShellEvent
+        );
+        assert_eq!(
+            open_settings_strategy("data:text/html;base64,PGh0bWw+"),
+            OpenSettingsStrategy::LoadUrl
+        );
+        assert_eq!(
+            open_settings_strategy("about:blank"),
+            OpenSettingsStrategy::LoadUrl
+        );
+        assert_eq!(open_settings_strategy(""), OpenSettingsStrategy::LoadUrl);
     }
 }
