@@ -13,10 +13,12 @@ AppImage runs on the host's C library and graphics drivers.
 
 ## Decision
 
-The Linux runtime drops only what the built-in player never uses: DVD and other
-disc support, Lua, JavaScript and VapourSynth. It keeps Vulkan and OpenGL
-rendering, VA-API, and NVDEC with CUDA interop. It bundles its private codec
-and subtitle libraries but never GPU drivers, the Vulkan loader, or NVIDIA's
+The Linux runtime drops only what the built-in player never uses, among them
+DVD and other disc support, Lua, JavaScript, VapourSynth, archive support,
+Rubber Band and capture devices; the full profile is in the README linked
+below. It keeps Vulkan and OpenGL rendering, VA-API, and NVDEC with CUDA
+interop. It bundles its private codec and subtitle libraries but never GPU
+drivers, the Vulkan loader, or NVIDIA's
 `libcuda` and `libnvcuvid`, which load from the host driver only when used.
 mpv is built with `gpl=true` because upstream gates X11 support on it; FFmpeg
 stays without GPL-only and nonfree features.

@@ -35,8 +35,9 @@ the native API in `src/shell/cef/api/`.
 
 ## Consequences
 
-- Provider features need the Companion, and therefore Jellyfin 12.0.0. Desktop
-  must work fully on Jellyfin 10.11 without it.
+- Provider-backed features need the Companion, and therefore Jellyfin 12.0.0.
+  Everything else (sign-in, browsing, search, playback and sync) must keep
+  working on Jellyfin 10.11 without it.
 - A provider feature is a contract change on both sides: Companion endpoint,
   models and tests, and the Desktop client. See
   [`plugin/README.md`](../../plugin/README.md).

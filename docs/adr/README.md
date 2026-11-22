@@ -12,7 +12,7 @@ them.
 | [0002](0002-native-video-composition.md) | mpv presents video natively; CEF is composited over it per platform | Accepted |
 | [0003](0003-mpv-json-ipc-and-post-load-resume.md) | Every mpv runtime is driven over one JSON IPC path and resumes after `file-loaded` | Accepted |
 | [0004](0004-companion-trust-boundary.md) | Provider credentials and calls live only in the server-side Companion | Accepted |
-| [0005](0005-expand-only-persistence.md) | Durable files evolve expand-only, because older releases keep opening them | Accepted |
+| [0005](0005-expand-only-persistence.md) | `library.db` evolves expand-only because older releases keep opening it; JSON formats only add defaulted fields | Accepted |
 | [0006](0006-linux-libmpv-runtime-baseline.md) | Linux AppImage libmpv keeps GPU paths and builds on Ubuntu 24.04 | Accepted |
 
 ## When to add a record

@@ -1,4 +1,4 @@
-# 0005. Durable files evolve expand-only, because older releases keep opening them
+# 0005. `library.db` evolves expand-only because older releases keep opening it; JSON formats only add defaulted fields
 
 Status: Accepted (2026-11-22). Decided in #357 (2026-11-18), when 0.2.0 was
 Latest.
