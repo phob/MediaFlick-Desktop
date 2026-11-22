@@ -335,6 +335,33 @@ wrap_task! {
     }
 }
 
+wrap_task! {
+    struct BrowserLoadUrlTask {
+        state: BrowserState,
+        browser: Browser,
+        url: String,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            let exiting = self.state.lock().is_ok_and(|state| state.close.is_exiting());
+            if exiting {
+                return;
+            }
+            if let Some(frame) = self.browser.main_frame() {
+                frame.load_url(Some(&CefString::from(self.url.as_str())));
+            }
+        }
+    }
+}
+
+pub(super) fn post_browser_load_url(state: BrowserState, browser: Browser, url: String) {
+    let mut task = BrowserLoadUrlTask::new(state, browser, url);
+    if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+        tracing::warn!(target: "cef", "failed to schedule renderer recovery navigation");
+    }
+}
+
 fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent, log_event: bool) {
     if let PlaybackEvent::Failed { message } = &event {
         tracing::warn!(target: "bridge", message, "player backend reported a playback failure");

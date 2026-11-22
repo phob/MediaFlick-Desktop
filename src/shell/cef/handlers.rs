@@ -346,7 +346,11 @@ wrap_life_span_handler! {
                 {
                     state.browsers.remove(index);
                 }
-                state.browsers.is_empty()
+                let empty = state.browsers.is_empty();
+                if empty {
+                    state.close.mark_shutting_down();
+                }
+                empty
             } else {
                 true
             };
@@ -464,6 +468,12 @@ wrap_request_handler! {
                 return 0;
             }
             if app_scheme::is_app_url(&request_url) {
+                if user_gesture != 0
+                    && frame.as_deref().is_some_and(|frame| frame.is_main() != 0)
+                    && let Ok(mut state) = self.state.lock()
+                {
+                    state.renderer_recovery.on_user_retry();
+                }
                 return 0;
             }
             if !request_url.starts_with("mediaflick-desktop://") {
@@ -503,6 +513,69 @@ wrap_request_handler! {
             _disable_default_handling: Option<&mut i32>,
         ) -> Option<ResourceRequestHandler> {
             Some(JellyfinResourceRequestHandler::new(self.state.clone()))
+        }
+
+        fn on_render_process_terminated(
+            &self,
+            browser: Option<&mut Browser>,
+            status: TerminationStatus,
+            error_code: std::os::raw::c_int,
+            error_string: Option<&CefString>,
+        ) {
+            let kind = recovery::RendererTerminationKind::from_cef(status);
+            let error_detail = error_string.map(CefString::to_string);
+            let (decision, title) = match self.state.lock() {
+                Ok(mut state) => {
+                    let exiting = state.close.is_exiting();
+                    let decision = state.renderer_recovery.on_terminated(
+                        kind,
+                        exiting,
+                        std::time::Instant::now(),
+                    );
+                    (decision, state.title.clone())
+                }
+                Err(_) => (
+                    recovery::RendererCrashDecision {
+                        action: recovery::RendererCrashAction::Ignore,
+                        reveal_window: false,
+                    },
+                    "MediaFlick Desktop".to_string(),
+                ),
+            };
+
+            tracing::error!(
+                target: "cef",
+                ?kind,
+                error_code,
+                action = ?decision.action,
+                "renderer process terminated"
+            );
+
+            if decision.reveal_window {
+                if let Some(services) = locator::services() {
+                    services.sync.release_startup_hold();
+                }
+                reveal_main_window(&self.state);
+            }
+
+            let target_url = match decision.action {
+                recovery::RendererCrashAction::Ignore | recovery::RendererCrashAction::Stop => {
+                    return;
+                }
+                recovery::RendererCrashAction::ReloadApp => app_scheme::APP_URL.to_string(),
+                recovery::RendererCrashAction::ShowErrorPage => {
+                    let error_text =
+                        recovery::format_renderer_error_text(kind, error_detail.as_deref());
+                    let html =
+                        load_error_html(&title, app_scheme::APP_URL, &error_text, error_code);
+                    data_uri(html.as_bytes(), "text/html")
+                }
+            };
+
+            let Some(browser) = browser.cloned() else {
+                return;
+            };
+            post_browser_load_url(self.state.clone(), browser, target_url);
         }
     }
 }

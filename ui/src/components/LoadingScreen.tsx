@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import appIcon from "../../../distribution/app-icon.png?inline"
-import { api } from "@/lib/api"
-import { markWindowRevealed, windowRevealed } from "@/lib/startup"
+import { signalWindowReady, windowRevealed } from "@/lib/startup"
 
 const HIDDEN_PAINT_FALLBACK_MS = 100
 
@@ -34,19 +33,7 @@ export function LoadingScreen({ ready }: { ready: boolean }) {
 
   useEffect(() => {
     if (mounted) return
-    markWindowRevealed()
-
-    void api.shell.windowReady().catch(() => {
-      if (window.location.protocol === "mediaflick-desktop:") {
-        const beacon = document.createElement("img")
-        beacon.hidden = true
-        beacon.alt = ""
-        beacon.addEventListener("error", () => beacon.remove(), { once: true })
-        document.body.append(beacon)
-        beacon.src = "mediaflick-desktop://window-ready"
-        window.setTimeout(() => beacon.remove(), 1_000)
-      }
-    })
+    signalWindowReady()
   }, [mounted])
 
   if (!mounted) return null
