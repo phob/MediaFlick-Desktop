@@ -17,6 +17,7 @@ export interface PendingSeek {
   readonly targetMs: number
   readonly minSentMs: number
   readonly maxSentMs: number
+  readonly lastStepMs: number
   readonly sentAtMs: number
   readonly triggeredSegments: number
 }
@@ -48,6 +49,7 @@ export function reconcilePendingSeek(
   pending: PendingSeek | null,
   player: SeekPlayerContext | null | undefined,
   nowMs: number,
+  targetDispatched = true,
 ): PendingSeek | null {
   if (!pending || !player?.active) return null
   if (pending.sessionKey !== playbackSessionKey(player)) return null
@@ -59,9 +61,9 @@ export function reconcilePendingSeek(
   const spanMax = Math.max(pending.originMs, pending.maxSentMs) + BURST_SPAN_MARGIN_MS
   if (reportedMs < spanMin || reportedMs > spanMax) return null
 
-  const distance = Math.abs(pending.targetMs - pending.originMs)
-  if (distance > 0) {
-    const tolerance = Math.min(CATCH_UP_TOLERANCE_MS, distance * 0.4)
+  if (targetDispatched) {
+    const stepScale = pending.lastStepMs > 0 ? pending.lastStepMs * 0.4 : CATCH_UP_TOLERANCE_MS
+    const tolerance = Math.min(CATCH_UP_TOLERANCE_MS, stepScale)
     if (Math.abs(reportedMs - pending.targetMs) <= tolerance) return null
   }
 
@@ -73,10 +75,12 @@ export function stepPendingSeek(
   player: SeekPlayerContext,
   deltaMs: number,
   nowMs: number,
+  targetDispatched = true,
 ): { readonly targetMs: number; readonly pending: PendingSeek | null } {
-  const current = reconcilePendingSeek(pending, player, nowMs)
+  const current = reconcilePendingSeek(pending, player, nowMs, targetDispatched)
   const baseMs = current ? current.targetMs : player.positionMs
   const targetMs = clampSeekPosition(baseMs + deltaMs, player.durationMs)
+  const stepSize = Math.abs(targetMs - baseMs)
 
   if (current) {
     return {
@@ -86,6 +90,7 @@ export function stepPendingSeek(
         targetMs,
         minSentMs: Math.min(current.minSentMs, targetMs),
         maxSentMs: Math.max(current.maxSentMs, targetMs),
+        lastStepMs: stepSize > 0 ? stepSize : current.lastStepMs,
         sentAtMs: nowMs,
       },
     }
@@ -103,6 +108,7 @@ export function stepPendingSeek(
       targetMs,
       minSentMs: targetMs,
       maxSentMs: targetMs,
+      lastStepMs: stepSize,
       sentAtMs: nowMs,
       triggeredSegments: countTriggeredSegments(player.skipSegments),
     },
@@ -115,7 +121,8 @@ export function setPendingSeekTarget(
   nowMs: number,
 ): { readonly targetMs: number; readonly pending: PendingSeek | null } {
   const targetMs = clampSeekPosition(positionMs, player.durationMs)
-  if (targetMs === player.positionMs) {
+  const stepSize = Math.abs(targetMs - player.positionMs)
+  if (stepSize === 0) {
     return { targetMs, pending: null }
   }
   return {
@@ -126,6 +133,7 @@ export function setPendingSeekTarget(
       targetMs,
       minSentMs: targetMs,
       maxSentMs: targetMs,
+      lastStepMs: stepSize,
       sentAtMs: nowMs,
       triggeredSegments: countTriggeredSegments(player.skipSegments),
     },

@@ -108,15 +108,11 @@ export function usePlayNeighbor() {
   })
 }
 
-type SendSeek = (
-  command: PlayerCommand,
-  callbacks: { onSuccess: () => void; onError: () => void },
-) => void
-
 class SeekController {
   pending: PendingSeek | null = null
   private inFlight = false
   private queuedTargetMs: number | null = null
+  private generation = 0
   private expiryTimer: ReturnType<typeof setTimeout> | undefined
   private readonly listeners = new Set<() => void>()
 
@@ -128,6 +124,10 @@ class SeekController {
   }
 
   snapshot = () => this.pending
+
+  isTargetSettled() {
+    return !this.inFlight && this.queuedTargetMs === null
+  }
 
   private notify() {
     for (const listener of this.listeners) listener()
@@ -141,6 +141,7 @@ class SeekController {
     if (this.pending) {
       this.expiryTimer = setTimeout(() => {
         this.expiryTimer = undefined
+        this.queuedTargetMs = null
         if (this.pending) {
           this.pending = null
           this.notify()
@@ -157,57 +158,69 @@ class SeekController {
   }
 
   clear() {
+    this.generation += 1
     this.queuedTargetMs = null
     this.setPending(null)
   }
 
   reconcile(player: PlayerState | null | undefined, nowMs = Date.now()) {
     if (!this.pending) return
-    const next = reconcilePendingSeek(this.pending, player, nowMs)
+    const next = reconcilePendingSeek(this.pending, player, nowMs, this.isTargetSettled())
     if (next === null) {
       this.queuedTargetMs = null
       this.setPending(null)
     }
   }
 
-  private enqueue(targetMs: number, send: SendSeek) {
+  private enqueue(client: QueryClient, targetMs: number) {
     if (this.inFlight) {
       this.queuedTargetMs = targetMs
       return
     }
     this.inFlight = true
-    send(
-      { command: "seek", positionMs: targetMs },
-      {
-        onSuccess: () => {
-          this.inFlight = false
-          const queued = this.queuedTargetMs
-          this.queuedTargetMs = null
-          if (queued !== null && this.pending !== null) {
-            this.enqueue(queued, send)
-          }
-        },
-        onError: () => {
-          this.inFlight = false
+    const generation = this.generation
+    void api.playerCommand({ command: "seek", positionMs: targetMs }).then(
+      () => {
+        this.inFlight = false
+        void client.invalidateQueries({ queryKey: queryKeys.playerState })
+        const queued = this.queuedTargetMs
+        this.queuedTargetMs = null
+        if (queued !== null) {
+          this.enqueue(client, queued)
+          return
+        }
+        this.reconcile(client.getQueryData<PlayerState>(queryKeys.playerState))
+      },
+      (error: unknown) => {
+        this.inFlight = false
+        void client.invalidateQueries({ queryKey: queryKeys.playerState })
+        reportError(client)(error instanceof Error ? error : new Error(String(error)))
+        if (generation === this.generation) {
           this.clear()
-        },
+          return
+        }
+        const queued = this.queuedTargetMs
+        this.queuedTargetMs = null
+        if (queued !== null) {
+          this.enqueue(client, queued)
+        }
       },
     )
   }
 
-  step(client: QueryClient, fallback: PlayerState, deltaMs: number, send: SendSeek) {
+  step(client: QueryClient, fallback: PlayerState, deltaMs: number) {
     const latest = client.getQueryData<PlayerState>(queryKeys.playerState) ?? fallback
-    const result = stepPendingSeek(this.pending, latest, deltaMs, Date.now())
+    const result = stepPendingSeek(this.pending, latest, deltaMs, Date.now(), this.isTargetSettled())
     this.setPending(result.pending)
-    this.enqueue(result.targetMs, send)
+    this.enqueue(client, result.targetMs)
     return result.targetMs
   }
 
-  seekTo(client: QueryClient, fallback: PlayerState, positionMs: number, send: SendSeek) {
+  seekTo(client: QueryClient, fallback: PlayerState, positionMs: number) {
     const latest = client.getQueryData<PlayerState>(queryKeys.playerState) ?? fallback
     const result = setPendingSeekTarget(latest, positionMs, Date.now())
     this.setPending(result.pending)
-    this.enqueue(result.targetMs, send)
+    this.enqueue(client, result.targetMs)
     return result.targetMs
   }
 }
@@ -241,9 +254,9 @@ const RESET_SEEK_COMMANDS = new Set<PlayerCommand["command"]>([
 export function usePlayerCommand() {
   const client = useQueryClient()
   return useMutation({
-    mutationFn: (command: PlayerCommand) => {
+    mutationFn: (command: PlayerCommand) => api.playerCommand(command),
+    onMutate: (command) => {
       if (RESET_SEEK_COMMANDS.has(command.command)) clearPendingSeek(client)
-      return api.playerCommand(command)
     },
     onSettled: () => {
       void client.invalidateQueries({ queryKey: queryKeys.playerState })
@@ -252,29 +265,31 @@ export function usePlayerCommand() {
   })
 }
 
-export function usePlayerSeek(player?: PlayerState) {
+export function usePendingSeekPosition(player: PlayerState) {
   const client = useQueryClient()
-  const command = usePlayerCommand()
   const controller = getSeekController(client)
   const pending = useSyncExternalStore(controller.subscribe, controller.snapshot, controller.snapshot)
 
   useEffect(() => {
-    if (player) controller.reconcile(player)
+    controller.reconcile(player)
   }, [controller, player])
 
-  const effectivePending =
-    pending && player ? reconcilePendingSeek(pending, player, pending.sentAtMs) : pending
+  const effectivePending = pending
+    ? reconcilePendingSeek(pending, player, pending.sentAtMs, controller.isTargetSettled())
+    : null
 
-  const send: SendSeek = (next, callbacks) => {
-    command.mutate(next, callbacks)
-  }
+  return effectivePending ? effectivePending.targetMs : null
+}
+
+export function useSeekCommands() {
+  const client = useQueryClient()
+  const controller = getSeekController(client)
 
   return {
-    pendingPositionMs: effectivePending ? effectivePending.targetMs : null,
     seekTo: (current: PlayerState, positionMs: number) =>
-      controller.seekTo(client, current, positionMs, send),
+      controller.seekTo(client, current, positionMs),
     seekBy: (current: PlayerState, deltaMs: number) =>
-      controller.step(client, current, deltaMs, send),
+      controller.step(client, current, deltaMs),
   }
 }
 

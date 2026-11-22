@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { useEffect, useEffectEvent } from "react"
 import type { PlayerCommand, PlayerState } from "./api"
-import { usePlayerCommand, usePlayerSeek, usePlayNeighbor } from "./playback-queries"
+import { usePlayerCommand, usePlayNeighbor, useSeekCommands } from "./playback-queries"
 import { queryKeys } from "./query-client"
 
 const AUDIO_SEEK_BACK_MS = 10_000
@@ -10,7 +10,7 @@ const AUDIO_SEEK_FORWARD_MS = 30_000
 export function usePlaybackKeys() {
   const queryClient = useQueryClient()
   const command = usePlayerCommand()
-  const { seekBy } = usePlayerSeek()
+  const { seekBy } = useSeekCommands()
   const neighbor = usePlayNeighbor()
 
   const handleKeyDown = useEffectEvent((event: KeyboardEvent) => {

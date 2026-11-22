@@ -47,7 +47,7 @@ test("stale ticks and intermediate seek arrivals do not drop later presses", () 
   assert.equal(fourth.targetMs, 130_000)
 })
 
-test("small 1-second seek intervals do not falsely catch up on stale origin ticks", () => {
+test("small 1-second seek intervals do not falsely catch up on stale origin or intermediate ticks", () => {
   const first = stepPendingSeek(null, player({ positionMs: 10_000 }), 1_000, 1_000)
   assert.equal(first.targetMs, 11_000)
   assert.notEqual(first.pending, null)
@@ -58,8 +58,39 @@ test("small 1-second seek intervals do not falsely catch up on stale origin tick
   const second = stepPendingSeek(afterStale, player({ positionMs: 10_150 }), 1_000, 1_060)
   assert.equal(second.targetMs, 12_000)
 
-  const caughtUp = reconcilePendingSeek(second.pending, player({ positionMs: 12_050 }), 1_200)
+  const third = stepPendingSeek(second.pending, player({ positionMs: 10_150 }), 1_000, 1_070)
+  assert.equal(third.targetMs, 13_000)
+
+  const afterIntermediate = reconcilePendingSeek(third.pending, player({ positionMs: 12_000 }), 1_150)
+  assert.equal(afterIntermediate?.targetMs, 13_000)
+
+  const whileUndispatched = reconcilePendingSeek(third.pending, player({ positionMs: 13_050 }), 1_180, false)
+  assert.equal(whileUndispatched?.targetMs, 13_000)
+
+  const caughtUp = reconcilePendingSeek(third.pending, player({ positionMs: 13_050 }), 1_200, true)
   assert.equal(caughtUp, null)
+})
+
+test("net-zero burst stays pending until dispatched and catches up immediately once settled", () => {
+  const start = player({ positionMs: 10_000 })
+  const forward = stepPendingSeek(null, start, 30_000, 1_000)
+  assert.equal(forward.targetMs, 40_000)
+  const back = stepPendingSeek(forward.pending, start, -30_000, 1_020)
+  assert.equal(back.targetMs, 10_000)
+  assert.notEqual(back.pending, null)
+
+  assert.equal(
+    reconcilePendingSeek(back.pending, player({ positionMs: 10_050 }), 1_040, false)?.targetMs,
+    10_000,
+  )
+  assert.equal(
+    reconcilePendingSeek(back.pending, player({ positionMs: 40_050 }), 1_060, true)?.targetMs,
+    10_000,
+  )
+  assert.equal(
+    reconcilePendingSeek(back.pending, player({ positionMs: 10_100 }), 1_080, true),
+    null,
+  )
 })
 
 test("mixed forward and backward seeks clamp at boundaries and reverse immediately", () => {
@@ -156,10 +187,18 @@ test("invariant: any generated burst matches sequential clamped arithmetic under
         player({ positionMs: laggedPositionMs, durationMs }),
         deltaMs,
         now,
+        false,
       )
       pending = result.pending
       assert.equal(result.targetMs, expectedMs, `trial=${trial} step=${step} delta=${deltaMs}`)
       assert.ok(result.targetMs >= 0 && result.targetMs <= durationMs)
+    }
+    if (pending) {
+      assert.equal(
+        reconcilePendingSeek(pending, player({ positionMs: expectedMs, durationMs }), now + 50, true),
+        null,
+        `trial=${trial} should clear once settled at target`,
+      )
     }
   }
 })

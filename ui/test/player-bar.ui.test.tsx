@@ -323,3 +323,181 @@ it("serializes and coalesces in-flight rapid seek commands in order", async () =
   )
   act(() => { releases[1]() })
 })
+
+it("does not wedge seeking when the player bar unmounts while a seek is in flight", async () => {
+  const sent: Array<{ command: string; positionMs?: number }> = []
+  const releases: Array<() => void> = []
+  const backendState: PlayerState = playerSnapshot({ active: true, playbackId: 21, positionMs: 10_000, durationMs: 600_000, paused: false })
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.body) {
+        sent.push(JSON.parse(String(init.body)))
+        return new Promise<Response>((resolve) => {
+          releases.push(() =>
+            resolve(
+              new Response(JSON.stringify({ accepted: true }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              }),
+            ),
+          )
+        })
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(backendState), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+    }),
+  )
+  const client = testQueryClient()
+  client.setQueryData(queryKeys.playerState, backendState)
+  client.setQueryData(queryKeys.settings, { client: { player: { playerBackend: "libmpv", comfort: DEFAULT_COMFORT } } })
+  const firstMount = render(<QueryClientProvider client={client}><PlayerBar /></QueryClientProvider>)
+
+  fireEvent.keyDown(window, { key: "ArrowRight" })
+  await waitFor(() => expect(sent).toEqual([{ command: "seek", positionMs: 40_000 }]))
+
+  firstMount.unmount()
+  await act(async () => {
+    releases[0]()
+    await Promise.resolve()
+  })
+
+  const nextState = playerSnapshot({ active: true, playbackId: 22, positionMs: 20_000, durationMs: 600_000, paused: false })
+  client.setQueryData(queryKeys.playerState, nextState)
+  render(<QueryClientProvider client={client}><PlayerBar /></QueryClientProvider>)
+
+  fireEvent.keyDown(window, { key: "ArrowRight" })
+  await waitFor(() =>
+    expect(sent).toEqual([
+      { command: "seek", positionMs: 40_000 },
+      { command: "seek", positionMs: 50_000 },
+    ]),
+  )
+  act(() => { releases[1]() })
+})
+
+it("dispatches a queued seek back to the reported position and unfreezes net-zero bursts immediately", async () => {
+  const sent: Array<{ command: string; positionMs?: number }> = []
+  const releases: Array<() => void> = []
+  let backendState: PlayerState = playerSnapshot({ active: true, playbackId: 23, positionMs: 10_000, durationMs: 600_000, paused: false })
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.body) {
+        sent.push(JSON.parse(String(init.body)))
+        return new Promise<Response>((resolve) => {
+          releases.push(() =>
+            resolve(
+              new Response(JSON.stringify({ accepted: true }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              }),
+            ),
+          )
+        })
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(backendState), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+    }),
+  )
+  const client = testQueryClient()
+  client.setQueryData(queryKeys.playerState, backendState)
+  client.setQueryData(queryKeys.settings, {
+    client: { player: { playerBackend: "libmpv", comfort: { ...DEFAULT_COMFORT, seekBackSeconds: 30, seekForwardSeconds: 30 } } },
+  })
+  render(<QueryClientProvider client={client}><PlayerBar /></QueryClientProvider>)
+
+  fireEvent.keyDown(window, { key: "ArrowRight" })
+  await waitFor(() => expect(sent).toEqual([{ command: "seek", positionMs: 40_000 }]))
+  fireEvent.keyDown(window, { key: "ArrowLeft" })
+
+  await act(async () => {
+    releases[0]()
+    await Promise.resolve()
+  })
+  await waitFor(() =>
+    expect(sent).toEqual([
+      { command: "seek", positionMs: 40_000 },
+      { command: "seek", positionMs: 10_000 },
+    ]),
+  )
+  await act(async () => {
+    releases[1]()
+    await Promise.resolve()
+  })
+
+  backendState = playerSnapshot({ active: true, playbackId: 23, positionMs: 10_500, durationMs: 600_000, paused: false })
+  act(() => { client.setQueryData(queryKeys.playerState, backendState) })
+  await waitFor(() => {
+    expect(screen.getByRole("slider", { name: "Playback position" }).getAttribute("aria-valuenow")).toBe("10500")
+  })
+})
+
+function RenderCountingAudioKeys({ onRender }: { onRender: () => void }) {
+  onRender()
+  usePlaybackKeys()
+  return null
+}
+
+it("does not re-render usePlaybackKeys host on seek", async () => {
+  let renders = 0
+  const backendState: PlayerState = playerSnapshot({
+    active: true,
+    playbackId: 24,
+    itemId: "track-2",
+    positionMs: 15_000,
+    durationMs: 300_000,
+    paused: false,
+    nowPlaying: {
+      kind: "audio",
+      mediaKind: "music",
+      current: {
+        itemId: "track-2",
+        title: "Track 2",
+        artists: ["Artist"],
+        album: "Album",
+        albumId: "album-1",
+        artwork: null,
+        discNumber: 1,
+        trackNumber: 2,
+        runtimeTicks: 3_000_000_000,
+      },
+      next: null,
+      playlistItemId: "pl-2",
+      index: 0,
+      length: 1,
+      canPrevious: false,
+      canNext: false,
+      phase: "playing",
+    },
+  })
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      new Response(JSON.stringify(init?.body ? { accepted: true } : backendState), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ),
+  )
+  const client = testQueryClient()
+  client.setQueryData(queryKeys.playerState, backendState)
+  render(
+    <QueryClientProvider client={client}>
+      <RenderCountingAudioKeys onRender={() => { renders += 1 }} />
+    </QueryClientProvider>,
+  )
+  expect(renders).toBe(1)
+  fireEvent.keyDown(document.body, { key: "ArrowRight" })
+  fireEvent.keyDown(document.body, { key: "ArrowRight" })
+  fireEvent.keyDown(document.body, { key: "ArrowRight" })
+  await waitFor(() => expect(renders).toBe(1))
+})

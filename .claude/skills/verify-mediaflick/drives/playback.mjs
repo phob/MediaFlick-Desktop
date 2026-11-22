@@ -144,6 +144,16 @@ async function userData(ctx, id) {
 
 const logSince = (ctx, marker) => ctx.appLog().slice(marker)
 
+function rapidKeys(ctx, presses) {
+  const dispatched = []
+  for (const [name, keyCode] of presses) {
+    const event = { key: name, code: name, windowsVirtualKeyCode: keyCode, modifiers: 0 }
+    dispatched.push(ctx.app.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...event }))
+    dispatched.push(ctx.app.send("Input.dispatchKeyEvent", { type: "keyUp", ...event }))
+  }
+  return Promise.all(dispatched)
+}
+
 export default async function playback(ctx) {
   await ctx.signIn({})
   await ctx.until(async () => {
@@ -189,7 +199,7 @@ export default async function playback(ctx) {
   const barPosition = () => ctx.app.evaluate(`Number(document.querySelector('[role="slider"][aria-label="Playback position"]')?.getAttribute("aria-valuenow") ?? NaN)`)
   const beforeRapid = (await ctx.player()).positionMs
   const rapidStartedAt = Date.now()
-  for (let press = 0; press < 6; press++) await ctx.key("ArrowRight", { code: "ArrowRight", keyCode: 39 })
+  await rapidKeys(ctx, Array.from({ length: 6 }, () => ["ArrowRight", 39]))
   await ctx.app.evaluate("new Promise((resolve) => requestAnimationFrame(() => resolve()))")
   const barAfterRapid = await barPosition()
   const rapidExpectedMs = beforeRapid + 180_000
@@ -205,8 +215,13 @@ export default async function playback(ctx) {
 
   const beforeMixed = (await ctx.player()).positionMs
   const mixedStartedAt = Date.now()
-  for (let press = 0; press < 3; press++) await ctx.key("ArrowRight", { code: "ArrowRight", keyCode: 39 })
-  for (let press = 0; press < 2; press++) await ctx.key("ArrowLeft", { code: "ArrowLeft", keyCode: 37 })
+  await rapidKeys(ctx, [
+    ["ArrowRight", 39],
+    ["ArrowRight", 39],
+    ["ArrowRight", 39],
+    ["ArrowLeft", 37],
+    ["ArrowLeft", 37],
+  ])
   const mixedExpectedMs = beforeMixed + 70_000
   const afterMixed = await ctx.until(async () => {
     const state = await ctx.player()
@@ -220,7 +235,7 @@ export default async function playback(ctx) {
   const target = report.play.durationMs * MIN_RESUME
   const beforeResumeBurst = (await ctx.player()).positionMs
   const remainingPresses = Math.max(0, Math.ceil((target + 15_000 - beforeResumeBurst) / 30_000))
-  for (let press = 0; press < remainingPresses; press++) await ctx.key("ArrowRight", { code: "ArrowRight", keyCode: 39 })
+  await rapidKeys(ctx, Array.from({ length: remainingPresses }, () => ["ArrowRight", 39]))
   const afterResumeBurst = await ctx.until(async () => {
     const state = await ctx.player()
     return state.positionMs >= target && (await barPosition()) >= target ? state : null

@@ -6,11 +6,12 @@ import { Timeline } from "@/components/player/Timeline"
 import { formatClock } from "@/components/player/format"
 import { Button } from "@/components/ui/button"
 import { imageUrl, TICKS_PER_MS, type AudioNowPlaying, type PlayerState } from "@/lib/api"
-import { usePatchPlayerState, usePlayerCommand, usePlayerSeek } from "@/lib/playback-queries"
+import { usePatchPlayerState, usePendingSeekPosition, usePlayerCommand, useSeekCommands } from "@/lib/playback-queries"
 
 export function AudioPlayerBar({ player, audio }: { player: PlayerState; audio: AudioNowPlaying }) {
   const command = usePlayerCommand()
-  const { pendingPositionMs, seekTo } = usePlayerSeek(player)
+  const pendingPositionMs = usePendingSeekPosition(player)
+  const { seekTo } = useSeekCommands()
   const patchPlayerState = usePatchPlayerState()
   const [scrubMs, setScrubMs] = useState<number | null>(null)
   const [volumeDraft, setVolumeDraft] = useState<number | null>(null)

@@ -55,9 +55,10 @@ import {
   usePlaybackNeighbors,
   usePlayNeighbor,
   usePatchPlayerState,
+  usePendingSeekPosition,
   usePlayerCommand,
-  usePlayerSeek,
   usePlayerState,
+  useSeekCommands,
 } from "@/lib/playback-queries"
 import { useSettings } from "@/lib/settings-queries"
 import { SUBTITLES_OFF, TrackMenu, TrackSubmenu, type TrackChoices } from "@/components/player/TrackMenu"
@@ -138,7 +139,8 @@ function ActivePlayerBar({
   onMenuOpenChange?: (open: boolean) => void
 }) {
   const command = usePlayerCommand()
-  const { pendingPositionMs, seekTo, seekBy } = usePlayerSeek(player)
+  const pendingPositionMs = usePendingSeekPosition(player)
+  const { seekTo, seekBy } = useSeekCommands()
   const patchPlayerState = usePatchPlayerState()
   const neighborPlayback = usePlayNeighbor()
   const qualityChange = useChangePlaybackQuality()
