@@ -1,10 +1,3 @@
-// A person page's Discover section, reached as a user does: library search,
-// a movie, then a Cast or Crew face. Read-only.
-//   Demo server (no Companion): expects the "not connected" explanation.
-//   --account SERVER with the Companion and Seerr: expects Seerr's own state
-//   (results or the empty text), never an error.
-//   just verify person-discover
-//   just verify person-discover --account https://jellyfin.example.com
 const DEMO = "https://demo.jellyfin.org/stable"
 
 const discoverText = (ctx) =>

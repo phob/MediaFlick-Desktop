@@ -32,22 +32,8 @@ export type AudioDetail = {
   positionTicks: number,
   favorite: boolean,
   unplayedCount: number | null,
-  /**
-   * Width over height of the primary image. Null for cached movies and
-   * shows, whose art is a 2:3 poster.
-   */
   primaryAspect: number | null,
-  /**
-   * `/api/item/{id}/children` carries this for a season's episodes, from
-   * its live server reconcile, and a generic item's details carry their
-   * own. The grid queries do not, and offline rows have none.
-   */
   overview?: string,
-  /**
-   * The slot this item fills among a playlist's children, counted from
-   * zero. Jellyfin's PlaylistItemId is the item's own id, so it cannot tell
-   * two slots of one item apart.
-   */
   playlistIndex?: number,
 };
 
@@ -79,22 +65,8 @@ export type BookDetail = {
   positionTicks: number,
   favorite: boolean,
   unplayedCount: number | null,
-  /**
-   * Width over height of the primary image. Null for cached movies and
-   * shows, whose art is a 2:3 poster.
-   */
   primaryAspect: number | null,
-  /**
-   * `/api/item/{id}/children` carries this for a season's episodes, from
-   * its live server reconcile, and a generic item's details carry their
-   * own. The grid queries do not, and offline rows have none.
-   */
   overview?: string,
-  /**
-   * The slot this item fills among a playlist's children, counted from
-   * zero. Jellyfin's PlaylistItemId is the item's own id, so it cannot tell
-   * two slots of one item apart.
-   */
   playlistIndex?: number,
 };
 
@@ -136,22 +108,8 @@ export type GenericItemDetail = {
   positionTicks: number,
   favorite: boolean,
   unplayedCount: number | null,
-  /**
-   * Width over height of the primary image. Null for cached movies and
-   * shows, whose art is a 2:3 poster.
-   */
   primaryAspect: number | null,
-  /**
-   * `/api/item/{id}/children` carries this for a season's episodes, from
-   * its live server reconcile, and a generic item's details carry their
-   * own. The grid queries do not, and offline rows have none.
-   */
   overview?: string,
-  /**
-   * The slot this item fills among a playlist's children, counted from
-   * zero. Jellyfin's PlaylistItemId is the item's own id, so it cannot tell
-   * two slots of one item apart.
-   */
   playlistIndex?: number,
 };
 
@@ -179,22 +137,8 @@ export type ItemSummary = {
   positionTicks: number,
   favorite: boolean,
   unplayedCount: number | null,
-  /**
-   * Width over height of the primary image. Null for cached movies and
-   * shows, whose art is a 2:3 poster.
-   */
   primaryAspect: number | null,
-  /**
-   * `/api/item/{id}/children` carries this for a season's episodes, from
-   * its live server reconcile, and a generic item's details carry their
-   * own. The grid queries do not, and offline rows have none.
-   */
   overview?: string,
-  /**
-   * The slot this item fills among a playlist's children, counted from
-   * zero. Jellyfin's PlaylistItemId is the item's own id, so it cannot tell
-   * two slots of one item apart.
-   */
   playlistIndex?: number,
 };
 
@@ -216,18 +160,10 @@ export type ResolvedPlaybackPreference = {
   mediaSourceId: string | null,
   mediaSourceIndex: number,
   audioStreamIndex: number | null,
-  /**
-   * `None` is subtitles off. Playback translates it to Jellyfin/mpv's off
-   * sentinel only when an existing stored row made that choice explicit.
-   */
   subtitleStreamIndex: number | null,
 };
 
 export type TitleDetail = {
-  /**
-   * Always a catalog library, whose profile offers the genre filter: only
-   * catalog libraries hold memberships. The UI's genre links rely on it.
-   */
   libraryId: LibraryId | null,
   genres: Array<string>,
   originalTitle: string | null,
@@ -257,21 +193,7 @@ export type TitleDetail = {
   positionTicks: number,
   favorite: boolean,
   unplayedCount: number | null,
-  /**
-   * Width over height of the primary image. Null for cached movies and
-   * shows, whose art is a 2:3 poster.
-   */
   primaryAspect: number | null,
-  /**
-   * `/api/item/{id}/children` carries this for a season's episodes, from
-   * its live server reconcile, and a generic item's details carry their
-   * own. The grid queries do not, and offline rows have none.
-   */
   overview?: string,
-  /**
-   * The slot this item fills among a playlist's children, counted from
-   * zero. Jellyfin's PlaylistItemId is the item's own id, so it cannot tell
-   * two slots of one item apart.
-   */
   playlistIndex?: number,
 };

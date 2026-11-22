@@ -349,7 +349,6 @@ impl LibmpvOverlaySurface {
         });
     }
 
-    /// Closes after the native window vanished; nothing may cancel it.
     fn close_browser(&self) {
         if self.closing.replace(true) {
             return;
@@ -412,9 +411,6 @@ impl LibmpvOverlaySurface {
     }
 
     fn handle_navigation_mouse_button(&self, message: u32, wparam: WPARAM) {
-        // CEF's off-screen mouse API only accepts left/middle/right. Handle
-        // navigation once on release; consume down events in the window
-        // procedure so DefWindowProc cannot issue a second browser command.
         let Some(back) = navigation_mouse_button(message, wparam) else {
             return;
         };

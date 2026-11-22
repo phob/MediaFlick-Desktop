@@ -129,25 +129,9 @@ pub enum LiveShape {
     Folder,
 }
 
-/// Where "Latest in <library>" comes from for a live library. Measured against
-/// the demo server, the account server and local Jellyfin 10.11.11 and 12.2.0:
-/// `/Items/Latest` wins wherever it answers, because the newest-first `/Items`
-/// query lists folders, albums, series and seasons first (Jellyfin dates them
-/// at scan time) and has no working filter for them.
-///
-/// Grouped, measured: music (demo); music videos, books, mixed, and home
-/// videos holding videos or photos (local). Newest, measured: box sets
-/// (account) and playlists (demo), where `/Items/Latest` answers nothing.
-/// Unmeasured: live TV (Newest, as jellyfin-web leaves it out of Latest),
-/// trailers (Grouped, as jellyfin-web), and photos, a library type Jellyfin
-/// 10.11 and later no longer creates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiveLatest {
-    /// Jellyfin's `/Items/Latest`, which groups new tracks into their album,
-    /// episodes into their series and photos into their album.
     Grouped,
-    /// The library's own grid, newest first. `/Items/Latest` answers nothing
-    /// for box sets and playlists.
     Newest,
 }
 
@@ -184,13 +168,10 @@ const LIVE_SORT_KEYS: [SortKey; LiveSort::ALL.len()] = {
     keys
 };
 
-/// Serialized as [`FilterKey::id`], which is each name in camel case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ts_rs::TS)]
 #[ts(rename_all = "camelCase")]
 pub enum FilterKey {
     Genre,
-    /// Labelled Network in TV libraries: Jellyfin stores a series' networks
-    /// as its studios.
     Studio,
     Tag,
     Decade,
@@ -221,8 +202,6 @@ impl Serialize for FilterKey {
     }
 }
 
-/// The sorts and filters a grid can run. A request for anything else answers
-/// 400.
 #[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowseCapabilities {
@@ -319,8 +298,6 @@ pub struct MediaLibrary {
     pub membership: Membership,
 }
 
-/// Where a catalog library's stored membership stands. A library walked once
-/// keeps its titles while a re-walk is owed, so only `Unwalked` is unknown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Membership {
     Unwalked,

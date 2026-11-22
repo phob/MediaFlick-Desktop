@@ -4,11 +4,6 @@ namespace Jellyfin.Plugin.MediaFlick.Services;
 
 internal sealed record RadarrMovieFacts(string? Status, bool IsAvailable, bool HasFile);
 
-/// <summary>
-/// Sonarr's monitored-episode counts for a series or one season.
-/// <see cref="Aired"/> counts monitored episodes that have aired or already
-/// have a file, which is Sonarr's own <c>episodeCount</c>.
-/// </summary>
 internal sealed record SonarrEpisodeFacts(int Aired, int Files, bool MoreScheduled);
 
 internal sealed record SonarrSeriesFacts(
@@ -24,14 +19,6 @@ internal sealed record ArrFacts(
         new Dictionary<int, SonarrSeriesFacts>());
 }
 
-/// <summary>
-/// Explains a Seerr <c>processing</c> title. Seerr uses that one state for
-/// everything between an approved request and an imported file, so on its own
-/// it cannot tell a download from a movie that is still in cinemas. The live
-/// download queue Seerr attaches to its media rows wins; otherwise Radarr's
-/// release state or Sonarr's episode counts say why nothing is downloading.
-/// Null means none of those facts is available.
-/// </summary>
 internal static class MediaActivity
 {
     public const string Downloading = "downloading";
@@ -42,10 +29,6 @@ internal static class MediaActivity
 
     public const int ProcessingStatus = 3;
 
-    /// <summary>
-    /// Whether an arr lookup could add anything: the title, or one of its
-    /// seasons, is processing without Seerr's queue already showing a download.
-    /// </summary>
     public static bool NeedsFacts(JsonObject? mediaInfo)
         => Waiting(mediaInfo, false)
             || Waiting(mediaInfo, true)
@@ -99,9 +82,6 @@ internal static class MediaActivity
 
     private static string? ForMovie(RadarrMovieFacts movie, bool is4k)
     {
-        // A file Seerr has not synced yet is neither searching nor
-        // unreleased. The Companion's Radarr is the regular-quality one, so
-        // its file says nothing about a 4K request.
         if (movie.HasFile && !is4k)
         {
             return null;
@@ -127,7 +107,6 @@ internal static class MediaActivity
             return Unreleased;
         }
 
-        // File counts come from the regular-quality Sonarr.
         if (is4k)
         {
             return null;

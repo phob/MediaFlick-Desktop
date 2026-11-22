@@ -37,15 +37,6 @@ internal sealed record ProviderHealthState
         => new(QuotaLimit, QuotaRemaining, QuotaResetAt);
 }
 
-/// <summary>
-/// The server-wide, rebuildable provider cache: MDBList rating entries plus
-/// MDBList and TMDB credential health (validation, quota, retry timing) used
-/// by both ratings and collections. It keeps the established
-/// <c>ratings-v1-cache.json</c> file and format.
-/// Changes are coalesced into one atomic save shortly after they happen
-/// instead of rewriting the file per change; <see cref="Flush"/> and
-/// <see cref="Dispose"/> write any pending change immediately.
-/// </summary>
 internal sealed class ProviderCacheStore : IDisposable
 {
     internal const int MaxEntries = 100_000;
@@ -169,14 +160,8 @@ internal sealed class ProviderCacheStore : IDisposable
         }
     }
 
-    /// <summary>
-    /// Writes pending changes now. A failed write keeps them pending, so the
-    /// next change or flush retries without losing the in-memory state.
-    /// </summary>
     public void Flush()
     {
-        // Writers queue on _writeLock so an older snapshot can never replace
-        // a newer file; readers only wait for the short snapshot below.
         lock (_writeLock)
         {
             string json;
@@ -240,10 +225,6 @@ internal sealed class ProviderCacheStore : IDisposable
         Flush();
     }
 
-    /// <summary>
-    /// Drops expired rating entries and, past <see cref="MaxEntries"/>, the
-    /// oldest fetches. Health state is a handful of providers and is kept.
-    /// </summary>
     private bool PruneLocked()
     {
         var now = _time.GetUtcNow().ToUnixTimeSeconds();
@@ -364,13 +345,11 @@ internal sealed class ProviderCacheStore : IDisposable
         }
         catch (JsonException exception)
         {
-            // JsonException text names a position, not cached values.
             logger.LogWarning(exception, "The MediaFlick ratings cache is corrupt; starting with an empty cache");
             return new CacheDocument();
         }
     }
 
-    /// <summary>Atomically replaces the cache file. Called under _writeLock only.</summary>
     private bool TryWrite(string json)
     {
         try

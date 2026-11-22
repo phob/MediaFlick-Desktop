@@ -88,7 +88,6 @@ fn visible_franchise(
     })
 }
 
-/// TMDB does not guarantee that collection parts follow release order.
 pub(crate) fn sort_titles_by_release_date(items: &mut [NormalizedTitle]) {
     items.sort_by_key(release_order_key);
 }

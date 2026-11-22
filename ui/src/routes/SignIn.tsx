@@ -28,9 +28,6 @@ const COPIED_FEEDBACK_MS = 2000
 export default function SignIn() {
   const settings = useSettings()
   const login = useLogin()
-  // `null` is "untouched", which is what lets the saved URL prefill the field
-  // once settings arrive. An empty string is a field the user cleared on
-  // purpose, and has to stay cleared so it can be retyped from scratch.
   const [server, setServer] = useState<string | null>(null)
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")

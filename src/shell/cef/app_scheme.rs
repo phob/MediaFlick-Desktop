@@ -1,9 +1,3 @@
-//! Serves the own UI and its JSON API on `mediaflick-desktop://app/`.
-//!
-//! The scheme is registered as `STANDARD | SECURE | CORS_ENABLED |
-//! FETCH_ENABLED`, so this is a real same-origin web app with no localhost
-//! port and no jellyfin-web involved.
-
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -56,8 +50,6 @@ fn read_post_body(request: &Request) -> Vec<u8> {
     let Some(post_data) = request.post_data() else {
         return Vec::new();
     };
-    // `elements` fills in place and takes its capacity from the vector's
-    // current length, so it has to be sized up front or nothing is returned.
     let count = post_data.element_count();
     if count == 0 {
         return Vec::new();
@@ -164,9 +156,6 @@ wrap_resource_handler! {
     }
 
     impl ResourceHandler {
-        // CEF raises this on its IO thread while `open` may still be blocked
-        // in a handler on a background thread; the shared flag is the only
-        // channel through which that handler can notice.
         fn cancel(&self) {
             self.cancelled.store(true, Ordering::Relaxed);
         }
@@ -288,20 +277,6 @@ wrap_resource_handler! {
     }
 }
 
-/// Scripts and styles ship inside the binary and images and local trailers come
-/// from our own proxy. The sole remote exception is a validated,
-/// privacy-enhanced YouTube trailer frame. The whole
-/// `mediaflick-desktop:` scheme is allowed to connect because the native
-/// remaining native dialogs call the shell on other hosts of it
-/// (`update-download`, `app-about`, …), and only our own handlers can answer
-/// those. Images may also load `mediaflick-desktop://window-ready`, the beacon
-/// the page falls back to when the shell's API is down, so the hidden main
-/// window is still shown.
-///
-/// The book reader renders each section, and each of its images, styles,
-/// fonts and media, from `blob:` URLs, so those sources allow `blob:`.
-/// `script-src` never does: a blob document inherits this policy, and the
-/// reader's iframes are sandboxed without `allow-scripts` on top of it.
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
 img-src 'self' data: blob: mediaflick-desktop://window-ready; \
 style-src 'self' 'unsafe-inline' blob:; font-src 'self' data: blob:; media-src 'self' blob:; \

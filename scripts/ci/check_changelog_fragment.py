@@ -11,7 +11,6 @@ import subprocess
 import sys
 
 CODE_PREFIXES = ("src/", "ui/src/", "plugin/")
-# Dependency manifests are exempt, as Cargo.toml and ui/package.json are by lying outside the prefixes.
 DEPENDENCY_SUFFIXES = (".csproj", ".props", "packages.lock.json")
 FRAGMENT = re.compile(r"^changelog\.d/[^/]+\.md$")
 

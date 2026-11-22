@@ -1,16 +1,3 @@
-# Windows isolation wrapper for verify-mediaflick: runs one command on a new,
-# inactive desktop inside a kill-on-close job. Never calls SwitchDesktop, so
-# nothing appears on the user's screen and nothing takes focus.
-#
-#   pwsh -NoProfile -File isolate-windows.ps1 node session.mjs <drive> ...
-#
-# Every argument is the command, verbatim (no parameter binding, so the
-# command's own --flags pass through). MEDIAFLICK_VERIFY_HARD_TIMEOUT
-# (seconds, default 900) bounds the whole run; the job is terminated after it.
-#
-# The child (and everything it starts, such as the app) inherits the private
-# desktop. MEDIAFLICK_VERIFY_ISOLATION tells the child which desktop it was
-# given so it can confirm it really runs there before launching anything.
 $ErrorActionPreference = 'Stop'
 if ($env:MEDIAFLICK_VERIFY_ISOLATION) { throw 'Already inside a verify-mediaflick isolation wrapper; refusing to nest.' }
 $TimeoutSeconds = if ($env:MEDIAFLICK_VERIFY_HARD_TIMEOUT) { [int]$env:MEDIAFLICK_VERIFY_HARD_TIMEOUT } else { 900 }
@@ -21,7 +8,6 @@ if ($Command.Count -eq 0) { throw 'No command given.' }
 $exe = (Get-Command $Command[0] -CommandType Application | Select-Object -First 1).Source
 if (!$exe) { throw "Cannot find $($Command[0])." }
 if ($exe -match '\\WindowsApps\\') {
-  # Children of an MSIX-packaged host start outside its job; refuse rather than leak.
   throw "$exe is MSIX-packaged; install the regular (MSI) build instead."
 }
 
@@ -139,7 +125,6 @@ public static class MediaFlickVerifyDesktop {
 
 function Quote([string] $arg) {
   if ($arg -and $arg -notmatch '[\s"]') { return $arg }
-  # CommandLineToArgvW rules: double backslashes before a quote, escape quotes.
   '"' + ($arg -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"'
 }
 

@@ -1,25 +1,5 @@
 @import "tailwindcss";
 
-/* Tailwind v4, CSS-first: no tailwind.config.js — tokens live here.
-   ---------------------------------------------------------------------------
-   MediaFlick's own visual language, "Signal".
-
-   The shape of the app — full-bleed hero, horizontal shelves, an expanding
-   hover card — is the shape any library browser converges on. What stops it
-   reading as a copy of one is everything else, and all of that is set here:
-
-   - One bright green against green-cast near-blacks, rather than red on grey.
-     The neutrals carry a trace of the accent, so the page reads as one material
-     lit from a single source instead of a grey chassis with coloured buttons.
-   - Near-square corners. Artwork sits in a 2px frame, chrome in 4px; nothing is
-     a pill except a progress track.
-   - Monospace for every piece of data — runtimes, ratings, counters, eyebrows —
-     set in caps with wide tracking, so facts look measured and titles look
-     typeset. This is the loudest single signal that this is not a video shop.
-   - Corner brackets instead of a zoom on hover: a card is framed, not enlarged.
-   - Hairline rules that run a heading out to the edge of the page.
-   --------------------------------------------------------------------------- */
-
 @custom-variant dark (&:is(.dark *));
 
 :root {
@@ -31,10 +11,6 @@
   --popover: #0f1512;
   --popover-foreground: #e6ede9;
 
-  /* Interaction. The green is deliberately at the top of its range: it is only
-     ever used for small, load-bearing marks — the play button, a progress fill,
-     the focus ring, the active shelf marker — where brightness is legibility
-     rather than noise. */
   --primary: #2bff88;
   --primary-foreground: #04120b;
   --secondary: #18211d;
@@ -52,8 +28,6 @@
   --field-hover: rgb(255 255 255 / 8%);
   --edge: rgb(255 255 255 / 10%);
   --hairline: rgb(255 255 255 / 5%);
-  /* The dark wash behind dialogs, over artwork and under raised surfaces.
-     Each use sets its strength, as in `bg-scrim/60` or `shadow-scrim/40`. */
   --scrim: #000;
 
   --border: #202c27;
@@ -83,9 +57,6 @@
   --artwork-intensity: 1;
   --backdrop-intensity: 1;
 
-  /* The book reader's page themes ("App" uses --background and --foreground).
-     A book's own documents cannot read these variables, so the reader copies
-     their values into each document it shows. */
   --reader-light-paper: #fbfaf6;
   --reader-light-ink: #1d1c1a;
   --reader-light-link: #1f5fa8;
@@ -212,10 +183,6 @@
     color: var(--primary-foreground);
   }
 
-  /* An application surface, not a document: drag, double-click, and select-all
-     never produce a text selection. Editing controls keep native text behavior,
-     which is the only place a selection is ever wanted. The arrow cursor follows
-     the Windows convention of reserving the beam for editable fields only. */
   body {
     user-select: none;
     cursor: default;
@@ -261,9 +228,6 @@
   }
 }
 
-/* CEF paints with a transparent background in integrated libmpv mode.
-   Clearing every document-level surface exposes mpv's native video surface
-   underneath; individual overlay controls remain normally painted. */
 html[data-libmpv-playback],
 html[data-libmpv-playback] body,
 html[data-libmpv-playback] #root {
@@ -413,12 +377,6 @@ html[data-libmpv-cursor-hidden] * {
 .rating-source-selector:disabled { opacity: 0.52; }
 .rating-source-selector:disabled label { cursor: not-allowed; }
 
-/* The live appearance preview renders the app's own components — real cards,
-   real artwork, real overlays — inside one scoped container carrying the
-   unsaved draft as data attributes plus inline intensity variables. The shared
-   token rules above re-skin that subtree exactly as they re-skin the root, so
-   the preview shows what Save will produce instead of a miniature imitation.
-   Nothing here defines its own palette. */
 .appearance-preview {
   position: relative;
   isolation: isolate;
@@ -649,10 +607,6 @@ html[data-libmpv-cursor-hidden] * {
   }
 }
 
-/* Every measured fact in the app — runtimes, years, ratings, counters, shelf
-   eyebrows — is set in this. Titles stay in the UI face, so a page separates
-   into "what this is called" and "what is known about it" before a word of it
-   has been read. */
 .data-label {
   font-family: var(--font-mono);
   font-size: 0.6875rem;
@@ -673,10 +627,6 @@ html[data-libmpv-cursor-hidden] * {
   overscroll-behavior-inline: contain;
   scroll-padding-inline: 1.5rem;
   scrollbar-width: none;
-  /* A freshly synced title enters its shelf at the first position. Anchoring
-     would pin the scroll offset to the previously visible cards and hide that
-     new first card off to the left, so shelves keep their numeric offset
-     instead and everything after the newcomer shifts one card to the right. */
   overflow-anchor: none;
 }
 
@@ -695,10 +645,6 @@ html[data-libmpv-cursor-hidden] * {
   display: none;
 }
 
-/* The mark that opens every shelf heading: a short accent bar, the title, then
-   a hairline that runs out to the page edge. The rule is what makes a shelf
-   read as a band across the page rather than as a row of pictures with a
-   caption over it. */
 .rail-rule {
   height: 1px;
   background: linear-gradient(
@@ -832,10 +778,6 @@ html[data-libmpv-cursor-hidden] * {
   }
 }
 
-/* Ratings share one open top gradient rather than becoming a row of badges.
-   Each short source/value pair is its own flex item, so wrapping starts flush
-   at the left edge instead of inheriting an icon indent or a leading separator.
-   Full labels, scale, origin and cache state remain in semantics and tooltips. */
 .card-rating-readout {
   position: absolute;
   top: 0;
@@ -934,10 +876,6 @@ html[data-libmpv-cursor-hidden] * {
 .detail-rating-readout .rating-source-icon { width: 0.9rem; height: 0.9rem; filter: none; }
 .detail-rating-readout[data-stale="true"] { opacity: 0.72; }
 
-/* A single integrated data plate, never a row of pills. The open gradient keeps
-   type readable over bright artwork without drawing a box around each fact;
-   video and audio retain their own baseline and icon so four facts still scan
-   cleanly on a 168px poster. */
 [data-media-info="false"] .card-technical-readout { display: none; }
 
 .card-technical-readout {
@@ -1006,10 +944,6 @@ html[data-libmpv-cursor-hidden] * {
 .preview-technical-readout .card-technical-row { gap: 0.42rem; }
 .preview-technical-readout .card-technical-row > svg { width: 0.84rem; height: 0.84rem; }
 
-/* Quick request is a poster action, not a replacement for the card link. It
-   sits over the lower artwork edge and appears as soon as either the pointer
-   or keyboard enters the card. The component mirrors those interaction states
-   into utility classes so the behavior remains focused and testable. */
 .quick-request-action {
   top: calc(var(--poster-height) - 3.25rem);
 }
@@ -1027,12 +961,6 @@ html[data-libmpv-cursor-hidden] * {
   transition: opacity 900ms ease-in-out;
 }
 
-/*
- * The still stays full-bleed for the whole slide. The trailer covers it on the
- * right and dissolves into it through its own left-edge mask, so nothing about
- * the still's geometry ever animates — it only steps back optically to keep
- * the footage the brightest thing in the hero.
- */
 .billboard-backdrop-image {
   position: absolute;
   top: 0;
@@ -1049,13 +977,6 @@ html[data-libmpv-cursor-hidden] * {
   filter: brightness(0.72) saturate(0.9);
 }
 
-/*
- * The trailer owns the full height of the hero and runs a little wider than
- * 16:9 so the moving image has more presence beside the still. Its media keeps
- * its native proportions and crops gently to fill that canvas. On a hero too
- * narrow for the wider stage, it falls back to an ordinary 16:9 frame centred
- * vertically.
- */
 .billboard-trailer-stage {
   position: absolute;
   top: 50%;
@@ -1071,13 +992,6 @@ html[data-libmpv-cursor-hidden] * {
     transform 1100ms cubic-bezier(0.33, 1, 0.68, 1);
 }
 
-/*
- * Only the left edge feathers, dissolving the footage into the still so the
- * two read as one composition. The alpha silhouette is deliberately uneven:
- * its broad, blurred bends feel more like a film burn than a gradient laid
- * straight down the frame. Every other edge stays solid and flush with the
- * hero.
- */
 .billboard-trailer-feather {
   --billboard-trailer-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'%3E%3Cdefs%3E%3Cfilter id='soft' x='-50%25' y='-20%25' width='180%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='5.5'/%3E%3C/filter%3E%3C/defs%3E%3Cpath d='M21-10C27 2 9 11 15 24C21 36 28 39 14 51C1 63 11 72 22 78C32 86 10 98 17 110H112V-10Z' fill='black' filter='url(%23soft)'/%3E%3C/svg%3E");
   position: absolute;
@@ -1091,11 +1005,6 @@ html[data-libmpv-cursor-hidden] * {
   mask-size: 100% 100%;
 }
 
-/*
- * Three low-key blooms catch the irregular overlap like light refracting at
- * the edge of a lens. They borrow the app's signal green but stay translucent
- * enough to take their colour from the footage underneath.
- */
 .billboard-trailer-feather::after {
   position: absolute;
   inset: 0;
@@ -1134,10 +1043,6 @@ html[data-libmpv-cursor-hidden] * {
   transform: translateY(-50%) translateX(0);
 }
 
-/*
- * Let YouTube's transient centre overlay disappear behind the still before the
- * right-hand footage finishes dissolving in. Hiding reverses immediately.
- */
 .billboard-trailer-stage[data-source="youtube"][data-playing="true"] {
   transition-delay: 2000ms;
 }
@@ -1170,10 +1075,6 @@ html[data-libmpv-cursor-hidden] * {
   position: absolute;
   top: 50%;
   left: 50%;
-  /*
-   * The stage itself is 16:9 now, so this is only a small, even overscan. It
-   * preserves the trailer's native composition while burying player chrome.
-   */
   width: max(112cqw, calc(112cqh * 16 / 9));
   height: max(112cqh, calc(112cqw * 9 / 16));
   border: 0;

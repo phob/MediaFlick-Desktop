@@ -8,9 +8,6 @@ pub(in super::super) struct ItemSynopsis {
     overview: Option<String>,
 }
 
-/// Rich metadata fetched live from Jellyfin by `/api/item/{id}/about` for the
-/// detail page. Nothing here is cached locally; with the server unreachable
-/// these sections stay in their loading/error states.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(in super::super) struct ItemAbout {

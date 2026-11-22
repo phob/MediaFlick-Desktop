@@ -86,11 +86,6 @@ function filterResults(
   })
 }
 
-/**
- * Shared tail for both catalogue and search pagination. Keeping the observer in
- * a rendered component means filtered-out pages still advance while the
- * sentinel remains visible.
- */
 function PaginationTail({
   active = true,
   hasNextPage,
@@ -246,7 +241,6 @@ function NetworkSelect({
   value: SeerrCompany | undefined
   onChange: (network: SeerrCompany | undefined) => void
 }) {
-  // The Companion's curated list changes only with the plugin.
   const networks = useQuery({
     queryKey: queryKeys.seerrNetworks,
     queryFn: ({ signal }) => api.seerr.networks(signal),
@@ -257,8 +251,6 @@ function NetworkSelect({
     return <p className="flex h-10 items-center text-sm text-destructive">Could not load networks.</p>
   }
   const listed = networks.data?.networks
-  // A detail-page link can name a network outside the curated list, and is
-  // the only option while the list loads.
   const options = [
     ...(value && !listed?.some((network) => network.id === value.id) ? [value] : []),
     ...(listed ?? []),
@@ -287,7 +279,6 @@ function NetworkSelect({
   )
 }
 
-/** The applied studio or network, with a button that removes it. */
 function CompanyFilterChip({
   label,
   company,
@@ -620,11 +611,6 @@ function SearchResults({
   )
 }
 
-/**
- * Browsing what the library does not have. The search box here is Seerr's, not
- * the sidebar's: that one is the local cache, and mixing the two would make
- * local results wait on a network round trip.
- */
 export default function Discover() {
   const [params, setParams] = useSearchParams()
   const companion = useCompanionCapabilities()
@@ -653,10 +639,7 @@ export default function Discover() {
       companion.has("seerr-discovery-v2") ||
       companionDiscoveryV3 ||
       companionDiscoveryV4)
-  // v3 carried the superseded century parameter. Only v4 understands decade;
-  // older Companions still keep their otherwise-supported discovery controls.
   const decadeDiscovery = advancedDiscovery && (!companionManaged || companionDiscoveryV4)
-  // The network list and company search come from the Companion itself.
   const studioNetworkDiscovery = advancedDiscovery && companion.has("seerr-discovery-v5")
   const discoveryRows = advancedDiscovery
     ? SEERR_DISCOVER_ROWS

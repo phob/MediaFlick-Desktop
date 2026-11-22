@@ -32,10 +32,6 @@ where
     }
 }
 
-// The settings patches take enum values as strings and parse them with
-// `from_id`, which decodes each enum's serde name, so the TypeScript names the
-// enum. The UI sends every key; `null` keeps the stored value, except for the
-// nullable `mpvPath` and `markWatchedNext`, where it clears it.
 #[derive(Debug, Clone, Default, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlayerSettingsPatch {
@@ -114,17 +110,10 @@ impl fmt::Display for PreferencesError {
 
 impl std::error::Error for PreferencesError {}
 
-/// The sole writer for application preferences.
-///
-/// A small in-process snapshot prevents a settings PATCH from reloading an
-/// older file and accidentally discarding window geometry written by CEF. The
-/// caller receives a normalized snapshot, while CEF subscribes to changes to
-/// perform UI-thread-only work such as rebuilding the playback backend.
 pub struct PreferencesService {
     state: Mutex<PreferencesState>,
     accounts: Arc<AccountConfigurationService>,
     listener: Mutex<Option<mpsc::Sender<SettingsChange>>>,
-    /// This device ran MediaFlick 0.1.6, read once at startup.
     upgraded_from_0_1_6: bool,
 }
 
@@ -236,11 +225,6 @@ impl PreferencesService {
                 NullablePatch::Clear => next.mark_watched_next = None,
                 NullablePatch::Set(value) => next.mark_watched_next = clean_binding(Some(&value)),
             }
-            // An unconfigured player is a valid saved state: it lets users reset
-            // the section to defaults and finish choosing a backend later. Playback
-            // still performs the concrete executable check before it starts. The
-            // built-in player shares its keyboard with the comfort shortcuts, so
-            // the watched binding must not collide with them there.
             if next.effective_backend() == PlayerBackend::Libmpv {
                 next.comfort
                     .validate_watched_next(next.mark_watched_next.as_deref())
@@ -370,9 +354,6 @@ impl PreferencesService {
     pub fn set_mpv_path(&self, path: String) -> Result<SettingsChange, PreferencesError> {
         self.update(move |next| {
             next.mpv_path = clean_path(&path);
-            // Choosing the one-click installer is an explicit choice of mpv;
-            // make its completed installation immediately usable even if the
-            // previous backend was the built-in player.
             next.player_backend = Some(PlayerBackend::Mpv);
             Ok(())
         })
@@ -386,8 +367,6 @@ impl PreferencesService {
         .map(|_| ())
     }
 
-    /// Whether the one-time What's new is due: this device ran 0.1.6 and it
-    /// was not closed yet.
     pub fn whats_new_pending(&self) -> bool {
         self.upgraded_from_0_1_6 && !self.snapshot().whats_new_seen
     }

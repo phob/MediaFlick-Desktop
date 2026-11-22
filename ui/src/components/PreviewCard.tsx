@@ -27,17 +27,7 @@ import { PreviewContext, createExpandedStore, type PreviewApi, type PreviewTarge
 import { useItem, useNextUp, useSetFavorite, useSetPlayed } from "@/lib/item-queries"
 import { usePlay } from "@/lib/playback-queries"
 
-/**
- * How long the pointer has to rest on a card before it expands. Short enough to
- * feel like a property of the card, long enough that sweeping the pointer across
- * a rail on the way somewhere else does not set off a chain of them.
- */
 const OPEN_DELAY = 550
-/**
- * The grace period on the way out. The panel is drawn over the card it belongs
- * to, so travelling from one to the other necessarily leaves the card first;
- * without a delay the panel would close under the pointer that was reaching it.
- */
 const CLOSE_DELAY = 140
 
 const PANEL_WIDTH = 348
@@ -72,15 +62,6 @@ const DEFAULT_PREVIEW_DEPENDENCIES: PreviewDependencies = {
   played: useSetPlayed,
 }
 
-/**
- * The expanded-card layer. One panel exists for the whole app: it is positioned
- * over whichever card the pointer is resting on, rather than each card owning a
- * copy that only differs in where it sits.
- *
- * It lives in a portal because the rails clip their overflow — an expansion
- * drawn inside the scroller would be cut off at the row's edge, which is the
- * whole thing it exists to escape.
- */
 export function PreviewProvider({
   children,
   dependencies = DEFAULT_PREVIEW_DEPENDENCIES,
@@ -92,11 +73,6 @@ export function PreviewProvider({
   dependencies?: PreviewDependencies
   enabled?: boolean
   delay?: number
-  /**
-   * Where the panel portals. Defaults to `document.body`; the Appearance
-   * settings' live preview aims this at its own draft-themed host instead, so
-   * the panel is re-skinned by the unsaved choices like the shelf beneath it.
-   */
   container?: HTMLElement | null
 }) {
   const location = useLocation()
@@ -161,10 +137,6 @@ export function PreviewProvider({
     clearTimers()
   }, [clearTimers, enabled, route])
 
-  // Anything that moves the page moves the card out from under the panel, and
-  // the panel has no way to follow: its position was resolved from a rect taken
-  // once. Closing is the honest response — re-anchoring mid-scroll reads as the
-  // panel chasing the pointer.
   useEffect(() => {
     if (!target) return
     const close = () => {
@@ -174,8 +146,6 @@ export function PreviewProvider({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") close()
     }
-    // Capture: the rails and the content pane scroll, not the window, and a
-    // scroll event from those does not bubble.
     window.addEventListener("scroll", close, true)
     window.addEventListener("resize", close)
     window.addEventListener("keydown", onKeyDown)
@@ -235,15 +205,6 @@ function PreviewPanel({
   const pressStartedInside = useRef(false)
   const [height, setHeight] = useState(ESTIMATED_HEIGHT)
 
-  // The panel's height depends on how much metadata the item turns out to have,
-  // so it can only be centred once it exists. The first measurement happens in a
-  // layout effect, before the browser paints, which is why the correction from
-  // the estimate is never seen.
-  //
-  // An observer rather than a re-measure on every render: the height moves again
-  // when the detail record lands and once more if a logo fails and gives way to
-  // the typeset title, and neither of those is a value this could list as a
-  // dependency.
   useLayoutEffect(() => {
     const node = panel.current
     if (!node) return
@@ -259,17 +220,9 @@ function PreviewPanel({
 
   const { left, top } = usePanelPosition(rect, height)
 
-  // Everything past the summary — genres, the overview, the series' own logo —
-  // lives on the detail record. It is fetched only once a card has actually
-  // been rested on, and the cache keeps it for the next hover and for the
-  // detail page the panel leads to.
   const { data: detail } = dependencies.item(item.id)
   const isSeries = item.kind === "Series"
   const nextUp = dependencies.nextUp(item.id, isSeries)
-  // The title treatment that belongs over an episode still is the *show's*, not
-  // the episode's — episodes essentially never carry one of their own. Disabled
-  // for everything else, so this costs a request only on a Continue Watching
-  // card, and only the first time one is rested on.
   const series = dependencies.item(item.kind === "Episode" ? (item.seriesId ?? undefined) : undefined)
 
   const play = dependencies.play()
@@ -299,10 +252,6 @@ function PreviewPanel({
   return (
     <div
       ref={panel}
-      // The stretched Link supplies the panel's details semantics without
-      // nesting the action buttons inside an interactive element. This fallback
-      // handler also makes clicks dispatched directly at any background node
-      // behave like that link; controls stop before reaching it.
       onClick={(event) => {
         const element = event.target instanceof Element ? event.target : null
         if (event.defaultPrevented || element?.closest("a, button")) return
@@ -311,11 +260,6 @@ function PreviewPanel({
       onPointerDown={() => {
         pressStartedInside.current = true
       }}
-      // A click that straddles the panel's appearance never fires anywhere: the
-      // mousedown targeted the card underneath, the mouseup targets the panel,
-      // and the browser resolves the click to their common ancestor — the body,
-      // outside both trees. That press began as a card click, and both the card
-      // and the panel background lead to the same details page, so honour it.
       onPointerUp={(event) => {
         const startedInside = pressStartedInside.current
         pressStartedInside.current = false
@@ -330,9 +274,6 @@ function PreviewPanel({
         pointerInside.current = false
         if (!focusInside.current) onRelease()
       }}
-      // A press focuses the control it lands on, and Chromium only sometimes
-      // blurs a toggle that its pending request disables. Only keyboard focus
-      // may keep the panel open after the pointer leaves.
       onFocusCapture={() => {
         focusInside.current = !pressStartedInside.current
         if (focusInside.current) onHold()

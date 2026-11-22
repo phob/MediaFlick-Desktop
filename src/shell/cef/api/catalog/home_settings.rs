@@ -55,9 +55,6 @@ pub(super) fn resolved_home(services: &Services) -> Result<ResolvedHome, ApiResp
     })
 }
 
-/// What Reset restores. Saved elements the fresh defaults lack are kept,
-/// because a save must hold every current element: a library shelf joins the
-/// library block, on, and any other is appended, off.
 fn home_defaults(
     settings: &HomeSettings,
     genres: &[String],
@@ -107,8 +104,6 @@ fn library_block_end(elements: &[HomeElement]) -> usize {
         .map_or(0, |index| index + 1)
 }
 
-/// A read never writes: library shelves reach accounts.json with the user's
-/// next Home save.
 fn reconcile_home_elements(
     settings: &mut HomeSettings,
     genres: &[String],
@@ -203,7 +198,6 @@ struct HomeElementView {
     category: HomeElementCategory,
 }
 
-/// The group Home settings lists an element under.
 #[derive(Serialize, ts_rs::TS)]
 enum HomeElementCategory {
     #[serde(rename = "Built-in")]

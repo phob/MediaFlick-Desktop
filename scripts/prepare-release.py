@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-"""Prepare a changelog-driven release, or check that a checkout holds one.
-
-Run without a mode in the release-notes PR: it promotes CHANGELOG.md's
-[Unreleased] section to the requested version, opens a fresh [Unreleased]
-section, updates the Cargo.toml and Cargo.lock package versions, and writes the
-release notes.
-
-`--check` is what the release workflow runs on the merged result: it changes no
-release file, fails unless the checkout already is that release, and writes the
-same notes. `--test-draft` only stamps a prerelease version for a disposable
-build.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -32,8 +19,6 @@ LOCK_VERSION_RE = re.compile(r'(\[\[package\]\]\s*\nname = "mediaflick-desktop"\
 RELEASE_FILE = "release.toml"
 RELEASE_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
-# library.db's schema counts as released once its first prerelease is published, so that
-# release carries the schema frozen as fixtures/library-db/released/schema-<N>.sql.
 SCHEMA_SOURCE = Path("src/library/db/migrate.rs")
 SCHEMA_VERSION_RE = re.compile(r"^pub const SCHEMA_VERSION: i32 = (\d+);$", re.MULTILINE)
 RELEASED_SCHEMAS = Path("fixtures/library-db/released")
@@ -44,7 +29,6 @@ Action = Literal["none", "prerelease", "latest"]
 
 @dataclass(frozen=True)
 class Release:
-    """What release.toml says: the version main is at and the channel it ships on."""
 
     version: str
     channel: Channel
@@ -151,7 +135,6 @@ def promote_changelog(version: str, release_date: str) -> str:
 
 
 def package_version(cargo_toml: str) -> re.Match[str]:
-    """The `version` line of Cargo.toml's [package] section, with the version as group 1."""
     package_match = re.search(r"(?m)^\[package\]\s*$", cargo_toml)
     if not package_match:
         raise SystemExit("Cargo.toml is missing a [package] section.")
@@ -164,7 +147,6 @@ def package_version(cargo_toml: str) -> re.Match[str]:
 
 
 def lock_version(cargo_lock: str) -> re.Match[str]:
-    """Cargo.lock's entry for this package, with the version as group 2."""
     match = LOCK_VERSION_RE.search(cargo_lock)
     if not match:
         raise SystemExit("Cargo.lock is missing the mediaflick-desktop package entry.")
@@ -222,7 +204,6 @@ def current_release() -> Release:
 
 
 def release_at(rev: str) -> Release | None:
-    """release.toml as committed at `rev`, or None when that commit has none."""
     commit = git("rev-parse", "--verify", "--end-of-options", f"{rev}^{{commit}}").strip()
     if not git("ls-tree", "--name-only", commit, "--", RELEASE_FILE).strip():
         return None
@@ -234,11 +215,6 @@ def write_release(release: Release) -> None:
 
 
 def transition(before: Release | None, after: Release) -> Action:
-    """The release a merge from `before` to `after` asks for; exits on a change no merge may make.
-
-    A new version ships first as a prerelease, and only a change of the channel alone makes
-    that version Latest. Anything else, an unchanged file included, releases nothing.
-    """
     if before is None or before == after:
         return "none"
     if version_key(after.version) > version_key(before.version):
@@ -253,7 +229,6 @@ def transition(before: Release | None, after: Release) -> Action:
 
 
 def plan_release(base: str) -> tuple[Action, Release]:
-    """What merging this checkout into `base` releases; exits unless the merge is allowed."""
     after = current_release()
     cargo_version = package_version(Path("Cargo.toml").read_text(encoding="utf-8")).group(1)
     if after.version != cargo_version:
@@ -265,7 +240,6 @@ def plan_release(base: str) -> tuple[Action, Release]:
 
 
 def check_prepared(version: str) -> str:
-    """The notes of a release the checkout already holds; exits when it does not hold it."""
     hint = f"Merge the release-notes PR that runs `prepare-release.py --version {version}` first."
     if not Path(RELEASE_FILE).is_file():
         raise SystemExit(f"{RELEASE_FILE} is missing, so it does not release {version}. {hint}")
@@ -294,7 +268,6 @@ def check_prepared(version: str) -> str:
 
 
 def check_schema_frozen(version: str) -> None:
-    """Exits unless the library.db schema this release creates is frozen."""
     if not SCHEMA_SOURCE.is_file():
         raise SystemExit(f"{SCHEMA_SOURCE} is missing, so the library.db schema {version} creates is unknown.")
     match = SCHEMA_VERSION_RE.search(SCHEMA_SOURCE.read_text(encoding="utf-8"))

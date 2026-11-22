@@ -1,17 +1,3 @@
-//! Background synchronisation of the catalog index.
-//!
-//! One controlled worker owns the whole cycle: a resumable catalog fill, an
-//! incremental `DateCreated` sweep, and a periodic identity/user-data/deletion
-//! pass. It idles until credentials exist, resumes durable offsets after
-//! restart, and pauses when the server rejects the token.
-//!
-//! Jellyfin offers no "changed since" ordering — `DateLastSaved` is a valid
-//! `ItemFields` value but not a valid `ItemSortBy` one, and servers return it
-//! empty. So the incremental sweep catches *new* items via `DateCreated`
-//! (which also covers a replaced file, since Jellyfin re-creates the item with
-//! a fresh id), and in-place metadata edits are picked up by the periodic
-//! re-bootstrap instead.
-
 mod children;
 mod cycle;
 mod libraries;
@@ -39,10 +25,6 @@ pub(super) const IDENTITY_SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60
 pub(super) const REBOOTSTRAP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 pub(super) const IDENTITY_PAGE_SIZE: i64 = 1_000;
 pub(super) const MAX_INCREMENTAL_PAGES: usize = 100;
-/// The same valve for the two full passes, which end on the server's own idea
-/// of where the library stops. Both caps sit far above any real library — a
-/// server that reaches one is repeating pages or miscounting, not answering
-/// honestly — so they only bound a runaway, never a normal cycle.
 pub(super) const MAX_BOOTSTRAP_PAGES: usize = 1_000;
 pub(super) const MAX_IDENTITY_PAGES: usize = 1_000;
 
@@ -62,10 +44,6 @@ pub(super) const META_LAST_BOOTSTRAP: &str = "sync.bootstrap_at";
 pub(super) const META_LAST_SYNC: &str = "sync.completed_at";
 pub(super) const META_LATEST_FAILURE: &str = "sync.latest_failure";
 
-/// Durable progress for the resumable initial cache fill.
-///
-/// Both values live in SQLite rather than in the worker handle so a restarted
-/// app can report the same progress before the next page request begins.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapProgress {
@@ -76,11 +54,6 @@ pub struct BootstrapProgress {
     pub total: Option<i64>,
 }
 
-/// The catalog becomes usable after its first successful page commit.
-///
-/// This only reports progress; the sync cycle reads its own state fallibly.
-/// An unreadable database is logged and reported as a catalog that is not
-/// ready yet.
 pub fn bootstrap_progress(library: &Library) -> BootstrapProgress {
     read_bootstrap_progress(library).unwrap_or_else(|error| {
         tracing::warn!(target: "library.sync", "could not read catalog progress: {error}");
@@ -98,8 +71,6 @@ fn read_bootstrap_progress(library: &Library) -> rusqlite::Result<BootstrapProgr
     })
 }
 
-/// The daily re-download keeps the titles it replaces, so only the first one
-/// leaves a library short of titles.
 pub fn first_catalog_download(library: &Library) -> rusqlite::Result<bool> {
     Ok(!flag(library, META_BOOTSTRAP_DONE)? && library.meta(META_LAST_BOOTSTRAP)?.is_none())
 }
@@ -142,13 +113,6 @@ impl SyncReport {
     }
 }
 
-/// What set this cycle off.
-///
-/// The distinction only matters to the identity sweep. Its hourly gate is a
-/// bandwidth budget for the *timer*, not a correctness rule, and it is the only
-/// thing that notices a deletion — so an explicit ask has to be able to skip it.
-/// Without that, pressing refresh after deleting something on the server does
-/// nothing observable until the hour is up, which reads as a broken button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trigger {
     Scheduled,
@@ -301,11 +265,6 @@ impl SyncHandle {
         }
     }
 
-    /// Asks for a cycle as soon as possible: sign-in, the refresh button, or an
-    /// eviction that proved the cache is behind.
-    ///
-    /// The resulting cycle runs as [`Trigger::Requested`], so it also reconciles
-    /// deletions instead of waiting out the identity sweep's hourly gate.
     pub fn request(&self) {
         if let Ok(mut flags) = self.signal.flags.lock() {
             flags.requested = true;
@@ -423,14 +382,10 @@ pub(super) fn commit<T>(
     session.commit_if_current(scope, || ApiError::Cancelled, work)
 }
 
-/// Opens an answer inside a [`commit`] closure. The closure only runs while
-/// the account is current, so a stale answer here is a cancelled sync.
 pub(super) fn opened<T>(live: &Live, scoped: Scoped<T>) -> Result<T, ApiError> {
     live.open(scoped).map_err(|Stale| ApiError::Cancelled)
 }
 
-/// Fetches one page of a walk and opens it at once, because the walk reads
-/// each page before its commit; that commit checks the account again.
 pub(super) fn fetch_page<T>(
     session: &Session,
     scope: &SessionScope,
@@ -441,22 +396,13 @@ pub(super) fn fetch_page<T>(
         .map_err(|_stale| ApiError::Cancelled)
 }
 
-/// How an optional sync step ended. The cycle goes on after `Skipped` and
-/// `Failed` and keeps what is stored; the next cycle tries the step again.
 #[derive(Debug)]
 pub(super) enum Step<T> {
-    /// The step ran to the end and stored its answer.
     Settled(T),
-    /// The server's answer could not be trusted as complete, so the step
-    /// stored nothing.
     Skipped,
-    /// The server could not answer.
     Failed,
 }
 
-/// Runs an optional step. A failure the cycle has to stop for still ends it:
-/// a rejected session, a cancelled cycle, and a local storage failure, which
-/// no later step can work around and which the user has to see.
 pub(super) fn optional<T>(
     step: &str,
     result: Result<Step<T>, ApiError>,

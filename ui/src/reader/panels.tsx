@@ -104,8 +104,6 @@ function useInitialFocus<T extends HTMLElement = HTMLDivElement>(entry: string |
   const list = useRef<T>(null)
   useEffect(() => {
     let frame = 0
-    // A Radix slider hides its thumb until its second render, and a hidden
-    // thumb refuses focus, so the focus is tried again for a few frames.
     const attempt = (left: number) => {
       const rows = [...(list.current?.querySelectorAll<HTMLElement>(ROW) ?? [])]
       focusRow(rows.find((row) => row.dataset.readerEntry === entry) ?? rows[0])

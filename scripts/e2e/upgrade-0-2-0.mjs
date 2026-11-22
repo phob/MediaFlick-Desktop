@@ -1,51 +1,3 @@
-// End-to-end proof that updating from MediaFlick 0.2.0, the first release
-// with a library.db, keeps a user's data, that the real 0.2.0 still runs on
-// what this build left, and that this build then takes the profile back.
-// Linux only.
-//
-//   just upgrade-e2e-0-2-0 --account https://jellyfin.example.com --profile DIR
-//   node scripts/e2e/upgrade-0-2-0.mjs --account SERVER --profile DIR [--only id,id] [--negative-control NAME]
-//
-// --profile is a profile the released 0.2.0 AppImage left, in the verify
-// layout (config/mediaflick-desktop, data/mediaflick-desktop), signed in to
-// --account's cached session (`just verify-login SERVER`) on the same device.
-// It holds a real server's library, so it never enters the repository; the
-// sanitized part of one is frozen in fixtures/. Make one with the released
-// AppImage as fixtures/library-db/README.md says.
-//
-// Each start of an app on the profile is checked in two steps:
-//
-// 1. The same binary first opens a copy of the profile with --library-stats,
-//    which runs the real `Library::open`, so the migration, and exits before
-//    any sync could refill a table. Every table of that copy must keep every
-//    row, value for value, projected onto the columns it had (pre-sync.json).
-// 2. The binary then starts on the profile itself through verify-mediaflick
-//    (`drives/upgrade-0-2-0.mjs`), which checks the session, the user's files
-//    and choices in the UI, and a completed sync.
-//
-// Scenarios: 1-update (this build on the 0.2.0 profile), 2-back (the real
-// 0.2.0 on what 1-update left), 3-forward (this build again on what 2-back
-// left), 4-newer-refused (this build on the profile stamped with a newer
-// schema, with real WAL frames beside it), 5-migration-failed (stamped
-// with schema 0, so the schema change fails and rolls back) and 6-in-use (the
-// profile as 0.2.0 left it, with another process holding a write lock on
-// library.db, so the open fails with SQLite's BUSY): this build must
-// refuse the file once, leave it as it was, and show the reason on a startup
-// error screen instead of sign-in; Open data folder must reach xdg-open (a
-// stand-in first on PATH records what it is given), and Recreate library must
-// move the file aside, open the services on a new one in the same window and
-// sync it from --account's server after a Quick Connect sign-in, as a new
-// device the session revokes afterwards. For 6-in-use it must offer no
-// Recreate library and refuse one asked for, because moving a database
-// another program has open can corrupt it. Every expectation comes from the profile as the previous app
-// left it (before.json), never from the code under test. The artifact is
-// build/e2e/upgrade-0-2-0/report.json, with each scenario's snapshots,
-// screenshots and logs next to it. Exits non-zero when a scenario fails.
-//
-// --only picks scenarios; one that continues from another's profile brings it
-// along. --negative-control NAME passes through to each session (see the verify
-// skill's "Negative control"); pick the scenario with --only. Its drive must
-// then fail on a check.
 import { execFileSync, spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { copyFileSync, cpSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
@@ -63,7 +15,6 @@ const out = path.join(root, "build/e2e/upgrade-0-2-0")
 const RELEASED = {
   release: "v0.2.0",
   name: "MediaFlickDesktop-v0.2.0-linux-x86_64.AppImage",
-  // The asset as published on 2026-11-17, matching GitHub's asset digest.
   sha256: "f10515096ab2e5fe34b8c4f8140a96b147c5fef3ae52cc85d8ffd2bcaac71772",
   schema: 23,
 }
@@ -131,9 +82,6 @@ const SCENARIOS = [
   {
     id: "5-migration-failed",
     title: "A schema change that fails and rolls back: refused once, left as it was, the reason on a startup error screen",
-    // No released step from 23 exists yet to fail, so the file claims schema
-    // 0 while it holds 0.2.0's tables: creating the schema fails on the first
-    // table that is already there, and the change rolls back.
     run: () => refusedStart("5-migration-failed", {
       schema: 0,
       kind: "unusable",
@@ -152,21 +100,11 @@ const SCENARIOS = [
       held: true,
       says: "SQLite's \"database is locked\", that another program is using library.db, and to restart MediaFlick once it is closed",
       patterns: ["library\\.db: database is locked\\. Another program is using library\\.db: close it, then restart MediaFlick"],
-      // --library-stats is not the startup screen: it gives SQLite's reason alone.
       stats: { says: "SQLite's \"database is locked\"", patterns: ["library\\.db: database is locked"] },
     }),
   },
 ]
 
-// This build on a copy of the 0.2.0 profile whose library.db is stamped
-// `schema`, which it must refuse once with a reason matching `patterns`,
-// leave as it was, and show on the startup error screen, refused as `kind`;
-// then the user's way out of it. `unmergedWal` leaves a transaction in
-// library.db-wal, as a crash would, so the move has sidecars to carry. Only a
-// refusal before the open writes can keep it: the failed schema change's
-// writable connection merges the WAL when it closes.
-// `held` runs the app, and its --library-stats check, beside
-// hold-library-lock.mjs, which holds library.db with a write lock.
 async function refusedStart(id, { schema, kind, unmergedWal = false, held = false, says, patterns, stats: statsReason = { says, patterns }, leavesOut, logKeeps }) {
   const profile = copyProfile(original, path.join(out, id, "profile"))
   const { config, data } = appDirs(profile)
@@ -207,7 +145,6 @@ async function refusedStart(id, { schema, kind, unmergedWal = false, held = fals
 
 const unknown = only ? [...only].filter((id) => !SCENARIOS.some((scenario) => scenario.id === id)) : []
 if (unknown.length) throw new Error(`--only names no scenario ${unknown.join(", ")}; the scenarios are ${SCENARIOS.map((scenario) => scenario.id).join(", ")}`)
-// A scenario that continues from another's profile brings that one along.
 for (const scenario of [...SCENARIOS].reverse()) if (only?.has(scenario.id) && scenario.after) only.add(scenario.after)
 
 rmSync(out, { recursive: true, force: true })
@@ -230,11 +167,6 @@ async function releasedAppImage() {
   return file
 }
 
-// A write lock on library.db from another process, as another program would
-// hold it. `around` holds it on the script's copy while `work` runs; `session`
-// is the environment that starts the app through a wrapper which takes the
-// lock on the session's own copy first and lets go when the app is gone or
-// the drive writes MEDIAFLICK_VERIFY_HOLD_RELEASE.
 function holdLock(dir) {
   mkdirSync(dir, { recursive: true })
   const holder = path.join(root, "scripts/e2e/hold-library-lock.mjs")
@@ -272,10 +204,6 @@ function holdLock(dir) {
   }
 }
 
-// Leaves one committed transaction in library.db-wal, unmerged, with its
-// -shm: written with automatic checkpoints off, and the three files copied
-// while the writer is still open, since closing it merges the WAL. `staging`
-// holds the copies.
 function leaveUnmergedWal(dataDir, staging) {
   const files = ["library.db", "library.db-wal", "library.db-shm"]
   mkdirSync(staging, { recursive: true })
@@ -291,7 +219,6 @@ function leaveUnmergedWal(dataDir, staging) {
   rmSync(staging, { recursive: true, force: true })
 }
 
-// Opens library.db in place, to change a copy the script owns.
 function writeDatabase(dataDir, work) {
   const db = new DatabaseSync(path.join(dataDir, "library.db"))
   try {
@@ -301,9 +228,6 @@ function writeDatabase(dataDir, work) {
   }
 }
 
-// Copies a profile's app dirs, with no token left in its library.db: each
-// session puts the cached token back into its own disposable copy. The app's
-// log is left behind, so each start's log holds only that start.
 function copyProfile(from, to) {
   const source = appDirs(from)
   const target = appDirs(to)
@@ -311,7 +235,6 @@ function copyProfile(from, to) {
   cpSync(source.config, target.config, { recursive: true, filter: (file) => !/mediaflick-desktop\.log(\.\d+)?$/.test(file) })
   cpSync(source.data, target.data, { recursive: true })
   writeDatabase(target.data, (db) => {
-    // Overwrite the freed bytes too, or the token would stay in the file.
     db.exec("PRAGMA secure_delete = ON")
     db.exec("UPDATE credentials SET token = NULL WHERE id = 1")
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -319,7 +242,6 @@ function copyProfile(from, to) {
   return to
 }
 
-// What the profile holds: library.db row by row, and the user's files.
 async function snapshot(profile, columnsFrom = null) {
   const { config, data } = appDirs(profile)
   const database = await readDatabaseCopy(data, (db) => {
@@ -328,8 +250,6 @@ async function snapshot(profile, columnsFrom = null) {
     const virtual = db.prepare("SELECT name FROM sqlite_master WHERE sql LIKE 'CREATE VIRTUAL TABLE%'").all().map((row) => row.name)
     for (const name of names.filter((table) => !virtual.some((owner) => table.startsWith(`${owner}_`)))) {
       const columns = db.prepare(`SELECT name FROM pragma_table_xinfo('${name}') WHERE hidden = 0`).all().map((row) => row.name)
-      // Against an earlier snapshot, rows are compared on the columns that
-      // snapshot had: a migration may add a column, never drop one.
       const held = columnsFrom?.tables[name]?.columns
       const compared = held && held.every((column) => columns.includes(column)) ? held : columns
       tables[name] = { columns, ...rowsDigest(db, name, compared) }
@@ -358,7 +278,6 @@ function rowsDigest(db, table, columns) {
   return { rows: rows.length, digest: sha256(rows.join("\n")) }
 }
 
-// The choices the 0.2.0 user made, as the JSON files record them.
 function intent(config, credentials, customArt) {
   const read = (name) => JSON.parse(readFileSync(path.join(config, name), "utf8"))
   const mine = (document) => document.accounts.find((entry) => entry.serverId === credentials.server_id && entry.userId === credentials.user_id)
@@ -382,7 +301,6 @@ function intent(config, credentials, customArt) {
   }
 }
 
-// Checks that `after` kept everything `before` had in library.db.
 function compare(before, after, schema) {
   const checks = []
   const check = (ok, message, detail) => checks.push({ ok: Boolean(ok), message, ...(detail === undefined ? {} : { detail }) })
@@ -399,8 +317,6 @@ function compare(before, after, schema) {
   return checks
 }
 
-// One start of `binary` with --library-stats on a copy of `profile`: the real
-// open, migration included, and an exit before any network or sync.
 async function openBeforeSync(id, binary, profile, before, schema) {
   const dir = path.join(out, id, "pre-sync")
   const copy = copyProfile(profile, path.join(dir, "profile"))
@@ -459,7 +375,6 @@ function wrapped(command, env = {}, timeoutS = 900) {
     const chunks = []
     child.stdout.on("data", (chunk) => chunks.push(chunk))
     child.stderr.on("data", (chunk) => chunks.push(chunk))
-    // Daemons the wrapper's session bus started can hold the pipes open after it exits.
     child.once("exit", (code) => {
       child.stdout.destroy()
       child.stderr.destroy()
@@ -468,7 +383,6 @@ function wrapped(command, env = {}, timeoutS = 900) {
   })
 }
 
-// One verify-mediaflick session; its evidence is build/verify/<run id>.
 async function session(id, drive, args, env, timeoutS) {
   const runId = `upgrade-0-2-0-${id}-${stamp}`
   const control = options["negative-control"] ? ["--negative-control", options["negative-control"]] : []
@@ -480,7 +394,6 @@ async function session(id, drive, args, env, timeoutS) {
   return { runId, code, evidence }
 }
 
-// A session's result for the report, with its evidence copied next to it.
 function collect(id, run, checksFile) {
   const dir = path.join(out, id)
   mkdirSync(dir, { recursive: true })
@@ -503,7 +416,6 @@ function collect(id, run, checksFile) {
   }
 }
 
-// Takes the profile a --keep-profile session left, without its token.
 function keptProfile(run, to) {
   const kept = JSON.parse(readFileSync(path.join(run.evidence, "pids.json"), "utf8")).profile
   copyProfile(kept, to)
@@ -534,7 +446,6 @@ for (const [field, key] of [["server_id", "serverId"], ["user_id", "userId"], ["
 }
 report.profile = { source: path.resolve(options.profile), copy: path.relative(root, original), userVersion: start.userVersion, rows: summary(start).rows, intent: start.intent }
 
-// One start of a binary on `profile`: the pre-sync open, then the UI session.
 async function startOn(id, { binary, profile, phase, schema, args = [] }) {
   const before = await snapshot(profile)
   const beforeFile = path.join(out, id, "before.json")
@@ -600,7 +511,6 @@ function scanForToken(dir, token) {
   return found
 }
 
-// What Linux cannot run, for someone on Windows or a Mac, step by step.
 function OUTSTANDING() {
   return [
     {

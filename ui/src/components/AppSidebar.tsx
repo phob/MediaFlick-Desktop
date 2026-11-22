@@ -186,8 +186,6 @@ export function LibrarySyncProgress() {
   )
 }
 
-// The open menu holds the hover sidebar expanded: as a modal menu it disables
-// pointer events outside itself, so the sidebar sees the pointer leave.
 function UserMenu({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
   const { data: status } = useStatus()
   const logout = useLogout()

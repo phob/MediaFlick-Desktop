@@ -2,11 +2,6 @@ import { useSeerrPersonCredits, useSeerrStatus } from "@/lib/seerr-queries"
 import { useStatus } from "@/lib/session-queries"
 import { useCompanionCapabilities } from "@/lib/companion"
 
-/**
- * Everything both cast surfaces (the Discover row and the proven server
- * extras) need before person credits may be requested, and the one phase the
- * UI should describe while they wait.
- */
 export type CastCreditsPhase =
   | "checking-seerr"
   | "seerr-error"
@@ -39,9 +34,6 @@ export function useCastCredits({
     !companionProvidesSeerr || companion.has("seerr-person-discovery")
   const linked = seerr.data?.linked ?? false
   const catalogComplete = app.data?.catalogComplete ?? false
-  // With an exact Jellyfin person id the backend verifies every Seerr credit
-  // against the live server relation. Without one, wait for the progressive
-  // catalog to finish so an unseen local title is never offered as a request.
   const availabilitySafe = jellyfinId !== null || catalogComplete
   const credits = useSeerrPersonCredits(
     tmdbId,

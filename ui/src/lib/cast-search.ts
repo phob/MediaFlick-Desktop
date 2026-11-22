@@ -49,11 +49,6 @@ function mediaKey(result: Pick<SeerrResult, "mediaType" | "tmdbId">) {
   return `${result.mediaType}:${result.tmdbId}`
 }
 
-/**
- * Local titles belong to the complete Jellyfin section, never Discover. If a
- * malformed provider response repeats one, any owned copy suppresses the whole
- * key so another copy cannot misleadingly offer a request.
- */
 export function castDiscoverResults(results: SeerrResult[] | undefined) {
   if (!results) return undefined
   const locallyAvailable = new Set(

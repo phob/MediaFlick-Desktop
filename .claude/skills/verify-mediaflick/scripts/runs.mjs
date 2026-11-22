@@ -1,8 +1,3 @@
-// Disposable profiles of verify runs, live or left behind. Shared by the
-// doctor and cleanup. A profile is named
-//   <tmp>/mediaflick-verify-<run-id>-<session-pid>-<random>
-// so a run's liveness is a question about one PID, even across worktrees.
-
 import { readdirSync, statSync } from "node:fs"
 import path from "node:path"
 import { PROFILE_PREFIX, isAppProcess, listProcesses, profileParent } from "./platform.mjs"

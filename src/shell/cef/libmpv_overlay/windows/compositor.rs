@@ -67,8 +67,6 @@ impl Compositor {
         if shared_handle.is_null() {
             return Ok(());
         }
-        // CEF owns the handle. We open a D3D reference during this callback
-        // and deliberately never close the borrowed handle itself.
         if self.gpu.is_none() {
             self.gpu = Some(GpuDevice::open_for_shared_texture(shared_handle)?);
         }

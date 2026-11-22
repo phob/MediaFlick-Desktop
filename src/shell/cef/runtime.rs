@@ -56,13 +56,7 @@ wrap_app! {
             if libmpv_overlay::is_configured(&self.config.settings) {
                 command_line.append_switch_with_value(Some(&CefString::from("ozone-platform")),
                     Some(&CefString::from("x11")));
-                // This adapter consumes software OnPaint frames, not DMA-BUF
-                // textures. GPU compositing otherwise retains large offscreen
-                // render targets just to read them back into those CPU frames.
                 command_line.append_switch(Some(&CefString::from("disable-gpu-compositing")));
-                // The X11 adapter forwards mouse input to a windowless browser.
-                // Without a Chromium-owned window, device discovery reports no
-                // pointer and incorrectly activates the UI's touch fallbacks.
                 command_line.append_switch_with_value(
                     Some(&CefString::from("blink-settings")),
                     Some(&CefString::from(
@@ -73,9 +67,6 @@ wrap_app! {
 
             #[cfg(target_os = "windows")]
             {
-                // CEF's separate Windows GPU process can loop through
-                // STATUS_BREAKPOINT exits with GL disabled. Keeping the GPU
-                // service in-process avoids that crash loop for both browser modes.
                 command_line.append_switch(Some(&CefString::from("in-process-gpu")));
                 command_line.append_switch_with_value(
                     Some(&CefString::from("use-angle")),
@@ -357,9 +348,6 @@ wrap_window_delegate! {
             update_webui_window_settings(self.state.as_ref(), window.as_deref(), new_bounds);
         }
 
-        /// macOS only: the title bar's close, minimize and zoom buttons. CEF's
-        /// own default gives a framed window these, but cef-rs answers 0 for
-        /// every callback a delegate leaves out.
         fn with_standard_window_buttons(&self, _window: Option<&mut Window>) -> i32 {
             1
         }

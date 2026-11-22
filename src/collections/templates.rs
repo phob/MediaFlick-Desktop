@@ -94,8 +94,6 @@ pub struct CollectionTemplate {
     pub cadence: RefreshCadence,
 }
 
-// This independently authored manifest contains no copied Silo Server text,
-// source, or artwork.
 pub fn catalog() -> Vec<CollectionTemplate> {
     let mut templates = movie_discover_templates();
     let series = templates

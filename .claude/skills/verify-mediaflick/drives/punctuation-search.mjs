@@ -1,8 +1,3 @@
-// A search made only of punctuation (`!!`), typed into the sidebar search as a
-// user would, against a word with punctuation (`night!!`): the first shows no
-// results, not an error, and the second still finds titles. Read-only
-// against the demo server.
-//   just verify punctuation-search
 export default async function punctuationSearch(ctx) {
   await ctx.signIn({ server: "https://demo.jellyfin.org/stable", username: "demo" })
   await ctx.until(async () => (await ctx.pathname()) === "/", "Home")

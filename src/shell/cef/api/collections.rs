@@ -76,7 +76,6 @@ fn active_account(services: &Arc<Services>) -> Result<AccountKey, ApiResponse> {
     active_scope(services).map(|scope| scope.account().clone())
 }
 
-/// `/api/collections/jellyfin`: the server's own box sets.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct JellyfinCollections {
     collections: Vec<JellyfinCollectionSummary>,
@@ -92,7 +91,6 @@ struct JellyfinCollectionSummary {
     item_count: Option<i64>,
 }
 
-/// `/api/collections/jellyfin/{id}`: one box set and its children.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct JellyfinCollectionDetail {
@@ -104,7 +102,6 @@ pub(super) struct JellyfinCollectionDetail {
     total_record_count: i64,
 }
 
-/// `/api/collections/artwork`: the staged custom poster's id.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct UploadedArtwork {
     id: String,

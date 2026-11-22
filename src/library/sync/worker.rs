@@ -32,11 +32,6 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
     let mut backoff = Duration::ZERO;
     let mut normal_deadline = Instant::now();
     let mut trigger = Trigger::Scheduled;
-    // A restored session with a usable catalog paints Home from SQLite. A cycle
-    // started beside it would commit pages and send change notifications that
-    // refetch Home while it is still loading, so the first cycle waits for the
-    // window instead. A catalog that is not ready yet gates the window itself
-    // and is never held.
     let mut startup_hold = (session.is_authenticated() && super::bootstrap_progress(library).ready)
         .then(|| Instant::now() + STARTUP_HOLD_MAX);
     loop {

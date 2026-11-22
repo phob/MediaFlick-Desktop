@@ -2,10 +2,6 @@ using System.Text.RegularExpressions;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-/// <summary>
-/// The one IMDb title-id rule used by ratings, identity mapping, and Seerr
-/// detail: "tt" followed by 5 to 12 digits, compared in lower case.
-/// </summary>
 internal static partial class ImdbIds
 {
     public static string? Normalize(string? value)

@@ -46,7 +46,6 @@ async function save(key: string, writer: Writer): Promise<void> {
   if (!writer.open && !writer.saving && (writer.stopped || !writer.pending) && writers.get(key) === writer) writers.delete(key)
 }
 
-/** Resolves once nothing is left to save for the book, so a reader opening it reads the place last kept. */
 export async function settled(account: string, itemId: string): Promise<void> {
   const key = writerKey(account, itemId)
   for (let writer = writers.get(key); writer && !writer.stopped && (writer.saving || writer.pending); writer = writers.get(key)) {

@@ -1,20 +1,3 @@
-// What Jellyfin keeps after the playback cases the `playback` drive does not
-// cover, read back from Jellyfin itself after each case:
-// - play-to-end: a movie plays to its end: played, resume point cleared.
-// - finish-episode: episode 1 plays to its end, episode 2 follows: episode 1
-//   played, Next Up moves to episode 2.
-// - stop-early: episode 2 played and stopped within its first seconds: not
-//   played, no resume point.
-// - sign-out (External mpv only; the Built-in player covers the page, so the
-//   user menu is out of reach while it plays): sign out while a movie plays,
-//   then sign in to the demo server: playback ends and nothing is reported
-//   once the other account is signed in.
-// A case that needs the end of a title sets the resume point 40 s before it in
-// Jellyfin first, as another client would; the app then plays the end itself.
-// Writes the test user's playstate and puts it back; signs both of the app's
-// tokens out.
-//   just verify playstate --account SERVER --signed-out --timeout 900 --log-level "debug,jellyfin.playstate=trace,playback=trace"
-// External mpv: add `--seed .claude/skills/verify-mediaflick/seeds/external-mpv`.
 const TAIL_S = 40
 const DEMO = { server: "https://demo.jellyfin.org/stable", username: "demo" }
 const RESUME = { role: "button", name: "Resume" }
@@ -84,8 +67,6 @@ async function playing(ctx, id, fromMs, description) {
   }
 }
 
-// The player bar shows its own Stop from 1536 px; narrower, Stop moves into
-// the overflow menu.
 async function stopFromBar(ctx) {
   const stop = { role: "button", name: "Stop" }
   const more = { role: "button", name: "More playback controls" }
@@ -128,9 +109,6 @@ async function playToEnd(ctx, movie, expectIn) {
   return { "play-to-end": { items: { [movie.id]: { name: movie.name, before, after } } } }
 }
 
-// Episode 1 plays to its end and episode 2 follows. Episode 2 is stopped at
-// once: under Xvfb, External mpv hangs on a second load in the same process
-// (see the segments drive), so stop-early plays it in a pass of its own.
 async function finishEpisode(ctx, { series, episodes: [first, second] }, integrated, expectIn) {
   const expect = expectIn("finish-episode")
   await ctx.setResumeOnServer(first.id, first.runtimeTicks - TAIL_S * 1e7)
@@ -141,7 +119,6 @@ async function finishEpisode(ctx, { series, episodes: [first, second] }, integra
   await ctx.press(RESUME)
   await playing(ctx, first.id, (before.positionS + 1) * 1000, "episode 1 playing from its resume point")
 
-  // Next episode follows on its own by default; with a countdown, Play now.
   const playNow = { role: "button", name: "Play now" }
   await ctx.until(async () => {
     const now = await ctx.player()
@@ -218,8 +195,6 @@ async function signOutWhilePlaying(ctx, movie, expectIn) {
 
 export default async function playstate(ctx) {
   if (!ctx.account?.signedOut) throw new Error("playstate needs --account SERVER --signed-out: the sign-out case revokes the app's own token")
-  // Without an audio device mpv ends every file with reason error instead of
-  // eof, even after playing it to the end.
   if (process.platform === "linux") await ctx.audioSink()
   await ctx.signIn({})
   ctx.revokeAppSessionAfterRun()
@@ -237,10 +212,6 @@ export default async function playstate(ctx) {
   await ctx.until(async () => (await ctx.mpv("idle-active")) === true, "mpv warm and idle")
 
   const failures = []
-  // Runs one pass of the app that covers the named cases and records each
-  // with its own checks. External mpv under Xvfb hangs on a second load after
-  // a stop in the same process (see the segments drive), so every pass after
-  // the first relaunches it for a fresh mpv.
   const run = async (names, body) => {
     if (!integrated && report.cases.length) {
       await ctx.relaunch()

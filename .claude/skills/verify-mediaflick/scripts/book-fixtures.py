@@ -1,22 +1,3 @@
-"""Builds the self-authored EPUB fixtures the `books` drive needs.
-
-    python3 -I .claude/skills/verify-mediaflick/scripts/book-fixtures.py OUT_DIR
-
-Writes three EPUBs and prints each file's SHA-256:
-
-- `MediaFlick Script Trap - MediaFlick Tests.epub`: every way a book could
-  try to run script. Each probe requests `/api/book-script-trap/<probe>` and
-  posts `book-script-ran:<probe>` to its parent, so a probe that ran shows up
-  in `app.log` (an unknown endpoint) and in the page.
-- `MediaFlick Nested Contents - MediaFlick Tests.epub`: twelve chapters under
-  a three-level table of contents.
-- `MediaFlick Fixed Layout - MediaFlick Tests.epub`: a pre-paginated EPUB of
-  eight pages.
-
-The files are deterministic (fixed timestamps), so the same hashes come out
-on every run.
-"""
-
 import hashlib
 import sys
 import zipfile

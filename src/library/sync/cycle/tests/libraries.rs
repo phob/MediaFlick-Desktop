@@ -333,8 +333,6 @@ fn the_first_sync_walks_each_library_once() {
     assert_eq!(steps(&requests), ["views", "incremental"]);
 }
 
-/// Makes the local database refuse one kind of write, as a full or
-/// read-only disk would.
 fn refuse(library: &Library, event: &str, table: &str) {
     library
         .db
@@ -347,8 +345,6 @@ fn refuse(library: &Library, event: &str, table: &str) {
         .expect("trigger");
 }
 
-// Rule (agent-proofing step 6): a failed storage write surfaces as a storage
-// error, not as a step that is merely not done yet.
 #[test]
 fn a_storage_failure_while_storing_the_library_list_fails_the_cycle() {
     let library = settled_library(&[("m1", "Movie")]);

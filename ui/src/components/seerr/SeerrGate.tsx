@@ -8,10 +8,6 @@ import { ApiError } from "@/lib/api"
 import { useSeerrStatus } from "@/lib/seerr-queries"
 import { useCompanionCapabilities } from "@/lib/companion"
 
-/**
- * Guards the Seerr views. The sidebar hides them without the Companion
- * capability, while deep links and unmapped users land on an explanation.
- */
 export function SeerrGate({ children }: { children: ReactNode }) {
   const companion = useCompanionCapabilities()
   const companionManaged = companion.has("seerr")

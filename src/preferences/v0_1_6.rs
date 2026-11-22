@@ -1,9 +1,3 @@
-//! MediaFlick 0.1.6, the last release before `settings.json`, kept the device
-//! settings in `config.json` and the mark-watched-next key in `input.json`,
-//! both in the same config directory. A device without `settings.json` starts
-//! from them; its next save writes `settings.json`, which is read from then
-//! on. These files are only ever read.
-
 use std::io;
 use std::path::Path;
 
@@ -12,8 +6,6 @@ use serde::de::DeserializeOwned;
 
 use super::{AppSettings, clean_binding};
 
-/// `input.json` as 0.1.6 wrote it (`MpvInputBindings::save` in
-/// v0.1.6:src/players/mpv/input.rs); a blank key means disabled.
 #[derive(Deserialize)]
 struct InputFile {
     bindings: InputBindings,
@@ -24,9 +16,6 @@ struct InputBindings {
     mark_watched_next: String,
 }
 
-/// The settings 0.1.6 left in `dir`, or defaults where a file is missing or
-/// unreadable. `config.json` goes through the same schema as `settings.json`,
-/// so its MPC-HC backend becomes the built-in player.
 pub(super) fn import(dir: &Path) -> AppSettings {
     let mut settings = read::<AppSettings>(&dir.join("config.json")).unwrap_or_default();
     if let Some(input) = read::<InputFile>(&dir.join("input.json")) {
@@ -35,10 +24,6 @@ pub(super) fn import(dir: &Path) -> AppSettings {
     settings
 }
 
-/// Whether `dir` holds 0.1.6's settings: the device ran 0.1.6, so it shows
-/// the one-time What's new after sign-in. 0.1.6 saved `config.json` whenever
-/// its window closed (`save_webui_window_settings` in
-/// v0.1.6:src/shell/cef/mod.rs); later builds never write that name.
 pub fn carries_0_1_6_data(dir: &Path) -> bool {
     dir.join("config.json").is_file()
 }

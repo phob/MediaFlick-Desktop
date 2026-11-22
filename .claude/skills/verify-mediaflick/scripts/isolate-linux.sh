@@ -1,15 +1,4 @@
 #!/usr/bin/env bash
-# Linux isolation wrapper for verify-mediaflick: runs one command against a
-# private Xvfb display, with no Wayland socket, audio server or session bus of
-# the user's, in its own session so everything it starts can be stopped.
-#
-#   bash isolate-linux.sh node session.mjs <drive> ...
-#
-# MEDIAFLICK_VERIFY_HARD_TIMEOUT (seconds, default 900) bounds the whole run.
-# MEDIAFLICK_VERIFY_SCREEN (WIDTHxHEIGHTxDEPTH, default 1920x1080x24) sizes
-# the Xvfb screen.
-# The child learns its display from MEDIAFLICK_VERIFY_ISOLATION and checks it
-# (and MEDIAFLICK_VERIFY_XVFB_PID) before launching anything.
 set -euo pipefail
 
 if [[ -n "${MEDIAFLICK_VERIFY_ISOLATION:-}" ]]; then
@@ -50,8 +39,6 @@ cleanup() {
     kill -TERM "$xvfb_pid" 2>/dev/null || true
     wait "$xvfb_pid" 2>/dev/null || true
   fi
-  # xdg-document-portal, which the private session bus can start, mounts a FUSE
-  # file system at runtime/doc; rm -rf cannot remove a mount point.
   if mountpoint -q "$work/runtime/doc" 2>/dev/null; then
     fusermount3 -u -z "$work/runtime/doc" 2>/dev/null || fusermount -u -z "$work/runtime/doc" 2>/dev/null || true
   fi
@@ -61,8 +48,6 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-# -displayfd picks a free display number and reports it, so parallel runs and
-# the user's own X server never collide. No TCP listener.
 mkfifo "$work/display"
 Xvfb -displayfd 3 -screen 0 "$screen" -nolisten tcp -noreset 3>"$work/display" 2>"$work/xvfb.log" &
 xvfb_pid=$!
@@ -77,21 +62,13 @@ export MEDIAFLICK_VERIFY_ISOLATION="linux-xvfb:$DISPLAY"
 export MEDIAFLICK_VERIFY_XVFB_PID="$xvfb_pid"
 export XDG_SESSION_TYPE=x11
 unset WAYLAND_DISPLAY WAYLAND_SOCKET XAUTHORITY DBUS_SESSION_BUS_ADDRESS PULSE_SERVER PIPEWIRE_REMOTE
-# The user's runtime dir holds their Wayland, PipeWire and Pulse sockets; a
-# private one keeps the app off the user's screen and speakers by default.
-# session.mjs also makes it the app's TMPDIR: its path is short enough for the
-# Unix sockets Chromium and mpv create there (107-byte limit).
 mkdir -m 700 "$work/runtime"
 export XDG_RUNTIME_DIR="$work/runtime"
-# The private session bus can start gvfsd, whose FUSE mount under the runtime
-# dir would make the final rm -rf fail with "Is a directory".
 export GVFS_DISABLE_FUSE=1
 
 runner=()
 if command -v dbus-run-session >/dev/null; then runner=(dbus-run-session --); fi
 
-# setsid makes the child a session and process-group leader, so cleanup can
-# stop the whole group (the app and CEF's helpers) with one signal.
 setsid timeout --kill-after=10 "$timeout_s" "${runner[@]}" "$@" &
 child=$!
 set +e

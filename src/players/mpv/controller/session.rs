@@ -92,9 +92,6 @@ impl ControllerState {
         };
         #[cfg(target_os = "linux")]
         if fullscreen == FullscreenBehavior::Fullscreen {
-            // Retire the opaque catalog and finish the delayed resume seek
-            // before growing video render targets. Seeking can replace the
-            // decoder's buffers; don't overlap that with fullscreen resizing.
             self.fullscreen_gate.pending = true;
             return;
         }
@@ -204,7 +201,6 @@ impl ControllerState {
         }
     }
 
-    /// Sends `loadfile` and returns the new playlist entry's id from its reply.
     fn send_loadfile(&self, launch: &PlaybackRequest) -> Result<Option<i64>, IpcCommandFailure> {
         let reply =
             self.send_mpv_command_with_timeout(loadfile_command(launch), IPC_COMMAND_TIMEOUT)?;
@@ -687,8 +683,6 @@ impl ControllerState {
         self.publish_snapshot();
     }
 
-    /// Stops mpv's current file when the controller stops tracking it without
-    /// a replacement, so it never keeps playing unreported.
     pub(super) fn stop_mpv(&self, why: &str) {
         tracing::info!(target: "playback", "stopping mpv: {why}");
         if let Err(error) = self.send_mpv_command(json!({ "command": ["stop"] })) {

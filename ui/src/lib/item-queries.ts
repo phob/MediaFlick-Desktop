@@ -27,12 +27,6 @@ export function useItemSynopsis(id: string | undefined, enabled = true) {
   })
 }
 
-/**
- * The live rich-metadata record — synopsis, cast, critic rating, tags,
- * studios — behind the instant cached row. Never persisted natively, so the
- * query cache is its only memory; a modest staleTime keeps detail navigation
- * from re-asking the server on every mount.
- */
 export function useItemAbout(id: string | undefined, enabled = true) {
   return useQuery({
     ...optionalIdQuery(id, queryKeys.itemAbout(id ?? ""), (id) => api.itemAbout(id), enabled),
@@ -45,11 +39,6 @@ export function useChildren(id: string | undefined, enabled = true) {
   return useQuery(optionalIdQuery(id, queryKeys.children(id ?? ""), (id) => api.children(id), enabled))
 }
 
-/**
- * Container and track detail. This is the one detail-page query that always
- * costs a request to the server — nothing about codecs is cached locally — so
- * it is only enabled for the kinds that have streams of their own.
- */
 export function useMediaInfo(id: string | undefined, enabled = true) {
   return useQuery({
     ...optionalIdQuery(id, queryKeys.media(id ?? ""), (id) => api.media(id), enabled),
@@ -58,7 +47,6 @@ export function useMediaInfo(id: string | undefined, enabled = true) {
   })
 }
 
-/** Saves source, audio, and subtitle together so indices never cross sources. */
 export function useSetPlaybackPreference(itemId: string) {
   const client = useQueryClient()
   return useMutation({
@@ -71,8 +59,6 @@ export function useSetPlaybackPreference(itemId: string) {
     },
     onError: (error: Error) => {
       reportError(client)(error)
-      // A 409 means the file changed between reading and saving the controls.
-      // Re-fetching restores safe current choices instead of keeping stale UI.
       if (error instanceof ApiError && error.status === 409 && !error.accountChanged) {
         void client.invalidateQueries({ queryKey: queryKeys.media(itemId) })
       }
@@ -101,11 +87,6 @@ export function useOpenExternal() {
   })
 }
 
-/**
- * `context` is the id of whatever list the item was toggled from — a season for
- * an episode row, a series for a Next Up card. Without it the row updates but
- * the list it sits in keeps the stale watched state.
- */
 interface UserDataMutation {
   id: string
   context?: string | null

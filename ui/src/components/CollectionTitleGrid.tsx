@@ -18,11 +18,6 @@ function cssNumber(element: HTMLElement, name: string, fallback: number) {
   return Number.parseFloat(getComputedStyle(element).getPropertyValue(name)) || fallback
 }
 
-/**
- * A fixed-width poster grid that shares the route's scroll container. Only
- * visible rows and a two-row buffer mount, which bounds card hooks and eager
- * image work even when a provider profile contains hundreds of titles.
- */
 export function CollectionTitleGrid<T>({
   items,
   itemKey,
@@ -64,8 +59,6 @@ export function CollectionTitleGrid<T>({
 
   const rows = Math.ceil(items.length / layout.columns)
   const ready = scroller !== null && scrollMargin !== null
-  // `react/incompatible-library` is off for this file in .oxlintrc.json: its
-  // TanStack Virtual diagnostic ignores `use no memo` (TanStack/virtual#1119).
   const virtualizer = useVirtualizer({
     count: rows,
     getScrollElement: () => scroller,

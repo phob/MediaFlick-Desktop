@@ -64,12 +64,6 @@ fn image(
     }
 }
 
-/// Evicts a cached item, but only once the server confirms it is really gone.
-///
-/// An image 404 alone is not proof: an item can exist with no artwork under
-/// that tag. `fetch_item` queries `/Items?ids=`, so a missing item comes back as
-/// an empty result rather than an error, which cleanly separates "deleted" from
-/// "the server is unwell" — the latter lands in `Err` and is left alone.
 fn forget_if_server_disowns(services: &Arc<Services>, scope: &SessionScope, item_id: &str) {
     let item = scope
         .fetch(|client, user_id| items::fetch_item(client, user_id, item_id))
@@ -118,10 +112,6 @@ pub(super) fn store_image(path: &std::path::Path, bytes: &[u8]) {
     }
 }
 
-/// Writes a temporary file beside the cached one and renames it into place, so
-/// a reader sees the old file, no file, or the whole new one. Unlike
-/// `atomic_write` it does not fsync: a cached image is refetched when lost, and
-/// on a spinning disk the sync costs about 20 ms per poster.
 fn replace_cached(
     parent: &std::path::Path,
     path: &std::path::Path,

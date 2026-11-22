@@ -1,0 +1,26 @@
+# 0010. Wire contracts are generated from Rust and the UI bundle is owned by Cargo builds
+
+Status: Accepted (2026-11-22). Consolidated from codebase audit of `build.rs`, `scripts/stage-app.mjs`, `src/shell/cef/api/`, `src/app/cli.rs`, `src/preferences/store.rs`, and `ui/`.
+
+## Context
+
+The Rust binary embeds the React UI and serves typed JSON endpoints and shell events to it. Drift between Rust serde shapes and TypeScript definitions, stale `ui/dist` bundles embedded into binaries, or silent `ts-rs` attribute drops can cause runtime 400s or UI crashes that unit tests miss.
+
+## Decision
+
+- **Cargo-owned embedded UI bundle.** `build.rs` runs `pnpm install --frozen-lockfile` and `pnpm build` (trying `pnpm.cmd` first on Windows because `Command::new` does not resolve `.cmd` shims) unless `MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1` is set for split CI jobs. Built UI and `/reader/` assets are copied into Cargo's `OUT_DIR` before `include_bytes!` so wiping `ui/dist` never breaks compilation when Cargo skips `build.rs`. Because assets are embedded in memory and served with `no-store`, Vite disables code splitting and content hashing to emit fixed `app.js` / `app.css` names matched in `assets.rs`. `build.rs` watches `HEAD`, loose branch ref (only when `is_file()`, because missing packed refs force unconditional rebuilds), and `packed-refs`, deliberately omitting `.git/index` so `git add` does not rebuild the UI. `scripts/stage-app.mjs` reads Cargo's JSON build messages to locate binaries and CEF runtimes on Windows/Linux (working around Cargo 1.100's deeper `OUT_DIR` breaking `cef-dll-sys`'s third-parent copy; macOS bundles `.framework` in `build-dmg.sh`).
+- **Generated wire types and serde fidelity guards.** `routes!` and `wire_types!` generate `ui/src/lib/api/wire.gen.ts` and per-module `ui/src/lib/api/wire/*.gen.ts`, enforced by `generated_typescript_is_current`. Because `ts-rs` 12 silently skips unknown serde keys under `no-serde-warnings`, drops whole `#[serde(...)]` attributes on nested `key(...)`, applies field `#[ts(type/as)]` only to value types (while keeping serde key/optionality), ignores `skip_serializing_if` unless paired with `#[ts(optional)]`/`#[serde(default)]` (last `#[ts(optional)]` wins), and inspects `Option` on `#[ts(as)]` rather than the Rust field (with `#[ts(type)]` ignoring container `optional_fields`), `src/shell/cef/api/wire/guards.rs` verifies every `#[derive(TS)]` item via AST inspection. Generic monomorphizations have distinct `TypeId`s but identical rendered TS, so `Collect::visit` deduplicates by declaration text while catching name collisions. `collections::model::JsonValue` uses an explicit `#[ts(type = ...)]` instead of `ts-rs`'s `serde-json-impl` to keep a single stable `JsonValue` module.
+- **Same-commit trust boundary and API decoding.** Because the embedded UI ships from the exact commit as `wire.gen.ts`, the UI casts JSON answers (`payload as Answers[K]`) and `mediaflick-desktop-shell` `CustomEvent.detail` without secondary runtime schema decoding. Companion JSON routes relayed opaquely by Rust emit `kind: "relay"` and are exhaustively mapped in `RelayAnswerTypes` so new relays fail TypeScript compilation until typed. `Body::decode` treats empty/whitespace bodies as `{}` while strictly rejecting malformed JSON with 400 (never defaulting), and runs lazily inside handlers so 401/404/409 checks win over 400s. `/api/startup` batches first-frame payloads and degrades failing parts to `null` so individual queries refetch and surface errors in context. Settings PATCH endpoints interpret `null` as "keep stored value", while UI shelves enforce full non-null writes (`SettingsWrite`); `ViewingSettingsWrite` overrides TS to require every key except `startupDestination` because missing serde keys reset to defaults. UI draft dirty-checking compares JSON independent of object key order because `serde_json::Value` sorts keys alphabetically while struct serialization keeps declaration order.
+- **Toolchain lint constraints.** `src/app/cli.rs` uses clap's builder API instead of `#[derive(Parser)]` because clap's derive emits `#[allow(clippy::restriction)]`, rejected by `Cargo.toml`'s `forbid` levels. `src/preferences/store.rs` keeps a standalone `use super::AppSettings;` so Clippy 1.100 resolves `clippy.toml`'s `disallowed-methods` paths. UI suppression banning lives in standalone `ui/lint/no-suppression.mjs` because an oxlint rule cannot catch `/* oxlint-disable */` that disables itself.
+
+## Rejected alternatives
+
+- Runtime Zod/Valibot validation on every internal CEF IPC response: duplicates compile-time Rust/TS contracts locked to the same embedded binary.
+- Relying on developers to run `just ui` before `cargo build`: allows stale UI assets to ship inside release binaries.
+- Enforcing `no-suppression` inside oxlint: trivially bypassed by the directive it forbids.
+
+## Consequences
+
+- Any Rust wire type change requires running `just wire-types` and keeping `guards.rs` passing.
+- Relay routes bypass Rust typegen and rely on Companion contract tests plus `RelayAnswerTypes`.
+- Development builds accept a lagging `-dirty` git suffix until the next commit or checkout because `.git/index` is unwatched.

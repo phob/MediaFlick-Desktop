@@ -73,7 +73,6 @@ struct State {
 
 pub struct CollectionConfigurationService {
     path: PathBuf,
-    /// Why the file cannot name the posters in use, if it cannot.
     references_lost: Option<LostReferences>,
     state: Mutex<State>,
 }
@@ -113,7 +112,6 @@ impl CollectionConfigurationService {
         })
     }
 
-    /// What the orphaned-poster sweep may trust to name the posters in use.
     pub fn poster_references(&self) -> PosterReferences<'_> {
         match self.references_lost {
             Some(reason) => PosterReferences::Lost(reason),

@@ -1,15 +1,3 @@
-// The detail page's "More like this" rail, read-only, through a loopback proxy
-// in front of the server. A movie's rail must list exactly the movies and
-// series Jellyfin's own /Items/<id>/Similar answers, and so must a series'
-// rail, or the page has no rail when that answer has no titles. Jellyfin
-// breaks ties in its similarity score at random, so two calls can order the
-// same titles differently: the rail is compared with Jellyfin's answer as a
-// set, and its order with the answer the page itself received. A
-// rail card opens its title, and when the proxy drops that title's similar
-// request the page still renders, without the rail and without an error
-// toast. An episode page never asks for similar titles.
-//   just verify similar-titles                                   (demo server)
-//   just verify similar-titles --account SERVER --signed-out     (your server)
 const DEMO = "https://demo.jellyfin.org/stable"
 const RAIL = "More like this"
 const TITLE_KINDS = new Set(["Movie", "Series"])
@@ -22,7 +10,6 @@ const railNames = (ctx) => ctx.app.evaluate(`(() => {
     .map((link) => link.getAttribute("aria-label").slice("Open details for ".length))
 })()`)
 
-// The page's own similar requests, as the fetch wrapper installed below saw them.
 const similarRequests = (ctx) => ctx.app.evaluate(`window.__similarRequests.map((entry) => ({ ...entry, names: entry.names && [...entry.names] }))`)
 const toastCount = (ctx) => ctx.app.evaluate(`document.querySelectorAll("[data-sonner-toast]").length`)
 const itemId = async (ctx) => decodeURIComponent((await ctx.pathname()).split("?")[0].slice("/item/".length))
@@ -50,12 +37,9 @@ export default async function similarTitles(ctx) {
     fail: (url) => broken !== null && url.pathname.toLowerCase() === `/items/${broken}/similar`,
   })
   const oracle = async (id) => {
-    // The app asks for 40 and keeps the first 20 movies and series.
     const { Items } = await ctx.jellyfin(`/Items/${id}/Similar?userId=${report.userId}&Limit=40`)
     return Items.filter((item) => TITLE_KINDS.has(item.Type)).slice(0, 20).map((item) => ({ id: item.Id, name: item.Name, type: item.Type }))
   }
-  // The first title by name whose name is unique and whose similar answer
-  // holds at least two titles; else the first unique one, to prove the empty case.
   const pick = async (kind) => {
     const { Items } = await ctx.jellyfin(`/Items?userId=${report.userId}&Recursive=true&IncludeItemTypes=${kind}&SortBy=SortName&Limit=${CANDIDATES}&EnableImages=false&Fields=`)
     const unique = Items.filter((item) => Items.filter((other) => other.Name === item.Name).length === 1 && !item.Name.includes("'"))
@@ -118,7 +102,6 @@ export default async function similarTitles(ctx) {
       }
     })()`)
 
-    // A movie: the rail equals Jellyfin's own answer.
     const movie = await pick("Movie")
     expect(movie.similar.length >= 2, `Jellyfin suggests ${movie.similar.length} titles for the movie ${movie.name}`)
     expect((await openFromSearch(ctx, movie.name)) === movie.id, `${movie.name} opened from search`)
@@ -128,7 +111,6 @@ export default async function similarTitles(ctx) {
     await ctx.snapshot("01-movie-rail")
     await ctx.screenshot("01-movie-rail")
 
-    // A rail card opens its title; that title's similar request fails upstream.
     const target = movie.similar[0]
     broken = target.id.toLowerCase()
     const failedBefore = proxy.stats.failed
@@ -146,7 +128,6 @@ export default async function similarTitles(ctx) {
     await ctx.screenshot("02-similar-failed")
     broken = null
 
-    // A series: the rail equals Jellyfin's answer, or is absent when it is empty.
     const series = await pick("Series")
     expect((await openFromSearch(ctx, series.name)) === series.id, `${series.name} opened from search`)
     await railFor("series", series)
@@ -158,7 +139,6 @@ export default async function similarTitles(ctx) {
     }
     await ctx.screenshot("03-series")
 
-    // An episode page never asks.
     await ctx.app.evaluate(`document.querySelector(".content-viewport")?.scrollTo({ top: 0 })`)
     const episodeLink = (await ctx.snapshot("04-series")).match(/link '(\d+\.[^']+)'/)?.[1]
     if (!episodeLink) throw new Error(`no episode link on ${series.name}`)

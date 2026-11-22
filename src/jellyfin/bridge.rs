@@ -1,11 +1,3 @@
-//! Shell actions triggered by the native dialogs and startup handshake.
-//!
-//! The jellyfin-web injection bridge is gone: the own UI talks to Rust over
-//! `mediaflick-desktop://app/api/*`. What remains here is the small
-//! `mediaflick-desktop://<action>` protocol used by the update toast, plus the
-//! readiness fallback used when the typed API is unavailable. A per-session
-//! token authenticates every toast action.
-
 use std::sync::OnceLock;
 
 static BRIDGE_TOKEN: OnceLock<String> = OnceLock::new();

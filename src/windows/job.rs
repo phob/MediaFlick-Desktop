@@ -25,9 +25,6 @@ fn kill_on_close_job() -> isize {
             &info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION as *const c_void,
             std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
         );
-        // Intentionally keep the handle open for the process lifetime: when this
-        // process exits, the OS closes it, the job closes, and every assigned
-        // child is terminated.
         job as isize
     })
 }

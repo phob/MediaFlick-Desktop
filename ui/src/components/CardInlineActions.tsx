@@ -6,11 +6,6 @@ import { useQualityOverride } from "@/lib/playback-quality"
 import { useNextUp, useSetFavorite, useSetPlayed } from "@/lib/item-queries"
 import { usePlay } from "@/lib/playback-queries"
 
-/**
- * The expanded preview's three actions, kept on the artwork when that preview
- * is disabled. A series resolves its episode only after Play is pressed, so a
- * library wall does not issue one Next Up request per card.
- */
 export function CardInlineActions({
   item,
   playedContext = item.seriesId,

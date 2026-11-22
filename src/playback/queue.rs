@@ -5,8 +5,6 @@ use super::model::{
     QueueReportEntry,
 };
 
-/// The most entries one queue may hold. A longer list is rejected where it
-/// is resolved rather than silently truncated.
 pub const MAX_QUEUE_LENGTH: usize = 10_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,8 +33,6 @@ pub(super) struct AudioQueue {
 }
 
 impl AudioQueue {
-    /// `None` for an empty list or a start outside it. Entries before
-    /// `start` stay as past entries, so Previous can reach them.
     pub(super) fn new(queue_id: u64, tracks: Vec<AudioTrack>, start: usize) -> Option<Self> {
         if start >= tracks.len() || tracks.len() > MAX_QUEUE_LENGTH {
             return None;
@@ -123,7 +119,6 @@ mod tests {
 
     const QUEUE_ID: u64 = 7;
 
-    /// Four distinct items, so longer queues hold the same item twice.
     fn track(ordinal: usize) -> AudioTrack {
         let item = ordinal % 4;
         AudioTrack {
@@ -142,9 +137,6 @@ mod tests {
         }
     }
 
-    /// The music changelog and the now-playing bar's contract: "n of m",
-    /// Up next, Previous and Next enabled only where they lead somewhere, and
-    /// Jellyfin sees the whole queue in order with the entry that plays.
     fn assert_queue_at(queue: &AudioQueue, tracks: &[AudioTrack], position: usize) {
         let view = queue.view(AudioPhase::Playing);
         let report = queue.report();
@@ -179,8 +171,6 @@ mod tests {
         assert_eq!(ids.len(), tracks.len(), "every queue entry has its own id");
     }
 
-    /// Checked against a plain position in the track list, for every length
-    /// up to 12, every start and generated Next/Previous sequences.
     #[test]
     fn next_and_previous_follow_a_plain_position_in_the_list() {
         let mut seed: u64 = 0x5eed;

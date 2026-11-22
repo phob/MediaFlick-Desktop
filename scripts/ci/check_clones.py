@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""Ratchet code copied between files: a change may not add a cross-file clone.
-
-Usage: check_clones.py
-Runs jscpd, pinned in ui/package.json and installed by `pnpm --dir ui install`, over the
-production sources. A clone inside one file is left to review; one spanning two files is
-a copied helper or block that wants one owner. The thresholds skip short look-alikes
-(field lists, two-line wrappers) and keep copied functions and blocks.
-"""
-
 import json
 import subprocess
 import sys

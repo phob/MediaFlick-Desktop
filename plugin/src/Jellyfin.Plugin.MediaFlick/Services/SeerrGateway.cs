@@ -6,10 +6,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-/// <summary>
-/// Runs Seerr calls as the Seerr user mapped to the signed-in Jellyfin user
-/// and reshapes every answer into the typed Desktop contract.
-/// </summary>
 public sealed partial class SeerrGateway
 {
     private const ulong Admin = 2;
@@ -30,11 +26,6 @@ public sealed partial class SeerrGateway
     private const int MaxUserScan = 10_000;
     internal static readonly TimeSpan MappingLifetime = TimeSpan.FromMinutes(10);
 
-    /// <summary>
-    /// How long an unmapped Jellyfin user is remembered, so repeated requests
-    /// do not rescan every Seerr user. Short enough that an administrator's
-    /// import is picked up quickly.
-    /// </summary>
     internal static readonly TimeSpan MissingUserLifetime = TimeSpan.FromMinutes(2);
 
     private readonly ISeerrTransport _seerr;
@@ -385,8 +376,6 @@ public sealed partial class SeerrGateway
                     "api/v1/user/import-from-jellyfin",
                     new JsonObject
                     {
-                        // Seerr matches these against the ids Jellyfin's API
-                        // serializes, which are dashless ("N" format).
                         ["jellyfinUserIds"] = new JsonArray(JsonValue.Create(jellyfinUserId.ToString("N")))
                     },
                     null,
@@ -474,10 +463,6 @@ public sealed partial class SeerrGateway
         CancellationToken cancellationToken)
         => _seerr.SendAsync(method, path, body, seerrUserId, cancellationToken);
 
-    /// <summary>
-    /// Radarr and Sonarr facts for the processing titles among
-    /// <paramref name="titles"/>, which pair a media type with Seerr's media row.
-    /// </summary>
     private async Task<ArrFacts> FactsAsync(
         IEnumerable<(string? MediaType, JsonObject? MediaInfo)> titles,
         CancellationToken cancellationToken)
@@ -560,8 +545,6 @@ public sealed partial class SeerrGateway
             .GroupBy(
                 static credit => $"{JsonRead.String(credit, "mediaType")}:{JsonRead.Int32(credit, "id")}",
                 StringComparer.Ordinal)
-            // Preserve request state when only a duplicate credit row
-            // happens to carry Seerr's mediaInfo object.
             .Select(group => ShapeSearchResult(
                 group.FirstOrDefault(static credit => credit["mediaInfo"] is JsonObject)
                 ?? group.First(),
@@ -789,10 +772,6 @@ public sealed partial class SeerrGateway
                 JsonRead.String(person, "profilePath")))
             .ToArray();
 
-    /// <summary>
-    /// The crew jobs a detail page and a person's credits show, in rail order.
-    /// TMDB credits outside this table are dropped.
-    /// </summary>
     private static readonly (string Label, Func<string?, string?, bool> Matches)[] KeyCrewJobs =
     [
         ("Creator", static (job, _) => job == "Creator"),
@@ -811,14 +790,8 @@ public sealed partial class SeerrGateway
         return rank < 0 ? null : rank;
     }
 
-    /// <summary>
-    /// One entry per person, ordered by their highest-ranked key job and then
-    /// by where TMDB first credits them, so a writer-director appears once.
-    /// </summary>
     private static SeerrCrewMemberResponse[] ShapeCrew(JsonObject detail)
     {
-        // Seerr relays TMDB's series `created_by` unmapped, so its headshot
-        // keeps the snake_case name the mapped crew credits do not use.
         var creators = Objects(detail["createdBy"]).Select(static person => (
             Person: person,
             Rank: (int?)0,

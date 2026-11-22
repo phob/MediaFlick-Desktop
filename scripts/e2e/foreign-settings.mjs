@@ -1,30 +1,3 @@
-// End-to-end check that settings written by another MediaFlick version
-// survive this one. An older build once read a newer accounts.json (a Home
-// shelf it did not know) and settings.json as damage: it moved both aside
-// and started from defaults, wiping the user's preferences.
-//
-//   just build
-//   node scripts/e2e/foreign-settings.mjs [output-dir]
-//
-// MEDIAFLICK_DESKTOP_EXE runs another build instead; an installed build from
-// before the fix fails the newer-file scenarios, which shows the check bites.
-//
-// Each scenario starts the staged app (build/mediaflick-desktop.exe) in its
-// own throwaway profile under the output directory, reads the app's state
-// through its own API over CDP, closes the app, and then compares every
-// settings file byte for byte. Failure modes covered:
-//
-// - a same-version accounts.json with an unknown Home shelf (the incident)
-//   is moved aside, replaced by its backup or reset;
-// - the same for a same-version accounts.json with an unknown field;
-// - a settings.json with an unknown value is moved aside or reset, or the
-//   app later saves its defaults over it (a settings change, or on exit);
-// - damaged bytes stop recovering from the backup as they did before.
-//
-// The output directory (default build/e2e/foreign-settings) receives
-// report.json with every scenario's API answers and file comparison, plus
-// the app log of each run. The script exits non-zero when an invariant fails.
-
 import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"

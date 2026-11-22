@@ -1,27 +1,3 @@
-// Custom posters survive a start whose collections.json is damaged and has no
-// valid backup. Such a start moves the file aside as
-// collections.json.broken-<time> and opens with no collections, so the only
-// record of which posters are in use is the moved-aside file. The orphaned
-// poster cleanup that follows must not delete them. Bug report (PR #338
-// follow-up): before the fix that start deleted every custom poster older than
-// 7 days.
-//
-// The drive starts on a fresh profile, then writes a collections.json cut off
-// mid-write that names two posters, no collections.json.bak, and the two
-// posters dated 30 days back (the harness seed copy does not keep mtimes, so
-// the drive writes them itself). It relaunches the app on that profile and
-// checks that the damaged file was moved aside byte for byte and both posters
-// are still there byte for byte. Then it relaunches once more: there is no
-// collections.json by then, only the moved-aside file, and both posters must
-// still survive (operator decision on PR #342: skip the cleanup while any
-// collections.json.broken-* exists). Last it removes the moved-aside file and
-// relaunches a third time: with no collections.json, no .bak and no .broken
-// copy, nothing names the posters, and a missing collections.json must still
-// delete nothing (operator decision of 2026-11-17: a user who moved or deleted
-// the file, or a release that renames it, must not lose every poster). Before
-// that fix this start deleted both. Never signs in. Every check is recorded in
-// poster-cleanup.json and the run fails at the end listing each failed one.
-//   just verify poster-cleanup
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
@@ -31,8 +7,6 @@ const POSTERS = [
   { id: "9a8b7c6d5e4f30211203f4e5d6c7b8a9", extension: "jpg", bytes: Buffer.from("\xff\xd8\xffposter-cleanup-jpg", "latin1") },
 ]
 
-// A collections.json cut off mid-write: no readable version, so the app
-// treats it as damaged rather than as another version's file.
 function damagedCollections() {
   const profile = (poster, index) => `{"id":"profile${index}","revision":"r1","title":"Poster ${index}","description":"","customPosterId":"${poster.id}"`
   return `{"version":1,"accounts":[{"serverId":"server","userId":"user","profiles":[${POSTERS.map(profile).join("},")}`

@@ -11,13 +11,9 @@ use super::{
     TmdbCandidate, WatchFilter,
 };
 
-/// Bound on one `tmdb_id IN (...)` clause so even a full person filmography
-/// stays well under SQLite's host-parameter limit.
 const TMDB_CANDIDATE_CHUNK: usize = 400;
 const ITEM_ID_CHUNK: usize = 400;
 
-/// A title attribute with many values per item, each normalized into its own
-/// lookup table by the schema's triggers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Facet {
     Genre,
@@ -26,7 +22,6 @@ pub enum Facet {
 }
 
 impl Facet {
-    /// The lookup table and its value column, both fixed SQL identifiers.
     const fn table(self) -> (&'static str, &'static str) {
         match self {
             Self::Genre => ("item_genres", "genre"),
@@ -104,10 +99,6 @@ impl Library {
             .with_connection(|connection| page_items(connection, query))
     }
 
-    /// Cached Jellyfin ids for these TMDB credits. The cache is only a
-    /// pre-filter for live ownership checks because it can hold rows the server
-    /// has since deleted. Callers must fetch the ids from Jellyfin before
-    /// treating them as owned.
     pub(crate) fn tmdb_candidates(&self, tmdb_ids: &[i64]) -> rusqlite::Result<Vec<TmdbCandidate>> {
         let mut candidates = Vec::new();
         if tmdb_ids.is_empty() {
@@ -186,10 +177,6 @@ impl Library {
         })
     }
 
-    /// Seasons of a series, or episodes of a season, in broadcast order.
-    ///
-    /// Summary rows only: episode synopses are not cached. The children API
-    /// handler overlays them from its live server reconcile when online.
     pub fn children(&self, parent_id: &str) -> rusqlite::Result<Vec<ItemSummary>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
@@ -289,7 +276,6 @@ impl Library {
         })
     }
 
-    /// Every value of `facet` on a cached item, or on a title in `library`.
     pub fn facet_values(
         &self,
         facet: Facet,
@@ -297,8 +283,6 @@ impl Library {
     ) -> rusqlite::Result<Vec<String>> {
         let (table, column) = facet.table();
         let sql = match library {
-            // Each step seeks the next distinct value in the primary key
-            // instead of walking every tagged item.
             None => format!(
                 "WITH RECURSIVE distinct_values(value) AS (
                      SELECT min({column}) FROM {table}
@@ -419,10 +403,6 @@ impl Library {
     }
 }
 
-/// Counted locally rather than cached from the server's series
-/// `UnplayedItemCount`: Jellyfin's user-data push climbs only from an episode
-/// to its season, so a cached series count would go stale on every pushed
-/// episode change.
 macro_rules! summary_columns {
     () => {
         "i.jellyfin_id, i.kind, i.name, i.year, i.runtime_ticks, \
@@ -486,8 +466,6 @@ fn summary_row(row: &Row<'_>) -> rusqlite::Result<ItemSummary> {
     })
 }
 
-/// `items.genres` is always a JSON array (`'[]'` by default), so one that
-/// does not parse is a damaged row, not a title without genres.
 fn genres_column(row: &Row<'_>, index: usize) -> rusqlite::Result<Vec<String>> {
     serde_json::from_str(&row.get::<_, String>(index)?).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
@@ -555,8 +533,6 @@ fn page_sql(query: &ItemQuery) -> (String, Vec<SqlValue>) {
     )
 }
 
-/// SQL functions the catalog queries call. Registered on every pooled
-/// connection, because SQLite functions belong to one connection.
 pub(super) fn register_functions(connection: &Connection) -> rusqlite::Result<()> {
     connection.create_scalar_function(
         "mediaflick_shuffle",
@@ -599,9 +575,6 @@ fn in_progress() -> String {
     )
 }
 
-/// The parts of one catalog item query. The full-text decision is made once
-/// here: a matchable search both joins `items_fts` and orders by its rank, and
-/// the order clause must never name `items_fts` when the FROM clause lacks it.
 struct ItemSql {
     from_clause: String,
     where_clause: String,

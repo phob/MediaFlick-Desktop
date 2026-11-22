@@ -1,26 +1,3 @@
-// End-to-end check of flick.media as a visitor's browser sees it.
-//
-//   node scripts/website/check-site.mjs [output-dir]
-//
-// Serves website/public with the Content-Security-Policy from its _headers
-// file, drives headless Chrome (or Edge) over CDP at a desktop and a phone
-// viewport, and exercises the page: the section order (Highlights and the
-// Companion before the standard features), scrolling every section into
-// view, the hero's readouts, the Browse walkthrough step by step, the player
-// switch, the Companion tabs, the accent swatches and the gallery lightbox. It fails
-// on console errors, CSP violations, missing assets, horizontal overflow or
-// broken interactions.
-//
-// It also checks the Companion install guide (/companion/) at both viewports,
-// including its copy button, and that /companion/manifest.json is served as
-// JSON in Jellyfin's plugin repository format with entries that point only at
-// published GitHub Release assets.
-//
-// The output directory (default build/website-check) receives report.json,
-// full-page screenshots (desktop.png, mobile.png, companion-desktop.png and
-// companion-mobile.png) and one viewport screenshot per walkthrough step
-// (walk-<viewport>-<step>.png).
-
 import { createServer } from "node:http"
 import { readFile, stat, mkdir, writeFile, rm } from "node:fs/promises"
 import { existsSync } from "node:fs"
@@ -43,8 +20,6 @@ const TYPES = {
 const COMPANION_GUID = "11d8f2bb-2b9d-4ce1-8c33-5a0f809dfd2f"
 const REPOSITORY_URL = "https://flick.media/companion/manifest.json"
 
-// Jellyfin's repository format (a list of plugins, each with versions), and the
-// operator's rule that an entry points only at a published release asset.
 function manifestProblems(manifest) {
   if (!Array.isArray(manifest)) return ["manifest is not a JSON array"]
   const problems = []
@@ -71,7 +46,6 @@ function manifestProblems(manifest) {
       if (!/^\d+\.\d+\.\d+\.\d+$/.test(entry.targetAbi ?? "")) problems.push(`${version}: targetAbi ${entry.targetAbi} is not a four-part version`)
       if (typeof entry.changelog !== "string") problems.push(`${version}: changelog is missing`)
       if (Number.isNaN(Date.parse(entry.timestamp))) problems.push(`${version}: timestamp ${entry.timestamp} is not a date`)
-      // Jellyfin compares System.Version values, so 0.2.2 and 0.2.2.0 are one build.
       const parts = [...version.split(".").map(Number), 0].slice(0, 4)
       const order = (other) => (other.map((part, index) => Math.sign(part - parts[index])).find((sign) => sign !== 0) ?? 0)
       if (seen.some((other) => order(other) === 0)) problems.push(`${version} is listed twice`)
@@ -256,10 +230,6 @@ try {
     if (state.overflow > 1) fail(name, `page overflows horizontally by ${state.overflow}px`)
     if (state.csp.length) fail(name, `CSP violations: ${state.csp.join("; ")}`)
 
-    // The walkthrough: bring each step to the middle of the viewport and
-    // expect the pinned window to show that step's frame, name it in its
-    // title bar, and play the hover recording only on the hover step. A
-    // screenshot of each step is kept as the artifact.
     await mkdir(outDir, { recursive: true })
     const walkthrough = []
     const stepNames = await page.evaluate(`[...document.querySelectorAll("[data-walk-step]")].map((step) => step.dataset.walkStep)`)
@@ -364,7 +334,6 @@ try {
     const { data } = await page.send("Page.captureScreenshot", {
       format: "png",
       captureBeyondViewport: true,
-      // Chrome cannot rasterize past 16384 device pixels in one capture.
       clip: { x: 0, y: 0, width: metrics.width, height: fullHeight, scale: Math.min(1, 16000 / (fullHeight * metrics.deviceScaleFactor)) },
     })
     await mkdir(outDir, { recursive: true })
@@ -374,7 +343,6 @@ try {
     for (const problem of problems) fail(name, problem)
     report.viewports[name] = { ...metrics, heroTop: Math.round(heroTop), pageHeight: fullHeight, imagesChecked: assets.checked, hero, order, walkthrough, tracking, interactions, screenshot: path.relative(root, shot) }
   }
-  // The Companion repository manifest, as Jellyfin fetches it.
   const manifestResponse = await fetch(`${siteUrl}companion/manifest.json`)
   const manifestText = await manifestResponse.text()
   let manifest = null
@@ -395,7 +363,6 @@ try {
     problems: manifestIssues,
   }
 
-  // The install guide at both viewports.
   await page.send("Browser.grantPermissions", { permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"], origin: siteUrl.replace(/\/$/, "") })
   await page.send("Emulation.setFocusEmulationEnabled", { enabled: true })
   report.companionPage = {}

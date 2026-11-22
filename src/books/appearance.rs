@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// How the reader shows books, one setting per account. Text settings apply
-/// to reflowable books, `fit` to PDFs, comics and fixed-layout EPUBs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReaderAppearance {
@@ -58,7 +56,6 @@ pub enum Margins {
     Wide,
 }
 
-/// `App` follows the app's own light or dark appearance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub enum ReaderTheme {

@@ -15,9 +15,6 @@ function nextPaint() {
       window.clearTimeout(fallback)
       resolve()
     }
-    // Chromium may pause animation frames while the native window is hidden
-    // (for example after a `--hidden` start). Keep the normal two-paint path
-    // without letting a stalled frame hold the cover.
     const fallback = window.setTimeout(finish, HIDDEN_PAINT_FALLBACK_MS)
     requestAnimationFrame(() => requestAnimationFrame(finish))
   })
@@ -39,13 +36,7 @@ export function LoadingScreen({ ready }: { ready: boolean }) {
     if (mounted) return
     markWindowRevealed()
 
-    // Effects run after React commits the cover's removal. The native request
-    // is therefore the final startup step, making the finished route—not the
-    // loading cover—the main window's first visible frame.
     void api.shell.windowReady().catch(() => {
-      // Service initialization failures also take the JSON shell queue down.
-      // The exact app-origin-only action keeps the native recovery surface
-      // reachable without weakening the authenticated dialog bridge.
       if (window.location.protocol === "mediaflick-desktop:") {
         const beacon = document.createElement("img")
         beacon.hidden = true

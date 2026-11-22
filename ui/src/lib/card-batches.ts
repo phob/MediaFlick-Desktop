@@ -6,24 +6,11 @@ export const COALESCE_MS = 75
 type ActiveBatch = { ids: Set<string>; controller: AbortController }
 
 interface CardBatchOptions {
-  /** Whether batches may run now. */
   enabled: () => boolean
-  /** Whether a card that just mounted needs its data fetched. */
   wanted: (id: string) => boolean
-  /** Fetches one batch and keeps its answer; resolves to the delay before the next flush. */
   load: (ids: string[], signal: AbortSignal) => Promise<number>
 }
 
-/**
- * The scheduler behind every card's live metadata (ratings, technical
- * badges). It deduplicates the same title across shelves, coalesces arrivals
- * into bounded requests, and aborts a request once none of its cards remains
- * mounted. The options are read when used, so their identity may change freely.
- *
- * `register` stays identity-stable: cards re-run their registration effect
- * when it changes, and a whole-page cleanup pass momentarily empties `active`,
- * which reads as "no cards remain" and aborts every in-flight batch.
- */
 export function useCardBatches(options: CardBatchOptions) {
   const latest = useRef(options)
   const [active] = useState(() => new Map<string, number>())
@@ -73,7 +60,6 @@ export function useCardBatches(options: CardBatchOptions) {
     flushRef.current = flush
   }, [flush])
 
-  /** Drops queued work and aborts every request in flight. */
   const cancel = useCallback(() => {
     if (timer.current !== null) {
       window.clearTimeout(timer.current)

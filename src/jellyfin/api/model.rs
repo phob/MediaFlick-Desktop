@@ -1,8 +1,3 @@
-//! The subset of Jellyfin's OpenAPI shapes this app actually consumes.
-//!
-//! Everything is `#[serde(default)]` so a server that drops or adds fields
-//! between releases degrades to missing metadata instead of a failed sync.
-
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -69,18 +64,13 @@ impl UserPolicy {
     }
 }
 
-/// What the signed-in user's Jellyfin policy lets the app rely on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UserAccess {
-    /// The catalog may hide titles from this user, so Missing stays hidden.
     pub restricted: bool,
-    /// The user administers the server, so the app may offer server setup.
     pub administrator: bool,
 }
 
 impl UserAccess {
-    /// Before a policy is read nothing is proven: Missing stays hidden and no
-    /// server setup is offered.
     pub const UNVERIFIED: Self = Self {
         restricted: true,
         administrator: false,
@@ -116,14 +106,11 @@ pub struct QuickConnectResult {
 #[serde(default, rename_all = "PascalCase")]
 pub struct ItemsResponse {
     pub items: Vec<BaseItemDto>,
-    /// `None` when the server left the count out, which is not a count of 0.
     pub total_record_count: Option<i64>,
     pub start_index: i64,
 }
 
 impl ItemsResponse {
-    /// The total a page reports to the UI: the server's count, or, when the
-    /// server left it out, the items known to exist through this page.
     pub fn total_or_received(&self) -> i64 {
         self.total_record_count.unwrap_or_else(|| {
             let received = i64::try_from(self.items.len()).unwrap_or(i64::MAX);
@@ -200,10 +187,7 @@ pub struct BaseItemDto {
     pub date_created: Option<String>,
     pub date_last_saved: Option<String>,
     pub path: Option<String>,
-    /// A series' airing state. Jellyfin sends it for every series whatever
-    /// `Fields` asks for.
     pub status: Option<String>,
-    /// `Virtual` marks a missing episode: metadata without a media file.
     pub location_type: Option<String>,
     pub user_data: Option<UserItemDataDto>,
     pub media_streams: Vec<MediaStream>,
@@ -335,22 +319,13 @@ pub struct MediaStream {
     pub title: Option<String>,
     pub is_default: bool,
     pub is_forced: bool,
-    /// Jellyfin marks SDH/closed-caption-style subtitle tracks separately from
-    /// ordinary dialogue subtitles. Keep the flag even when the server does
-    /// not localize a display title so per-item choices retain accessibility
-    /// intent.
     pub is_hearing_impaired: bool,
     pub is_external: bool,
     pub delivery_url: Option<String>,
     pub height: Option<i64>,
     pub width: Option<i64>,
     pub channels: Option<i64>,
-    /// Jellyfin's normalized spatial-audio value (for example
-    /// `DolbyAtmos`). Older servers may only mention it in Profile/DisplayTitle.
     pub audio_spatial_format: Option<String>,
-    /// "SDR" or "HDR". `video_range_type` narrows the latter to HDR10, HLG, or
-    /// one of the Dolby Vision profiles, which is what decides whether a file
-    /// tone-maps on a given display.
     pub video_range: Option<String>,
     pub video_range_type: Option<String>,
     pub bit_depth: Option<i64>,

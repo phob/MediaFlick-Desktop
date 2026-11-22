@@ -5,11 +5,6 @@ import { api, type ItemDetail } from "@/lib/api"
 import { isTitleKind } from "@/lib/kinds"
 import { optionalIdQuery, queryKeys } from "@/lib/query-client"
 
-/**
- * Jellyfin's similar titles for a film or series. Optional garnish: while it
- * loads, when it fails and when the server finds nothing, the page simply has
- * no rail.
- */
 export function SimilarTitles({ item }: { item: ItemDetail }) {
   const { data } = useQuery({
     ...optionalIdQuery(item.id, queryKeys.similar(item.id), (id) => api.similar(id), isTitleKind(item.kind)),

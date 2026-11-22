@@ -57,10 +57,6 @@ export type PlayerChapter = {
 };
 
 export type PlayerSnapshot = {
-  /**
-   * Set by the coordinator from what it asked to play, never from the
-   * player's tracks: an MP3's cover art is a video track.
-   */
   nowPlaying: NowPlaying | null,
   active: boolean,
   playbackId: number | null,

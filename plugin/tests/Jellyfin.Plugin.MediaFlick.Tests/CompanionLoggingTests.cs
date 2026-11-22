@@ -59,7 +59,6 @@ public sealed class CompanionLoggingTests
         var directory = Path.Combine(
             Path.GetTempPath(),
             "mediaflick-logging-tests-" + Guid.NewGuid().ToString("N"));
-        // A directory at the cache path makes every atomic replace fail.
         var cachePath = Path.Combine(directory, "ratings.json");
         Directory.CreateDirectory(cachePath);
         try

@@ -1,9 +1,5 @@
 use super::*;
 
-// The bundle is built by `build.rs` (Vite, in `ui/`) and staged into `OUT_DIR`.
-// It is emitted with fixed names — no content hashing and no code splitting,
-// because the assets never cross a network: they are embedded here and served
-// from memory.
 pub(super) fn static_asset(path: &str) -> Option<ApiResponse> {
     match path {
         "" | "/" | "/index.html" => Some(index_html()),
@@ -25,9 +21,6 @@ pub(super) fn static_asset(path: &str) -> Option<ApiResponse> {
 const READER_ASSETS: &[(&str, &str, &[u8])] =
     include!(concat!(env!("OUT_DIR"), "/reader_assets.rs"));
 
-/// libarchive's worker compiles its WebAssembly decoder, so its script alone
-/// is served with a policy that allows that. A dedicated worker takes the
-/// policy of its own script response, so the page keeps refusing WebAssembly.
 const LIBARCHIVE_WORKER: &str = "/reader/libarchive/worker-bundle.js";
 const LIBARCHIVE_WORKER_POLICY: &str =
     "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'";

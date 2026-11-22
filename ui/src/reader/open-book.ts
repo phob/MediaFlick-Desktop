@@ -8,10 +8,8 @@ import type { MouseChord } from "./keys"
 import type { ReaderCommand } from "./model"
 import { RemoteFile } from "./remote-file"
 
-/** Formats whose position Jellyfin keeps as a fraction of the text; the others keep pages. */
 const TEXT_FORMATS: ReadonlySet<BookFormat> = new Set(["epub", "mobi", "azw", "azw3"])
 const COMIC_FORMATS: ReadonlySet<BookFormat> = new Set(["cbz", "cbr", "cb7", "cbt"])
-/** Keys playback owns. A section document keeps them from the app, so they are passed on. */
 const PLAYBACK_KEYS: ReadonlySet<string> = new Set(["MediaPlayPause", "MediaPlay", "MediaPause", "MediaStop"])
 const PAGE_STEP = 10
 
@@ -25,12 +23,9 @@ export interface ReadingPosition {
   location: ReadingLocation
   finished: boolean
   fraction: number
-  /** Zero-based page and page count of a book with fixed pages: a PDF, a comic or a fixed-layout EPUB. */
   page: { current: number; total: number } | null
-  /** Zero-based location (about a screen of text) and their count in a text book. */
   textLocation: { current: number; total: number } | null
   chapter: string | null
-  /** The contents entry the reader is in: its href, or for a page list the page. */
   tocTarget: string | number | null
   canReturn: boolean
 }
@@ -51,9 +46,7 @@ export interface BookSession {
 
 export interface OpenOptions {
   signal: AbortSignal
-  /** Every key pressed inside the book's documents, which the page's own listeners never see. */
   onKey(event: KeyboardEvent): void
-  /** A click or right click on the book, the page or its margins, that is not a link or the end of a text selection. */
   onMouse(chord: MouseChord): void
   onPosition(position: ReadingPosition): void
   onDownload(fraction: number): void
@@ -79,11 +72,9 @@ function pageEntries(count: number): TocEntry[] {
 
 export async function openBook(host: HTMLElement, itemId: string, manifest: BookManifest, options: OpenOptions): Promise<BookSession> {
   const { View } = await foliateView()
-  // foliate tells a CBZ from an EPUB by the name, so the name carries the format the bytes were sniffed as.
   const file = await RemoteFile.open(itemId, `${itemId}.${manifest.format}`, options.signal)
   const book = await loadBook(file, manifest.format, options.onDownload)
   const view: View = new View()
-  // Until it is destroyed a book keeps its blob URLs, and a PDF its pdf.js worker.
   const close = () => {
     view.close()
     view.remove()
@@ -98,7 +89,6 @@ export async function openBook(host: HTMLElement, itemId: string, manifest: Book
     let restored = false
     const toPosition = (detail: FoliateLocation): ReadingPosition => {
       const section = detail.section ?? { current: 0, total: book.sections.length }
-      // foliate weighs fixed pages by their bytes, which makes a comic's percent jump; a page is a page here.
       const fraction = view.isFixedLayout
         ? section.current / Math.max(1, section.total - 1)
         : Math.min(1, Math.max(0, detail.fraction ?? 0))
@@ -121,7 +111,6 @@ export async function openBook(host: HTMLElement, itemId: string, manifest: Book
         "click",
         (event) => {
           if (event.button !== 0 || event.defaultPrevented || !doc.getSelection()?.isCollapsed) return
-          // A section document is another realm, with its own Element.
           const element = doc.defaultView?.Element ?? Element
           if (event.target instanceof element && event.target.closest("a[href]")) return
           options.onMouse("Click")
@@ -132,13 +121,11 @@ export async function openBook(host: HTMLElement, itemId: string, manifest: Book
         "contextmenu",
         (event) => {
           event.preventDefault()
-          // The Menu key also raises contextmenu, with no button held; that key has its own binding.
           if (event.button === 2) options.onMouse("RightClick")
         },
         { signal: options.signal },
       )
     }
-    // A click in foliate's margins lands in its shadow DOM and reaches the page as one on the view.
     listenForMouse(view, document)
     view.addEventListener("load", ({ detail }) => {
       installAppSurfaceGuard(detail.doc)

@@ -18,11 +18,6 @@ function useUnixSeconds() {
   return now
 }
 
-/**
- * Shown instead of Home when the first catalog page failed. The sync worker
- * keeps retrying on its own; this says why it is waiting, when it tries next,
- * and offers the two ways out.
- */
 export function BootstrapRetry({ retry, attempting }: { retry: SyncRetry; attempting: boolean }) {
   const client = useQueryClient()
   const logout = useLogout()

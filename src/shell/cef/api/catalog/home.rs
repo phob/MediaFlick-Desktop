@@ -13,7 +13,6 @@ pub(in super::super) struct HomeResponse {
     rows: Vec<HomeRow>,
 }
 
-/// One Home shelf, named by the element that produced it.
 #[derive(Serialize, ts_rs::TS)]
 struct HomeRow {
     #[serde(flatten)]
@@ -22,8 +21,6 @@ struct HomeRow {
     items: Vec<ItemSummary>,
 }
 
-/// The elements `/api/home` answers with a shelf. Library shelves come from
-/// `/api/libraries/{id}/latest`.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum HomeRowSource {
@@ -193,9 +190,6 @@ fn because_you_watched(
     }))
 }
 
-/// The played movie the shelf is built around, picked once per account and
-/// kept, so the shelf does not change on every visit. A failed pick is not
-/// kept, and the next visit picks again.
 fn watched_seed(services: &Services, account: &AccountKey) -> rusqlite::Result<Option<ItemDetail>> {
     let kept = services
         .home_watched

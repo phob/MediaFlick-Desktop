@@ -27,10 +27,6 @@ function readGeometry(element: HTMLElement) {
   }
 }
 
-/**
- * Column count and row height, re-measured on resize. Both come from the CSS
- * tokens rather than hardcoded numbers so the grid follows `--poster-width`.
- */
 function useGridMetrics(element: HTMLElement | null) {
   const [metrics, setMetrics] = useState({
     columns: 1,
@@ -75,12 +71,6 @@ export interface ItemGridProps {
   ref?: Ref<ItemGridHandle>
 }
 
-/**
- * The library's windowed poster grid. It is sized from the server's `total` on
- * the first page's arrival and fills itself from a sparse map of pages, so the
- * scrollbar never resizes as pages load — scrolling does not snap back the way
- * an append-as-you-go list does.
- */
 export function ItemGrid({
   source,
   scroller,
@@ -95,15 +85,6 @@ export function ItemGrid({
   const scrollMargin = useScrollMargin(content, scroller)
   const { columns, rowHeight, cardHeight, gap } = useGridMetrics(content)
   const [visibleRows, setVisibleRows] = useState({ first: 0, last: 0 })
-  // Page 0 is always requested: it is what `total` is read from, so keeping it
-  // resident stops the grid collapsing to zero rows when the user scrolls into
-  // a region that has not been fetched yet.
-  //
-  // The bounds are derived in render but the array is memoised on them, not on
-  // `visibleRows`: the visible range moves every row, while the page window
-  // only moves every `PAGE_SIZE / columns` rows. Keying on the bounds keeps the
-  // array identity — and with it the `useQueries` subscriptions — still while
-  // the user scrolls within one page.
   const firstPage = Math.floor((visibleRows.first * columns) / PAGE_SIZE)
   const lastPage = Math.floor(((visibleRows.last + 1) * columns - 1) / PAGE_SIZE)
   const pages = useMemo(() => {
@@ -114,9 +95,6 @@ export function ItemGrid({
 
   const results = useBrowsePages(source, pages)
   const total = results[0]?.data?.total ?? null
-  // A background refetch can fail while every cached card is still valid. Only
-  // page zero can make the whole view unavailable; later page failures remain
-  // as unloaded slots until the query retries.
   const error = results[0]?.data ? null : results[0]?.error
 
   const loaded = new Map<number, ItemSummary[]>()
@@ -130,9 +108,6 @@ export function ItemGrid({
   }, [total, onTotal])
 
   const rows = total === null ? 0 : Math.ceil(total / columns)
-  // TanStack Virtual is intentionally outside compiler memoization above. Its
-  // known diagnostic does not honor `use no memo` (TanStack/virtual#1119), so
-  // `react/incompatible-library` is off for this file in .oxlintrc.json.
   const virtualizer = useVirtualizer({
     count: rows,
     getScrollElement: () => scroller,

@@ -17,8 +17,6 @@ const MAX_REQUEST_IDS: usize = 500;
 const PLUGIN_FRESH_SECONDS: i64 = 24 * 60 * 60;
 const EXPIRE_SECONDS: i64 = 30 * 24 * 60 * 60;
 
-/// `/api/ratings/batch`: the cached ratings of the requested cards that have
-/// not expired.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RatingsBatchResponse {
@@ -112,9 +110,6 @@ impl RatingsService {
         })
     }
 
-    /// Drops the rows another cache schema version wrote, so they count as
-    /// misses and are refetched without being rewritten here, and stores the
-    /// rest back through the current rating schema where that changes them.
     fn sanitize_cached(
         &self,
         targets: &[RatingTarget],
@@ -445,9 +440,6 @@ mod tests {
         assert!(!diagnostic.contains(SERVER_TMDB_KEY));
     }
 
-    /// A Companion on loopback that advertises `ratings-v1` and answers every
-    /// ratings batch with `ratings_answer` (`"<status line>"`, `<body>`).
-    /// Returns its URL and the bodies of the ratings batches it received.
     fn loopback_companion(
         ratings_answer: (&'static str, &'static str),
     ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Value>>>) {
@@ -498,8 +490,6 @@ mod tests {
         (url, batches)
     }
 
-    /// Fresh cache rows for The Matrix (603) at schema 0, Reloaded (604) at a
-    /// newer schema, and Revolutions (605) at the current one, all rated 5.
     fn seed_three_schemas(library: &Library) -> Vec<RatingTarget> {
         let now = now_unix();
         let entries = [
@@ -531,12 +521,6 @@ mod tests {
         ratings[0]["value"].clone()
     }
 
-    /// Issue #356: a cache row written under another schema version must be
-    /// refetched, not restamped to the current one and served as if fresh.
-    /// Failure modes: the row is served without a refetch; the row is
-    /// rewritten at the current schema without a refetch, so it is never
-    /// refetched later; a failed refetch serves the other schema's row as
-    /// current data; a fresh row at the current schema is refetched too.
     #[test]
     fn rows_at_another_schema_version_are_refetched_not_restamped() {
         const NINE: &str = r#"{"boundaryVersion":1,"items":[

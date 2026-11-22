@@ -1,24 +1,3 @@
-// Studio, Network and Tag filters on the library grids, and the studio and tag
-// links on a title page. Read-only on the server; writes only the profile.
-//   just verify library-studio-tag --account https://jellyfin.example.com
-//
-// The oracle is Jellyfin's own data: every movie and series of the account's
-// first movies and TV shows libraries with their Studios and Tags, matched by
-// exact name as the app's filters match. Jellyfin's `StudioIds` and `Tags`
-// query counts are recorded next to it.
-//
-// 1. Turns on Remember library filters (Settings > Viewing, Save).
-// 2. Movies library: Filters > Studio, a search in the picker, a pick; the
-//    chip, the URL, the grid count and the grid's ids match the oracle.
-// 3. The same for Filters > Tag.
-// 4. Home, then the library again: the remembered tag filter comes back.
-// 5. TV shows library: the menu offers Network, not Studio; a network pick
-//    matches the oracle.
-// 6. The combined /library view (every movie and series, reached by
-//    clearing a sidebar search): Studio and Tag picks list exactly the titles
-//    of every library that carry them.
-// 7. A movie's page: its studio link opens the movies library filtered to that
-//    studio, and one of its tag links opens it filtered to that tag.
 const LIBRARY_ROUTE = /^\/library\/[0-9a-f]+/
 const itemCount = (ctx) =>
   ctx.app.evaluate(`(() => { const m = document.body.innerText.match(/^([\\d,]+) items?$/m); return m ? Number(m[1].replace(/,/g, "")) : null })()`)
@@ -120,7 +99,6 @@ export default async function libraryStudioTag(ctx) {
     await ctx.park()
   }
   const filterBy = async (label, value) => {
-    // The trigger's name carries the active count, which a chip removal changes.
     await ctx.press({ css: 'button[aria-label^="Filters"]' })
     const menu = await ctx.snapshot(`${label}-menu`)
     const items = [...menu.matchAll(/menuitem '([^']*)'/g)].map((match) => match[1])

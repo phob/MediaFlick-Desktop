@@ -1,8 +1,3 @@
-/* flick.media — the desktop app's "Signal" language, at landing-page scale.
-   Tokens mirror ui/src/app.css: green-cast near-blacks, one bright accent for
-   state, monospace for every piece of data, corner brackets instead of zoom,
-   and hairline rails that run a heading out to the edge. */
-
 :root {
   color-scheme: dark;
 
@@ -217,7 +212,6 @@ code {
 }
 .chrome-nav[data-ink] .nav-ink { opacity: 1; }
 .chrome-actions { display: flex; align-items: center; gap: 0.6rem; }
-/* Pages without the section nav, such as /companion/, keep the actions on the right. */
 .brand + .chrome-actions { margin-left: auto; }
 
 @media (max-width: 860px) {
@@ -1270,10 +1264,6 @@ code {
   font-weight: 600;
 }
 
-/* What sets MediaFlick apart. Same tiles as Details, larger, with
-   a tag that says whether the Companion is needed. Each pictogram acts out
-   the feature: a request moves through its states, a franchise's gaps ask to
-   be filled, the timeline's "today" marker pulses between past and next. */
 .feature-grid { margin-top: 0; }
 .feature-wide { grid-column: span 2; }
 .feature { grid-template-rows: auto auto auto 1fr; }
@@ -1454,7 +1444,6 @@ code {
 }
 .mpv-notes { display: flex; gap: 1rem; color: var(--muted); font-size: 0.52rem; }
 
-/* Side-by-side contrast matrix inside #highlights: stock Jellyfin Web vs. MediaFlick Desktop. */
 .compare {
   margin-top: clamp(2.4rem, 5vw, 3.6rem);
   padding: clamp(1.3rem, 3vw, 2rem);
@@ -1658,8 +1647,6 @@ code {
 .download-more { margin-top: 2rem; color: var(--muted); }
 .download-more a { color: var(--foreground); text-decoration-color: color-mix(in srgb, var(--primary) 60%, transparent); text-underline-offset: 3px; }
 
-/* The Companion install guide (/companion/): three numbered steps on cards,
-   the repository URL as data with a copy button. */
 .install { padding-block: clamp(3rem, 7vw, 5.5rem); }
 .install .section-head { margin-bottom: 1.6rem; }
 .install .section-head h1 { font-size: clamp(2rem, 4.6vw, 3.4rem); line-height: 1.04; }
@@ -1787,13 +1774,6 @@ code {
   .download-req { border-radius: 8px; }
 }
 
-/* Hidden only when scripts run, so a page without JavaScript is complete. A
-   late fallback reveals everything if the observer never fires.
-
-   Elements enter the way they are built: blocks rise, rails draw from their
-   mark, headings wipe up out of their baseline, words rise one by one, screens
-   lock on with the app's corner brackets, and the topology's services pop in
-   along their wires. */
 @media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
   .reveal:not(.is-visible) {
     opacity: 0;

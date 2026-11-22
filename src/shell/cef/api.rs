@@ -1,8 +1,3 @@
-//! The JSON API and static assets served on `mediaflick-desktop://app/`.
-//!
-//! Handlers run on a CEF background thread (never the UI or IO thread), so
-//! blocking SQLite and HTTP calls are safe here.
-
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -51,10 +46,6 @@ pub struct ApiRequest {
     pub query: String,
     pub body: RawBody,
     pub range: Option<String>,
-    /// Raised by CEF's `cancel` callback when the browser abandons the request
-    /// (an aborted fetch, a closed page). Handlers block synchronously, so
-    /// this flag is how a multi-request handler stops issuing further
-    /// upstream calls for an answer nobody will read.
     pub cancelled: Arc<AtomicBool>,
 }
 
@@ -81,10 +72,6 @@ pub struct ApiResponse {
     pub headers: Vec<(String, String)>,
 }
 
-/// The signed-in account this request runs against. Its failures go through
-/// [`scoped_failure`] and its cache writes through `commit_if_current`, so a
-/// response that arrives after an account switch cannot expire or rewrite the
-/// account that replaced it.
 fn session_scope(services: &Services) -> Result<SessionScope, ApiResponse> {
     services
         .session
@@ -92,14 +79,10 @@ fn session_scope(services: &Services) -> Result<SessionScope, ApiResponse> {
         .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
-/// Answers a failed call made for `scope`. A failure that arrives after the
-/// account changed answers the account-changed 409 instead of itself.
 fn scoped_failure(services: &Services, scope: &SessionScope, error: &ApiError) -> ApiResponse {
     ApiResponse::from_api_error(&services.session.scoped_error(scope, error.clone()))
 }
 
-/// Calls Jellyfin as `scope` and opens the answer for the response, or
-/// answers the account-changed 409 when the account changed meanwhile.
 fn fetch_current<T>(
     services: &Services,
     scope: &SessionScope,
@@ -111,8 +94,6 @@ fn fetch_current<T>(
         .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
-/// Opens a fetched answer for the response, or answers why it can't be:
-/// the account-changed 409, or a 401 when the account's own token expired.
 fn confirmed<T>(services: &Services, scoped: Scoped<T>) -> Result<T, ApiResponse> {
     services
         .session
@@ -160,9 +141,6 @@ pub fn handle(request: &ApiRequest) -> ApiResponse {
     dispatch(request, locator::init)
 }
 
-/// Serves an asset, or routes an API request: first to the routes that need
-/// no services, then, once `services` opened them, to the rest. While the
-/// services are down, every other request answers why.
 fn dispatch(
     request: &ApiRequest,
     services: impl FnOnce() -> Result<Arc<Services>, String>,
@@ -224,9 +202,6 @@ pub use routes::RawBody;
 use routes::{Binary, BinaryAnswer, Body, Bytes, Relay, Serve, routes};
 pub(super) use wire::Wire;
 
-/// Every module's routes, in the order a request tries them. Each module
-/// declares its own with [`routes::routes!`]; their tables also answer which
-/// methods a known path accepts, for a 405 and its `Allow` header.
 const MODULES: &[&routes::Routes] = &[
     &recovery::ROUTES,
     &ROUTES,
@@ -297,13 +272,6 @@ fn app_status(services: &Services) -> AppStatus {
     }
 }
 
-/// `/api/startup`: everything the first frame reads, in one request. Without
-/// it the UI asks for status, then waits for the answer before it can ask for
-/// the account's preferences and Home. Each part is what its own route
-/// answers; a part its route would answer with an error is `null`, so the UI
-/// requests it separately and surfaces its error there. `home` adds the local
-/// Home and billboard once the catalog is ready, for a launch that opens on
-/// Home.
 #[derive(Serialize, ts_rs::TS)]
 struct StartupResponse {
     status: AppStatus,
@@ -348,9 +316,6 @@ fn page_param(request: &ApiRequest) -> i64 {
         .unwrap_or(1)
 }
 
-/// Evicts a cached item the server has disowned, and asks for a sync so the
-/// replacement (Jellyfin re-creates the item with a new id) is picked up. The
-/// 404 is only proof for the account that received it.
 fn forget_item(services: &Arc<Services>, scope: &SessionScope, item_id: &str) {
     let forgotten = services.session.commit_if_current(
         scope,
@@ -683,7 +648,6 @@ mod tests {
             let (mut stale, _) = listener.accept().expect("stale request");
             let stale_line = read_request(&mut stale);
             reached_tx.send(()).expect("signal");
-            // Sign-in reads the server version before it sends credentials.
             let (mut info, _) = listener.accept().expect("public info request");
             read_request(&mut info);
             respond(

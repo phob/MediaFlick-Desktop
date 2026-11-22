@@ -14,7 +14,6 @@ const IMAGE_TYPES: Readonly<Record<string, string>> = {
   avif: "image/avif",
 }
 
-/** libarchive.js decodes in WebAssembly and copies the archive into its heap, so larger files are refused up front. */
 const ARCHIVE_LIMIT_BYTES = 1024 * 1024 * 1024
 
 interface Page {
@@ -24,14 +23,6 @@ interface Page {
   load(): Promise<Blob>
 }
 
-/**
- * The pages of a comic, in reading order, under the names foliate's comic
- * book is given. foliate keeps only lowercase image extensions and sorts by
- * name, so an archive of `1.PNG … 30.PNG` would lose every page. The pages are
- * ordered here (macOS resource forks and hidden files dropped, a tar's `./` kept, names compared
- * with numbers as numbers, ties broken by the raw name) and renamed
- * `00000001.png`, `00000002.png`, … so foliate keeps that order.
- */
 function comicLoader(pages: Page[]): ComicLoader {
   const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
   const ordered = pages
@@ -76,11 +67,6 @@ export async function zipComic(file: RemoteFile): Promise<ComicLoader> {
   return comicLoader(pages)
 }
 
-/**
- * A CBR (RAR 4 or 5), CB7 or CBT, decoded once, whole, by libarchive in its
- * own worker. Solid RAR and 7z archives decode front to back, so extracting
- * page by page would decode the archive again for every page.
- */
 export async function archiveComic(file: RemoteFile, onProgress: (fraction: number) => void): Promise<ComicLoader> {
   if (file.size > ARCHIVE_LIMIT_BYTES) {
     throw new Error(`This comic is ${Math.round(file.size / 1024 / 1024)} MB; the reader opens RAR, 7z and tar comics up to 1024 MB.`)

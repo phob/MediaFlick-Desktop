@@ -16,10 +16,6 @@ declare global {
   }
 }
 
-/**
- * Applies native player snapshots as they arrive. Stop events also carry the
- * completion reason used to decide whether the next episode should start.
- */
 export function usePlaybackEventsBridge() {
   const queryClient = useQueryClient()
   const viewing = useViewing()

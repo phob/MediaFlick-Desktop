@@ -83,9 +83,6 @@ fn credits_triggered(state: &ControllerState) -> bool {
     state.publish_snapshot().skip_segments[0].triggered
 }
 
-/// The prompt reads "Seek to Skip Credits": a native forward seek inside the
-/// segment skips to its end, while rewinding inside it does not. mpv can report
-/// `seeking=false` before the new position, so the decision waits for it.
 #[test]
 fn a_native_forward_seek_accepts_the_skip_prompt_and_a_rewind_does_not() {
     let fake = FakeMpv::start(|command| {

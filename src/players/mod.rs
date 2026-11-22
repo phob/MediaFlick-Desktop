@@ -1,8 +1,3 @@
-//! Media-player adapters.
-//!
-//! Player implementations translate backend-specific protocols into the
-//! backend-neutral contracts owned by the playback domain.
-
 pub mod mpv;
 
 use std::path::{Path, PathBuf};
@@ -55,9 +50,6 @@ pub fn bundled_libmpv_path() -> Option<PathBuf> {
 
 #[cfg(target_os = "linux")]
 fn system_libmpv_path() -> Option<PathBuf> {
-    // Let the dynamic loader honor the distribution's multiarch directories,
-    // ld.so cache and LD_LIBRARY_PATH instead of guessing installation paths.
-    // Cache the probe: settings capabilities are requested repeatedly by CEF.
     static SYSTEM_LIBRARY: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     SYSTEM_LIBRARY
         .get_or_init(|| {

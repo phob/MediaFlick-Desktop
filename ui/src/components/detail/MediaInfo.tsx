@@ -28,10 +28,6 @@ import {
 } from "@/lib/format"
 import { useSetPlaybackPreference } from "@/lib/item-queries"
 
-/**
- * A full-subtitle release carries thirty tracks. Listing them all buries the
- * video and audio next to it, so the tail is one click away instead.
- */
 const VISIBLE_STREAMS = 6
 
 function StreamGroup({
@@ -287,15 +283,6 @@ function PlaybackTrackControls({
   )
 }
 
-/**
- * What the file actually is: container, size, and every track in it.
- *
- * This is the one part of the page that always costs a request to the server —
- * codecs are not in the local cache — so it renders a skeleton rather than
- * holding the rest of the page back, and simply disappears when the server
- * cannot answer. Playback can still use server defaults without this panel;
- * when it does answer, the same current metadata validates saved selections.
- */
 export function MediaInfo({
   itemId,
   sources,

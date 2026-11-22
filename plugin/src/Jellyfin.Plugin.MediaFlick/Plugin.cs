@@ -49,10 +49,6 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         }
     }
 
-    /// <summary>
-    /// Applies a whole-configuration mutation under one lock. Secret writes and
-    /// ordinary dashboard saves cannot accidentally replace one another.
-    /// </summary>
     public void MutateConfiguration(Func<PluginConfiguration, PluginConfiguration> mutation)
     {
         ArgumentNullException.ThrowIfNull(mutation);

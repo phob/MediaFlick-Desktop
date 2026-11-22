@@ -10,13 +10,8 @@ if (!isWindows && !isLinux) throw new Error(`verify-mediaflick supports Windows 
 
 export const buildDir = path.join(root, "build")
 const stagedExe = path.join(buildDir, isWindows ? "mediaflick-desktop.exe" : "mediaflick-desktop")
-// MEDIAFLICK_DESKTOP_EXE runs another build, such as a packaged AppImage,
-// which brings its own CEF runtime and so gets none of the staged build's.
 export const exe = process.env.MEDIAFLICK_DESKTOP_EXE ? path.resolve(process.env.MEDIAFLICK_DESKTOP_EXE) : stagedExe
 
-// Every disposable profile lives under the OS temp dir with this prefix. It is
-// also how leftovers are recognized: CEF child processes carry
-// --user-data-dir=<profile>, and nothing else on the machine uses the prefix.
 export const PROFILE_PREFIX = "mediaflick-verify-"
 export const profileParent = os.tmpdir()
 
@@ -50,9 +45,6 @@ export function appEnvironment(profile) {
       XDG_DATA_HOME: dataRoot,
       XDG_CACHE_HOME: path.join(profile, "cache"),
       XDG_STATE_HOME: path.join(profile, "state"),
-      // Chromium's singleton socket and mpv's IPC socket go to TMPDIR, and a
-      // Unix socket path may not exceed 107 bytes; a profile path is too long.
-      // The wrapper's private runtime dir is short, per run, and removed with it.
       TMPDIR: process.env.XDG_RUNTIME_DIR,
     })
     const cef = path.join(buildDir, "libcef.so")
@@ -74,8 +66,6 @@ export function appEnvironment(profile) {
   }
 }
 
-// The MSI PowerShell 7 that the justfile's windows-shell pins. A Store
-// (MSIX) pwsh found first on PATH runs children outside the verify job.
 export const pwshPath = path.join(process.env.ProgramFiles ?? "C:\\Program Files", "PowerShell", "7", "pwsh.exe")
 
 function pwsh(script) {
@@ -87,7 +77,6 @@ export function assertIsolated() {
   if (isWindows) {
     const expected = claim.startsWith("windows-desktop:") ? claim.slice("windows-desktop:".length) : ""
     if (!expected) throw new Error("not started by isolate-windows.ps1; run `just verify <drive>`")
-    // A child pwsh inherits this process's desktop, so it reports ours.
     const [current, input] = pwsh(`Add-Type -Namespace MfVerify -Name Desk -MemberDefinition '
       [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
       [DllImport("user32.dll")] public static extern IntPtr GetThreadDesktop(uint id);
@@ -100,7 +89,6 @@ export function assertIsolated() {
       [MfVerify.Desk]::Name($in)
       [void][MfVerify.Desk]::CloseDesktop($in)`).trim().split(/\r?\n/).map((line) => line.trim())
     if (current !== expected) throw new Error(`expected private desktop ${expected}, running on ${current || "unknown"}`)
-    // The input desktop is the one the user sees (Default, or Winlogon when locked).
     if (current === input) throw new Error(`desktop ${current} is the visible input desktop; refusing to run`)
     return { kind: "windows-desktop", desktop: current, inputDesktop: input || "(unreadable: workstation locked?)" }
   }
@@ -132,8 +120,6 @@ export function listProcesses() {
       const argv = readFileSync(`/proc/${entry}/cmdline`, "utf8").split("\0").filter(Boolean)
       const cmd = argv.join(" ")
       const stat = readFileSync(`/proc/${entry}/stat`, "utf8")
-      // The stat comm field is cut to 15 characters ("mediaflick-desk"), so
-      // name the process by its executable, then argv[0], then comm.
       let name = ""
       try {
         name = path.basename(readlinkSync(`/proc/${entry}/exe`)).replace(/ \(deleted\)$/, "")
@@ -149,10 +135,6 @@ export function listProcesses() {
   return rows
 }
 
-// Asks the app's top-level window to close the way a window manager does
-// (Linux: WM_PROTOCOLS/WM_DELETE_WINDOW from examples/verify-wm-close.rs,
-// which `just verify` builds), then listens `watchMs` for the window's
-// request to be minimized. Returns { window, iconifyRequested }.
 export function sendWindowClose(watchMs) {
   if (!isLinux) throw new Error("wmClose is implemented for Linux only")
   const tool = path.resolve(root, process.env.CARGO_TARGET_DIR ?? "build/cargo-target", "debug", "examples", "verify-wm-close")
@@ -162,7 +144,6 @@ export function sendWindowClose(watchMs) {
 
 export function mainWindowShown(pid) {
   if (isWindows) {
-    // .NET reports a MainWindowHandle only for a visible top-level window.
     return pwsh(`(Get-Process -Id ${Number(pid)}).MainWindowHandle -ne 0`).trim() === "True"
   }
   const tree = execFileSync("xwininfo", ["-root", "-tree"], { encoding: "utf8" })

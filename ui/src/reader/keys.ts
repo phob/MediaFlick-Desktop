@@ -1,10 +1,5 @@
 import type { LayerKind, ReaderCommand } from "./model"
 
-/**
- * A key as the table writes it: `KeyboardEvent.key` (a space is `Space`),
- * after the modifiers held, as in `Shift+Space` or `Alt+ArrowLeft`, or a
- * mouse button on the book.
- */
 type Chord = string
 
 export type MouseChord = "Click" | "RightClick"
@@ -33,10 +28,6 @@ const LIST: readonly Binding[] = [
   { chords: ["End"], command: { kind: "move", to: "last" }, label: "Last entry" },
 ]
 
-/**
- * A key the table leaves out belongs to the focused control (a button's
- * Enter, a slider's arrows), and Play/Pause and Stop always belong to playback.
- */
 const KEYMAP: Readonly<Record<LayerKind, readonly Binding[]>> = {
   reading: [
     { chords: ["ArrowRight"], command: { kind: "turn", to: "right" }, label: "Page to the right", repeat: true },

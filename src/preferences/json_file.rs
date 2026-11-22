@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -19,14 +20,6 @@ pub struct LoadedDocument<T> {
     pub recovery: Option<RecoveryNotice>,
 }
 
-/// Loads one app-owned JSON document. A malformed primary is preserved under
-/// a timestamped name. A valid backup is restored before the caller sees the
-/// document, so the next save still starts from known-good bytes.
-///
-/// A well-formed JSON object that this build's schema rejects is not damage:
-/// it is almost always the work of another app version, one that added a
-/// setting or a new value for one. It is rejected and left byte-for-byte in
-/// place, never moved aside, replaced by its backup or reset to defaults.
 pub fn load_with_recovery<T>(path: &Path) -> io::Result<Option<LoadedDocument<T>>>
 where
     T: DeserializeOwned + Default,
@@ -37,14 +30,6 @@ where
     }
 }
 
-/// Loads a JSON document that records its format in a top-level `version`.
-/// The version is read leniently before the strict parse: a document from
-/// another app version is rejected and left byte-for-byte in place, never
-/// moved aside or replaced by its backup. That holds for a different version
-/// number and equally for the supported number with content this build's
-/// schema rejects, which is how an older build sees a newer one that added a
-/// value without changing the version. A document without a readable numeric
-/// version is damaged and goes through the normal recovery path.
 pub fn load_versioned_with_recovery<T>(
     path: &Path,
     supported_version: u32,
@@ -86,8 +71,6 @@ fn is_json_object(bytes: &[u8]) -> bool {
     serde_json::from_slice::<serde_json::Value>(bytes).is_ok_and(|value| value.is_object())
 }
 
-/// `intact` says the bytes are a well-formed document in a supported format,
-/// so a schema error means another app version wrote them, not damage.
 fn parse_or_recover<T>(
     path: &Path,
     bytes: &[u8],
@@ -158,17 +141,12 @@ where
     T: Serialize + DeserializeOwned,
 {
     let bytes = serde_json::to_vec_pretty(document).map_err(io::Error::other)?;
-    // Reparse before touching either destination. This catches a custom
-    // serializer that emitted a value the corresponding reader cannot load.
     serde_json::from_slice::<T>(&bytes).map_err(io::Error::other)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     if path.is_file() {
         let previous = std::fs::read(path)?;
-        // A file changed behind the app's back is not a valid recovery point.
-        // Keep the last known-good backup instead of replacing it with bytes
-        // this reader cannot load.
         if serde_json::from_slice::<T>(&previous).is_ok() {
             atomic_write(&backup_path(path), &previous)?;
         }
@@ -183,7 +161,27 @@ pub fn replace_backup_with_primary(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// A durable document this app refuses to load or save as written.
+pub fn mutate_locked<D, T>(
+    document: &Mutex<D>,
+    change: impl FnOnce(&mut D) -> io::Result<T>,
+    validate: impl FnOnce(&mut D) -> io::Result<()>,
+    save: impl FnOnce(&D) -> io::Result<()>,
+) -> io::Result<T>
+where
+    D: Clone,
+{
+    let mut current = document
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut next = current.clone();
+    let result = change(&mut next)?;
+    validate(&mut next)?;
+    save(&next)?;
+    *current = next;
+    drop(current);
+    Ok(result)
+}
+
 pub fn invalid_data(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
@@ -199,8 +197,6 @@ fn damaged_path(path: &Path) -> PathBuf {
     appended_path(path, &format!("{DAMAGED_SUFFIX}{timestamp}"))
 }
 
-/// Whether a damaged copy of `path`, moved aside on this start or an earlier
-/// one, is still next to it.
 pub fn damaged_copy_exists(path: &Path) -> io::Result<bool> {
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return Ok(false);

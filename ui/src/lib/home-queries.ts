@@ -23,17 +23,10 @@ export function useBillboard(enabled = true) {
     queryKey: queryKeys.billboard,
     queryFn: api.billboard,
     enabled,
-    // The endpoint returns a new random set on every request. Keep the chosen
-    // slides for the session so background syncs, reconnects, and navigation
-    // cannot replace the active title or restart its trailer.
     staleTime: Infinity,
   })
 }
 
-/**
- * One request per "Latest in <library>" shelf, so a slow or offline live
- * library holds back only its own shelf.
- */
 export function useLibraryShelves(libraryIds: readonly string[]) {
   return useQueries({
     queries: libraryIds.map((id) => ({

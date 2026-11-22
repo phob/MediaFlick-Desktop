@@ -41,7 +41,6 @@ pub(super) struct OfficialRatings {
     official_ratings: Vec<String>,
 }
 
-/// Where each initial starts in the grid, `#` for any that is not A to Z.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct ItemLetters {
     letters: BTreeMap<String, i64>,

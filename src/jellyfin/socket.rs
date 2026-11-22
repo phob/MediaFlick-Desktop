@@ -1,21 +1,3 @@
-//! Live Jellyfin server events over the `/socket` WebSocket.
-//!
-//! One worker thread owns the connection: it idles until credentials exist,
-//! answers the server's keep-alive probes, and translates pushed
-//! `UserDataChanged` and `LibraryChanged` notifications into the same cache
-//! upserts, evictions, and UI invalidations the sync thread produces. Reported
-//! ids the resulting cache batch does not name (albums, playlists, folders)
-//! are passed on as a live change, so pages Jellyfin serves directly refresh
-//! too.
-//!
-//! The socket is an acceleration layer only — dropped connections lose
-//! events, so every successful (re)connect asks the sync worker for one
-//! requested cycle to reconcile the gap, and the periodic sweeps remain the
-//! backstop. The sync covers only the cache, so a reconnect for the same
-//! session also tells open item pages, their album, playlist and folder
-//! lists, and open library pages to refetch. Person filmography grids are
-//! left to their next visit.
-
 use std::io::ErrorKind;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Condvar, Mutex};
@@ -114,7 +96,6 @@ impl SocketHandle {
             .unwrap_or(true)
     }
 
-    /// Sleeps for `timeout` unless stopped; returns whether to keep running.
     fn wait(&self, timeout: Duration) -> bool {
         let Ok(stopped) = self.signal.stopped.lock() else {
             return false;
@@ -213,10 +194,6 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, sync: &SyncHandle, handle
     }
 }
 
-/// Announces media-control capabilities for the freshly connected session on
-/// its own thread: the announcement is a bounded HTTP POST that must not hold
-/// up event handling, and a failure only means "Play On" menus skip this
-/// device until the next reconnect.
 fn announce_capabilities(session: &Arc<Session>, scope: &SessionScope) {
     let session = session.clone();
     let scope = scope.clone();
@@ -267,8 +244,6 @@ fn connect(session: &Session) -> Result<(Socket, SessionScope), String> {
         .as_str()
         .into_client_request()
         .map_err(|error| error.to_string())?;
-    // The token travels in the same MediaBrowser header as every REST call;
-    // it must never appear in the URL.
     request.headers_mut().insert(
         AUTHORIZATION,
         HeaderValue::from_str(&authorization).map_err(|error| error.to_string())?,
@@ -372,10 +347,7 @@ fn handle_message(
 
 #[derive(Debug, Clone, PartialEq)]
 enum ServerMessage {
-    /// ForceKeepAlive: the server's lost-connection timeout, already halved
-    /// into the cadence our pings must keep.
     KeepAliveInterval(Duration),
-    /// UserDataChanged: pushed watch-state rows for the signed-in user.
     UserData(Vec<UserDataRecord>),
     LibraryChanged(LibraryChange),
     Play(Value),
@@ -516,10 +488,6 @@ fn apply_user_data(
     }
 }
 
-/// Evicts removed items and fetches changed ones as the connection's own
-/// account. Fetches run without any lock held; each write then commits only if
-/// that session is still current. A stale result is dropped, because the next
-/// session's own sync owns its cache.
 fn apply_library_change(
     library: &Library,
     session: &Session,
@@ -660,8 +628,6 @@ impl Endpoint {
         })
     }
 
-    /// Connects with explicit timeouts; `tungstenite::connect` would otherwise
-    /// let a stalling handshake block the worker indefinitely.
     fn open(&self) -> Result<TcpStream, String> {
         let addresses = (self.host.as_str(), self.port)
             .to_socket_addrs()

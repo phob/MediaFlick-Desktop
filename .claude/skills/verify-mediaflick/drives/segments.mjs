@@ -1,20 +1,3 @@
-// Media segments on your own server, which has none: a loopback proxy in
-// front of it forwards everything and answers `GET /MediaSegments/<id>` for
-// two episodes, one with embedded chapters and one without, with an Intro
-// (6.25–97.5 s) and an Outro near the end. Each case saves the Playback shelf's
-// four segment selects through Settings, plays an episode from the start and,
-// inside the intro, reads `/api/player/state`'s skipSegments, the injected
-// markers in mpv's chapter-list, the player bar's `Skip Intro`, mpv's OSD
-// prompt (raw `show-text` commands in app.log) and the position running on
-// through the intro; after Skip Intro, Jellyfin's session must hold a position
-// past the intro. With External mpv the page stays usable, so one more case
-// switches Intro to Don't show and saves mid-playback.
-// Plays real audio and writes the test user's playstate; leaves both episodes
-// unplayed without a resume point and signs the app's own token out.
-//   just verify segments --account https://jellyfin.example.com --signed-out --timeout 600 --log-level "debug,mpv.ipc=trace"
-// External mpv: add `--seed .claude/skills/verify-mediaflick/seeds/external-mpv`.
-// MEDIAFLICK_VERIFY_SEGMENTS=baseline runs only the cases that predate the
-// Don't show option (Ask me, Never); the report lists the others as skipped.
 import { mediaSegmentsAnswer } from "../scripts/proxy.mjs"
 
 const ASK = "Ask me"
@@ -27,16 +10,10 @@ const SELECTS = [
   { label: "Recap skipping", key: "skipRecap" },
   { label: "Commercial skipping", key: "skipCommercial" },
 ]
-// Off round seconds: the app's merge keeps an embedded chapter at the same
-// time instead of the marker, and files often have chapters on round seconds.
 const INTRO = { startS: 6.25, endS: 97.5 }
 const OUTRO_BEFORE_END = { startS: 87.5, endS: 12.5 }
 const all = (mode) => [mode, mode, mode, mode]
 
-// `episode`: `chapters` has embedded chapters the markers merge into, `plain`
-// has none. `show`: the segment types expected in skipSegments and as chapter
-// markers; the Skip Intro button follows `intro`. `fetch: false` expects no
-// MediaSegments request at all.
 const CASES = [
   { name: "intro-ask", baseline: true, episode: "chapters", selects: all(ASK), show: { intro: true, outro: true }, prompt: true, pressSkip: true },
   { name: "intro-never", baseline: true, episode: "chapters", selects: [NEVER, ASK, ASK, ASK], show: { intro: true, outro: true }, prompt: false },
@@ -148,8 +125,6 @@ async function startFromBeginning(ctx, episode) {
   }
 }
 
-// The player bar shows its own Stop from 1536 px; narrower, Stop moves into
-// the overflow menu.
 async function stopFromBar(ctx) {
   const stop = { role: "button", name: "Stop" }
   const more = { role: "button", name: "More playback controls" }
@@ -233,7 +208,6 @@ async function runCase(ctx, spec, { episode, integrated, proxy, report }) {
       return now >= INTRO.endS * 1000 - 1000 ? now : null
     }, "the position at the end of the intro", 15000)
     expect(result.skippedToMs !== null && !(await skipButtonShown(ctx)), `Skip Intro jumped to ${((result.skippedToMs ?? NaN) / 1000).toFixed(1)} s and left the bar`)
-    // What Jellyfin itself holds for this playback, not what the app shows.
     const { deviceId } = await status(ctx)
     result.serverAfterSkipS = await settle(ctx, async () => {
       const live = (await ctx.jellyfin(`/Sessions?deviceId=${encodeURIComponent(deviceId)}`)).find((entry) => entry.NowPlayingItem?.Id === episode.id)
@@ -327,10 +301,6 @@ export default async function segments(ctx) {
       continue
     }
     ctx.step(`case ${spec.name}: ${spec.selects.join(" / ")} on the ${spec.episode} episode`)
-    // External mpv 0.41 under Xvfb hangs on a second loadfile after stop in
-    // the same process (bare mpv reproduces it, with or without the proxy);
-    // the app only recovers after mpv's 60 s network timeout. A relaunch gives
-    // each case a fresh mpv.
     if (!integrated && report.cases.length) {
       ctx.step("relaunching for a fresh External mpv: a second load in the same mpv hangs under Xvfb")
       await ctx.relaunch()

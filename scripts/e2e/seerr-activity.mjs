@@ -1,16 +1,3 @@
-// End-to-end check of Seerr request activity badges.
-//
-// Drives a running, signed-in MediaFlick Desktop through its real path:
-// Desktop -> Companion -> Seerr, Radarr, and Sonarr. Start the app with
-// `--remote-debugging-port 9333` against a server whose Companion is
-// configured with Seerr, then run:
-//
-//   node scripts/e2e/seerr-activity.mjs [output-dir]
-//
-// The output directory (default build/e2e/seerr-activity) receives
-// report.json and screenshots of the Requests page and each in-progress title's
-// detail page. The script exits non-zero when an invariant fails.
-
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 

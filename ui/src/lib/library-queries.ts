@@ -35,11 +35,6 @@ export function useBrowseLetters(source: ListingSource, enabled = true) {
   })
 }
 
-/**
- * Both library hooks pass the real `queryFn`. The query keeps the options of
- * the observer that rendered last, so one rendered with `skipToken` would
- * leave the next invalidation without a fetcher.
- */
 const librariesQuery = queryOptions({ queryKey: queryKeys.libraries, queryFn: api.libraries })
 
 export function useLibraries() {
@@ -80,12 +75,6 @@ export function usePersonResolution(query: PersonResolveQuery, enabled = true) {
   })
 }
 
-/**
- * The windowed grid's data source: one query per `PAGE_SIZE` page, so a page
- * already in the cache renders without a round trip and pages scrolled past
- * stay cached under the normal `gcTime`. Callers pass only the pages they can
- * actually see (plus page 0, which anchors `total`).
- */
 export function useBrowsePages(source: BrowseSource, pages: number[]) {
   return useQueries({
     queries: pages.map((page) => {

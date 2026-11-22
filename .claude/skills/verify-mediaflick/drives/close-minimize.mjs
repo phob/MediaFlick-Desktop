@@ -1,8 +1,3 @@
-// "When the window closes: Minimize window" through a window-manager close
-// (the title bar's close button): the window asks to be minimized and the app
-// keeps running. Switched back to "Exit MediaFlick", the next close exits.
-// Device-local; the demo server only provides the sign-in. Linux only (wmClose).
-//   just verify close-minimize
 const DEMO = "https://demo.jellyfin.org/stable"
 const CLOSE_BEHAVIOR = { name: "Close behavior" }
 const MINIMIZED_LOG = "close request minimized the window"

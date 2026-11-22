@@ -1,11 +1,5 @@
-// Settings → Application through the real path: sign in (Jellyfin's public
-// demo server, inside the disposable profile), open Settings from the
-// sidebar, change "Show scrollbars", prove Discard leaves settings.json alone
-// and Save writes it, and that the saved value survives leaving the page.
-//   just verify application-settings
 const DEMO = "https://demo.jellyfin.org/stable"
 const SWITCH = { role: "switch", name: "Show scrollbars" }
-// role=status takes no accessible name from its content, so read its text.
 const saveBarStatus = (ctx) => ctx.app.evaluate(`document.querySelector(".settings-save-bar [role=status]")?.textContent.trim() ?? null`)
 
 export default async function applicationSettings(ctx) {

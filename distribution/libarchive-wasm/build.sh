@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Builds the comic reader's libarchive.wasm and worker-bundle.js without any
-# crypto library. See README.md.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,7 +12,6 @@ EMSDK_VERSION=6.0.13
 EMSDK_COMMIT=35659964bc2762fffec0d257997fb61475f765b7
 EMSCRIPTEN_COMMIT=e13ee988ce3d87a738dd8f3661d02223308c412a
 
-# name|version|url|sha256
 SOURCES=(
   "libarchive|3.8.11|https://github.com/libarchive/libarchive/releases/download/v3.8.11/libarchive-3.8.11.tar.xz|a3dc0872b1b39da34dc18ef1b944f0f11ffd37425d70ae04be679279f1cf43d2"
   "zlib|1.3.2|https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.xz|d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3"
@@ -61,7 +58,6 @@ for entry in "${SOURCES[@]}"; do
   tar -xf "$downloads/$name-$version.tarball" -C "$src/$name" --strip-components=1
 done
 
-# Paths in __FILE__ and assertions would otherwise carry this machine's work directory.
 cflags=(-O3 "-ffile-prefix-map=$work=.")
 export CFLAGS="${cflags[*]}"
 cmake_common=(-G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix"
@@ -85,7 +81,6 @@ emcmake cmake -S "$src/xz" -B "$build/xz" "${cmake_common[@]}" \
 cmake --build "$build/xz" -j "$jobs" >/dev/null
 cmake --install "$build/xz" >/dev/null
 
-# RAR5's BLAKE2sp is libarchive's own (CC0) implementation.
 emcmake cmake -S "$src/libarchive" -B "$build/libarchive" "${cmake_common[@]}" \
   -DENABLE_OPENSSL=OFF -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_CNG=OFF \
   -DENABLE_MD=OFF -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF -DENABLE_LZO=OFF -DENABLE_ZSTD=OFF \
@@ -94,7 +89,6 @@ emcmake cmake -S "$src/libarchive" -B "$build/libarchive" "${cmake_common[@]}" \
   -DENABLE_ZLIB=ON -DENABLE_BZip2=ON -DENABLE_LZMA=ON -DENABLE_ICONV=ON \
   -DENABLE_XATTR=OFF -DENABLE_ACL=OFF -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF \
   -DENABLE_UNZIP=OFF -DENABLE_TEST=OFF -DENABLE_WERROR=OFF >"$build/libarchive-configure.log"
-# A codec libarchive can't find silently falls back to "unsupported" (7z's LZMA among them).
 for header in ZLIB_H BZLIB_H LZMA_H; do
   grep -q "^#define HAVE_$header 1" "$build/libarchive/config.h" || { echo "libarchive did not find $header" >&2; exit 1; }
 done
@@ -102,9 +96,6 @@ cmake --build "$build/libarchive" -j "$jobs" >/dev/null
 cmake --install "$build/libarchive" >/dev/null
 
 mkdir -p "$build/glue"
-# libarchive.js 2.0.2's worker was written against Emscripten 3.1: it reads
-# cwrap and HEAPU8 off the module and does arithmetic on int64 returns such as
-# archive_entry_size, which WASM_BIGINT (the default since) turns into BigInts.
 emcc "${cflags[@]}" -I"$prefix/include" -c "$src/libarchivejs/lib/wrapper/main.c" -o "$build/main.o"
 emcc "$build/main.o" "$prefix/lib/libarchive.a" "$prefix/lib/liblzma.a" "$prefix/lib/libbz2.a" "$prefix/lib/libz.a" \
   -o "$build/glue/libarchive.js" -O3 \

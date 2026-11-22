@@ -1,34 +1,11 @@
-// The upgrade from MediaFlick 0.1.6, whose settings live in config.json and
-// whose mark-watched key lives in input.json (there is no settings.json yet).
-// Seed the profile with those files as 0.1.6 wrote them: the hand-made seed
-// below, or a profile the real 0.1.6 left (scripts/e2e/upgrade-0-1-6.mjs).
-//
-// The expected result comes from the files themselves, read by 0.1.6's own
-// rules (v0.1.6:src/preferences/model.rs and v0.1.6:src/players/mpv/input.rs:
-// to_vec_pretty of AppSettings, a field at its default is left out, a missing
-// player_backend is 0.1.6's default external mpv, a blank key is disabled and
-// a missing input.json means "w") and the operator's decisions of 2026-11-15:
-// an MPC-HC user moves to the Built-in player and keeps every other setting,
-// and a user of external mpv with its path keeps external mpv.
-//
-// Proves: the sign-in screen is prefilled with the 0.1.6 server, the Player
-// shelf shows the expected player and the 0.1.6 Default fullscreen, opening it
-// writes nothing, Save writes settings.json with that player, no MPC-HC and
-// every other 0.1.6 value, the 0.1.6 files are left byte for byte, and after a
-// relaunch the app reads settings.json. Every check is recorded in
-// upgrade-0-1-6.json and the run fails at the end listing each failed one.
-// Never signs in.
-//   just verify upgrade-0-1-6 --seed .claude/skills/verify-mediaflick/seeds/upgrade-0-1-6
 import { isDeepStrictEqual } from "node:util"
 import { readFileSync } from "node:fs"
 
 const LEGACY_FILES = ["config.json", "input.json"]
-// Fields 0.1.6 saved that 0.2.0 reads with another meaning or drops on purpose.
 const MPC_HC_FIELDS = ["player_backend", "mpchc_path"]
 const saveBarStatus = (ctx) => ctx.app.evaluate(`document.querySelector(".settings-save-bar [role=status]")?.textContent.trim() ?? null`)
 const toasts = (ctx) => ctx.app.evaluate(`[...document.querySelectorAll("[data-sonner-toast]")].map((e) => e.textContent.trim()).join(" | ") || null`)
 
-/** What 0.2.0 must make of the 0.1.6 files, by 0.1.6's rules and the operator's decisions. */
 function expectations(config, input) {
   const external = config.player_backend === "mpv" || (config.player_backend === undefined && typeof config.mpv_path === "string")
   return {
@@ -86,7 +63,6 @@ async function steps(ctx, report, record) {
   await ctx.screenshot("02-player-imported")
   record(ctx.configStat("settings.json") === null, "opening the settings writes nothing before Save")
 
-  // The edit that makes the shelf dirty: the other Default fullscreen.
   const edited = fullscreen.value === "Windowed" ? "Fullscreen" : "Windowed"
   await ctx.choose({ name: "Default fullscreen" }, edited)
   await ctx.press({ role: "button", name: "Save" })
@@ -95,7 +71,6 @@ async function steps(ctx, report, record) {
   await ctx.screenshot("03-player-saved")
   const clean = (await ctx.state({ role: "button", name: "Save" })).disabled === true
   record(clean, "the shelf is clean after Save", await saveBarStatus(ctx))
-  // A failed save leaves the draft dirty, and the relaunch's close would stop at the leave dialog.
   if (!clean) await ctx.press({ role: "button", name: "Discard" })
 
   const raw = ctx.configStat("settings.json") ? onDisk("settings.json") : null

@@ -53,7 +53,6 @@ pub(super) struct MpvEvent {
     pub(super) property: Option<String>,
     pub(super) data: Option<Value>,
     pub(super) args: Vec<String>,
-    /// The playlist entry `start-file` and `end-file` belong to (mpv 0.33+).
     pub(super) playlist_entry_id: Option<i64>,
     pub(super) raw: Value,
 }
@@ -146,10 +145,6 @@ impl IpcWorker {
         tracing::trace!(target: "mpv.ipc", ipc_path = path, "connecting mpv IPC reader");
         let mut reader = connect_ipc(path)?;
         write_observe_commands(&mut reader)?;
-        // Keep command writes on a dedicated pipe opened while mpv is still idle.
-        // Opening fresh command pipes after load can hang on Windows, and writing
-        // commands through a clone of the event reader can prevent loadfile from
-        // reaching mpv. The separate persistent writer is the known-good shape.
         tracing::trace!(target: "mpv.ipc", ipc_path = path, "connecting mpv IPC command writer");
         let writer_alive = Arc::new(AtomicBool::new(true));
         let writer = IpcCommandWriter {
@@ -183,8 +178,6 @@ impl IpcWorker {
         self.writer_alive.load(Ordering::SeqCst)
     }
 
-    /// Sends one command and returns its reply's `data` (`null` when the
-    /// reply has none, and for an async command, which is not awaited).
     pub(super) fn send_with_timeout(
         &self,
         command: Value,
@@ -206,9 +199,6 @@ impl IpcWorker {
         match ack_rx.recv_timeout(timeout) {
             Ok(result) => result,
             Err(_) => {
-                // A reply timeout leaves the synchronous reader's state
-                // unknowable. Poison this worker so no later command queues
-                // behind it; the controller poll will replace the session.
                 self.writer_alive.store(false, Ordering::SeqCst);
                 Err(IpcCommandFailure::Transport(io::Error::new(
                     io::ErrorKind::TimedOut,
@@ -249,10 +239,6 @@ impl IpcCommandWriter {
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             let result = if asynchronous {
-                // mpv's async IPC mode explicitly permits later commands to run
-                // while this one is still executing. Acknowledge the successful
-                // write now; a later validated command drains and logs the
-                // eventual completion reply by request id.
                 write_command(self.stream.get_mut(), &command)
                     .map(|()| Value::Null)
                     .map_err(IpcCommandFailure::Transport)
@@ -598,10 +584,6 @@ fn set_ipc_command_read_timeout(stream: &IpcConnection, timeout: Duration) -> io
     stream.set_read_timeout(Some(timeout))
 }
 
-/// A scripted mpv IPC endpoint for tests. It accepts the two connections an
-/// [`IpcWorker`] makes, event reader first and command writer second, like mpv.
-/// It records each command, tagged with the connection it arrived on, and
-/// answers with whatever lines the test's `reply` returns for it.
 #[cfg(test)]
 pub(super) mod test_server {
     use std::io::{BufRead, BufReader, Write};
@@ -656,8 +638,6 @@ pub(super) mod test_server {
                         let _ = received_tx.send((EVENT_CONNECTION, command));
                     }
                 }
-                // Only `events` may hold the server end, so dropping it in
-                // `finish` is what ends the worker's reader.
                 drop(observers);
                 *server_events.lock().expect("event stream") = Some(event_stream);
 
@@ -746,9 +726,6 @@ pub(super) mod test_server {
         }
     }
 
-    /// A named-pipe server. mpv creates one pipe instance per client; the next
-    /// instance must exist before the event reader connects, and the command
-    /// writer's connect retries until the second one does.
     #[cfg(windows)]
     struct Listener {
         name: Vec<u16>,

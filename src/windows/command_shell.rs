@@ -37,9 +37,6 @@ pub fn run_command_processor_shim() -> Option<i32> {
     None
 }
 
-/// Point a child process at this executable for `%COMSPEC%`, while preserving the
-/// real `cmd.exe` path for the shim above. This prevents Windows mpv Lua scripts
-/// that call `os.execute(...)` from flashing a visible console window.
 #[cfg(target_os = "windows")]
 pub fn install_hidden_command_processor_shim(command: &mut Command) {
     let Ok(current_exe) = std::env::current_exe() else {

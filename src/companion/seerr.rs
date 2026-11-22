@@ -1,6 +1,3 @@
-//! Seerr through the Companion: discovery, details and requests, joined
-//! against the local library so rows know which titles are owned.
-
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -11,20 +8,16 @@ use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
 
 use super::CompanionSession;
 
-/// Studio and network filters, company search and the network list.
 const STUDIO_NETWORK_DISCOVERY: &str = "seerr-discovery-v5";
 
-/// The longest company search the Companion accepts.
 pub const MAX_COMPANY_QUERY_CHARS: usize = 100;
 
-/// A TMDB production company or TV network.
 #[derive(Debug, Deserialize, Serialize, ts_rs::TS)]
 pub struct SeerrCompany {
     id: i64,
     name: String,
 }
 
-/// `GET /api/seerr/companies`: one page of TMDB companies matching a name.
 #[derive(Debug, Deserialize, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SeerrCompanyPage {
@@ -34,8 +27,6 @@ pub struct SeerrCompanyPage {
     results: Vec<SeerrCompany>,
 }
 
-/// `GET /api/seerr/networks`: the Companion's curated TV networks, in its
-/// order.
 #[derive(Debug, Deserialize, Serialize, ts_rs::TS)]
 pub struct SeerrNetworkList {
     networks: Vec<SeerrCompany>,
@@ -110,8 +101,6 @@ impl CompanionSession {
     ) -> Result<Value, ApiError> {
         self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
         let query = options.query_pairs(kind, page);
-        // An older Companion ignores these parameters and would answer with
-        // the unfiltered catalog.
         if query
             .iter()
             .any(|(name, _)| matches!(*name, "studio" | "network"))
@@ -257,19 +246,12 @@ impl CompanionSession {
     }
 }
 
-/// What a joined page does with a row whose kind is neither `movie` nor
-/// `tv`, such as a person.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum OtherKinds {
-    /// Search, discover and person credits feed request cards, which need a
-    /// known kind.
     Drop,
-    /// The user's requests show every row, with no library title.
     Keep,
 }
 
-/// Joins a page of shaped Seerr rows, answered under `results`, against the
-/// local cache.
 fn join_seerr_results(
     library: &Library,
     value: &mut Value,
@@ -314,8 +296,6 @@ fn join_seerr_results(
     Ok(())
 }
 
-/// Seerr names movies `movie` and series `tv`; persons and anything else
-/// have no library title.
 fn seerr_kind(item: &Value) -> Option<TitleKind> {
     match item["mediaType"].as_str()? {
         "movie" => Some(TitleKind::Movie),
@@ -394,7 +374,6 @@ mod tests {
         assert_eq!(page["results"][1]["played"], false);
         assert!(page["results"][2]["libraryItemId"].is_null());
         assert_eq!(page["results"][2]["played"], false);
-        // TMDB numeric ids can overlap across movie and TV namespaces.
         assert_eq!(page["results"][3]["libraryItemId"], "s1");
     }
 }

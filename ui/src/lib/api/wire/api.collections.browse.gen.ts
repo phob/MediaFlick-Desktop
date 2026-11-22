@@ -11,14 +11,8 @@ export type CollectionProfileDetail = {
   missing: Array<NormalizedTitle>,
   items: Array<NormalizedTitle>,
   libraryItems: Array<ItemSummary>,
-  /**
-   * Sent only once results are ready.
-   */
   ownershipAvailable?: boolean,
   refresh: RefreshState,
-  /**
-   * Sent only once results are ready.
-   */
   overdue?: boolean,
 };
 

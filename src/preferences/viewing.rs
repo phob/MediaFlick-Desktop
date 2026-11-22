@@ -45,8 +45,6 @@ impl StartupDestination {
     }
 }
 
-/// The page the app opens on, as the UI reads it: a legacy Movies or Series
-/// destination is already resolved to a library.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub enum StartupView {
@@ -132,7 +130,6 @@ pub struct ViewingSettings {
     pub spoiler_protection: bool,
     pub next_episode: NextEpisode,
     pub countdown_seconds: u8,
-    /// Zero leaves continuous playback unlimited.
     pub episode_limit: u8,
     pub audio_languages: Vec<String>,
     pub subtitle_languages: Vec<String>,

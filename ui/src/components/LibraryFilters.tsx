@@ -57,7 +57,6 @@ const ANY = "__any__"
 
 const WATCHED = [{ id: ANY, label: "Any watch status" }, ...WATCH_FILTERS]
 
-/** A studio or tag list as its query stands: no values yet while it loads. */
 interface FacetList {
   values: readonly string[] | undefined
   error: Error | null
@@ -67,7 +66,6 @@ interface FilterOptions {
   genres: string[]
   genresLoading: boolean
   studios: FacetList
-  /** "Network" in TV libraries, where Jellyfin keeps a series' networks as its studios. */
   studioLabel: string
   tags: FacetList
   ratings: string[]
@@ -98,14 +96,8 @@ function currentValue(value: string, fallback: string) {
 
 const NO_VALUES: readonly string[] = []
 
-/** Studio and tag lists run into the thousands; past this many matches the picker asks for a narrower search. */
 const FACET_MATCH_LIMIT = 100
 
-/**
- * A searchable single choice for long value lists. It stops key events at its
- * root so that, inside a dropdown menu, typing reaches the search field instead
- * of the menu's typeahead and arrow keys move through the matches.
- */
 function FacetPicker({
   noun,
   list,
@@ -156,7 +148,6 @@ function FacetPicker({
   )
 }
 
-/** A submenu opened from the keyboard focuses its own content; hand that focus to the picker's search field. */
 function focusSearch(event: FocusEvent<HTMLDivElement>) {
   if (event.target === event.currentTarget) event.currentTarget.querySelector("input")?.focus()
 }

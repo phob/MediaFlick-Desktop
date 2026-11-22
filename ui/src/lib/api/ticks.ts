@@ -1,5 +1,3 @@
-// Jellyfin positions and runtimes are in 100-nanosecond ticks.
-
 import type { ItemSummary } from "./types/catalog.ts"
 
 export const TICKS_PER_MS = 10_000

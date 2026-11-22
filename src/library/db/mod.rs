@@ -1,8 +1,3 @@
-//! SQLite storage for credentials, the catalog index, and sync state.
-//!
-//! `rusqlite::Connection` is not `Sync`, so callers borrow one from a small
-//! pool for the duration of a query instead of sharing a single handle.
-
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -19,18 +14,12 @@ mod tests;
 
 const MAX_IDLE_CONNECTIONS: usize = 4;
 
-/// Why `library.db` could not be opened. Every variant leaves the file as it
-/// was: a schema change commits whole or not at all.
 #[derive(Debug)]
 pub enum OpenError {
     Sqlite(rusqlite::Error),
-    /// A newer MediaFlick wrote the file, at a schema this build does not know.
     NewerSchema {
         found: i32,
     },
-    /// A schema change failed and was rolled back: the file is still at
-    /// `from`. `step` is the change that failed, from schema to schema: one
-    /// migration step, or the whole range when the check after them failed.
     Migration {
         from: i32,
         step: std::ops::Range<i32>,
@@ -38,9 +27,6 @@ pub enum OpenError {
     },
 }
 
-/// The user reads this on the startup error screen, so a SQLite error is
-/// shown without the statement it ran, which can be the whole schema. The
-/// alternate form (`{:#}`), which goes to the log, keeps the statement.
 impl fmt::Display for OpenError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let full = formatter.alternate();
@@ -96,10 +82,6 @@ impl Database {
             open_flags: read_write_flags(),
             idle: Mutex::new(Vec::new()),
         };
-        // An existing file is checked through a read-only connection first:
-        // closing a writable one merges an unmerged WAL into the file, and
-        // `configure` would switch its journal mode, so a refused file stays
-        // as it was.
         if path.exists() {
             let probe = Connection::open_with_flags(
                 path,
@@ -172,9 +154,6 @@ impl Database {
         result
     }
 
-    /// Refreshes the query planner's statistics. SQLite only reads them when a
-    /// connection opens, so idle pooled connections are retired and reopen
-    /// with the new statistics on their next use.
     pub fn optimize(&self) -> rusqlite::Result<()> {
         let connection = self.acquire()?;
         let result = (|| {

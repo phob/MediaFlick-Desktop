@@ -1,17 +1,3 @@
-// A storage failure in an optional sync step reaches the user as a storage
-// failure. The app signs in through a loopback proxy that holds the first
-// /UserViews answer; while it is held the drive takes SQLite's write lock on
-// the profile's library.db from this process, as another program holding the
-// file would, then lets the answer through. Storing the library list waits out
-// the app's 10 s busy timeout and fails. The retry screen must name local
-// storage, and after the lock is gone Retry now must load Home with the
-// library list stored. Read-only against the demo server.
-//   just verify storage-failure
-//
-// Before the fix the failure was logged as "could not sync the library list"
-// and the cycle went on as if the list were merely not loaded yet. The drive
-// releases the lock as soon as it sees that line, so the old build shows
-// Home without a library list instead of the storage screen, and fails.
 import fs from "node:fs"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -43,8 +29,6 @@ function userFiles(ctx) {
   }))
 }
 
-// BEGIN IMMEDIATE takes the WAL write lock and fails at once while the app is
-// itself writing, so try until the app is between writes.
 async function holdWriteLock(ctx, file) {
   const database = new DatabaseSync(file)
   await ctx.until(() => {

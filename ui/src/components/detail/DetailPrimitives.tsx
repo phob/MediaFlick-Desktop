@@ -21,13 +21,6 @@ export function DetailPageSkeleton() {
   )
 }
 
-/**
- * Viewport-sized artwork behind every section of a detail route. The outer
- * layer spans the page; the sticky artwork uses the content viewport's height
- * so season lengths and asynchronously loaded sections cannot change its crop.
- * Overflow must clip without creating another scroll container, otherwise the
- * artwork would stop sticking to the route viewport.
- */
 export function DetailBackdrop({ src }: { src: string }) {
   const [failed, setFailed] = useState(false)
   if (failed) return null

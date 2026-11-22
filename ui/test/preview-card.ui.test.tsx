@@ -212,10 +212,6 @@ describe("expanded media-card details target", () => {
   })
 
   test("treats a release from a press that began on the card as the card click", () => {
-    // The press straddled the panel's appearance: mousedown hit the card, the
-    // panel mounted during the 170ms fade-in, and mouseup lands on the panel.
-    // The browser fires no click for a down/up target mismatch, so the panel
-    // must honour the release itself.
     const panel = renderOpenPreview()
 
     fireEvent.pointerUp(panel, { button: 0 })

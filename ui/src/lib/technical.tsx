@@ -5,7 +5,6 @@ import { useSettings } from "./settings-queries"
 import { readShellEvent } from "./shell-events"
 import { TechnicalContext } from "./technical-context"
 
-/** Live stream metadata is refreshed even when a remux leaves the catalog row unchanged. */
 const TECHNICAL_STALE_MS = 15 * 60_000
 const STALE_SCAN_MS = 60_000
 
@@ -13,12 +12,6 @@ function isAbortError(cause: unknown) {
   return cause instanceof DOMException && cause.name === "AbortError"
 }
 
-/**
- * Every visible card's quality badges, fetched through the shared card batch
- * scheduler. Streams are never cached natively — this map is their only
- * memory. Successful and failed lookups are rechecked on a modest timer so an
- * in-place remux cannot leave stale badges for the session.
- */
 export function TechnicalProvider({ children }: { children: ReactNode }) {
   const settings = useSettings()
   const [items, setItems] = useState<ReadonlyMap<string, MediaStream[]>>(new Map())
@@ -51,8 +44,6 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
         markChecked(ids)
       } catch (error) {
         if (error instanceof ApiError && error.accountChanged) {
-          // Two accounts on one server share item ids, so the previous
-          // account's failure must not stand in for the next one's lookup.
           for (const id of ids) if (active.has(id)) pending.add(id)
         } else if (!isAbortError(error)) {
           markChecked(ids)
@@ -76,10 +67,6 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
     cancel()
   }, [active, cancel, fresh, pending, showMediaInfo, schedule])
 
-  // MediaStreams are deliberately absent from the catalog index, so an
-  // in-place remux can leave every catalog column unchanged. Refresh only the
-  // cards still visible, at a low cadence, to discover that change without
-  // restoring a durable rich-metadata cache.
   useEffect(() => {
     const interval = window.setInterval(() => {
       if (!enabled.current) return
@@ -91,10 +78,6 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
     return () => window.clearInterval(interval)
   }, [active, fresh, pending, schedule])
 
-  // Changed episodes affect the representative stream of their series and
-  // season cards, so both direct item ids and parent context ids invalidate the
-  // live map. Off-screen entries are dropped now and fetched only if visible
-  // again; visible entries are requeued immediately.
   useEffect(() => {
     const receive = (event: Event) => {
       const detail = readShellEvent(event)

@@ -49,15 +49,6 @@ function Poster({ result }: { result: SeerrResult }) {
   )
 }
 
-/**
- * A title from Seerr, in the same geometry as [`MediaCard`] so a row of them
- * sits level with the library's own posters.
- *
- * Every card opens Seerr's full title record first. A title already in the
- * library can continue into the local detail page from there; a missing title
- * offers the request flow alongside its synopsis, release information, cast,
- * trailer, and availability.
- */
 export const SeerrCard = memo(function SeerrCard({
   result,
   capabilities,

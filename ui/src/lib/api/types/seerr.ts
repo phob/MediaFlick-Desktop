@@ -11,11 +11,6 @@ export type SeerrStatus =
   | "available"
   | "blacklisted"
 
-/**
- * Why a `processing` title is not available yet, from Seerr's download queue
- * and the Companion's Radarr/Sonarr lookup. Absent or null when neither can
- * say, including from Companions that predate the field.
- */
 export type SeerrActivity =
   | "downloading"
   | "searching"
@@ -25,11 +20,6 @@ export type SeerrActivity =
 
 export type SeerrRequestStatus = "unknown" | "pending" | "approved" | "declined" | "failed"
 
-/**
- * One Seerr result, already joined against the local cache by the shell.
- * `libraryItemId` is the whole point of the join: a result either plays or is
- * requested, and the card never has to guess which.
- */
 export interface SeerrResult {
   mediaType: SeerrMediaType
   tmdbId: number
@@ -44,7 +34,6 @@ export interface SeerrResult {
   activity?: SeerrActivity | null
   activity4k?: SeerrActivity | null
   libraryItemId: string | null
-  /** Watch state from the local catalog join, for owned movies. */
   played?: boolean
 }
 
@@ -73,7 +62,6 @@ interface SeerrCastMember {
 interface SeerrCrewMember {
   id: number
   name: string
-  /** Display labels in the Companion's key-job order, such as "Director". */
   jobs: string[]
   profilePath: string | null
 }
@@ -112,22 +100,16 @@ export interface SeerrMediaDetail extends SeerrResult {
   numberOfEpisodes: number | null
   originalLanguage: string | null
   homepage: string | null
-  /** Absent when an older compatible Companion serves the detail response. */
   externalIds?: { imdb: string | null; tvdb: number | null }
   budget: number | null
   revenue: number | null
   studios: string[]
   networks: string[]
-  /**
-   * The studios and networks with a TMDB id, for Discover links. Absent when
-   * an older compatible Companion serves the detail response.
-   */
   studioRefs?: SeerrCompany[]
   networkRefs?: SeerrCompany[]
   productionCountries: { code: string; name: string }[]
   spokenLanguages: { code: string; name: string }[]
   cast: SeerrCastMember[]
-  /** Absent when an older compatible Companion serves the detail response. */
   crew?: SeerrCrewMember[]
   trailer: SeerrTrailer | null
   releaseDates: SeerrReleaseDate[]
@@ -147,11 +129,6 @@ export interface SeerrPage<T> {
   results: T[]
 }
 
-/**
- * Person credits plus the server titles the backend proved are on Jellyfin
- * even though its own cast relation never credited this person to them. They
- * are excluded from `results`' discoverable set by their `libraryItemId`.
- */
 export interface SeerrPersonCreditsPage extends SeerrPage<SeerrResult> {
   libraryExtras?: ItemSummary[]
 }
@@ -180,7 +157,6 @@ export interface SeerrCapabilities {
   tv: SeerrCapability
   movie4k: SeerrCapability
   tv4k: SeerrCapability
-  /** Seerr's REQUEST_ADVANCED bit: may choose a Radarr/Sonarr profile. */
   advancedRequest: boolean
 }
 
@@ -265,18 +241,11 @@ type SeerrTrendingMediaType = "all" | SeerrMediaType
 
 type SeerrTrendingWindow = "day" | "week"
 
-/** A TMDB production company or TV network. */
 export type SeerrCompany = Wire.SeerrCompany
 
-/**
- * Discover's filters. A studio or network keeps its name beside the id so
- * the active-filter chip can name it; only the id reaches Seerr.
- */
 export interface SeerrDiscoverFilters {
   genre?: number
-  /** The movie catalog only. */
   studio?: SeerrCompany
-  /** The TV catalog only. */
   network?: SeerrCompany
   sort?: SeerrDiscoverSort
   minRating?: number

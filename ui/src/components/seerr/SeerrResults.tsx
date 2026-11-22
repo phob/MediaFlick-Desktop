@@ -30,10 +30,6 @@ function ResultCard({
   return <SeerrCard result={result} capabilities={capabilities} />
 }
 
-/**
- * A wrapped row of Seerr results. Not virtualized on purpose: a Seerr page is
- * twenty titles, and the poster wall the library grid windows for is thousands.
- */
 export function SeerrResults({
   results,
   isPending,

@@ -1,15 +1,6 @@
 import { SeerrResults } from "@/components/seerr/SeerrResults"
 import { useSeerrSearch, useSeerrStatus } from "@/lib/seerr-queries"
 
-/**
- * The unified-search tail: what the library does not have, under what it does.
- *
- * It is a *separate* query from the local one on purpose — the local FTS answer
- * renders at SQLite speed and must never be held back by a round trip to Seerr,
- * which is itself proxying TMDB. Results the cache already holds are dropped
- * here rather than shown twice: the shell's (kind, TMDB id) join has already
- * said which those are.
- */
 export function NotInYourLibrary({ term }: { term: string }) {
   const status = useSeerrStatus()
   const linked = status.data?.linked ?? false

@@ -1,13 +1,3 @@
-// Every library the app serves live, against Jellyfin's own answers: each
-// offered sort, and favorites where offered, over two pages; the refusal of
-// every sort and filter it does not offer; empty filter options; and Latest
-// against the Jellyfin query the library's profile names. On the demo server
-// the run signs in through a loopback proxy and also proves that a dropped or
-// failing live request answers an error, never an empty page, and that paging
-// a live container asks Jellyfin for its type once. On both servers a missing
-// container's children answer 404 and an id list answers 400. Read-only.
-//   just verify live-libraries
-//   just verify live-libraries --account https://jellyfin.example.com
 import { randomUUID } from "node:crypto"
 
 const DEMO = "https://demo.jellyfin.org/stable"

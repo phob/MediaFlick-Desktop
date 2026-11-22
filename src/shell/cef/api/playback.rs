@@ -16,7 +16,6 @@ routes! {
     POST ["sync"] -> SyncRequested = Ok(request_sync(services)),
 }
 
-/// `/api/sync`: a library sync was queued.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct SyncRequested {
     requested: bool,
@@ -27,8 +26,6 @@ fn request_sync(services: &Arc<Services>) -> SyncRequested {
     SyncRequested { requested: true }
 }
 
-/// The answer to every `/api/play` route. `started: false`, with no other
-/// field, comes back when there is no next or previous episode.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct PlayStarted {
@@ -57,14 +54,12 @@ impl PlayStarted {
     };
 }
 
-/// `/api/play/neighbors`: the episodes either side of an item.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct PlaybackNeighbors {
     previous: Option<ItemSummary>,
     next: Option<ItemSummary>,
 }
 
-/// `/api/player/command`: the player took the command.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct PlayerCommandAccepted {
     accepted: bool,
@@ -86,8 +81,6 @@ pub(super) struct PlayBody {
     quality: Option<StreamingQuality>,
 }
 
-/// `/api/play/queue`: play an album, audiobook or track as an audio queue,
-/// from `startItemId` (one of its tracks) or its first track.
 #[derive(Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(optional_fields)]
@@ -325,51 +318,23 @@ pub(super) enum PlayerCommandBody {
     Pause,
     Resume,
     TogglePause,
-    Seek {
-        position_ms: f64,
-    },
-    SetVolume {
-        volume: f64,
-    },
-    SetMute {
-        mute: bool,
-    },
-    SetAudioDelay {
-        delay_seconds: f64,
-    },
-    SetSubtitleDelay {
-        delay_seconds: f64,
-    },
-    SetSubtitleScale {
-        scale: f64,
-    },
-    SetVideoFit {
-        fit: VideoFitBody,
-    },
-    SetVideoAspect {
-        aspect: VideoAspectBody,
-    },
-    SetDeinterlace {
-        enabled: bool,
-    },
-    SetToneMapping {
-        mode: ToneMappingBody,
-    },
-    SetAudioTrack {
-        audio_track: i64,
-    },
-    /// A null track turns subtitles off.
-    SetSubtitleTrack {
-        subtitle_track: Option<i64>,
-    },
+    Seek { position_ms: f64 },
+    SetVolume { volume: f64 },
+    SetMute { mute: bool },
+    SetAudioDelay { delay_seconds: f64 },
+    SetSubtitleDelay { delay_seconds: f64 },
+    SetSubtitleScale { scale: f64 },
+    SetVideoFit { fit: VideoFitBody },
+    SetVideoAspect { aspect: VideoAspectBody },
+    SetDeinterlace { enabled: bool },
+    SetToneMapping { mode: ToneMappingBody },
+    SetAudioTrack { audio_track: i64 },
+    SetSubtitleTrack { subtitle_track: Option<i64> },
     ToggleSubtitles,
     ToggleFullscreen,
     Stop,
     MarkWatchedNext,
-    /// The audio queue's next entry; nothing while no queue plays.
     NextTrack,
-    /// Restarts the audio entry after its first 3 seconds, else the previous
-    /// entry; nothing while no queue plays.
     PreviousTrack,
 }
 
@@ -405,8 +370,6 @@ pub(super) enum ToneMappingBody {
 }
 
 impl PlayerCommandBody {
-    /// Values the player cannot apply (a zero subtitle scale, a non-positive track) are
-    /// rejected here rather than forwarded.
     fn into_command(self) -> Option<crate::playback::PlayerCommand> {
         use crate::playback::{PlayerCommand, ToneMapping, VideoAspect, VideoFit};
 

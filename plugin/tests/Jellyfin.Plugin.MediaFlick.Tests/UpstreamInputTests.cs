@@ -8,10 +8,6 @@ using Xunit;
 
 namespace Jellyfin.Plugin.MediaFlick.Tests;
 
-/// <summary>
-/// Upstream text never reaches Desktop or health state, and malformed input
-/// fails as a request error or a safely ignored value instead of a 500.
-/// </summary>
 public sealed class UpstreamInputTests
 {
     private const string ServiceHost = "sonarr.internal.example";

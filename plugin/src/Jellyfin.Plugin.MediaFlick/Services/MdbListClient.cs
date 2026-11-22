@@ -33,13 +33,6 @@ internal interface IMdbListTransport
         CancellationToken cancellationToken);
 }
 
-/// <summary>
-/// Fixed-origin MDBList transport. It deliberately does not use
-/// IHttpClientFactory: MDBList API-key authentication is a query parameter and
-/// the factory's normal request logging could otherwise record the full URI.
-/// Diagnostics log only status codes and error categories, never the request
-/// URI, the exception text, or the response body.
-/// </summary>
 internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
 {
     private const int MaxResponseBytes = 8 * 1024 * 1024;
@@ -89,8 +82,6 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
         IReadOnlyList<string> ids,
         CancellationToken cancellationToken)
     {
-        // provider and mediaType have already passed strict allowlists. No
-        // caller can select a host, path, port, or arbitrary upstream query.
         var path = provider + "/" + mediaType + "/?apikey=" + Uri.EscapeDataString(apiKey);
         var bodyIds = ids.Select(id => provider == "tmdb"
             && long.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var number)
@@ -106,11 +97,6 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
 
     public void Dispose() => _client.Dispose();
 
-    /// <summary>
-    /// Fetches one MDBList list's items. `resource` is an already-validated
-    /// validated lists-relative path built by the collection provider; no caller
-    /// can select a host, path, port, or arbitrary upstream query.
-    /// </summary>
     public Task<MdbListResponse> ListItemsAsync(
         string apiKey,
         string resource,
@@ -124,9 +110,6 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
 
     internal static string BuildListItemsPath(string apiKey, string resource)
     {
-        // The regular payload carries rank and media-specific ids. MDBList's
-        // ids_only payload drops rank and moves TMDB to a different field,
-        // which cannot preserve the order of a mixed movie and show list.
         var separator = resource.Contains('?', StringComparison.Ordinal) ? "&" : "?limit=500&";
         return resource + separator + "apikey=" + Uri.EscapeDataString(apiKey);
     }
@@ -214,9 +197,6 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
         }
         catch (HttpRequestException exception)
         {
-            // Never propagate or log HttpRequestException itself: its message
-            // can contain the API-key-bearing request URI on some
-            // handlers/runtimes. Its error category is safe.
             _logger.Log(
                 _failures.Failure(Subject, "unreachable"),
                 "MDBList could not be reached ({HttpRequestError})",
@@ -274,10 +254,6 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
                 ? parsed
                 : null;
 
-    /// <summary>
-    /// Reads MDBList's body pagination markers. Wrongly typed markers are
-    /// treated as absent rather than failing the list request.
-    /// </summary>
     internal static bool BodyHasMore(JsonObject detail)
     {
         var pagination = detail["pagination"] as JsonObject;

@@ -1,8 +1,3 @@
-// The reader's engines run unbundled from the `/reader/` tree, which
-// `ui/vite.config.ts` copies verbatim from these packages and `build.rs`
-// embeds, so each URL serves exactly the module its type is taken from.
-// That is what makes the casts below safe: `import()` of a computed URL is
-// untyped, and these URLs are the packages' own files.
 const ROOT = "/reader"
 
 export async function foliateView() {

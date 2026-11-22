@@ -1,6 +1,3 @@
-//! CEF uses device-independent coordinates; X11 reports drawable pixels.
-//! Xft.dpi determines layout and input. On Wayland, raster density is capped at
-//! the physical output density; libmpv stretches the bitmap to X11 coordinates.
 use cef::Rect;
 use x11rb::connection::Connection;
 

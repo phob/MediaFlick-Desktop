@@ -93,8 +93,6 @@ export default function PlayerSettings() {
         toast.error(pickerError)
         return
       }
-      // A null path is the native dialog's cancellation result. It settles the
-      // request but deliberately leaves the user's existing draft untouched.
       if (path === null) return
       updateDraft((current) => current ? { ...current, mpvPath: path } : current)
     }

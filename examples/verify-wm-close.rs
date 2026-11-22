@@ -1,14 +1,3 @@
-//! Verification helper for `.claude/skills/verify-mediaflick`, never shipped.
-//! Plays the part of an ICCCM window manager when the user clicks the app's
-//! close button: sends its top-level a `WM_PROTOCOLS` client message carrying
-//! `WM_DELETE_WINDOW`, then listens on the root window for `watch-ms` for the
-//! `WM_CHANGE_STATE` IconicState request a window sends to be minimized.
-//!
-//!   verify-wm-close <WM_CLASS class> [watch-ms]
-//!
-//! Prints `{"window":"0x…","iconifyRequested":bool}`. Fails unless exactly one
-//! viewable top-level with that class advertises `WM_DELETE_WINDOW`.
-
 #[cfg(target_os = "linux")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::time::{Duration, Instant};
@@ -36,7 +25,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)?
             .reply()?
             .value;
-        // WM_CLASS is "instance\0class\0".
         if wm_class.split(|byte| *byte == 0).nth(1) != Some(class.as_bytes()) {
             continue;
         }
@@ -58,8 +46,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     };
-    // Without a window manager nobody holds SubstructureRedirect on the root,
-    // so a SubstructureNotify listener receives the client's WM requests.
     conn.change_window_attributes(
         root,
         &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY),

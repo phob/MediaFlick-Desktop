@@ -1,9 +1,3 @@
-// A "Delete local account data" that fails halfway, then a sign-in to the same account.
-//   just verify account-deletion-retry --account SERVER --signed-out
-// A directory planted at accounts.json.bak makes the deletion's first step fail after its
-// journal entry is written. The UI must then show the app as signed out. Signing in again
-// must finish the pending deletion first, so the journal is empty and a relaunch keeps the
-// new session instead of deleting the account again.
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 
 const pendingFor = (ctx, userId) => (ctx.readConfig("pending-deletions.json")?.deletions ?? []).filter((entry) => entry.userId === userId)
@@ -22,8 +16,6 @@ export default async function accountDeletionRetry(ctx) {
   writeFileSync(`${plant}/blocker`, "planted by account-deletion-retry")
   ctx.step("planted a directory at accounts.json.bak")
 
-  // The UI polls /api/status only while a sync runs, so delete once it is idle:
-  // only the delete's own failure handling can then show the app signed out.
   await ctx.until(async () => {
     const status = (await ctx.api("/api/status")).body
     return status.bootstrap?.state === "ready" && !status.syncing && !status.syncProgress?.active
@@ -35,8 +27,6 @@ export default async function accountDeletionRetry(ctx) {
     await ctx.fill({ role: "textbox", name: "Type DELETE to confirm local account deletion" }, "DELETE")
     await ctx.press({ role: "button", name: "Delete local account data" })
     await ctx.press({ role: "button", name: "Delete local account data", within: { role: "alertdialog", name: "Delete local account data?" } })
-    // The journal entry is written before the deletion fails; the UI leaves the
-    // shell only once the delete request has answered with its failure.
     await ctx.find({ role: "link", name: "Back to sign in" }, { timeout: 20000 })
     ctx.step("the UI shows the app signed out after the failed deletion")
     report.pendingAfterFailure = pendingFor(ctx, userId).length

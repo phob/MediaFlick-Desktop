@@ -619,25 +619,11 @@ impl AccountConfigurationService {
         &self,
         change: impl FnOnce(&mut AccountConfigurationFile) -> io::Result<T>,
     ) -> io::Result<T> {
-        // File replacement is part of this critical section. Releasing the
-        // guard before it completes would let two API requests both save an
-        // older clone and silently discard whichever mutation committed first.
-        let mut current = self
-            .document
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut next = current.clone();
-        let result = change(&mut next)?;
-        validate_document(&mut next)?;
-        save_document(&self.path, &next)?;
-        *current = next;
-        drop(current);
-        Ok(result)
+        super::json_file::mutate_locked(&self.document, change, validate_document, |next| {
+            save_document(&self.path, next)
+        })
     }
 
-    /// Like [`Self::mutate`], but `change` answers whether it changed the
-    /// document, and an unchanged one is not written. Deciding under the same
-    /// lock keeps another save from landing between the check and the write.
     fn mutate_if_changed(
         &self,
         change: impl FnOnce(&mut AccountConfigurationFile) -> io::Result<bool>,

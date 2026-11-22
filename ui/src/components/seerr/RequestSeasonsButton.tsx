@@ -5,14 +5,6 @@ import { Button } from "@/components/ui/button"
 import type { ItemDetail } from "@/lib/api"
 import { useSeerrMedia, useSeerrStatus } from "@/lib/seerr-queries"
 
-/**
- * "Request season" on a series the library only partly has.
- *
- * The series is matched to Seerr by its own TMDB id — the same (kind, TMDB id)
- * join the search results use, from the other direction — so a show with no
- * TMDB id, or one Seerr already has in full, offers nothing at all rather than
- * a button that would open an empty dialog.
- */
 export function RequestSeasonsButton({ item }: { item: ItemDetail }) {
   const status = useSeerrStatus()
   const [requesting, setRequesting] = useState(false)

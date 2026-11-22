@@ -1,13 +1,3 @@
-//! Executes remote-control messages other Jellyfin clients send this session.
-//!
-//! Once the socket has announced media-control capabilities, this device
-//! appears in the "Play On" menus of Jellyfin Web and the mobile apps. `Play`
-//! starts an item in the configured external player through the same launch
-//! path as the UI's own Play button, `Playstate` drives pause/stop/seek/next,
-//! and `GeneralCommand` covers volume and mute. Every command here is
-//! implemented by the mpv adapter; anything else is logged and ignored rather
-//! than half-applied.
-
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -105,7 +95,6 @@ pub(crate) fn parse_general(data: &Value) -> GeneralAction {
     let name = data["Name"].as_str().unwrap_or_default();
     match name {
         "SetVolume" => {
-            // Jellyfin serializes command arguments as strings.
             let volume = &data["Arguments"]["Volume"];
             volume
                 .as_str()
@@ -212,10 +201,6 @@ fn handle_play(services: &Arc<Services>, data: &Value, scope: &SessionScope) {
     }
 }
 
-/// Maps a remote target onto something the player can open. Movies and
-/// episodes play as themselves; a series plays its Next Up episode (first
-/// episode once fully watched), matching the series page's Play button; a
-/// season plays its first episode.
 fn resolve_playable(
     services: &Services,
     scope: &SessionScope,

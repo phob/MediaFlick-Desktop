@@ -6,8 +6,6 @@ import subprocess
 import sys
 
 
-# These interfaces must come from the host together with its drivers, audio
-# plugins, desktop, and libc. Do not traverse or copy their private dependencies.
 HOST_LIBRARIES = re.compile(
     r"^(?:ld-linux[^/]*|lib(?:c|m|pthread|dl|rt|resolv|util|gcc_s|stdc\+\+)\.so.*"
     r"|lib(?:EGL|GL|GLX|OpenGL|GLdispatch|glapi|drm[^/]*|va[^/]*|vdpau|vulkan|cuda|nvcuvid|nvidia-[^/]*)\.so.*"
@@ -28,8 +26,6 @@ def dependencies(library, prefix):
         if match:
             resolved[match[1]] = Path(match[2])
         else:
-            # The ELF loader can itself be a DT_NEEDED entry (e.g. GnuTLS).
-            # ldd prints its absolute path without the usual "name =>" prefix.
             match = re.match(r"\s*(/\S+) \(", line)
             if match:
                 path = Path(match[1])
@@ -41,7 +37,6 @@ def dependencies(library, prefix):
 
 
 def package_for(library):
-    # dpkg may record /lib or /usr/lib, depending on the release's usr-merge.
     candidates = [str(library), str(library.resolve())]
     if str(library).startswith("/usr/lib/"):
         candidates.append(str(library)[4:])
@@ -100,7 +95,6 @@ def bundle(prefix, output, source_dir, build_packages=()):
                 cwd=source_dir, check=True,
             )
             fetched.add((source, version))
-    # Debian copyright files can reference common license texts by absolute path.
     shutil.copytree("/usr/share/common-licenses", licenses / "common-licenses")
     (output / "SYSTEM-PACKAGES.txt").write_text("\n".join(records) + "\n")
     (output / "HOST-LIBRARIES.txt").write_text("\n".join(sorted(host)) + "\n")

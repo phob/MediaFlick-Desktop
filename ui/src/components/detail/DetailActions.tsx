@@ -23,14 +23,8 @@ import { useOpenExternal, useSetFavorite, useSetPlayed } from "@/lib/item-querie
 import { usePlay } from "@/lib/playback-queries"
 import { useSettings } from "@/lib/settings-queries"
 
-/** Stands in for "no override" — Radix Select cannot hold an empty value. */
 const FROM_SETTINGS = "__settings__"
 
-/**
- * A per-session override of the streaming quality saved in Settings.
- * It applies from the next playback on, so it lives next to the Play button
- * rather than in a settings dialog.
- */
 function QualityPicker() {
   const override = useQualityOverride()
   const settings = useSettings()
@@ -78,11 +72,6 @@ function ExternalLinks({ item }: { item: ItemDetail }) {
   />
 }
 
-/**
- * The action bar under the title. `playTarget` is what Play actually starts:
- * for a series that is its Next Up episode, so the primary button is never a
- * request the shell cannot serve.
- */
 export function DetailActions({
   item,
   playTarget,

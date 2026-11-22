@@ -6,10 +6,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-/// <summary>
-/// The Radarr and Sonarr calls <see cref="ArrFactsLookup"/> makes, so the
-/// lookup can be driven without live services.
-/// </summary>
 internal interface IArrTransport
 {
     bool IsConfigured(string service);
@@ -55,12 +51,6 @@ internal sealed class CompanionArrTransport : IArrTransport
         };
 }
 
-/// <summary>
-/// Looks up the Radarr movies and Sonarr series behind Seerr titles that are
-/// processing. Each lookup is one small by-id request, cached briefly so
-/// repeated pages do not repeat it. The facts only refine a status badge, so
-/// every failure degrades to "no facts" and never fails the Seerr response.
-/// </summary>
 public sealed class ArrFactsLookup
 {
     internal static readonly TimeSpan FactsLifetime = TimeSpan.FromMinutes(5);
@@ -166,7 +156,6 @@ public sealed class ArrFactsLookup
             }
             catch (GatewayException exception) when (exception.Failure == ServiceFailure.RequestFailed)
             {
-                // The service answered; it just does not know this title.
                 cache.Set(id, null);
                 return (Id: id, Facts: (TFacts?)null);
             }

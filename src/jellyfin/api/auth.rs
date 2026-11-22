@@ -60,8 +60,6 @@ pub fn quick_connect_enabled(client: &JellyfinClient) -> bool {
         .unwrap_or(false)
 }
 
-/// Starts a Quick Connect attempt. Jellyfin moved this from GET to POST in
-/// 10.9, so both are tried before giving up.
 pub fn quick_connect_initiate(client: &JellyfinClient) -> Result<QuickConnectResult, ApiError> {
     match client.post_json::<Value, QuickConnectResult>("/QuickConnect/Initiate", &[], &json!({})) {
         Ok(result) => Ok(result),
@@ -112,11 +110,6 @@ mod tests {
         assert!(!credentials.access.administrator);
     }
 
-    /// The policies are excerpts of real `AuthenticateByName` answers from
-    /// Jellyfin 12.4.0 (2026-11-15): the administrator a fresh server's
-    /// startup wizard created, and demo.jellyfin.org's `demo` user. Only an
-    /// administrator may be offered server setup such as the Companion
-    /// install; a policy that does not say so, or no policy, offers none.
     #[test]
     fn the_administrator_flag_comes_from_the_policy() {
         let administrator = result(

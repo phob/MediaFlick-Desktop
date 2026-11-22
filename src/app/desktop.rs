@@ -1,6 +1,3 @@
-//! Desktop shells resolve native Wayland icons and names through installed
-//! desktop entries, even when CEF supplies a window icon. Register a fallback
-//! for unpackaged launches before creating the window.
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -20,8 +17,6 @@ pub fn register() -> io::Result<()> {
     let search_dirs: Vec<_> = std::env::split_paths(&data_dirs)
         .filter(|path| path.is_absolute())
         .collect();
-    // APPIMAGE is the persistent archive path; current_exe points into its
-    // temporary mount and cannot be used to relaunch it from a pinned icon.
     let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
     let executable = launch_path(appimage.as_deref(), &std::env::current_exe()?);
     register_at(&data_home, &search_dirs, &executable)
@@ -42,8 +37,6 @@ fn register_at(data_home: &Path, search_dirs: &[PathBuf], executable: &Path) -> 
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => return Err(error),
     };
-    // User/package-managed launchers take precedence. Only refresh our own
-    // fallback when a checkout or AppImage moves.
     if existing
         .as_ref()
         .is_some_and(|entry| !entry.lines().any(|line| line == MARKER))
@@ -62,7 +55,6 @@ fn register_at(data_home: &Path, search_dirs: &[PathBuf], executable: &Path) -> 
 
     let icon_path = data_home.join("mediaflick-desktop/desktop/app-icon.svg");
     let entry = desktop_entry(executable, &icon_path)?;
-    // Use an absolute icon path so no icon-theme cache refresh is required.
     write_changed(&icon_path, ICON)?;
     write_changed(&destination, entry.as_bytes())
 }
@@ -72,8 +64,6 @@ fn desktop_entry(executable: &Path, icon: &Path) -> io::Result<String> {
     if let Some(directory) = executable.parent() {
         let cef = directory.join("libcef.so");
         if cef.is_file() {
-            // Match the staged launcher: CEF must precede libc in the loader's
-            // link map. Do not persist the launching process's environment.
             arguments.push(format!("LD_LIBRARY_PATH={}", path_text(directory)?));
             arguments.push(format!("LD_PRELOAD={}", path_text(&cef)?));
             arguments.push(format!(
@@ -82,8 +72,6 @@ fn desktop_entry(executable: &Path, icon: &Path) -> io::Result<String> {
             ));
         }
     }
-    // Pass the path as data, including paths containing '=' that env would
-    // otherwise interpret as another environment assignment.
     arguments.extend(["/bin/sh", "-c", "exec \"$0\""].map(str::to_owned));
     arguments.push(path_text(executable)?.to_owned());
     let command = arguments

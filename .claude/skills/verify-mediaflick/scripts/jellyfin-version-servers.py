@@ -1,28 +1,4 @@
 #!/usr/bin/env python3
-"""Run real Jellyfin servers of chosen versions on loopback for the `server-versions` drive.
-
-    python3 .claude/skills/verify-mediaflick/scripts/jellyfin-version-servers.py 10.10.7 10.11.0 10.11.11 12.4 12.4+companion
-
-For each version it downloads Jellyfin's official portable Linux build
-(cached in build/e2e/jellyfin-servers), starts it with a fresh data directory
-on a free 127.0.0.1 port, completes the startup wizard with the user
-`e2e-admin` / `e2e-password`, and adds a Movies and a Shows library of short
-generated videos (needs ffmpeg). A version written `X.Y+companion` (12.0
-and newer) also gets the MediaFlick Companion, built and packaged like a
-release by scripts/e2e/companion-jellyfin.py (needs dotnet) and placed in the
-server's plugins directory before its first start, as an administrator's
-manual install does; the server must then answer /MediaFlick/info. Jellyfin
-12 names its releases by minor version (12.4), and a server answers to the
-version it was asked for when its full version starts with it. It writes the servers to
-build/e2e/jellyfin-version-servers/servers.json and, for the first version
-given, the profile a MediaFlick 0.1.6 user of that server has:
-upgrade-0-1-6/config.json, as 0.1.6 wrote it (serde_json::to_vec_pretty of
-its AppSettings with only `jellyfin_url` set; every other field is skipped at
-its default). It prints `ready` and keeps the servers running until
-interrupted. Server logs stay in that directory.
-Linux x64 and arm64 only.
-"""
-
 from __future__ import annotations
 
 import importlib.util
@@ -115,12 +91,10 @@ def free_port() -> int:
 
 
 def companion_package() -> Path:
-    """The Companion zip, built and packaged as companion-jellyfin.py does for a release."""
     spec = importlib.util.spec_from_file_location("companion_jellyfin", ROOT / "scripts/e2e/companion-jellyfin.py")
     if spec is None or spec.loader is None:
         raise SystemExit("cannot load scripts/e2e/companion-jellyfin.py")
     module = importlib.util.module_from_spec(spec)
-    # Its dataclasses look their module up in sys.modules while it loads.
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     work = OUTPUT / "companion-package"
@@ -150,7 +124,6 @@ def start(spec: str, executable: Path, media_root: Path, companion: Path | None)
     if shutil.which("ffmpeg"):
         command += ["--ffmpeg", shutil.which("ffmpeg")]
     process = subprocess.Popen(command, stdout=(data / "console.log").open("wb"), stderr=subprocess.STDOUT)
-    # A server that fails to come up must not outlive the script.
     try:
         base = f"http://127.0.0.1:{port}"
         deadline = time.monotonic() + 180
@@ -159,7 +132,6 @@ def start(spec: str, executable: Path, media_root: Path, companion: Path | None)
                 raise SystemExit(f"Jellyfin {version} did not start; see {data / 'console.log'}")
             try:
                 status, body = request(base, "GET", "/System/Info/Public")
-                # While it migrates, a stand-in answers without a version.
                 if status == 200 and json.loads(body).get("Version"):
                     break
             except (urllib.error.URLError, ConnectionError, TimeoutError, json.JSONDecodeError):
@@ -175,12 +147,9 @@ def start(spec: str, executable: Path, media_root: Path, companion: Path | None)
         ok(request(base, "POST", "/Startup/Complete"), "startup completion")
         token = json.loads(ok(request(base, "POST", "/Users/AuthenticateByName", body={"Username": USER, "Pw": PASSWORD}), "sign-in"))["AccessToken"]
         for name, kind in dict.fromkeys((name, kind) for name, kind, _, _ in LIBRARIES):
-            # Jellyfin 12 no longer reads the `paths` query parameter; every version reads PathInfos.
             query = urllib.parse.urlencode({"name": name, "collectionType": kind, "refreshLibrary": "true"})
             options = {"LibraryOptions": {"PathInfos": [{"Path": str(media_root / name)}]}}
             ok(request(base, "POST", f"/Library/VirtualFolders?{query}", token, options), f"library {name}")
-        # Jellyfin 12 may scan while the second library is still being added and
-        # then miss it; a scan started after both are in place finds every file.
         rescan = 0.0
         while json.loads(ok(request(base, "GET", "/Items?Recursive=true&IncludeItemTypes=Movie,Episode", token), "items"))["TotalRecordCount"] < len(LIBRARIES):
             if time.monotonic() > deadline:

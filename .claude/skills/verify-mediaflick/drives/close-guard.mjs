@@ -1,13 +1,6 @@
-// The unsaved-settings guard on a window-manager close (the title bar's close
-// button): an unsaved draft asks "Leave without saving?" first. Keep editing
-// keeps the app and the draft; Discard and leave exits without writing the
-// draft. Device-local; the demo server only provides the sign-in. Linux only
-// (wmClose).
-//   just verify close-guard
 const DEMO = "https://demo.jellyfin.org/stable"
 const SWITCH = { role: "switch", name: "Show scrollbars" }
 const GUARD = { role: "dialog", name: "Leave without saving?" }
-// role=status takes no accessible name from its content, so read its text.
 const saveBarStatus = (ctx) => ctx.app.evaluate(`document.querySelector(".settings-save-bar [role=status]")?.textContent.trim() ?? null`)
 
 export default async function closeGuard(ctx) {

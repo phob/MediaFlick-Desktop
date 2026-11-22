@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::urls::percent_decode;
 
-/// Jellyfin positions and durations are ticks of 100 ns.
 pub const TICKS_PER_SECOND: f64 = 10_000_000.0;
 pub const TICKS_PER_MILLISECOND: f64 = 10_000.0;
 
@@ -33,9 +32,6 @@ pub fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-/// Query parameter names Jellyfin accepts an access token under, compared
-/// ASCII case-insensitively. Media URLs handed to a player must not carry
-/// them; the token travels in [`PlaybackRequest::headers`] instead.
 pub const TOKEN_QUERY_KEYS: &[&str] = &[
     "api_key",
     "apikey",
@@ -45,8 +41,6 @@ pub const TOKEN_QUERY_KEYS: &[&str] = &[
     "x-mediabrowser-token",
 ];
 
-/// The first non-empty access token `url`'s query carries under one of
-/// [`TOKEN_QUERY_KEYS`].
 pub fn query_auth_token(url: &str) -> Option<String> {
     let query = url.split_once('?')?.1.split('#').next().unwrap_or_default();
     TOKEN_QUERY_KEYS.iter().find_map(|key| {
@@ -87,7 +81,6 @@ pub enum AudioKind {
     Audiobook,
 }
 
-/// One queue occurrence, so the same track queued twice reports two entries.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, ts_rs::TS)]
 #[ts(type = "string")]
 pub struct PlaylistItemId(String);
@@ -102,7 +95,6 @@ impl PlaylistItemId {
     }
 }
 
-/// Jellyfin's NowPlayingQueue: every entry in play order and the one playing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueReport {
     pub entries: Vec<QueueReportEntry>,
@@ -115,13 +107,8 @@ pub struct QueueReportEntry {
     pub playlist_item_id: PlaylistItemId,
 }
 
-/// A request to open media in the selected player. Backend-specific track
-/// translation happens in each player adapter.
 #[derive(Debug, Clone, Default)]
 pub struct PlaybackRequest {
-    /// Assigned by the coordinator for each dispatch and echoed as the
-    /// snapshot's `playback_id`, so its events can be told from a replaced
-    /// load's.
     pub load_id: i64,
     pub content: PlaybackContent,
     pub media_url: String,
@@ -135,7 +122,6 @@ pub struct PlaybackRequest {
     pub title: Option<String>,
     pub audio_stream_index: Option<i64>,
     pub subtitle_stream_index: Option<i64>,
-    // One-based embedded track ordinals, translated by each adapter.
     pub audio_mpv_id: Option<i64>,
     pub subtitle_mpv_id: Option<i64>,
     pub subtitle_url: Option<String>,
@@ -283,15 +269,11 @@ pub struct AudioDisplay {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "lowercase")]
 pub enum AudioPhase {
-    /// Negotiating the entry with Jellyfin.
     Preparing,
-    /// Handed to the player, which has not reported the file loaded yet.
     Loading,
     Playing,
 }
 
-/// The audio queue as the UI sees it: the current and next entry, never the
-/// whole queue.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioNowPlaying {
@@ -316,8 +298,6 @@ pub enum NowPlaying {
 #[derive(Debug, Clone, Default, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerSnapshot {
-    /// Set by the coordinator from what it asked to play, never from the
-    /// player's tracks: an MP3's cover art is a video track.
     pub now_playing: Option<NowPlaying>,
     pub active: bool,
     pub playback_id: Option<i64>,
@@ -350,7 +330,6 @@ pub enum StopReason {
 }
 
 impl StopReason {
-    /// Reads the `reason` of mpv's `end-file` event.
     pub fn parse(reason: &str) -> Option<Self> {
         let reason = reason.trim();
         if reason.is_empty() {
@@ -386,39 +365,23 @@ impl StopReason {
 #[derive(Debug, Clone)]
 pub enum BackendEvent {
     StateChanged(PlayerSnapshot),
-    /// The player loaded the file of this load and its playstate started.
-    Started {
-        playback_id: i64,
-    },
+    Started { playback_id: i64 },
     Stopped(PlayerSnapshot),
-    /// The player refused this load.
-    Failed {
-        load_id: i64,
-        message: String,
-    },
-    /// The player's own Next or Previous key, for the coordinator's queue.
-    TrackRequested {
-        next: bool,
-    },
+    Failed { load_id: i64, message: String },
+    TrackRequested { next: bool },
 }
 
 #[derive(Debug, Clone)]
 pub enum PlaybackEvent {
     StateChanged(PlayerSnapshot),
-    /// One queue entry ended and the queue moves on: refresh the item's
-    /// cached state, but playback continues.
     ItemFinished(PlayerSnapshot),
     Stopped(PlayerSnapshot),
-    Failed {
-        message: String,
-    },
+    Failed { message: String },
 }
 
 #[derive(Debug, Clone)]
 pub enum PlayerCommand {
     SetPause(bool),
-    /// Flips pause against the player's own state, so two quick presses never
-    /// both pause on a stale view of it.
     TogglePause,
     SeekMilliseconds(f64),
     SetVolume(f64),
@@ -490,9 +453,6 @@ mod tests {
         }
     }
 
-    /// Jellyfin sends `StartTimeTicks` 0 or nothing for a fresh start; only a
-    /// real resume point may schedule the startup seek. Ticks are .NET ticks
-    /// of 100 ns.
     #[test]
     fn only_a_resume_point_schedules_a_startup_seek() {
         for ticks in [None, Some(0), Some(-1)] {
@@ -509,7 +469,6 @@ mod tests {
         assert_eq!(request.start_seconds(), Some(1_234.5));
     }
 
-    /// .NET `TimeSpan.TicksPerMillisecond` is 10,000.
     #[test]
     fn positions_convert_to_milliseconds_at_ten_thousand_ticks_each() {
         assert_eq!(ticks_to_milliseconds(37_234_560_000), 3_723_456.0);
@@ -523,7 +482,6 @@ mod tests {
         }
     }
 
-    /// The `end-file` reasons in mpv's manual (input.rst).
     #[test]
     fn mpv_end_file_reasons_map_to_their_stop_reason() {
         for (mpv, reason) in [
@@ -538,8 +496,6 @@ mod tests {
         }
     }
 
-    /// A finished title is marked watched and plays the next one; a stop the
-    /// user caused must do neither.
     #[test]
     fn only_reaching_the_end_counts_as_finishing_the_title() {
         for reason in [StopReason::Eof, StopReason::WatchedNext] {

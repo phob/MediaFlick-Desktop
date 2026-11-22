@@ -1,10 +1,3 @@
-//! Local catalog index.
-//!
-//! The UI browses, sorts, filters, and searches exclusively from here; rich
-//! metadata (synopsis, cast, technical streams) is fetched live from Jellyfin
-//! by the surfaces that need it. A background thread ([`sync`]) keeps the thin
-//! index current.
-
 pub mod browse;
 pub mod db;
 pub mod headless;
@@ -44,9 +37,6 @@ pub fn current_release_decade() -> i64 {
     year.div_euclid(10) * 10
 }
 
-/// Parses only decade starts that the library UI can represent. Keeping this
-/// at the API boundary means hand-written URLs cannot turn a future or
-/// five-year bucket into an accidental query contract.
 pub fn release_decade_from_id(value: &str) -> Option<i64> {
     let decade = value.trim().parse::<i64>().ok()?;
     (decade >= EARLIEST_RELEASE_DECADE
@@ -55,12 +45,8 @@ pub fn release_decade_from_id(value: &str) -> Option<i64> {
         .then_some(decade)
 }
 
-/// Longest genre, studio or tag name a filter accepts, in characters. Far
-/// above any real name; it only bounds what a hand-written URL can send.
 const MAX_FACET_VALUE_CHARS: usize = 256;
 
-/// A genre, studio or tag filter value, matched exactly against the names
-/// Jellyfin sent.
 pub fn facet_value_from_id(value: &str) -> Option<String> {
     (value.chars().count() <= MAX_FACET_VALUE_CHARS).then(|| value.to_string())
 }
@@ -184,7 +170,6 @@ pub enum ItemSort {
     },
 }
 
-/// Serialized as [`SortKey::id`]; the TypeScript names repeat those ids.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ts_rs::TS)]
 pub enum SortKey {
     #[ts(rename = "name")]
@@ -303,8 +288,6 @@ impl ItemSort {
         };
         match self {
             Self::Name => indexed(&[BY_NAME], "name COLLATE NOCASE", false),
-            // Its index also serves release-decade filtering: kind, then a
-            // bounded year range.
             Self::ReleaseDate => indexed(&["year", "premiere_date"], BY_NAME, true),
             Self::DateAdded => indexed(&["date_created"], BY_NAME, true),
             Self::EpisodeAdded => SortOrder::Computed(
@@ -313,8 +296,6 @@ impl ItemSort {
                       AND e.is_virtual = 0), i.date_created)",
             ),
             Self::CommunityRating => indexed(&["community_rating"], BY_NAME, true),
-            // SQLite's two-argument max() is NULL when either side is, so
-            // absent dates compare as '' and turn back into NULL afterwards.
             Self::DatePlayed => SortOrder::Computed(
                 "CASE WHEN i.kind = 'Series' THEN NULLIF(max(
                     COALESCE(u.last_played_date, ''),
@@ -351,25 +332,17 @@ impl ItemSort {
 }
 
 enum SortOrder {
-    /// Plain item columns, kept in an `items_kind_<sort id>` index.
     Indexed(IndexedSort),
-    /// A value computed per row, which no index serves.
     Computed(&'static str),
     Shuffled(u32),
 }
 
-/// The ORDER BY clause and the library schema's index are both built from
-/// this, so the index always leads with the columns its sort orders by.
 struct IndexedSort {
-    /// Ordered in the requested direction; the index keeps them in the
-    /// sort's natural one.
     keys: &'static [&'static str],
-    /// Ascending, after `keys` and before the row id.
     tiebreak: &'static str,
     nulls_last: bool,
 }
 
-/// One `items_kind_<sort id>` index per indexed sort.
 fn sort_indexes() -> String {
     SortKey::ALL
         .into_iter()
@@ -443,7 +416,6 @@ pub struct ItemQuery {
     pub genre: Option<String>,
     pub studio: Option<String>,
     pub tag: Option<String>,
-    /// Inclusive first year of a standard ten-year release decade.
     pub release_decade: Option<i64>,
     pub watched: Option<WatchFilter>,
     pub favorite: Option<bool>,
@@ -548,8 +520,6 @@ pub(crate) fn now_unix() -> i64 {
     crate::app::clock::since_epoch().as_secs() as i64
 }
 
-/// The proleptic Gregorian `(year, month, day)` of a day count since the Unix
-/// epoch, after Howard Hinnant; small enough not to warrant a date-time crate.
 pub(crate) fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let days = days + 719_468;
     let era = days.div_euclid(146_097);

@@ -182,7 +182,6 @@ pub fn start_installer(_installer_path: &Path) -> UpdaterResult<()> {
     Err(std::io::Error::other("automatic installation is only supported on Windows").into())
 }
 
-/// The update toast, showing `release`, an [`UpdateRelease`] as JSON.
 pub fn update_available_script(release: &str) -> String {
     include_str!("update_toast.js")
         .replace("{{update_payload}}", release)

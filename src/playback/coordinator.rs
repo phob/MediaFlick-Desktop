@@ -26,8 +26,6 @@ pub struct AudioPlan {
 }
 
 impl AudioPlan {
-    /// `None` for an empty list, a start outside it, or more entries than
-    /// [`super::MAX_QUEUE_LENGTH`].
     pub fn new(tracks: Vec<AudioTrack>, start_index: usize, start: AudioStart) -> Option<Self> {
         let queue_id = NEXT_QUEUE_ID.fetch_add(1, Ordering::Relaxed);
         Some(Self {
@@ -41,13 +39,6 @@ impl AudioPlan {
     }
 }
 
-/// Application-facing playback service.
-///
-/// One actor thread owns the playback session: it orders UI and remote
-/// commands, audio preparation results and the player's events, keeps the
-/// audio queue, and is the only source of the events the shell sees. Native
-/// window and overlay calls go straight to the installed backend, so they
-/// never wait behind a negotiation.
 pub struct PlaybackCoordinator {
     shared: Arc<Shared>,
     commands: Sender<Command>,
@@ -148,8 +139,6 @@ enum Command {
 }
 
 impl PlaybackCoordinator {
-    /// `shell` receives every event the UI sees; `make_backend` builds the
-    /// first adapter around the sender its events go to.
     pub fn new(
         shell: Sender<PlaybackEvent>,
         make_backend: impl FnOnce(Sender<BackendEvent>) -> Box<dyn PlayerBackend>,
@@ -179,12 +168,6 @@ impl PlaybackCoordinator {
         }
     }
 
-    /// Publish a new adapter and retire the previous one. Whatever plays ends
-    /// with it; the retired adapter's own events, its shutdown's Stopped
-    /// included, never reach the shell.
-    ///
-    /// The retired backend's bounded teardown runs on a detached thread so the
-    /// calling thread (usually CEF's UI thread) never waits on player shutdown.
     pub fn replace(
         &self,
         make_backend: impl FnOnce(Sender<BackendEvent>) -> Box<dyn PlayerBackend>,
@@ -239,8 +222,6 @@ impl PlaybackCoordinator {
             .map_err(|error| format!("native UI presentation did not complete: {error}"))?
     }
 
-    /// Plays a video, replacing whatever plays, an audio queue included,
-    /// until it ends or `owner` is no longer the signed-in account.
     pub fn open(
         &self,
         path: String,
@@ -256,8 +237,6 @@ impl PlaybackCoordinator {
         });
     }
 
-    /// Replaces whatever plays with `plan`, whose entries `source` prepares
-    /// one at a time.
     pub fn play_audio(&self, plan: AudioPlan, source: Arc<dyn AudioSource>) {
         let _ = self.commands.send(Command::Audio {
             plan: Box::new(plan),
@@ -397,8 +376,6 @@ impl Actor {
                 }
                 Session::Video { owner, .. } if !owner.is_current() => {
                     tracing::info!(target: "playback", "the account that started the video is no longer signed in; stopping it");
-                    // The Stopped event that follows finds the session idle
-                    // and reaches the UI as a video's stop.
                     self.end_session();
                     self.shared.backend().control(PlayerCommand::Stop);
                 }
@@ -646,7 +623,6 @@ impl Actor {
             }),
             BackendEvent::Failed { load_id, message } => {
                 let _ = self.shell.send(PlaybackEvent::Failed { message });
-                // The player never reports a refused load stopped, so end it here.
                 if self.live == Some(load_id) {
                     self.stopped(PlayerSnapshot {
                         playback_id: Some(load_id),

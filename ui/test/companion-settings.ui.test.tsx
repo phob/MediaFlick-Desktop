@@ -10,7 +10,6 @@ import { TestProviders } from "./test-utils"
 
 afterEach(() => vi.restoreAllMocks())
 
-// What the native app reports after probing a server without the plugin.
 function missingCompanion(serverTooOld: CompanionStatus["serverTooOld"]): CompanionStatus {
   return {
     available: false,
@@ -32,8 +31,6 @@ function renderCompanion(companion: CompanionStatus) {
   </TestProviders>)
 }
 
-// The Companion builds against Jellyfin.Controller 12.0.0 (Martin, 2026-11-15),
-// so on a 10.11 server it cannot be installed at all.
 test("a server older than Jellyfin 12 says the Companion needs Jellyfin 12.0.0", async () => {
   renderCompanion(missingCompanion({ version: "10.11.11", minimum: "12.0.0" }))
   expect(await screen.findByText(

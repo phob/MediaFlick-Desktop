@@ -1,10 +1,3 @@
-// Removes what interrupted verify runs left behind: processes whose command
-// line names a dead run's disposable profile, then the profile itself. Live
-// runs (their session.mjs still running, in any worktree) are skipped.
-// Evidence under build/verify is never touched.
-//
-//   just verify-cleanup
-
 import { rmSync } from "node:fs"
 import { killPids, listProcesses } from "./platform.mjs"
 import { scanRuns } from "./runs.mjs"

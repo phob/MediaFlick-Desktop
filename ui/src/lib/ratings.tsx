@@ -9,12 +9,6 @@ import { useSettings } from "./settings-queries"
 import { readShellEvent } from "./shell-events"
 
 const CACHE_RECHECK_SECONDS = 6 * 60 * 60
-/**
- * A response can answer without an entry for a requested id — most commonly
- * when another native call still owns that title's refresh, since an aborted
- * request's native work is not cancelled. Ask again a little later, a bounded
- * number of times, instead of treating the omission as final for the mount.
- */
 const OMITTED_RETRY_MS = 2_000
 const OMITTED_RETRY_LIMIT = 2
 const NO_SOURCES: string[] = []
@@ -24,11 +18,6 @@ interface RatingsConfiguration {
   selected: string[]
 }
 
-/**
- * Card ratings, fetched through the shared card batch scheduler. Ratings
- * start only after cards commit, so neither catalog queries nor progressive
- * first-page readiness waits on them.
- */
 export function RatingsProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
   const settings = useSettings()
@@ -81,8 +70,6 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
         })
       } catch (error) {
         if (error instanceof ApiError && error.accountChanged) {
-          // Two accounts on one server share item ids; the next account asks
-          // again for the cards it still shows.
           for (const id of ids) if (active.has(id)) pending.add(id)
         }
       }

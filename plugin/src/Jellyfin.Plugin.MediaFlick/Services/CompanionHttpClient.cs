@@ -13,10 +13,6 @@ public sealed class CompanionHttpClient
     public const string ClientName = "MediaFlick.Companion";
     internal const int MaxSeerrResponseBytes = 16 * 1024 * 1024;
 
-    /// <summary>
-    /// Sonarr's calendar and Radarr's movie list cover a whole library in one
-    /// response, so they get a larger, still bounded, allowance.
-    /// </summary>
     internal const int MaxLibraryResponseBytes = 64 * 1024 * 1024;
 
     private const int ReadChunkBytes = 81_920;
@@ -86,8 +82,6 @@ public sealed class CompanionHttpClient
                 var failure = FailureKind(response.StatusCode, mappedUser);
                 if (failure == ServiceFailure.RequestFailed)
                 {
-                    // A missing title or a per-user permission answer proves
-                    // the service is reachable and accepts the key.
                     _health.Success(serviceName);
                 }
                 else
@@ -95,8 +89,6 @@ public sealed class CompanionHttpClient
                     _health.Failure(serviceName, failure);
                 }
                 ReportFailureStatus(serviceName, response.StatusCode, mappedUser);
-                // The upstream body can echo request data or name internal
-                // hosts, so Desktop only ever receives fixed plugin wording.
                 throw new GatewayException(
                     (int)response.StatusCode,
                     FailureMessage(serviceName, response.StatusCode, mappedUser),
@@ -170,8 +162,6 @@ public sealed class CompanionHttpClient
         }
         catch (HttpRequestException exception)
         {
-            // The exception text can name the configured service address, so
-            // only its error category is recorded and logged.
             _health.Failure(serviceName, ServiceFailure.Unreachable);
             _logger.Log(
                 _failures.Failure(serviceName, "unreachable"),
@@ -192,9 +182,6 @@ public sealed class CompanionHttpClient
     {
         if (serviceName.Equals("seerr", StringComparison.OrdinalIgnoreCase))
         {
-            // `/status` is public on Seerr and therefore proves nothing about
-            // the supplied key. `/auth/me` must accept the key before the
-            // informational version probe is useful.
             await SendAsync(
                 serviceName,
                 service,
@@ -244,10 +231,6 @@ public sealed class CompanionHttpClient
         }
     }
 
-    /// <summary>
-    /// Logs only the service name and status. The response body can echo
-    /// request data, so it never reaches the log.
-    /// </summary>
     private void ReportFailureStatus(string serviceName, HttpStatusCode status, bool mappedUser)
     {
         var code = (int)status;
@@ -279,10 +262,6 @@ public sealed class CompanionHttpClient
             ? MaxSeerrResponseBytes
             : MaxLibraryResponseBytes;
 
-    /// <summary>
-    /// Reads at most <paramref name="maxBytes"/>, or returns null as soon as
-    /// the body (declared or actual) is larger, without buffering the rest.
-    /// </summary>
     internal static async Task<byte[]?> ReadBoundedAsync(
         HttpContent content,
         int maxBytes,
@@ -322,7 +301,6 @@ public sealed class CompanionHttpClient
     {
         foreach (var value in json.Span)
         {
-            // JSON whitespace: space, tab, carriage return, line feed.
             if (value is not (0x20 or 0x09 or 0x0D or 0x0A))
             {
                 return false;
@@ -346,10 +324,6 @@ public sealed class CompanionHttpClient
                 : ServiceFailure.RequestFailed;
     }
 
-    /// <summary>
-    /// Fixed Desktop-facing wording for an upstream status. Only the service
-    /// name and status code are used; the response body never is.
-    /// </summary>
     internal static string FailureMessage(string serviceName, HttpStatusCode status, bool mappedUser)
     {
         var name = DisplayName(serviceName);

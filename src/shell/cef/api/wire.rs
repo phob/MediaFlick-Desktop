@@ -1,11 +1,3 @@
-//! The JSON contract with the UI. `ApiResponse::ok` and `Body::decode`
-//! take only types listed in [`wire_types!`], and `generated_typescript_is_current`
-//! renders that list, with the route declarations of `super::routes`, into
-//! one file per Rust module in `ui/src/lib/api/wire/`, re-exported by
-//! `ui/src/lib/api/wire.gen.ts`. The JSON encoder is private to this module;
-//! the router, alone, calls `ok` for wire answers and `untyped` for the
-//! Companion JSON that `Relay` routes pass through.
-
 use serde::Serialize;
 use ts_rs::TS;
 
@@ -67,9 +59,6 @@ use super::settings::{
 use super::shell::{MpvHelpOpened, ShellQueued, ShellRequestBody, ShellRequestQueued};
 use super::{ApiResponse, AppStatus, NO_STORE, StartupResponse};
 
-/// A type the UI reads or sends by name. Only [`wire_types!`] implements it,
-/// so a handler cannot answer with `json!` or with a type the generated
-/// TypeScript does not know.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a wire type, so the UI has no generated TypeScript for it",
     label = "API bodies must be named types, not `json!` values",
@@ -78,8 +67,6 @@ use super::{ApiResponse, AppStatus, NO_STORE, StartupResponse};
 pub(in crate::shell::cef) trait Wire: TS + sealed::Sealed + 'static {}
 
 mod sealed {
-    /// Only [`super::wire_types!`] implements this, so no other module can
-    /// make a type [`super::Wire`] without listing it.
     pub trait Sealed {}
 }
 
@@ -213,8 +200,6 @@ wire_types! {
     WhatsNew,
 }
 
-/// The body of every non-2xx JSON response. It is generated for the UI but
-/// is not a [`Wire`] type, so `ApiResponse::ok` cannot send it with a 200.
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 struct ErrorBody {
@@ -222,14 +207,9 @@ struct ErrorBody {
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     expired: Option<bool>,
-    /// Set on the 409 that answers a request whose account was switched
-    /// before it finished. Other 409s on this API mean something else.
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     account_changed: Option<bool>,
-    /// Set on the 503 that answers every request once the services failed
-    /// to open at startup. `error` says why; the failure is final for the
-    /// process, so the UI shows it instead of signing in.
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     startup_failed: Option<bool>,
@@ -252,10 +232,6 @@ impl ApiResponse {
         Self::json(200, value)
     }
 
-    /// A response the UI reads without a generated type, for a route
-    /// declared `-> Relay`. Declare a [`Wire`] answer instead;
-    /// `untyped_responses_only_shrink` keeps this from spreading, and
-    /// `only_the_router_answers_with_success` keeps it in the router.
     pub(super) fn untyped(value: impl Serialize) -> Self {
         Self::json(200, value)
     }
@@ -272,7 +248,6 @@ impl ApiResponse {
         )
     }
 
-    /// The answer to every request after the services failed to open.
     pub(super) fn startup_failed(reason: &str) -> Self {
         Self::json(
             503,

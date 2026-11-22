@@ -19,11 +19,9 @@ import { useCloseWhatsNew, useWhatsNew } from "@/lib/whats-new"
 type Entry = {
   title: string
   text: string
-  /** Where the user finds it: the feature's own page or its settings. */
   link?: { to: string; label: string }
 }
 
-/** A Companion feature, linked only once the server's Companion offers it. */
 type CompanionEntry = Entry & { capability: string }
 
 const COMPANION_FEATURES: readonly CompanionEntry[] = [
@@ -107,11 +105,6 @@ const SINCE_0_1_6: readonly Entry[] = [
   },
 ]
 
-/**
- * The one-time What's new for a device updated from 0.1.6. It holds no
- * settings and closes like any dialog; closing it, or following one of its
- * links, records it as seen.
- */
 export function WhatsNewDialog() {
   const { data: status } = useStatus()
   const signedIn = Boolean(status?.authenticated)
@@ -184,10 +177,6 @@ function Entries({ entries, onFollow }: { entries: readonly Entry[]; onFollow: (
   )
 }
 
-/**
- * Says whether this server has the Companion the features above come with,
- * and who can add it where it could run.
- */
 function CompanionNote({ companion, administrator }: { companion: CompanionStatus | undefined; administrator: boolean }) {
   if (companion?.compatible) {
     return <p className="text-sm text-muted-foreground">Your Jellyfin server has MediaFlick Companion.</p>

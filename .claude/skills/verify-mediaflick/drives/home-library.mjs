@@ -1,8 +1,3 @@
-// Home and the library against Jellyfin's public demo server, read-only:
-// billboard ticks, shelf arrows, a card from Home, Movies sort, a decade
-// filter and its chip, an empty search, and Favorites. Never presses
-// Play/Resume or a favorites toggle: the demo account is shared.
-//   just verify home-library
 const DEMO = "https://demo.jellyfin.org/stable"
 const CARD = { css: 'a[aria-label^="Open details for"]' }
 const billboardTitle = (ctx) => ctx.app.evaluate(`document.getElementById("billboard-title")?.textContent.trim() ?? null`)
@@ -56,7 +51,6 @@ export default async function homeLibrary(ctx) {
   await ctx.choose({ name: "Sort by" }, "Sort: Release date")
   await ctx.until(async () => /[?&]sort=year\b/.test(await ctx.pathname()), "sort=year in the URL")
   await ctx.press({ role: "button", name: "Filters" })
-  // Radix names the menu after its trigger, not its aria-label.
   await ctx.find({ role: "menu", name: "Filters" })
   const menu = await ctx.snapshot("04-filters-menu")
   const decade = menu.match(/menuitem '(Release decade[^']*)'/)?.[1]

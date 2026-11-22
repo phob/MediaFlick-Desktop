@@ -27,8 +27,6 @@ fn main() {
 
     jellyfin::bridge::ensure_session_token();
 
-    // Do not parse the user CLI in CEF subprocesses. Chromium starts this same
-    // executable with its own internal switches (for example `--type=renderer`).
     if is_cef_subprocess() {
         #[expect(
             clippy::disallowed_methods,

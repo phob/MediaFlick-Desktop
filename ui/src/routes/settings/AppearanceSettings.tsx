@@ -90,13 +90,6 @@ export function RatingSourceSelector({
   )
 }
 
-/**
- * The live preview is the app itself, scaled to a shelf: real `MediaCard`s fed
- * by the same cached home feed the Home page uses, wrapped in one container
- * that carries the unsaved draft as data attributes and intensity variables.
- * The shared token rules re-skin that subtree exactly as they re-skin the root,
- * so every choice here can be judged against your own artwork before saving.
- */
 const NO_RATINGS: RatingsContextValue = {
   items: new Map(),
   selected: [],
@@ -104,14 +97,6 @@ const NO_RATINGS: RatingsContextValue = {
   register: () => () => {},
 }
 
-/**
- * The preview shelf hovers for real — the same delay, the same panel, the same
- * hold-open behavior as Home — but it remains a picture of the app: the
- * panel's Play, favorites, and watched buttons render and disable exactly as
- * they do on a shelf yet mutate nothing, so resting on a card cannot launch a
- * film or rewrite watch state from the settings page. Detail and next-up reads
- * stay live so the panel fills with the same facts it carries on Home.
- */
 const PREVIEW_DEPENDENCIES: PreviewDependencies = {
   item: useItem,
   nextUp: useNextUp,
@@ -120,15 +105,6 @@ const PREVIEW_DEPENDENCIES: PreviewDependencies = {
   played: () => ({ isPending: false, mutate: () => {} }),
 }
 
-/**
- * The expanded panel portals outside this page: `content-viewport` declares
- * paint containment, which would clip a fixed panel and re-anchor it to the
- * scrolling pane. One host div at the body level gives the panel the same
- * escape the real app's body portal provides, while carrying the draft
- * appearance attributes used by the shelf.
- * Only one preview exists at a time, so a single module-level host is enough;
- * mounting attaches it to the body and unmounting removes it again.
- */
 const PANEL_HOST = document.createElement("div")
 
 function AppearancePreview({ appearance, previewDelay }: { appearance: AppearanceSettings; previewDelay?: number }) {
@@ -140,13 +116,6 @@ function AppearancePreview({ appearance, previewDelay }: { appearance: Appearanc
     () => savedRatings && { ...savedRatings, selected: appearance.ratingSources },
     [savedRatings, appearance.ratingSources],
   )
-  // A demo picture of the app must not act from its shelf: the card links are
-  // marked inert one by one below — inert on the whole shelf would take the
-  // pointer out of play too, and with it the hover state this preview exists
-  // to show — and this capture handler is the belt to those braces for
-  // everything else, such as the inline actions. The expanded panel keeps its
-  // real hover behavior and details link; only its state-changing actions are
-  // inerted, through PREVIEW_DEPENDENCIES above.
   const holdStill = (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()

@@ -38,9 +38,6 @@ impl ExternalMpv {
         command.arg("--no-terminal");
         command.arg("--input-default-bindings=yes");
         command.arg("--input-vo-keyboard=yes");
-        // Keep user/package mpv scripts available (SVP needs mpvSockets.lua).
-        // Windows `os.execute(...)` console flashes from those scripts are hidden
-        // by the command processor shim installed on the mpv child environment.
         command.arg("--load-scripts=yes");
         command.arg("--idle=yes");
         command.arg(format!("--input-ipc-server={ipc_path}"));
@@ -57,11 +54,6 @@ impl ExternalMpv {
 
 #[cfg(windows)]
 fn configure_hidden_child_window(command: &mut Command) {
-    // Windows mpv builds include both mpv.exe and mpv.com. If the user configures
-    // mpv.com, or the bare `mpv` name resolves to that console wrapper, Windows
-    // may allocate a transient console window even though mpv is later run with
-    // `--no-terminal`. CREATE_NO_WINDOW suppresses that console without changing
-    // the mpv window itself.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     command.creation_flags(CREATE_NO_WINDOW);
     install_hidden_command_processor_shim(command);
@@ -86,7 +78,6 @@ fn remove_packaged_cef_preload(command: &mut Command) {
     let current = match std::env::var("LD_PRELOAD") {
         Ok(current) => current,
         Err(std::env::VarError::NotPresent) => String::new(),
-        // A value that is not text cannot be split safely, so mpv gets it unchanged.
         Err(std::env::VarError::NotUnicode(_)) => {
             command.env_remove("MEDIAFLICK_DESKTOP_CEF_PRELOAD");
             return;
@@ -113,9 +104,6 @@ fn cleaned_ld_preload(current: &str, cef_preload: &str) -> Option<String> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn configure_focus_on_file_load(command: &mut Command) {
-    // Ask mpv to focus/raise its own window when a warm idle process creates
-    // the video output for a loaded file. mpv documents this for X11 and macOS;
-    // on unsupported compositors it is accepted as best-effort/no-op behavior.
     command.arg("--focus-on=all");
 }
 

@@ -2,11 +2,6 @@ using System.Collections.Concurrent;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-/// <summary>
-/// Why a configured service last failed. Only these fixed categories are
-/// retained: upstream response text and transport exception messages can name
-/// the service address or echo request data, so they never enter health state.
-/// </summary>
 public enum ServiceFailure
 {
     NotConfigured,

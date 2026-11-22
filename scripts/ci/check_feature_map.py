@@ -1,23 +1,10 @@
 #!/usr/bin/env python3
-"""Fail a verify feature map claim whose proof names a drive or evidence file that does not exist.
-
-Usage: check_feature_map.py
-A "Proven by" claim in .claude/skills/verify-mediaflick/features/*.md runs to the first `*`, `;`,
-sentence end or line end ("X is proven by Y" states a rule and is not a claim). It must name a drive
-in drives/, and every backticked name in it must be one of its drives, an evidence file one of them
-writes (a whole name in its source, for a capture with or without `.png` or `.ax.txt`) or one the
-harness writes for every run, or not look like either (`--account`, `Cast`). A name with arguments is
-a command and cites no evidence, though its first word must still be a drive if it looks like one.
-Whether the prose around a claim is true is left to review. Tests: test_check_feature_map.py.
-"""
-
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parents[2] / ".claude" / "skills" / "verify-mediaflick"
-# A `.` ends the clause only at a sentence end, so `segments.json` and 10.11.0 stay inside it.
 CLAUSE = re.compile(r"(?<!\bis )(?<!\bare )proven by((?:`[^`\n]*`|\.(?!\s|$)|[^`*;.\n])*)", re.IGNORECASE | re.MULTILINE)
 NAME = re.compile(r"`([^`\n]*)`")
 DRIVE_LIKE = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
@@ -37,13 +24,10 @@ class Problem:
 
 
 def problems(features: dict[str, str], drives: dict[str, str]) -> list[Problem]:
-    """Every claim in `features` (name to Markdown) that `drives` (name to source) does not back."""
     found = []
     for feature, text in sorted(features.items()):
         for clause in CLAUSE.finditer(text):
             line = text.count("\n", 0, clause.start()) + 1
-            # A name with arguments is a command (`playback --account SERVER`, `jellyfin-version-servers.py 12.4`):
-            # its first word may be a drive, but it cites no evidence.
             names = [(name.split()[0], len(name.split()) > 1) for name in NAME.findall(clause.group(1)) if name.strip()]
             named = [name for name, _ in names if name in drives]
             if not named:
@@ -53,8 +37,6 @@ def problems(features: dict[str, str], drives: dict[str, str]) -> list[Problem]:
                 if name in drives or name in HARNESS_FILES:
                     continue
                 if not command and EVIDENCE.fullmatch(name):
-                    # A capture is named without its extension (`screenshot("02-playing")`), so the bare
-                    # name must end there; `segments.png` is not `segments.json`.
                     spellings = {name, SCREENSHOT.sub("", name)}
                     written = re.compile(rf"(?<![\w.-])(?:{'|'.join(map(re.escape, spellings))})(?![\w.-])")
                     if not any(written.search(drives[drive]) for drive in named):

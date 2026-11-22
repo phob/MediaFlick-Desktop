@@ -1,9 +1,4 @@
-// foliate-js ships no types. These declare the subset the reader uses, as
-// read from commit 78914ae; `engines.ts` loads the modules themselves from
-// the embedded `/reader/` tree.
-
 declare module "foliate-js/view.js" {
-  /** What foliate reads from its input: `view.js`, `pdf.js`, `mobi.js` and zip.js's `BlobReader`. */
   export interface BookFile {
     readonly name: string
     readonly type: string
@@ -29,12 +24,10 @@ declare module "foliate-js/view.js" {
     toc?: FoliateTocItem[]
     sections: FoliateSection[]
     rendition?: { layout?: string; spread?: string }
-    /** Where a contents entry points; a PDF's answer is asynchronous. */
     resolveHref?(href: string): { index: number } | Promise<{ index: number }>
     destroy?(): void
   }
 
-  /** `section` and `fraction` are missing for a book foliate cannot measure. */
   export interface FoliateLocation {
     fraction?: number
     section?: { current: number; total: number }
@@ -43,7 +36,6 @@ declare module "foliate-js/view.js" {
     cfi: string
   }
 
-  /** The paginator (reflowable books) or the fixed-layout renderer; members only the paginator has are optional. */
   export interface FoliateRenderer extends HTMLElement {
     setStyles?(styles: string | [string, string]): void
     prevSection(): Promise<void>

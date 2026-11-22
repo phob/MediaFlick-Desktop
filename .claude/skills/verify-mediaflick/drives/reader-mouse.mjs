@@ -1,10 +1,5 @@
 import { execFileSync } from "node:child_process"
 
-// The reader on a 4K screen and by mouse alone (`--account`, Linux, with
-// MEDIAFLICK_VERIFY_SCREEN=3840x2160x24): the text size and column width the
-// reader's size gives, real X11 left and right clicks on the page, a drag
-// that selects text, the native menu only outside the book, and the same
-// clicks on a fixed-layout book. Writes reader-mouse.json. See features/books.md.
 const EPUB = "Pride and Prejudice"
 const FIXED = "MediaFlick Fixed Layout"
 const SCREEN = { width: 3840, height: 2160 }
@@ -16,13 +11,8 @@ const layer = `document.querySelector("[data-reader-layer]")?.dataset.readerLaye
 const footerText = `[...document.querySelectorAll("[data-reader-footer] > span")].map((span) => span.innerText).join(" · ")`
 const x = (...args) => execFileSync("xdotool", args.map(String), { encoding: "utf8" })
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-/**
- * A chapter's paragraph with no link, which a click would follow: Project
- * Gutenberg's own header and footer fix their text size in the book's CSS.
- */
 const bodyParagraph = `(p) => p.textContent.trim().length > 200 && !p.closest("[id^='pg-']") && !p.querySelector("a")`
 
-/** The reader's own rule (ui/src/reader/appearance.ts), restated as the oracle. */
 function expectedBase(width, height) {
   return Math.max(16, Math.round(24 * Math.min(width / 1920, height / 1048) * 2) / 2)
 }
@@ -34,7 +24,6 @@ function appWindow() {
     .sort((a, b) => b.area - a.area)[0].id
 }
 
-/** Top-level windows that are viewable now; a native menu is one more of them. */
 function viewableTopLevels() {
   const tree = execFileSync("xwininfo", ["-root", "-children"], { encoding: "utf8" })
   return [...tree.matchAll(/^\s+(0x[0-9a-f]+) /gm)].flatMap(([, id]) => {
@@ -72,7 +61,6 @@ async function changedFrom(ctx, id, previous, description) {
   }, description, 15000)
 }
 
-/** The place and the footer once nothing has moved for the time the reader takes to save twice. */
 async function unchanged(ctx, id, previous, footer) {
   await pause(2500)
   return { place: place(ctx, id), footer: await ctx.app.evaluate(footerText), same: JSON.stringify(place(ctx, id)) === JSON.stringify(previous) && (await ctx.app.evaluate(footerText)) === footer }
@@ -87,7 +75,6 @@ async function resize(ctx, window, { width, height }) {
   }, `the page to be ${width}x${height}`, 15000)
 }
 
-/** Sizes from inside the section document, as the reader laid it out. */
 const measureText = `(() => {
   const view = document.querySelector("foliate-view")
   const host = view.parentElement
@@ -104,7 +91,6 @@ const measureText = `(() => {
   }
 })()`
 
-/** A point in the window on a line of visible book text, and a second one further along that line. */
 const textPoint = `(() => {
   const view = document.querySelector("foliate-view")
   const bounds = view.getBoundingClientRect()
@@ -225,7 +211,6 @@ export default async function (ctx) {
       return now.length > footerMenusBefore.length && now.filter((w) => !footerMenusBefore.some((b) => b.id === w.id))
     }, "a right click on the footer opens the native menu", 10000).catch(() => null)
     ctx.displayCapture("05-footer-menu")
-    // Under Xvfb no window manager hands the menu the keyboard, so Escape can reach the reader too and close the book; a click outside the menu closes it instead.
     x("mousemove", "--window", window, footer.x, footer.y, "click", 1)
     const closed = await ctx.until(() => viewableTopLevels().length === footerMenusBefore.length, "a click on the footer closes the native menu", 10000).then(() => true, () => false)
     const afterFooter = await unchanged(ctx, epub, backward, footerBeforeDrag)

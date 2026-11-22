@@ -1,15 +1,3 @@
-// A real Jellyfin session for verify runs, without a password anywhere.
-//
-// `just verify-login SERVER` signs in once through Quick Connect, approved by
-// the user in Jellyfin, and caches what the app stored: server, user, device
-// id and access token. `just verify <drive> --account SERVER` seeds each
-// disposable profile with that session, so the app starts signed in.
-//
-// The cache lives outside the repo, the build dir and the real MediaFlick
-// profile, readable only by the user (0600 in a 0700 dir on Unix). The token
-// never enters steps.log or evidence: the session scans evidence for it after
-// every run. Revoke it in Jellyfin under Dashboard → Devices.
-
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -94,15 +82,6 @@ export function saveAccount(server, dataDir) {
   return { account, file }
 }
 
-// Writes a library.db holding only the session, stamped with an old schema
-// version. The app's development recreation path (src/library/db/migrate.rs)
-// then builds the current schema and keeps the session, so the app starts
-// signed in.
-//
-// A seeded library.db, such as a profile a released MediaFlick left, keeps
-// every row: only the cached token goes into its credentials row, and only
-// when that row is the cached account's own session (same server, user and
-// device), since the token is bound to that device.
 export function seedLibrary(dataDir, account) {
   const file = path.join(dataDir, "library.db")
   if (existsSync(file)) return spliceToken(file, account)
@@ -136,9 +115,6 @@ function spliceToken(file, account) {
   }
 }
 
-// Asks the server whether the cached token still works. A header with only
-// the token makes Jellyfin take client, device and device id from the token's
-// own device record, so the check changes nothing on the server.
 export async function checkAccount(account) {
   let response
   try {
@@ -245,8 +221,6 @@ export function publicAccount(account) {
   return rest
 }
 
-// Removes every occurrence of `secret` from files under `dir` and returns the
-// files that held it. latin1 maps bytes one to one, so binary files survive.
 export function redactSecret(dir, secret) {
   const leaked = []
   const visit = (current) => {

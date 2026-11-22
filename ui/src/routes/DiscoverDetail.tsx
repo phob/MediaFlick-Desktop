@@ -42,7 +42,6 @@ import { useCollectionTitle } from "@/lib/collection-queries"
 import { useSeerrMedia, useSeerrStatus } from "@/lib/seerr-queries"
 import { titleKindOfCollection } from "@/lib/kinds"
 
-/** Studios or networks, each opening Discover filtered to it. */
 function CompanyLinks({ companies, filter }: { companies: SeerrCompany[]; filter: "studio" | "network" }) {
   return (
     <span>
@@ -301,8 +300,6 @@ export default function DiscoverDetail() {
           value: item.spokenLanguages.map((spoken) => spoken.name || spoken.code).join(", "),
         }
       : null,
-    // Seerr filters only the movie catalog by studio and only the series
-    // catalog by network, so each links from its own kind of title.
     item.studios.length
       ? {
           label: "Studios",
@@ -346,8 +343,6 @@ export default function DiscoverDetail() {
   ].filter((fact) => fact !== null)
 
   return (
-    // `min-h-full` stretches short pages to the viewport so the backdrop
-    // reaches the window's bottom edge instead of stopping with the content.
     <div className="detail-page relative isolate flex min-h-full min-w-0 flex-col gap-12 pb-16">
       {backdrop && <DetailBackdrop src={backdrop} />}
       <DetailHeroLayout

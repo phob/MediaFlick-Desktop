@@ -11,18 +11,11 @@ export type BookManifest = {
 };
 
 export type BookPositionSaved = {
-  /**
-   * `false` when only this app kept the position because Jellyfin's write
-   * failed; the next save writes it again.
-   */
   synced: boolean,
 };
 
 export type BookPositionWrite = {
   location: ReadingLocation,
-  /**
-   * The book's last content is on screen: Jellyfin marks it played.
-   */
   finished: boolean,
 };
 

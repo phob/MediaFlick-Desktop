@@ -1,12 +1,5 @@
-// The sidebar's user menu off Home, where the sidebar expands under the
-// pointer and collapses when it leaves. The open menu must hold the sidebar
-// expanded, also while the pointer rests on the menu, and the sidebar must
-// collapse again once the menu closes and the pointer is away.
-//   just verify sidebar-user-menu
 const DEMO = "https://demo.jellyfin.org/stable"
 const USER_MENU = { role: "button", name: "D demo demo.jellyfin.org" }
-// The menu's marker. Not `Sync library`: that item reads `Syncing…` while a
-// sync runs, which sign-in starts.
 const SIGN_OUT = { role: "menuitem", name: "Sign out" }
 const sidebarState = (ctx) => ctx.app.evaluate(`document.querySelector('[data-slot="sidebar"]')?.dataset.state ?? null`)
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))

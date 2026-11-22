@@ -1,10 +1,3 @@
-//! Device profile sent with `PlaybackInfo`.
-//!
-//! Both supported players are full desktop decoders, so the profile declares
-//! unrestricted direct play and only offers a transcoding fallback when the
-//! user picked a capped streaming quality. Modelled on jellyfin-mpv-shim's
-//! profile (see `.agent-source.json`).
-
 use serde_json::{Value, json};
 
 use crate::app::build_info;

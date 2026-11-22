@@ -37,9 +37,6 @@ export type ItemChanges = {
 export type LiveChanges = {
   itemIds: Array<string>,
   contextIds: Array<string>,
-  /**
-   * Any page Jellyfin serves may have changed: the event stream was lost.
-   */
   all?: boolean,
 };
 

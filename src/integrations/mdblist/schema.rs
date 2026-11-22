@@ -5,13 +5,11 @@ use serde_json::Value;
 
 const MAX_VOTES: i64 = 1_000_000_000_000;
 
-/// One rating on its source's native scale, from 0 to `scaleMax`.
 #[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct NormalizedRating {
     source_id: &'static str,
     value: f64,
-    /// The source's 0 to 100 score, when it reports one.
     score: Option<f64>,
     votes: Option<i64>,
     scale_max: f64,
@@ -49,7 +47,6 @@ pub(super) fn normalize_rating_array(value: &Value) -> Vec<NormalizedRating> {
     deduplicate_ratings(ratings)
 }
 
-/// The rating cache stores a normalized list as its JSON.
 pub(super) fn rating_cache_value(ratings: &[NormalizedRating]) -> Value {
     serde_json::to_value(ratings).unwrap_or_else(|_| Value::Array(Vec::new()))
 }
@@ -148,7 +145,6 @@ pub(super) fn normalized_source_updated_at(value: Option<&str>) -> Option<String
     Some(value.to_string())
 }
 
-/// A rating source the app can show, with how its value is written.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct RatingSourceDefinition {

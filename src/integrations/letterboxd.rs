@@ -1,11 +1,3 @@
-//! Letterboxd's public-profile adapter.
-//!
-//! No credentials or page scraping are involved. Every public Letterboxd
-//! member profile exposes an RSS feed. Connected profiles are fixed to the
-//! canonical Letterboxd host before this module sees them, responses have a
-//! hard byte ceiling, and review HTML is reduced to bounded plain text before
-//! it crosses the native/UI boundary.
-
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -93,11 +85,6 @@ impl Verification {
     }
 }
 
-/// One connected member's newest rating and newest written review available
-/// in the current RSS feed for a film. Review content is always plain text;
-/// when a review is present, `entry_url` and `watched_date` describe that
-/// review rather than a newer rating-only rewatch. The URL is present only
-/// when it is a canonical film URL below that same member profile.
 #[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MemberReview {
@@ -105,14 +92,11 @@ pub struct MemberReview {
     pub username: String,
     pub display_name: String,
     pub profile_url: String,
-    /// Canonical Letterboxd film entry; absent if the feed supplied an unsafe URL.
     pub entry_url: Option<String>,
     pub rating: Option<f64>,
-    /// Native code strips provider HTML before this reaches React.
     pub review: Option<String>,
     pub review_truncated: bool,
     pub watched_date: Option<String>,
-    /// True when a failed refresh fell back to an older in-memory feed.
     pub stale: bool,
 }
 
@@ -131,9 +115,6 @@ struct CachedFeed {
     by_tmdb_id: HashMap<String, MemberReview>,
 }
 
-/// Process-local feed cache. The source is public, but the cache key still
-/// carries the Jellyfin server and user ids so two signed-in accounts can never
-/// consume one another's connected-profile selection.
 #[derive(Debug, Default)]
 pub struct ReviewService {
     feeds: Mutex<HashMap<String, CachedFeed>>,
@@ -293,10 +274,6 @@ pub fn normalize_profile(input: &str) -> Result<Profile, String> {
     })
 }
 
-/// Probe and parse the official RSS representation with short timeouts and a
-/// hard read ceiling. A non-success response remains an unverified stored
-/// profile so the user can correct a temporarily unavailable account without
-/// retyping it.
 pub fn verify(profile: &Profile) -> Verification {
     let Ok(xml) = fetch_rss(&profile.username) else {
         return Verification {
@@ -423,10 +400,6 @@ fn parse_feed(
                 stale: false,
             });
 
-        // Letterboxd orders the feed newest first. Keep looking only until the
-        // newest value for each independent surface has been found: a newer
-        // rating-only rewatch must not erase an older written review that is
-        // still present in this same bounded feed.
         let selects_newest_rating = activity.rating.is_none() && rating.is_some();
         if selects_newest_rating {
             activity.rating = rating;
@@ -437,8 +410,6 @@ fn parse_feed(
             activity.entry_url = entry_url;
             activity.watched_date = watched_date;
         } else if activity.review.is_none() && selects_newest_rating {
-            // Until a written review is found, the newest rated entry remains
-            // the click/date destination for rating-only activity.
             activity.entry_url = entry_url;
             activity.watched_date = watched_date;
         }
@@ -459,10 +430,6 @@ fn rss_channel<'a, 'input>(
         .flatten()
 }
 
-/// Letterboxd identifies the public member behind a feed as
-/// `<title>Letterboxd - {display name}</title>`. Keep the username as the
-/// fallback if the provider ever changes that shape, and bound the external
-/// string before persisting or returning it to the UI.
 fn channel_display_name(channel: roxmltree::Node<'_, '_>) -> Option<String> {
     let title = channel
         .children()
@@ -516,8 +483,6 @@ fn canonical_entry_url(username: &str, value: &str) -> Option<String> {
     .then(|| value.to_string())
 }
 
-/// The feed description is CDATA containing provider-sanitized HTML. Still,
-/// never hand it to React: remove every tag and decode only text entities here.
 fn review_plain_text(html: &str) -> (Option<String>, bool) {
     let mut text = String::with_capacity(html.len().min(MAX_REVIEW_CHARS));
     let mut rest = html;

@@ -1,24 +1,3 @@
-// A loopback Jellyfin proxy for drives that need a server behaving in a
-// controlled way. It forwards every request to `upstream` (including its path
-// prefix, such as `/stable`), streaming bodies both ways with their headers
-// (so ranged video requests work) and passing WebSocket upgrades (the app's
-// `/socket`) through. Three hooks change what the app sees:
-// - `fail(url, method)` drops the connection of each request it selects, which
-//   the app sees as an unreachable server; `heal()` stops failing and
-//   `resumeFailing()` starts again.
-// - `answer(url, method)` returns `{ status, body }` to answer a request
-//   itself with JSON instead of forwarding it, or null to forward it. It may
-//   return a Promise of either, which holds the request until it settles.
-// - `delay(url, method)` returns how many milliseconds to hold a request
-//   before forwarding it, so a slow server can be watched, or a Promise that
-//   holds it until the Promise settles, so a drive can release it on a gate.
-// Each request held on a Promise is recorded in `stats.held` when it arrives,
-// so a drive can wait until the app is really blocked on the server.
-// `cutSockets()` drops every open WebSocket and refuses new upgrades until
-// `restoreSockets()`, as a lost network would.
-// The app accepts `http://127.0.0.1:<port>` as a server address, so a drive
-// signs in to `proxy.url`.
-
 import http from "node:http"
 import https from "node:https"
 
@@ -127,7 +106,6 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
       response.writeHead(reply.statusCode ?? 502, reply.headers)
       reply.pipe(response)
     })
-    // mpv drops a ranged stream on every seek; stop downloading it upstream.
     response.on("close", () => {
       const finished = response.writableFinished
       if (!finished) outbound.destroy()
@@ -176,8 +154,6 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
       upstreamSocket.on("close", () => socket.destroy())
       upstreamSocket.pipe(socket).pipe(upstreamSocket)
     })
-    // A refused upgrade: Node has already decoded the body, so send it
-    // unframed and end it by closing the connection.
     outbound.on("response", (reply) => {
       log(`proxy: upstream refused the upgrade of ${url.pathname} (HTTP ${reply.statusCode})`)
       writeHead(reply, ["transfer-encoding", "content-length", "connection"], ["Connection: close"])
@@ -232,11 +208,6 @@ const isPromise = (value) => typeof value?.then === "function"
 const JELLYFIN_SEGMENT_TYPES = ["Unknown", "Commercial", "Preview", "Recap", "Outro", "Intro"]
 const compactId = (id) => id.replace(/-/g, "").toLowerCase()
 
-// An `answer` hook serving Jellyfin's `GET /MediaSegments/{itemId}` for the
-// given items, as Jellyfin 10.10+ does (`MediaSegmentDtoQueryResult`, ids in
-// Jellyfin's dashless form, positions in 100 ns ticks), honouring the
-// `includeSegmentTypes` filter. `segmentsByItemId` maps an item or media
-// source id to `[{ type: "Intro", startS, endS }]`. Other requests pass.
 export function mediaSegmentsAnswer(segmentsByItemId) {
   const byId = new Map(Object.entries(segmentsByItemId).map(([id, segments]) => [compactId(id), { id: compactId(id), segments }]))
   return (url, method) => {

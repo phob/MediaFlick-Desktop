@@ -8,7 +8,6 @@ pub(super) struct LetterboxdProfiles {
     profiles: Vec<ExternalProfile>,
 }
 
-/// The connected profile as saved after an add, enable, or refresh.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct LetterboxdProfileSaved {
     profile: ExternalProfile,
@@ -240,9 +239,6 @@ fn item_letterboxd(services: &Arc<Services>, item_id: &str) -> Result<ReviewLook
         Ok(None) => return Err(ApiResponse::error(404, "item not found")),
         Err(error) => return Err(storage_failure(&error)),
     };
-    // Letterboxd's RSS movieId namespace is TMDB's movie namespace. Refuse a
-    // series or episode even if it happens to carry the same numeric provider
-    // id, or a TV record could inherit an unrelated film review.
     if item.summary.kind != "Movie" {
         return Ok(ReviewLookup::default());
     }

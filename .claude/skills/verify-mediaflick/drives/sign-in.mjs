@@ -1,11 +1,5 @@
-// The sign-in screen against Jellyfin's public demo server: the --url
-// prefill, the Quick Connect probe while typing, the code (never approved) and
-// its copy button, sign-in, the user menu, and sign-out from Home with the
-// remembered server.
-//   just verify sign-in --url https://demo.jellyfin.org/stable
 const DEMO = "https://demo.jellyfin.org/stable"
 const SERVER = { role: "textbox", name: "Server" }
-// role=status takes no accessible name from its content, so read its text.
 const quickConnectHelp = (ctx) => ctx.app.evaluate(`document.getElementById("quick-connect-help")?.textContent.trim() ?? null`)
 const pageText = (ctx) => ctx.app.evaluate("document.body.innerText")
 const serverFocused = (ctx) => ctx.app.evaluate(`document.activeElement?.id === "server"`)
@@ -47,7 +41,6 @@ export default async function signIn(ctx) {
   await ctx.until(async () => (await pageText(ctx)).includes("Waiting for approval"), "a Quick Connect code waiting for approval", 20000)
   const code = await ctx.app.evaluate(`document.querySelector('[aria-label="Copy code"]')?.previousElementSibling?.textContent ?? null`)
   ctx.check(typeof code === "string" && code.length > 0, `a Quick Connect code is shown (${code})`)
-  // readText needs the permission; the app itself only writes.
   await ctx.app.send("Browser.grantPermissions", { permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"], origin: "mediaflick-desktop://app" })
   await ctx.press({ role: "button", name: "Copy code" })
   await ctx.find({ role: "button", name: "Copied" }, { timeout: 5000 })

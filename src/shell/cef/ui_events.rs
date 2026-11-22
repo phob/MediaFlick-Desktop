@@ -1,7 +1,3 @@
-//! What the native app pushes into the UI's pages. Each [`Channel`] names
-//! where a page listens and the wire type it receives there, and it is the
-//! only way to hand a page a payload, so no `json!` value reaches a script.
-
 use std::marker::PhantomData;
 
 use serde::Serialize;
@@ -12,7 +8,6 @@ use super::document::js_json;
 use super::*;
 use crate::playback::PlayerSnapshot;
 
-/// Where a page receives one kind of payload, and the wire type it is.
 pub(super) struct Channel<T> {
     listener: Listener,
     source: &'static str,
@@ -21,12 +16,8 @@ pub(super) struct Channel<T> {
 
 #[derive(Clone, Copy)]
 enum Listener {
-    /// A function the UI installs on `window`; a page without it ignores the
-    /// payload.
     Hook(&'static str),
-    /// A `CustomEvent` dispatched on `window`.
     Event(&'static str),
-    /// A self-contained script that renders the payload JSON itself.
     Script(fn(&str) -> String),
 }
 
@@ -50,7 +41,6 @@ impl<T: Serialize + Wire> Channel<T> {
         }
     }
 
-    /// Sends the payload to every page, and returns how many received it.
     pub(super) fn broadcast(&self, state: &BrowserState, payload: &T) -> usize {
         let browsers = state
             .lock()
@@ -114,8 +104,6 @@ pub(super) const ABOUT_DIALOG: Channel<AboutInfo> = Channel::new(
 
 const UPDATE_TOAST_SOURCE: &str = "mediaflick-desktop://update-toast";
 
-/// A message on the `mediaflick-desktop-shell` event. Listeners tell them
-/// apart by `type`.
 #[derive(Debug, Serialize, TS)]
 #[serde(tag = "type", content = "payload", rename_all = "kebab-case")]
 pub(super) enum ShellEvent {
@@ -126,8 +114,6 @@ pub(super) enum ShellEvent {
     LibrariesChanged {},
     LibraryMembershipsSettled {},
     JellyfinSessionExpired {},
-    /// Closing the window waits for the Settings page to save or discard
-    /// its drafts.
     WindowCloseBlocked {},
     MpvInstallProgress(MpvInstallProgress),
     FilePickerCompleted(FilePickerCompleted),
@@ -145,7 +131,6 @@ pub(super) struct ItemChanges {
 pub(super) struct LiveChanges {
     pub(super) item_ids: Vec<String>,
     pub(super) context_ids: Vec<String>,
-    /// Any page Jellyfin serves may have changed: the event stream was lost.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     #[ts(optional = nullable)]
     pub(super) all: bool,
@@ -184,8 +169,6 @@ pub(super) struct FilePickerCompleted {
     pub(super) error: Option<String>,
 }
 
-/// Jellyfin's view of an item after its final playstate report, or a
-/// library refresh scheduled in its place.
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct PlaybackCacheRefreshed {

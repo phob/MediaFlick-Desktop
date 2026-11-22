@@ -29,25 +29,15 @@ pub struct ByteResponse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiError {
     Unauthorized,
-    Status {
-        status: u16,
-    },
-    RateLimited {
-        retry_after_secs: Option<u64>,
-    },
-    Remote {
-        status: u16,
-        message: String,
-    },
+    Status { status: u16 },
+    RateLimited { retry_after_secs: Option<u64> },
+    Remote { status: u16, message: String },
     Transport(String),
     Decode(String),
     Storage(String),
     NotConfigured,
     Cancelled,
-    /// The account the request ran for was switched, signed out or deleted
-    /// before its answer arrived.
     AccountChanged,
-    /// The server is older than Desktop supports, so sign-in is refused.
     ServerTooOld(ServerTooOld),
 }
 
@@ -123,8 +113,6 @@ impl fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
-/// A failed read or write of the local library is a storage failure, never a
-/// server answer, so `?` on a library call reports it as one.
 impl From<rusqlite::Error> for ApiError {
     fn from(error: rusqlite::Error) -> Self {
         Self::Storage(error.to_string())
@@ -146,17 +134,11 @@ struct SharedAgents {
     companion: ureq::Agent,
 }
 
-/// Connection pools live in the agent, and callers build a fresh client for
-/// almost every request. Sharing the agents lets those clients reuse open
-/// connections instead of paying a TCP and TLS handshake each time. Nothing
-/// server- or account-specific is configured here: the base URL and token
-/// travel with each request.
 static SHARED_AGENTS: LazyLock<SharedAgents> = LazyLock::new(|| {
     let build_agent = || -> ureq::Agent {
         ureq::Agent::config_builder()
             .timeout_global(Some(HTTP_TIMEOUT))
             .timeout_connect(Some(CONNECT_TIMEOUT))
-            // Keep error responses readable so `Retry-After` can be honored.
             .http_status_as_error(false)
             .user_agent(format!("mediaflick-desktop/{}", build_info::APP_VERSION))
             .build()
@@ -252,12 +234,6 @@ impl JellyfinClient {
         Ok((response.body, response.content_type))
     }
 
-    /// Fetches one bounded byte range without ever placing the token in a URL.
-    /// A body longer than `limit` fails the call instead of being buffered.
-    ///
-    /// Video elements seek by issuing range requests. Keeping the upstream
-    /// status and range headers lets the app scheme behave like the Jellyfin
-    /// resource while still authenticating it natively.
     pub fn get_bytes_range(
         &self,
         path: &str,
@@ -323,12 +299,6 @@ impl JellyfinClient {
             .map(|_| ())
     }
 
-    /// Authenticated plugin GET that preserves a 403 as an action refusal.
-    ///
-    /// Core Jellyfin calls historically treat 401 and 403 alike as a rejected
-    /// session. Companion endpoints sit behind that session but may themselves
-    /// return 403 for an upstream Seerr permission, which must not sign the
-    /// user out of Jellyfin.
     pub fn companion_get_json<T: DeserializeOwned>(
         &self,
         path: &str,
@@ -373,10 +343,6 @@ impl JellyfinClient {
         read_json(response, Diagnostics::Relayed)
     }
 
-    /// Typed companion boundary for rating data. Unlike general companion
-    /// routes, no server response text is allowed to become an ApiError: the
-    /// plugin is the credential owner and an upstream diagnostic may contain
-    /// credential-shaped data.
     pub fn companion_post_ratings_json_once<B: Serialize, T: DeserializeOwned>(
         &self,
         path: &str,
@@ -525,7 +491,6 @@ fn core_response(response: Response) -> Result<Response, ApiError> {
     }
 }
 
-/// Only a 401 is the Jellyfin session; a 403 is the plugin refusing one action.
 fn companion_response(
     mut response: Response,
     diagnostics: Diagnostics,
@@ -621,9 +586,6 @@ mod tests {
         assert!(header.ends_with("Token=\"secret\""), "{header}");
     }
 
-    /// One request read to its end: the request line, then its body. Closing
-    /// with unread bytes makes Windows reset the connection before the client
-    /// reads the response.
     fn read_request(stream: &mut TcpStream) -> String {
         let mut reader = BufReader::new(stream);
         let mut request_line = String::new();

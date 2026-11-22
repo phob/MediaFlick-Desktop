@@ -1,14 +1,5 @@
-//! Development schemas, below the first released one, are recreated rather
-//! than migrated: they exist only on developer machines and in the verify
-//! harness, which seeds a schema-1 database holding only a session.
-
 use rusqlite::{Connection, OptionalExtension, Transaction};
 
-/// Recreates a development database at the current schema, inside the
-/// caller's transaction, keeping the signed-in session (it performs the
-/// resync) and, from schema 13, the account data the JSON stores import
-/// later in the same start. Every historical schema stored the session under
-/// the same single-row shape.
 pub(super) fn recreate(transaction: &Transaction<'_>, version: i32) -> rusqlite::Result<()> {
     let session = saved_session(transaction)?;
     let legacy_account_data = if version == 13 {
@@ -66,8 +57,6 @@ struct SavedPlaybackPreference {
     updated_at: i64,
 }
 
-/// The stored session, or `None` when there is no row. Any other error stops
-/// the recreation: a session that cannot be read is not an absent one.
 fn saved_session(connection: &Connection) -> rusqlite::Result<Option<SavedSession>> {
     connection
         .query_row(
@@ -202,10 +191,6 @@ fn restore_legacy_account_data(
     Ok(())
 }
 
-/// Drops every table (and, with them, indexes and triggers) so the fresh
-/// schema starts from nothing. The virtual table goes first so its FTS shadow
-/// tables disappear with it instead of erroring on a direct drop. The caller
-/// turned foreign keys off before its transaction began, so no drop cascades.
 fn drop_everything(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch("DROP TABLE IF EXISTS items_fts;")?;
     let tables: Vec<String> = {

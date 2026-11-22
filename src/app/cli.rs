@@ -4,9 +4,6 @@ use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 
 use crate::preferences::normalize_server_url;
 
-/// The command line. Built with clap's builder API rather than
-/// `#[derive(Parser)]`: the derive emits `#[allow(clippy::restriction)]` and
-/// friends, which the crate's `forbid` lint levels reject.
 #[derive(Debug, Clone)]
 pub struct Cli {
     pub url: Option<String>,
@@ -90,8 +87,6 @@ fn command() -> Command {
 }
 
 impl Cli {
-    /// Parses the process arguments, exiting with clap's message on `--help`,
-    /// `--version` or an invalid argument.
     pub fn parse() -> Self {
         Self::from_matches(&command().get_matches())
     }
@@ -100,7 +95,6 @@ impl Cli {
         Self {
             url: matches.get_one::<String>(URL).cloned(),
             mpv_path: matches.get_one::<PathBuf>(MPV_PATH).cloned(),
-            // Always present: the argument has a default value.
             remote_debugging_port: matches
                 .get_one::<i32>(REMOTE_DEBUGGING_PORT)
                 .copied()

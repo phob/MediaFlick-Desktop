@@ -1,21 +1,3 @@
-//! The JSON files a released MediaFlick wrote still load, keep their values,
-//! and survive a save.
-//!
-//! The files in `fixtures/preferences/released/0.2.0/` are what the released
-//! 0.2.0 AppImage wrote while a drive set each choice through its UI
-//! (sanitized by `scripts/fixtures/freeze_release.py`). The expected values are
-//! the choices that drive recorded in its `fixture-intent.json`: Default
-//! fullscreen Windowed, Show scrollbars on, Hide watched by default, audio
-//! languages en and de, the Cobalt accent with IMDb and Rotten Tomatoes
-//! Critics ratings, one Letterboxd profile, a daily "Trending today"
-//! collection with a custom poster, and an English SRT subtitle on a movie.
-//!
-//! Failure modes: a released file fails to load or is moved aside as
-//! damaged; it loads but a value changes meaning or falls back to its
-//! default; a save through the store drops or rewrites a value it did not
-//! change. Not covered: `reader.json` and `pending-deletions.json`, which the
-//! 0.2.0 profile has no copy of.
-
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -27,7 +9,6 @@ use super::{
 };
 use crate::collections::model::RefreshCadence;
 
-/// The sanitized server and user of the 0.2.0 profile.
 const SERVER: &str = "f1c70000000000000000000000000001";
 const USER: &str = "f1c70000000000000000000000000002";
 
@@ -36,7 +17,6 @@ struct Released {
 }
 
 impl Released {
-    /// A scratch copy of the released 0.2.0 files.
     fn copy() -> Self {
         let dir = std::env::temp_dir().join(format!(
             "mediaflick-released-{}",
@@ -60,7 +40,6 @@ impl Released {
         serde_json::from_slice(&std::fs::read(self.path(name)).expect("read")).expect("JSON")
     }
 
-    /// Opening must not have moved anything aside or written anything.
     fn assert_untouched(&self, name: &str) {
         let original = std::fs::read(
             Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -1,24 +1,3 @@
-// Captures the website's screenshots and screen recordings from the real app.
-//
-//   just build
-//   node scripts/website/capture.mjs demo [scene ...]
-//   node scripts/website/capture.mjs home [scene ...]
-//   node scripts/website/encode.mjs
-//
-// `demo` signs in to Jellyfin's public demo server (public-domain and
-// Creative Commons titles) in an empty profile. `home` runs a copy of the
-// current user's profile for features that need the MediaFlick Companion:
-// the release calendar, Release Timeline, ratings and requests. See
-// launch.mjs for how the profiles are isolated.
-//
-// Raw PNG stills, JPEG screencast frames and overlay frames land in
-// build/website-capture/raw together with report-<profile>.json, which
-// records every scene, its route, its output files and any failure. Naming
-// scenes re-captures only those and keeps the rest of the report. encode.mjs
-// turns the raw files into the web assets under website/public/media. The
-// capture app is closed at the end, and the script exits non-zero when a
-// scene fails.
-
 import { mkdir, rm, writeFile, readFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { spawnSync } from "node:child_process"
@@ -52,16 +31,11 @@ function sizeWindow(width, height) {
   return JSON.parse(windowScript(["-X", "40", "-Y", "40", "-Width", String(width), "-Height", String(height)]))
 }
 
-// CEF tiles screenshots taken under Emulation.setDeviceMetricsOverride, so
-// the real window is sized until its CSS viewport matches, and captures run
-// at the display's own device pixel ratio.
 async function viewport(target = VIEWPORT) {
   const dpr = await app.evaluate("devicePixelRatio")
   const current = async () => app.evaluate("[innerWidth, innerHeight]")
   let [width, height] = await current()
   if (width === target.width && height === target.height) return dpr
-  // window.ps1 works in physical pixels. Step by the scaled difference, then
-  // one pixel at a time, because fractional scaling rounds unevenly.
   let size = JSON.parse(windowScript([]))
   for (let attempt = 0; attempt < 16; attempt++) {
     const stepX = Math.abs(target.width - width) > 1 ? Math.round((target.width - width) * dpr) : Math.sign(target.width - width)
@@ -113,8 +87,6 @@ async function linkFor(text) {
   return href
 }
 
-// Full viewport only: any clip or scale also makes CEF tile the image.
-// Cropping happens in encode.mjs.
 async function still(name) {
   const { data } = await app.send("Page.captureScreenshot", { format: "png" })
   const file = path.join(rawDir, `${name}.png`)
@@ -122,10 +94,6 @@ async function still(name) {
   return file
 }
 
-// Screencast frames arrive only when the page repaints, each stamped with its
-// own time, so the encoder turns them into a variable-duration sequence. An
-// action may return `{ from }`, a wall-clock second before which the encoder
-// drops the recording.
 async function record(name, action, { tail = 800 } = {}) {
   const dir = path.join(rawDir, name)
   await rm(dir, { recursive: true, force: true })
@@ -178,7 +146,6 @@ async function stopPlayback() {
   await sleep(1500)
 }
 
-// The seek thumb's aria-valuenow is the player position in milliseconds.
 const POSITION = `+(document.querySelector(".player-seek-target [role=slider]")?.getAttribute("aria-valuenow") ?? NaN)`
 
 async function overlayFrames(name, { from, seconds, interval = 80 }) {
@@ -304,11 +271,6 @@ const demoScenes = {
     await app.route("/")
     return result
   },
-  // libmpv draws the video natively beneath a transparent page, so neither
-  // CDP nor a desktop grab of a background window sees both. This scene plays
-  // the film for real, captures the page with alpha at the film's exact
-  // position, and downloads the same film so encode.mjs can composite the
-  // two. Audio is muted the moment the player appears.
   async player() {
     await viewport({ width: 1600, height: 900 })
     await go("/library?kind=Movie")

@@ -2,12 +2,6 @@ using Jellyfin.Plugin.MediaFlick.Models;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-/// <summary>
-/// The TV networks Desktop offers as a Discover filter. Neither Seerr nor
-/// TMDB can search networks, so the Companion ships a curated list and
-/// updates it with the plugin. Every id was checked against
-/// <c>themoviedb.org/network/{id}</c>; names follow TMDB.
-/// </summary>
 internal static class SeerrNetworks
 {
     public static IReadOnlyList<SeerrCompanyResponse> All { get; } =

@@ -1,9 +1,3 @@
-// The MediaFlick Companion on your own server: the status page, Releases
-// (Agenda, Month, month navigation, release-type toggles), Home's Releases
-// shelf, and MDBList ratings on cards and a detail page after picking rating
-// sources in Appearance. Read-only on the server; the Appearance change is a
-// local, disposable-profile write and is restored.
-//   just verify companion --account https://jellyfin.example.com
 const status = async (ctx) => (await ctx.api("/api/status")).body
 const articles = (ctx) => ctx.app.evaluate(`document.querySelectorAll("main article").length`)
 const monthTitle = (ctx) => ctx.app.evaluate(`document.querySelector("main h1")?.textContent.trim() ?? null`)

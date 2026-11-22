@@ -2,8 +2,6 @@ use std::fmt;
 use std::path::Path;
 use std::process::Command;
 
-/// Cargo prints a failed build script's `main` error with `Debug`, so this
-/// prints the message as written instead of a quoted, escaped string.
 struct BuildError(String);
 
 impl fmt::Debug for BuildError {
@@ -51,14 +49,6 @@ fn main() -> Result<(), BuildError> {
     Ok(())
 }
 
-/// Builds the UI bundle that `src/shell/cef/api.rs` embeds with `include_bytes!`.
-///
-/// Cargo owns this rather than a separate `just ui` step so `cargo build` stays
-/// self-sufficient and can never embed a stale `ui/dist` — the failure mode is
-/// silent otherwise, and it would ship in a release binary.
-///
-/// Set `MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1` when the bundle was already built
-/// out of band (CI splits the steps to cache `node_modules`).
 fn build_ui(repo_root: &Path) -> Result<(), BuildError> {
     let ui_dir = repo_root.join("ui");
     if !ui_dir.join("package.json").is_file() {
@@ -101,12 +91,6 @@ fn build_ui(repo_root: &Path) -> Result<(), BuildError> {
     stage_bundle(&ui_dir.join("dist"))
 }
 
-/// Copies the built bundle into `OUT_DIR` for `include_bytes!`.
-///
-/// Embedding straight from `ui/dist` looks simpler but breaks: cargo skips
-/// `build.rs` whenever its tracked inputs are unchanged, so a wiped `ui/dist`
-/// leaves `include_bytes!` pointing at nothing. `OUT_DIR` is cargo-managed and
-/// survives exactly as long as the fingerprint that produced it.
 fn stage_bundle(dist: &Path) -> Result<(), BuildError> {
     let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").ok_or_else(|| {
         BuildError("Cargo did not set OUT_DIR for the MediaFlick build script".to_string())
@@ -208,8 +192,6 @@ fn reader_content_type(url: &str) -> Result<&'static str, BuildError> {
 }
 
 fn run_pnpm(ui_dir: &Path, args: &[&str]) -> Result<(), BuildError> {
-    // On Windows pnpm is a `.cmd` shim, which `Command::new` will not resolve
-    // from the bare name.
     let candidates: &[&str] = if cfg!(windows) {
         &["pnpm.cmd", "pnpm"]
     } else {
@@ -260,11 +242,6 @@ fn git_version(repo_root: &Path) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
-/// Reruns the build when the described commit changes: a checkout moves
-/// `HEAD`, and a commit moves the branch `HEAD` names. The index is left out on
-/// purpose: it changes on every `git add`, and each rerun rebuilds the embedded
-/// UI. A development build's `-dirty` suffix can therefore lag until the next
-/// commit or checkout.
 fn track_git_refs(repo_root: &Path) {
     let dot_git = repo_root.join(".git");
     let git_dir = if dot_git.is_dir() {
@@ -279,16 +256,12 @@ fn track_git_refs(repo_root: &Path) {
         };
         repo_root.join(path)
     };
-    // Branch refs live in the shared git dir; a worktree names it in `commondir`.
     let common_dir = std::fs::read_to_string(git_dir.join("commondir"))
         .map(|path| git_dir.join(path.trim()))
         .unwrap_or_else(|_| git_dir.clone());
 
     let head = git_dir.join("HEAD");
     println!("cargo:rerun-if-changed={}", head.display());
-    // A packed branch has no loose ref file until it next moves; naming a
-    // missing path would rerun the script on every build, and `packed-refs`
-    // already covers it.
     if let Ok(head) = std::fs::read_to_string(&head)
         && let Some(reference) = head.trim().strip_prefix("ref:")
         && let branch = common_dir.join(reference.trim())

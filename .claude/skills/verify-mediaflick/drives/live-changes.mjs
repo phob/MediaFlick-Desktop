@@ -1,20 +1,3 @@
-// A private playlist changed on the server while its page is open. The drive
-// creates a playlist of three movies out of name order as the test account,
-// opens its page and expects the cards in the playlist's own order. Then, as
-// another device would, it adds a fourth movie, moves it to the second place
-// and adds the first movie a second time, and expects the open page to follow
-// without a reload once Jellyfin pushes the change over its socket, with both
-// cards of the repeated movie in their slots. Jellyfin's PlaylistItemId is the
-// item's own id, so the app numbers slots itself (playlistIndex).
-// Jellyfin reports a playlist change as LibraryChanged ItemsUpdated
-// [<playlist>], about 30 s after the server's last library change. The
-// playlist is deleted at the end, and after the run if the drive failed first.
-// With --signed-out the app signs in through a loopback proxy, which then cuts
-// the app's socket while the playlist changes again and restores it only after
-// Jellyfin's push has gone out to nobody. The open page must follow once the
-// app reconnects, though no push names the playlist.
-//   just verify live-changes --account https://jellyfin.example.com --timeout 600
-//   just verify live-changes --account https://jellyfin.example.com --signed-out --timeout 900
 const GRID_CARD_LINK = '[data-item-grid-canvas] article a[aria-label^="Open details for"]'
 const PUSH_WAIT_MS = 240000
 const LIVE_NOTICE = "announced a pushed change to items the cache does not hold"
@@ -26,7 +9,6 @@ const AFTER_RECONNECT_MS = 30000
 async function openByUrl(ctx, path) {
   await ctx.app.evaluate(`history.pushState(null, "", ${JSON.stringify(path)}); dispatchEvent(new PopStateEvent("popstate"))`)
   await ctx.until(async () => (await ctx.pathname()) === path, `the ${path} route`)
-  // A card under the resting pointer scales up and would sort ahead of its row.
   await ctx.park()
 }
 

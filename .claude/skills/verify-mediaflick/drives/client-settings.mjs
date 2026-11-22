@@ -1,12 +1,4 @@
-// The Client settings shelves beyond Show scrollbars: the Player shelf for
-// each backend, a range alert, the leave-without-saving guard, a Playback
-// select, restart notices, the live scrollbar style, Restore defaults + Save, and the
-// Delete local account data dialog (cancelled). Device-local; the demo server
-// only provides the sign-in. Never presses Installation help or Choose mpv
-// executable.
-//   just verify client-settings
 const DEMO = "https://demo.jellyfin.org/stable"
-// role=status takes no accessible name from its content, so read its text.
 const saveBarStatus = (ctx) => ctx.app.evaluate(`document.querySelector(".settings-save-bar [role=status]")?.textContent.trim() ?? null`)
 const scrollbarStyle = (ctx) => ctx.app.evaluate(`!!document.getElementById("__mediaFlickDesktopScrollbarStyle")`)
 

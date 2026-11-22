@@ -1,14 +1,3 @@
-// Starts the staged app (`just build`) in a throwaway profile so website
-// captures never touch the real one.
-//
-//   node scripts/website/launch.mjs demo   # empty profile, Jellyfin's public demo server
-//   node scripts/website/launch.mjs home   # copy of the current user's signed-in profile
-//
-// The copy takes the durable settings, library.db and the image cache; it
-// leaves out instance.json so the capture app gets its own single-instance
-// gate and can run beside a normal session. Profiles live under
-// build/website-capture/profiles and are rebuilt from scratch on every launch.
-
 import { spawn } from "node:child_process"
 import { cp, mkdir, rm, readdir, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"

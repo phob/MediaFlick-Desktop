@@ -42,10 +42,6 @@ function seasonLabel(season: SeerrSeason) {
     : label
 }
 
-/**
- * Season picking, only where it applies: a movie has none, and an instance with
- * `partialRequestsEnabled` off takes the whole show or nothing.
- */
 function SeasonPicker({
   seasons,
   selected,
@@ -82,14 +78,6 @@ function SeasonPicker({
   )
 }
 
-/**
- * The request confirmation. Mounted only while open, so closing it discards the
- * season selection rather than leaving it to be reset.
- *
- * The dialog is shown even to a user whose requests are approved automatically;
- * what changes is the outcome the toast reports, which comes from the status
- * Seerr answers with.
- */
 export function RequestDialog({
   result,
   onClose,
@@ -102,8 +90,6 @@ export function RequestDialog({
   const detail = useSeerrMedia(result.mediaType, result.tmdbId, isSeries)
   const request = useSeerrRequest()
   const [is4k, setIs4k] = useState(false)
-  // `null` is "untouched", which is what lets the default — everything Seerr
-  // does not already have — follow the seasons as they load.
   const [chosen, setChosen] = useState<Set<number> | null>(null)
   const [qualityChoice, setQualityChoice] = useState<string | null>(null)
 

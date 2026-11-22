@@ -1,21 +1,3 @@
-//! Each API module declares its routes once with [`routes!`]: the method, the
-//! path, the request body and the answer, next to the call that serves it.
-//! The macro turns that list into the module's dispatcher and its row of the
-//! route table, the 405 answers come from the same list, and
-//! `generated_typescript_is_current` renders it into the UI's route map.
-//!
-//! The compiler holds every handler to its declaration: it returns
-//! `Result<_, ApiResponse>` whose success side is the declared wire type, a
-//! [`Relay`]'s JSON value or a [`Binary`] route's [`BinaryAnswer`], and only
-//! this module turns that success into a response. A handler reads the
-//! request body only through the [`Body`] its route declares, because only
-//! this module can see a [`RawBody`]'s bytes. What visibility cannot keep
-//! inside this module, `only_the_router_answers_with_success` does: it fails
-//! when code elsewhere, a `routes!` table included, builds a success
-//! `ApiResponse`, sets a status, names `Body::new` or `Answer` (or reaches
-//! `Answer` through `Relay`, `Binary` or a glob of this module), or answers
-//! an error with a 2xx status.
-
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -26,8 +8,6 @@ use serde_json::Value;
 use super::{ApiRequest, ApiResponse, NO_STORE, Wire};
 use crate::app::services::Services;
 
-/// One module's routes: the dispatcher [`routes!`] generates and the
-/// declarations it was generated from.
 pub(in crate::shell::cef) struct Routes {
     pub(super) serve: Serve,
     pub(super) table: &'static [Route],
@@ -35,16 +15,11 @@ pub(in crate::shell::cef) struct Routes {
     pub(super) module: &'static str,
 }
 
-/// A module's dispatcher, by what its routes need.
 pub(in crate::shell::cef) enum Serve {
     WithServices(fn(&Arc<Services>, &[&str], &ApiRequest) -> Option<ApiResponse>),
-    /// Routes that also answer while the services are down, such as the
-    /// startup error screen's.
     WithoutServices(fn(&[&str], &ApiRequest) -> Option<ApiResponse>),
 }
 
-/// One declaration: the method and path it takes, and, for the generated
-/// TypeScript, what it reads and answers.
 pub(in crate::shell::cef) struct Route {
     pub(super) method: &'static str,
     pub(super) path: &'static [Segment],
@@ -56,7 +31,6 @@ pub(in crate::shell::cef) struct Route {
 
 pub(in crate::shell::cef) enum Segment {
     Literal(&'static str),
-    /// Any one segment, which the call receives under this name.
     Param {
         #[cfg(test)]
         name: &'static str,
@@ -77,8 +51,6 @@ impl Route {
     }
 }
 
-/// The bytes of a request body. Only this module reads them, through
-/// [`Body`], so a handler sees the body its route declares and nothing else.
 #[derive(Debug, Clone)]
 pub struct RawBody(Vec<u8>);
 
@@ -88,10 +60,6 @@ impl RawBody {
     }
 }
 
-/// The request body a route declares. [`routes!`] makes one for a route
-/// that declares a body, and the guard keeps everyone else from calling
-/// `Body::new`, so a handler cannot decode a type other than the one its
-/// route names.
 pub(super) struct Body<'a, T> {
     request: &'a ApiRequest,
     body: PhantomData<fn() -> T>,
@@ -107,12 +75,6 @@ impl<'a, T> Body<'a, T> {
 }
 
 impl<T: DeserializeOwned + Wire> Body<'_, T> {
-    /// Decodes the JSON body. A request sent without a body decodes like
-    /// `{}`, so it is accepted exactly when every field of `T` is optional.
-    /// A body that is not JSON, or does not match `T`, is rejected rather
-    /// than read as defaults: a garbled "mark as unwatched" must not mark the
-    /// item watched. Handlers decode where they used to, after the checks
-    /// that answer first.
     pub(super) fn decode(self) -> Result<T, ApiResponse> {
         let raw = &self.request.body.0;
         let body: &[u8] = if raw.iter().all(u8::is_ascii_whitespace) {
@@ -125,7 +87,6 @@ impl<T: DeserializeOwned + Wire> Body<'_, T> {
     }
 }
 
-/// A body the UI sends as raw bytes, such as an uploaded image.
 pub(super) struct Bytes;
 
 impl<'a> Body<'a, Bytes> {
@@ -134,13 +95,8 @@ impl<'a> Body<'a, Bytes> {
     }
 }
 
-/// An answer the UI does not read as JSON: an image, artwork, or a trailer
-/// stream. Its handler answers a [`BinaryAnswer`].
 pub(super) struct Binary;
 
-/// What a [`Binary`] route answers on success. Only a binary route answers
-/// bytes, and only through the builders below; the builders take whatever
-/// content type the handler passes.
 pub(super) struct BinaryAnswer(ApiResponse);
 
 impl BinaryAnswer {
@@ -154,7 +110,6 @@ impl BinaryAnswer {
         })
     }
 
-    /// Part of a stream, with the status and range headers its source sent.
     pub(super) fn ranged_bytes(
         status: u16,
         content_type: String,
@@ -179,13 +134,8 @@ impl BinaryAnswer {
     }
 }
 
-/// Companion JSON the app passes through without a Rust type. Its handler
-/// answers the JSON value, and the UI describes it by hand.
 pub(super) struct Relay;
 
-/// What a route answers with on success. Its handler returns
-/// `Result<Self::Value, ApiResponse>`, and [`Answer::respond`] makes the
-/// response: the success through [`Answer::success`], an error as it is.
 pub(super) trait Answer {
     type Value;
     fn success(value: Self::Value) -> ApiResponse;
@@ -238,7 +188,6 @@ impl RequestBody for Bytes {
     const SPEC: BodySpec = BodySpec::Bytes;
 }
 
-/// A wire type's name in the generated TypeScript.
 #[cfg(test)]
 pub(super) type WireRef = fn(&ts_rs::Config) -> String;
 
@@ -256,16 +205,6 @@ pub(super) enum AnswerSpec {
     Relay,
 }
 
-/// Declares a module's routes as `METHOD [path segments] (body: Type) ->
-/// Answer = call`. `METHOD` is `GET`, `POST`, `PUT`, `PATCH` or `DELETE`;
-/// anything else does not compile. A quoted segment is literal and a name
-/// binds that segment for the call; the body is optional. The call sees the
-/// names given in `|services, request|` and must return
-/// `Result<Answer::Value, ApiResponse>`: the wire type itself, a JSON
-/// [`Value`] for [`Relay`], a [`BinaryAnswer`] for [`Binary`]. Routes are
-/// tried in the order written. A module whose routes need no services
-/// declares `|request|` instead; they are tried before the services open,
-/// so they also answer while the services are down.
 macro_rules! routes {
     (
         @build ($($services:ident)?) $request:ident, $kind:ident;

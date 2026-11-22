@@ -2,10 +2,6 @@ import type { ReactNode } from "react"
 import appIcon from "../../../distribution/app-icon.png?inline"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
-/**
- * The app icon over one card on the sign-in backdrop, for a screen shown in
- * place of the app when it cannot continue.
- */
 export function CoverCard({ title, description, children }: { title: string; description: ReactNode; children?: ReactNode }) {
   return (
     <div className="signin-page relative grid h-full place-items-center overflow-x-hidden overflow-y-auto p-6">

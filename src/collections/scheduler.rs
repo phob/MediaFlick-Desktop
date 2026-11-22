@@ -396,10 +396,6 @@ fn profile_is_current(
         .any(|profile| profile.id == expected.id && profile.revision == expected.revision)
 }
 
-/// Records a failed refresh on top of the stored state, so the last success
-/// survives. The refresh already failed for its own reason, so a failure to
-/// record it is only logged; recording over a state that could not be read
-/// would erase that last success.
 pub(crate) fn save_failed_refresh(
     repository: &SnapshotRepository<'_>,
     account: &AccountKey,
@@ -489,7 +485,6 @@ mod tests {
 
     #[test]
     fn monthly_cadence_clamps_to_the_last_day() {
-        // 2025-01-31T01:00Z -> 2025-02-28T01:00Z, and the leap-year 29th.
         assert_eq!(
             next_due_at(1_738_285_200, RefreshCadence::Monthly),
             Some(1_740_704_400)

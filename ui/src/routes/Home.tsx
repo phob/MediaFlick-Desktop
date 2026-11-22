@@ -35,7 +35,6 @@ type ReleaseStatus = "downloaded" | "missing"
 interface UpcomingShelfEntry {
   entry: CalendarEntry
   past: boolean
-  /** Set only for past releases; a future date has nothing to be missing yet. */
   status: ReleaseStatus | null
 }
 
@@ -65,10 +64,6 @@ function seasonDay(entry: CalendarEntry) {
   return `${upcomingIdentity(entry)}:${entry.season}:${entry.date}`
 }
 
-/**
- * The Companion's file flags come from a daily snapshot, so a library match
- * also counts: it shows a download that landed since the last refresh.
- */
 function isDownloaded(entry: CalendarEntry) {
   return entry.hasFile || entry.libraryItemId != null
 }
@@ -84,11 +79,6 @@ function releaseStatus(entries: CalendarEntry[]): ReleaseStatus | null {
   return entries.some((entry) => entry.monitored && !isDownloaded(entry)) ? "missing" : null
 }
 
-/**
- * Recent releases lead the shelf, oldest first, so it reads as one timeline
- * into the upcoming dates. Each side takes its share and the other fills any
- * slots it leaves empty.
- */
 function upcomingEntries(entries: CalendarEntry[], today: string): UpcomingShelfEntry[] {
   const eligible = entries
     .filter((entry) => entry.kind === "episode" || entry.dateKind !== "air")
@@ -192,11 +182,6 @@ function UpcomingCard({ entry, past, status }: UpcomingShelfEntry) {
   )
 }
 
-/**
- * Today, drawn in the gap between the last released card and the first
- * upcoming one. The negative margins give back the extra flex gap, so the
- * cards keep their usual spacing and the mark sits centred between them.
- */
 function TodayMark() {
   return (
     <div role="separator" aria-orientation="vertical" aria-label="Today" className="-mx-[calc(var(--card-gap)/2)] flex h-poster-h w-0 shrink-0 flex-col items-center gap-1.5">

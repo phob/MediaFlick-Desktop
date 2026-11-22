@@ -1,6 +1,3 @@
-// Bundles libarchive.js's browser worker around the freshly linked emscripten
-// glue, with the rolldown and Comlink that ui/pnpm-lock.yaml pins.
-// Usage: node bundle-worker.mjs <ui dir> <worker entry> <output file>
 import { createRequire } from "node:module"
 import { realpathSync } from "node:fs"
 import path from "node:path"

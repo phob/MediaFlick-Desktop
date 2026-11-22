@@ -96,7 +96,6 @@ pub(super) fn display_frame_rate(host: HWND) -> i32 {
 }
 
 fn usable_frame_rate(frequency: u32) -> i32 {
-    // Windows uses 0 or 1 for an unspecified/default refresh rate.
     if frequency <= 1 {
         60
     } else {

@@ -1,10 +1,3 @@
-// Seerr through the MediaFlick Companion on your own server: Discover's rows,
-// a genre, a search with an owned title, a title page, then a real request
-// from a Discover card and its cancellation from Requests.
-//   just verify discover-requests --account https://jellyfin.example.com
-// Writes to the server owner's Seerr: it requests one movie nobody has
-// requested and cancels it again (Seerr may notify its admin meanwhile). If
-// the drive fails in between, the session cancels it after the run.
 const SIDEBAR = { css: '[data-sidebar="sidebar"]' }
 const OWNED = "28 Days Later"
 
@@ -13,7 +6,6 @@ async function sidebarLink(ctx, name) {
   await ctx.press({ role: "link", name })
 }
 
-// "20 loaded / 1,000"; CSS upper-cases it, so innerText would read LOADED.
 const loadedCount = (ctx) => ctx.app.evaluate(`Number(document.querySelector("main")?.textContent.match(/(\\d+) loaded \\//i)?.[1] ?? 0)`)
 
 async function pickUnrequested(ctx) {

@@ -1,9 +1,3 @@
-// The account's own settings shelves on your own server: Viewing (Discard,
-// Save, a revisit, Restore defaults), the leave guard between shelves,
-// Appearance (accent applied live), and Letterboxd (add, save, remove). Every
-// write goes to the disposable profile's accounts.json; Letterboxd also
-// fetches the profile's public RSS from letterboxd.com.
-//   just verify account-settings --account https://jellyfin.example.com
 const LETTERBOXD_USER = "davidehrlich"
 
 const account = (ctx) => ctx.readConfig("accounts.json")?.accounts?.find((entry) => entry.userId === ctx.account.userId) ?? null

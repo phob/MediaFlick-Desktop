@@ -1,52 +1,3 @@
-// A library.db this build cannot use: it refuses it, leaves it as it was,
-// tries only once, and says why on a startup error screen instead of the
-// sign-in screen; the user can then open the folder holding it, or move it
-// aside and start on a new one. `scripts/e2e/upgrade-0-2-0.mjs` runs it on a
-// copy of a 0.2.0 profile, stamped with the next schema (scenario
-// 4-newer-refused, which also leaves real WAL frames beside it), with
-// schema 0 so the schema change fails and rolls back (scenario
-// 5-migration-failed), or as 0.2.0 left it while another process holds a
-// write lock on it (scenario 6-in-use, through MEDIAFLICK_DESKTOP_EXE), with
-//
-//   --account SERVER --signed-out --services-down --seed DIR --seed-data DIR
-//   MEDIAFLICK_VERIFY_REFUSED_SHA256   the seeded library.db's SHA-256
-//   MEDIAFLICK_VERIFY_REFUSED_SCHEMA   its PRAGMA user_version
-//   MEDIAFLICK_VERIFY_REFUSED_KIND     newerSchema, unusable or inUse: which
-//                                      refusal the scenario stages
-//   MEDIAFLICK_VERIFY_HOLD_RELEASE     inUse only: the file that makes the
-//                                      lock holder let go
-//   MEDIAFLICK_VERIFY_REFUSED_REASON   JSON { says, patterns, leavesOut?, logKeeps? }:
-//                                      what the reason must say, as regular
-//                                      expression sources; what it must not
-//                                      say, and what app.log keeps in full,
-//                                      each as { says, patterns }
-//   MEDIAFLICK_VERIFY_SCHEMA           this build's SCHEMA_VERSION
-//   MEDIAFLICK_VERIFY_OPENED_LOG       the file the orchestrator's xdg-open
-//                                      stand-in, first on PATH, appends each
-//                                      argument it is given to
-//
-// The services stay down, so every API call answers 503 marked
-// `startupFailed`, with the reason app.log gave. Several calls later app.log
-// still has one `could not open` line: a failed open is not retried on each
-// request. The main window is shown with the startup error screen holding
-// that reason and no sign-in form, and library.db keeps its bytes and its
-// version. The reason stays short enough to read: at most
-// REASON_LIMIT characters, the profile's path included.
-//
-// Then the recovery: the screen offers Recreate library and Open data
-// folder. Open data folder hands the folder holding library.db to xdg-open.
-// Recreate library asks first, in a dialog that says what is lost and kept
-// and where the old file goes; Cancel moves nothing. Confirm moves library.db
-// and its sidecars, byte for byte, to one library-replaced-<UTC time>.db
-// next to it; the services open in the same window on a new library.db at
-// this build's schema, without a second failed open; the JSON files and
-// custom posters are as they were; the sign-in screen shows, Quick Connect
-// signs in as a new device, and a sync fills the library from the server.
-// The dialog is opened and confirmed in a 1280x400 viewport, where it must
-// fit and both its actions must be reachable. A library.db another program
-// holds (inUse) gets neither button, and a Recreate library asked for
-// directly is refused and moves nothing, since moving a database another
-// connection has open can corrupt it. Every check is in library-refused.json.
 import { createHash } from "node:crypto"
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
@@ -58,20 +9,15 @@ const SIDECARS = ["", "-wal", "-shm"]
 const BACKUP = /^library-replaced-\d{4}-\d\d-\d\d-\d{6}Z\.db$/
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex")
-// The page lays text out with its line breaks collapsed.
 const collapsed = (value) => value.replace(/\s+/g, " ").trim()
 const escaped = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
-// A database file and the sidecars beside it, by suffix, as SHA-256.
 function databaseFiles(dir, name) {
   return Object.fromEntries(SIDECARS.filter((suffix) => existsSync(path.join(dir, `${name}${suffix}`))).map((suffix) => [suffix || "db", sha256(readFileSync(path.join(dir, `${name}${suffix}`)))]))
 }
 
-// A POST from the page, as the UI sends it.
 const post = (ctx, apiPath, body) => ctx.app.evaluate(`fetch(${JSON.stringify(apiPath)}, { method: "POST", headers: { "Content-Type": "application/json" }, body: ${JSON.stringify(JSON.stringify(body))} }).then(async (response) => ({ status: response.status, body: await response.json().catch(() => null) }))`)
 
-// The user's files the recreate must leave alone: the JSON stores, reader.json
-// and the custom posters.
 function userFiles(configDir) {
   const reader = path.join(configDir, "reader.json")
   return { ...userFileDigests(configDir), ...(existsSync(reader) ? { "reader.json": sha256(readFileSync(reader)) } : {}) }
@@ -99,9 +45,6 @@ export default async function libraryRefused(ctx) {
     for (let index = 0; index < 6; index += 1) answers.push(await ctx.api("/api/status"))
     report.answers = answers.map((answer) => ({ status: answer.status, body: answer.body }))
     record(answers.every((answer) => answer.status === 503), "every /api/status answers 503 while the services are down", answers.map((answer) => answer.status))
-    // The path may hold spaces (it lives under TMPDIR). The reason runs to
-    // the next log line: a failed schema change quotes its SQL over several
-    // lines.
     const logged = ctx.appLog().match(/could not open [^\r\n]*?library\.db: [\s\S]*?(?=\n\d{4}-\d\d-\d\dT|\n?$)/)?.[0] ?? null
     const reason = answers[0].body?.error ?? ""
     const matches = (patterns, text) => patterns.every((pattern) => new RegExp(pattern).test(text))
@@ -149,7 +92,6 @@ export default async function libraryRefused(ctx) {
   if (failed.length) throw new Error(`${failed.length} check(s) failed: ${failed.join("; ")}`)
 }
 
-// Open data folder, then Recreate library: cancelled once, then confirmed.
 async function recover(ctx, record, report, { opens, deviceId, dataDir }) {
   const kind = required("MEDIAFLICK_VERIFY_REFUSED_KIND")
   const schema = Number(required("MEDIAFLICK_VERIFY_SCHEMA"))
@@ -165,15 +107,12 @@ async function recover(ctx, record, report, { opens, deviceId, dataDir }) {
   const files = userFiles(ctx.configDir)
   report.userFiles = files
 
-  // A missing control fails the checks that need it instead of the drive.
   const pressed = (target) => ctx.press(target).then(() => true, (error) => {
     ctx.step(`could not press ${target.name}: ${error.message.split("\n")[0]}`)
     return false
   })
   const dialog = { role: "alertdialog", name: "Recreate the library?" }
   const openDialog = async () => (await pressed(recreate)) && ctx.find(dialog).then(() => true, () => false)
-  // A short window. Uncapped, the dialog is about 536 px tall here; at 400 px
-  // its footer would be off screen.
   const SHORT = { width: 1280, height: 400 }
   const fits = () => ctx.app.evaluate(`(() => {
     const dialog = document.querySelector('[role="alertdialog"]')
@@ -211,7 +150,6 @@ async function recover(ctx, record, report, { opens, deviceId, dataDir }) {
   const cancelled = shown && await pressed(cancel)
   record(cancelled, `in a ${SHORT.width}x${SHORT.height} window the dialog's Cancel is reachable`)
   if (cancelled) await ctx.until(async () => !(await ctx.exists(dialog)), "the dialog to close", 10000)
-  // A recreate that Cancel set off would be done by now.
   await ctx.sleep(2000)
   const afterCancel = databaseFiles(dataDir, "library.db")
   record(JSON.stringify(afterCancel) === JSON.stringify(beforeCancel), "Cancel leaves library.db and its sidecars byte for byte as they were", { before: beforeCancel, after: afterCancel })
@@ -226,8 +164,6 @@ async function recover(ctx, record, report, { opens, deviceId, dataDir }) {
   await ctx.app.send("Emulation.clearDeviceMetricsOverride")
   const up = await ctx.until(async () => (await ctx.api("/api/status")).status === 200, "the services to open", 30000).then(() => true, () => false)
   record(up, "after Recreate library /api/status answers 200")
-  // The window was made while the services were down, so it gets its player
-  // and its shell-request queue only when they open.
   const player = await post(ctx, "/api/player/command", { command: "set-mute", mute: false })
   record(player.status === 200, "the window's player is attached to the services that opened", player)
   const ready = await post(ctx, "/api/shell/window/ready", {})
@@ -273,8 +209,6 @@ async function recover(ctx, record, report, { opens, deviceId, dataDir }) {
   await ctx.screenshot("05-home-after-resync")
 }
 
-// Another program holds library.db: no way to recreate it is offered, and
-// one asked for directly moves nothing. Then the holder lets go.
 async function inUse(ctx, record, { dataDir }) {
   try {
     const recovery = await ctx.api("/api/recovery")

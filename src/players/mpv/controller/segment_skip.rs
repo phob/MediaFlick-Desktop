@@ -102,9 +102,6 @@ impl ControllerState {
         self.chapter_markers = ChapterMarkers::default();
     }
 
-    /// mpv reports an observed property only when its value changes, so a
-    /// file without chapters loaded after an idle mpv sends no `chapter-list`
-    /// event. Read the list once the file has loaded instead.
     pub(super) fn read_chapter_list(&mut self) {
         match self.get_mpv_property("chapter-list") {
             Ok(Value::Array(chapters)) => self.handle_chapter_list(chapters),
@@ -467,9 +464,6 @@ impl ControllerState {
         let Some(startup_seek) = self.startup_seek else {
             return false;
         };
-        // mpv reports 0.0 immediately after file-loaded even for resumed media.
-        // Do not let that transient sample overwrite Jellyfin/Web's resume
-        // position before the delayed startup seek has landed.
         let target_ticks = seconds_to_ticks(startup_seek.position_ms / 1000.0).unwrap_or_default();
         let minimum_resume_tick = target_ticks.saturating_sub(STARTUP_SEEK_POSITION_TOLERANCE);
         if target_ticks > 0 && ticks < minimum_resume_tick {

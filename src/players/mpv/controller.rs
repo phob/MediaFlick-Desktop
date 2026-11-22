@@ -139,12 +139,7 @@ struct ControllerState {
     recent_loads: VecDeque<RecentLoad>,
     next_playback_handoff_until: Option<Instant>,
     replacement_end_file_pending: bool,
-    /// The mpv playlist entry of the load being handled, from `loadfile`'s
-    /// reply. `end-file` and `file-loaded` events of any other entry belong
-    /// to a file that was replaced. `None` when the reply carried no entry
-    /// id, or once that load is finished.
     tracked_entry: Option<i64>,
-    /// The entry of mpv's latest `start-file`; `file-loaded` follows it.
     started_entry: Option<i64>,
     pending_raise_pulse_reset_at: Option<Instant>,
     last_session_poll: Instant,
@@ -217,10 +212,6 @@ impl PlaybackIdentity {
     }
 }
 
-/// The Jellyfin item the controller is handling. A load is `Loading` from an
-/// accepted `loadfile` until mpv reports `file-loaded`, then `Playing` while
-/// its playstate is reported; the two never overlap. `Idle` says nothing about
-/// mpv itself, which can still be playing a file of its own.
 enum PlaybackPhase {
     Idle,
     Loading(Box<PendingPlayback>),
@@ -643,9 +634,6 @@ impl ControllerState {
             return;
         }
         if matches!(command, PlayerCommand::Stop) && self.phase.pending().is_some() {
-            // mpv emits no event for a load stopped before it started, so
-            // finish it here; a late `end-file` then finds nothing to end.
-            // The user's Stop overrides any hand-off still waiting for it.
             self.replacement_end_file_pending = false;
             self.next_playback_handoff_until = None;
             self.finish_active(Some(StopReason::Stop));
@@ -653,12 +641,6 @@ impl ControllerState {
     }
 
     fn kick_start_playback(&mut self, launch: &PlaybackRequest) {
-        // Regression guard: resumed Jellyfin streams must not use mpv's
-        // load-time `start` option. On Windows external mpv can show a still
-        // frame until a later seek when opened directly at the resume offset.
-        // Built-in libmpv uses the same path so every runtime shares one
-        // resume and position-hold policy: load normally, then seek after
-        // file-loaded.
         if let Some(position_ms) = launch
             .start_seconds()
             .map(|seconds| seconds * 1000.0)
@@ -829,15 +811,11 @@ impl ControllerState {
         }
     }
 
-    /// A load that arrives while another is pending replaces it when mpv
-    /// reports entry ids. Returns false when the load must be refused.
     fn make_way_for_load(&mut self, key: &str, load_id: i64) -> bool {
         let Some(pending) = self.phase.pending() else {
             return true;
         };
         if self.tracked_entry.is_none() {
-            // Without entry ids a replaced load's late events can't be told
-            // apart from the new one's, so refuse it visibly.
             tracing::debug!(
                 target: "playback",
                 pending_dedupe_key = %pending.key,
@@ -856,7 +834,6 @@ impl ControllerState {
             incoming_dedupe_key = %key,
             "replacing the pending playback load"
         );
-        // Its playstate was never started, so there is nothing to report.
         self.phase.take_pending();
         true
     }

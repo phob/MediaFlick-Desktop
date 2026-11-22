@@ -17,20 +17,11 @@ export type MemberReview = {
   username: string,
   displayName: string,
   profileUrl: string,
-  /**
-   * Canonical Letterboxd film entry; absent if the feed supplied an unsafe URL.
-   */
   entryUrl: string | null,
   rating: number | null,
-  /**
-   * Native code strips provider HTML before this reaches React.
-   */
   review: string | null,
   reviewTruncated: boolean,
   watchedDate: string | null,
-  /**
-   * True when a failed refresh fell back to an older in-memory feed.
-   */
   stale: boolean,
 };
 

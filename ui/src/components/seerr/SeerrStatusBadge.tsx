@@ -6,15 +6,6 @@ type StatusBadgeDescription = {
   variant: "default" | "secondary" | "outline" | "destructive"
 }
 
-/**
- * What Seerr already knows about a title. `unknown` is deliberately not a badge:
- * "we have never heard of this" is the default state of everything on a
- * discovery page, and a badge on every card would say nothing.
- *
- * `processing` covers everything from an approved request to an imported file,
- * so on its own it only claims that the request is in progress; the activity
- * says what is actually happening.
- */
 const MEDIA_LABELS = {
   unknown: null,
   pending: { label: "Requested", variant: "secondary" },
@@ -24,11 +15,6 @@ const MEDIA_LABELS = {
   blacklisted: { label: "Blocked", variant: "destructive" },
 } satisfies Record<SeerrStatus, StatusBadgeDescription | null>
 
-/**
- * Without Radarr and Sonarr connected to the Companion, every approved request
- * that is not downloading reads "Processing". The description says that the
- * request itself is working, so the plain label is not mistaken for a fault.
- */
 const PROCESSING_DESCRIPTION =
   "Request approved and handed to the server's download service. It becomes available once imported. " +
   "Release and download details appear when the MediaFlick Companion is connected to Radarr and Sonarr."

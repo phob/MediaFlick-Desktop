@@ -1,14 +1,7 @@
-//! Jellyfin server versions, and the oldest server this app signs in to.
-
 use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// A Jellyfin server version as `/System/Info/Public` reports it. Jellyfin
-/// formats it with .NET's `Version.ToString(3)`, so it is always exactly
-/// three numbers; anything else did not come from a Jellyfin server.
-///
-/// The derived order compares major, then minor, then patch, numerically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, ts_rs::TS)]
 #[ts(type = "string")]
 pub struct ServerVersion {
@@ -18,7 +11,6 @@ pub struct ServerVersion {
 }
 
 impl ServerVersion {
-    /// The oldest Jellyfin server Desktop signs in to (Martin, 2026-11-15).
     pub const DESKTOP_MINIMUM: Self = Self::new(10, 11, 0);
 
     pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
@@ -29,11 +21,8 @@ impl ServerVersion {
         }
     }
 
-    /// Reads a version as Jellyfin reports it, or `None` for anything that
-    /// is not exactly three decimal numbers.
     pub fn parse(raw: &str) -> Option<Self> {
         let mut parts = raw.split('.').map(|part| {
-            // `u32::from_str` takes a leading `+`; Jellyfin never sends one.
             part.bytes()
                 .all(|byte| byte.is_ascii_digit())
                 .then(|| part.parse::<u32>().ok())
@@ -47,7 +36,6 @@ impl ServerVersion {
         Some(Self::new(major, minor, patch))
     }
 
-    /// What to tell the user when this server is older than `minimum`.
     pub fn short_of(self, minimum: Self) -> Option<ServerTooOld> {
         (self < minimum).then_some(ServerTooOld {
             version: self,
@@ -55,9 +43,6 @@ impl ServerVersion {
         })
     }
 
-    /// Reads the `Version` of a public system info answer. A missing or
-    /// unreadable version decodes as `None`, so the caller decides what an
-    /// unknown server means instead of the whole answer failing to decode.
     pub fn deserialize_reported<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Self>, D::Error> {
@@ -78,8 +63,6 @@ impl Serialize for ServerVersion {
     }
 }
 
-/// A server older than what a feature needs: the version it reported and
-/// the minimum, for the UI to name both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
 pub struct ServerTooOld {
     pub version: ServerVersion,
@@ -88,11 +71,6 @@ pub struct ServerTooOld {
 
 #[cfg(test)]
 mod tests {
-    //! Expected versions come from real `/System/Info/Public` answers, saved
-    //! verbatim in `fixtures/jellyfin/public-info/` (their README names each
-    //! server), and from the floor Martin set on 2026-11-15: Desktop signs
-    //! in to Jellyfin 10.11.0 and newer.
-
     use super::{ServerTooOld, ServerVersion};
     use crate::jellyfin::api::model::PublicSystemInfo;
 
@@ -132,8 +110,6 @@ mod tests {
         assert_eq!(reported(r#"{"ServerName":"x"}"#), None);
         assert_eq!(reported(r#"{"Version":null}"#), None);
         assert_eq!(reported(r#"{"Version":""}"#), None);
-        // Jellyfin 10.11.11 answered one request in camelCase right after it
-        // started; its normal answers are PascalCase.
         assert_eq!(reported(r#"{"version":"10.11.11"}"#), None);
     }
 
@@ -183,8 +159,6 @@ mod tests {
         }
     }
 
-    /// Every version orders as its three numbers do, never as text, and
-    /// shows as it was reported.
     #[test]
     fn versions_order_by_their_numbers_and_show_as_reported() {
         const PARTS: [u32; 9] = [0, 1, 2, 9, 10, 11, 12, 99, 100];

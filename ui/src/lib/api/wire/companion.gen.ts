@@ -16,10 +16,6 @@ export type CompanionStatus = {
   info: CompanionInfo | null,
   error: string | null,
   supportedApi: SupportedApi,
-  /**
-   * Set when the Companion was not found and the server is older than
-   * the Companion needs, so it cannot be installed there.
-   */
   serverTooOld: ServerTooOld | null,
 };
 

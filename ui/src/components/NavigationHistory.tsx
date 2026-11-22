@@ -49,7 +49,6 @@ export function NavigationHistory({ children }: { children: ReactNode }) {
       event.preventDefault()
       void navigate(event.button === 3 ? -1 : 1)
     }
-    // Cancel Chromium's auxiliary-button default so one press moves one entry.
     const cancelAuxiliary = (event: MouseEvent) => {
       if (event.button === 3 || event.button === 4) event.preventDefault()
     }

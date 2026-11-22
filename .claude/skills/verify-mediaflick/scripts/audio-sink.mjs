@@ -1,9 +1,3 @@
-// A private PipeWire with one null sink, inside the session's private runtime
-// dir, so mpv has an audio device to play into under Xvfb and the drive can
-// record what reached it. The user's own audio server is never contacted: the
-// sockets live in the private XDG_RUNTIME_DIR, WirePlumber watches no ALSA,
-// Bluetooth or camera devices, and the configs live in a temp dir of their own.
-
 import { execFileSync, spawn, spawnSync } from "node:child_process"
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
@@ -64,8 +58,6 @@ export async function startAudioSink({ evidence, log }) {
   }
   log(`audio sink: private PipeWire ${SINK} in ${root}`)
 
-  // Records the sink for `seconds` into `<name>.wav` and measures its level
-  // with ffmpeg's volumedetect: silence reads about -91 dB.
   async function capture(name, seconds) {
     const file = path.join(evidence, `${name}.wav`)
     const recorder = spawn("pw-record", ["--target", SINK, "-P", "stream.capture.sink=true", file], { env, stdio: "ignore" })

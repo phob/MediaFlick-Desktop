@@ -116,7 +116,6 @@ test.each([
 
   await act(() => router.navigate(url.includes("q=") ? "/discover?q=ocean" : `${url}&decade=1980`))
   await waitFor(() => expect(view.container.querySelectorAll("[data-quick-request-card]")).toHaveLength(20))
-  // StrictMode can cancel and restart the new first-page request.
   const newPages = requests.mock.calls.slice(requestCount).map((args) => args[url.includes("q=") ? 1 : 2])
   expect(newPages.length).toBeGreaterThan(0)
   expect(newPages.every((number) => number === 1)).toBe(true)

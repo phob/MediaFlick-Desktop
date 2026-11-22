@@ -187,7 +187,7 @@ mod tests {
     use super::*;
     #[test]
     fn navigation_and_text_use_cef_key_codes() {
-        assert_eq!(virtual_key(0xffc8), 122); // F11
+        assert_eq!(virtual_key(0xffc8), 122);
         assert_eq!(virtual_key(0xff51), 37);
         assert_eq!(virtual_key(u32::from('q')), 81);
         assert_eq!(unicode(0x0101f600), 0x1f600);

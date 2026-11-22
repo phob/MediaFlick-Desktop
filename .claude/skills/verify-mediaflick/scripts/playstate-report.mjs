@@ -1,12 +1,3 @@
-// Collects the playstate-proof cases from finished `just verify` runs into one
-// report, per case and player:
-//   node .claude/skills/verify-mediaflick/scripts/playstate-report.mjs <run-id>...
-// Reads build/verify/<run-id>/ (result.json and the drive's own evidence) and
-// writes build/e2e/playstate/report.json. Each case names the run it comes
-// from; a case or player no run covered is listed as missing, and so is a case
-// with parts when one part has no run. A failed run that wrote no evidence
-// file counts as failed for every case its drive covers. Exits 1 unless every
-// case passed or was skipped with a reason.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
@@ -17,8 +8,6 @@ const PLAYERS = ["builtin", "external"]
 const MUSIC = "music and audiobook"
 const BOOK = "book (the reader, not a player)"
 
-// [name, description, parts]: a case with parts passes for a player only when
-// each part passed there.
 const CASES = [
   ["stop-mid", "Stop a film part way: Jellyfin holds that position"],
   ["resume", "Resume starts there; no report during the startup seek falls back"],
@@ -30,7 +19,6 @@ const CASES = [
   ["sign-out", "Sign out during playback: nothing reported to the other account"],
 ]
 
-// The cases each drive covers, for a failed run that left no evidence file.
 const DRIVE_CASES = {
   playback: [{ name: "stop-mid" }, { name: "resume" }],
   playstate: [{ name: "play-to-end" }, { name: "finish-episode" }, { name: "stop-early" }, { name: "sign-out" }],
@@ -39,7 +27,6 @@ const DRIVE_CASES = {
   "book-progress": [{ name: "audio-and-books", part: BOOK, players: PLAYERS }],
 }
 
-// Each drive's evidence, mapped to the cases it proves.
 function casesOf(runId) {
   const dir = path.join(root, "build/verify", runId)
   const result = readJson(path.join(dir, "result.json"))
@@ -48,8 +35,6 @@ function casesOf(runId) {
   const file = { playback: "playback.json", playstate: "playstate.json", segments: "segments.json", music: "music.json", "book-progress": "book-progress.json" }[drive]
   if (!file) return []
   if (!existsSync(path.join(dir, file))) {
-    // The drive stopped before writing its evidence. Its player is the one
-    // the run's settings chose, as the drives read it.
     const settings = path.join(dir, "profile/config/settings.json")
     const backend = existsSync(settings) && readJson(settings).player_backend === "mpv" ? "external" : "builtin"
     const error = `the run wrote no ${file}: ${result.error?.split("\n")[0] ?? "no error recorded"}`

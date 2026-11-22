@@ -5,12 +5,6 @@ use crate::playback::non_empty;
 
 use super::libraries::LibraryId;
 
-/// A durable description of one selected track.
-///
-/// The absolute Jellyfin stream index is what this item needs today. The
-/// descriptive fields are intentionally stored with it so a later series-wide
-/// preference can match equivalent tracks by language and characteristics
-/// without trying to recover intent from an opaque index.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TrackPreference {
@@ -42,10 +36,6 @@ impl TrackPreference {
         }
     }
 
-    /// An index can be reused for a different stream after a file replacement.
-    /// Compare the descriptors that were actually available when this choice
-    /// was saved before trusting it. Newly enriched metadata does not make an
-    /// otherwise matching old snapshot stale.
     fn matches(&self, stream: &MediaStream) -> bool {
         let display_title_matches = if self.language.is_none()
             && self.title.is_none()
@@ -57,9 +47,6 @@ impl TrackPreference {
                 stream.display_title.as_deref(),
             )
         } else {
-            // DisplayTitle is generated/localized by Jellyfin and can change
-            // when a Default/External badge changes. Treat it as identity only
-            // when no stronger descriptor was available in the snapshot.
             true
         };
         self.index == stream.index
@@ -85,11 +72,6 @@ pub struct MediaSourcePreference {
     pub container: Option<String>,
 }
 
-/// Per-item playback selection persisted in the library database.
-///
-/// A missing `subtitle_track` in an existing row means subtitles explicitly
-/// off. A missing row means the server/default selection has never been
-/// overridden, which is why this is separate from [`ResolvedPlaybackPreference`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ItemPlaybackPreference {
@@ -124,8 +106,6 @@ pub struct ResolvedPlaybackPreference {
     pub media_source_id: Option<String>,
     pub media_source_index: usize,
     pub audio_stream_index: Option<i64>,
-    /// `None` is subtitles off. Playback translates it to Jellyfin/mpv's off
-    /// sentinel only when an existing stored row made that choice explicit.
     pub subtitle_stream_index: Option<i64>,
 }
 
@@ -158,7 +138,6 @@ pub fn resolve_playback_preference(
 
     let subtitle = if saved_source_matches {
         match preference.and_then(|preference| preference.subtitle_track.as_ref()) {
-            // The row explicitly records subtitles off.
             None => None,
             Some(saved) => {
                 matching_stream(source, "Subtitle", saved).or_else(|| default_subtitle(source))
@@ -238,10 +217,6 @@ fn optional_text_matches(saved: Option<&str>, current: Option<&str>) -> bool {
         .is_some_and(|current| saved.eq_ignore_ascii_case(current))
 }
 
-/// One cached library item — the thin catalog index row. Provider IDs get
-/// dedicated columns because they are the join keys for external metadata
-/// features. Rich metadata (synopsis, cast, streams, critic ratings) is never
-/// cached; surfaces fetch it live from Jellyfin.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ItemRecord {
     pub jellyfin_id: String,
@@ -265,10 +240,7 @@ pub struct ItemRecord {
     pub imdb_id: Option<String>,
     pub tvdb_id: Option<String>,
     pub genres: String,
-    /// Studio names, kept for movies and series only: the library grids that
-    /// filter by them list titles. TV libraries call them networks.
     pub studios: String,
-    /// Kept for movies and series only, as `studios` is.
     pub tags: String,
     pub image_tags: String,
     pub primary_image_tag: Option<String>,
@@ -395,10 +367,6 @@ impl ItemRecord {
             sort_name: non_empty(dto.sort_name.as_deref())
                 .map(str::to_string)
                 .or_else(|| Some(dto.display_name().to_lowercase())),
-            // Jellyfin normally supplies ProductionYear for both films and
-            // series (for a series it is the first-air year). Older servers
-            // and some metadata providers only supply PremiereDate, so keep a
-            // small fallback here.
             year: dto.production_year.or_else(|| {
                 dto.premiere_date
                     .as_deref()
@@ -484,8 +452,6 @@ fn release_year_from_date(value: &str) -> Option<i64> {
     (1900..=9999).contains(&year).then_some(year)
 }
 
-/// One item as list, row and grid surfaces show it. Built from a cached row
-/// or a live Jellyfin item.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemSummary {
@@ -512,18 +478,10 @@ pub struct ItemSummary {
     pub position_ticks: i64,
     pub favorite: bool,
     pub unplayed_count: Option<i64>,
-    /// Width over height of the primary image. Null for cached movies and
-    /// shows, whose art is a 2:3 poster.
     pub primary_aspect: Option<f64>,
-    /// `/api/item/{id}/children` carries this for a season's episodes, from
-    /// its live server reconcile, and a generic item's details carry their
-    /// own. The grid queries do not, and offline rows have none.
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overview: Option<String>,
-    /// The slot this item fills among a playlist's children, counted from
-    /// zero. Jellyfin's PlaylistItemId is the item's own id, so it cannot tell
-    /// two slots of one item apart.
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub playlist_index: Option<i64>,
@@ -565,7 +523,6 @@ impl ItemSummary {
     }
 }
 
-/// A cached item with what its detail page adds to the card.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemDetail {
@@ -613,8 +570,6 @@ pub struct BookDetail {
     pub reading: crate::books::ReadingState,
 }
 
-/// An album, audiobook or track: the tracks its Play button queues, grouped
-/// by disc in play order.
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioDetail {
@@ -634,7 +589,6 @@ pub struct Disc {
 }
 
 impl AudioDetail {
-    /// `tracks` in play order, as the audio queue would hold them.
     pub fn new(dto: &BaseItemDto, tracks: Vec<crate::playback::AudioTrack>) -> Self {
         let media_kind = tracks
             .first()
@@ -669,8 +623,6 @@ impl AudioDetail {
 pub struct TitleDetail {
     #[serde(flatten)]
     pub item: ItemDetail,
-    /// Always a catalog library, whose profile offers the genre filter: only
-    /// catalog libraries hold memberships. The UI's genre links rely on it.
     pub library_id: Option<LibraryId>,
 }
 

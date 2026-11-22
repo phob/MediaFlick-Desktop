@@ -5,10 +5,6 @@ use super::{ReadingLocation, SavedPosition};
 
 const REMEMBERED_BOOKS: usize = 32;
 
-/// The books the reader opened under a session generation, least recently
-/// used first. Only an opened book's bytes are served and its place written,
-/// and each remembers the ticks Jellyfin holds for it as far as this app
-/// knows: what the reader saw on opening, then what Jellyfin confirmed.
 #[derive(Default)]
 pub struct OpenBooks(Mutex<VecDeque<OpenBook>>);
 
@@ -36,8 +32,6 @@ impl OpenBooks {
         self.touch(generation, item_id).is_some()
     }
 
-    /// What a save keeps before Jellyfin confirms it: the new place, with
-    /// what Jellyfin holds as synced. `None` for a book that is not open.
     pub fn unsynced(
         &self,
         generation: u64,

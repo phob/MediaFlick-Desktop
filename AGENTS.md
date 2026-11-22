@@ -47,6 +47,7 @@ Each rule below fails the named check; read the check's message for the fix. `ju
 | `pnpm` leaves `ui/pnpm-lock.yaml` unchanged | CI `Check that pnpm left the lockfile unchanged` |
 | No code copied between files; give it one owner | `scripts/ci/check_clones.py` (CI `Check for code copied between files`) |
 | A source file over 1,000 lines may not grow | `scripts/ci/check_file_size.py` (PR scripts `Check file sizes`) |
+| No new non-exempt code comments; existing comment counts may only fall (exemptions: Rust `// SAFETY:`, generated wire/worker files, `/* @vite-ignore */`, `# shellcheck disable=`, license headers, shebangs) | `scripts/ci/check_comments.py` (PR scripts `Check comment ratchet`) |
 | A change to `src/`, `ui/src/` or `plugin/` carries a `changelog.d/` fragment; only the `no-changelog` PR label waives it | `scripts/ci/check_changelog_fragment.py` (PR scripts `Check changelog fragment`) |
 | Every "Proven by" claim in the verify feature map names an existing drive and only evidence files that drive writes, never a run id | `scripts/ci/check_feature_map.py` (PR scripts `Check verify feature map proofs`) |
 | A `library.db` schema change bumps `SCHEMA_VERSION` and appends exactly one step to `MIGRATIONS` | The compiler (`src/library/db/migrate.rs`) |
