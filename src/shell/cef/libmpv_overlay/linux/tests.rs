@@ -33,6 +33,9 @@ impl PlaybackBackend for BlockingOverlayBackend {
     }
     fn load(&self, _path: String, _fullscreen: FullscreenBehavior, _request: PlaybackRequest) {}
     fn control(&self, _command: PlayerCommand) {}
+    fn stop_and_wait(&self, _timeout: Duration) -> bool {
+        true
+    }
     fn set_preferences(&self, _preferences: PlayerPreferences) {}
     fn snapshot(&self) -> PlayerSnapshot {
         PlayerSnapshot::default()

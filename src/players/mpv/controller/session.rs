@@ -140,6 +140,14 @@ impl ControllerState {
     }
 
     pub(super) fn set_fullscreen(&self, fullscreen: FullscreenBehavior) {
+        self.set_fullscreen_with_timeout(fullscreen, self.ipc_command_timeout());
+    }
+
+    pub(super) fn set_fullscreen_with_timeout(
+        &self,
+        fullscreen: FullscreenBehavior,
+        timeout: Duration,
+    ) {
         #[cfg(target_os = "linux")]
         if let Some(runtime) = &self.runtime
             && let Err(error) = runtime.set_fullscreen(fullscreen)
@@ -151,8 +159,79 @@ impl ControllerState {
             "command": ["set_property", "fullscreen", fullscreen == FullscreenBehavior::Fullscreen],
             "request_id": next_request_id(),
         });
-        if let Err(error) = self.send_mpv_command(command) {
+        if let Err(error) = self.send_mpv_command_with_timeout(command, timeout) {
             tracing::warn!(target: "mpv.ipc", "failed to change fullscreen mode: {error}");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn leave_native_fullscreen(&self) {
+        if let Some(runtime) = &self.runtime
+            && let Err(error) = runtime.set_fullscreen(FullscreenBehavior::Windowed)
+        {
+            tracing::warn!(target: "mpv.window", "could not change native fullscreen state: {error}");
+        }
+    }
+
+    pub(super) fn stop_sync(&mut self, ack: &std::sync::mpsc::Sender<()>, timeout: Duration) {
+        #[cfg(target_os = "linux")]
+        {
+            self.fullscreen_gate.pending = false;
+        }
+        let had_playback = self.mpv_playback_active || !self.phase.is_idle();
+        if !had_playback {
+            let _ = ack.send(());
+            return;
+        }
+        self.replacement_end_file_pending = false;
+        self.next_playback_handoff_until = None;
+        self.finish_active(Some(StopReason::Stop));
+
+        let Some(command_json) = control_command(&PlayerCommand::Stop) else {
+            let _ = ack.send(());
+            return;
+        };
+        let has_live_worker = self
+            .ipc
+            .worker
+            .as_ref()
+            .is_some_and(IpcWorker::is_writer_alive);
+        if !has_live_worker {
+            let library_ipc = self.can_recycle_library_ipc();
+            if library_ipc {
+                self.ipc.pending_stop = true;
+            }
+            #[cfg(target_os = "linux")]
+            self.leave_native_fullscreen();
+            let _ = ack.send(());
+            if !library_ipc && (self.runtime_is_alive() || self.ipc.worker.is_some()) {
+                self.handle_mpv_session_lost("mpv stop had no live IPC worker");
+            }
+            return;
+        }
+        let deadline = Instant::now() + timeout;
+        let stop_timeout = timeout.min(self.ipc_command_timeout());
+        let stop_result = self.send_mpv_command_with_timeout(command_json, stop_timeout);
+        if stop_result.is_ok() {
+            let remaining = deadline
+                .saturating_duration_since(Instant::now())
+                .min(self.ipc_command_timeout());
+            if !remaining.is_zero() {
+                self.set_fullscreen_with_timeout(FullscreenBehavior::Windowed, remaining);
+            }
+        } else {
+            #[cfg(target_os = "linux")]
+            self.leave_native_fullscreen();
+        }
+        let _ = ack.send(());
+        if let Err(error) = stop_result {
+            tracing::warn!(target: "mpv.ipc", "failed to send mpv stop command: {error}");
+            if error.is_transport() {
+                if self.can_recycle_library_ipc() {
+                    self.ipc.pending_stop = true;
+                }
+                self.handle_mpv_session_lost("mpv stop command transport failed");
+            }
         }
     }
 
@@ -834,5 +913,7 @@ fn normalize_mpv_path_for_compare(path: &str) -> String {
     }
 }
 
+#[cfg(test)]
+mod stop_tests;
 #[cfg(test)]
 mod tests;

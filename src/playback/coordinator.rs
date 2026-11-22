@@ -125,6 +125,10 @@ enum Command {
         source: Arc<dyn AudioSource>,
     },
     Control(PlayerCommand),
+    StopAndWait {
+        ack: Sender<()>,
+        timeout: Duration,
+    },
     Prepared {
         ticket: u64,
         result: Result<Box<PreparedAudio>, String>,
@@ -253,6 +257,18 @@ impl PlaybackCoordinator {
 
     pub fn control(&self, command: PlayerCommand) {
         let _ = self.commands.send(Command::Control(command));
+    }
+
+    pub fn stop_and_wait(&self, timeout: Duration) -> bool {
+        let (ack, ack_rx) = mpsc::channel();
+        if self
+            .commands
+            .send(Command::StopAndWait { ack, timeout })
+            .is_err()
+        {
+            return false;
+        }
+        ack_rx.recv_timeout(timeout).is_ok()
     }
 
     pub fn configure(&self, preferences: PlayerPreferences) {
@@ -432,6 +448,7 @@ impl Actor {
                 self.prepare_current();
             }
             Command::Control(command) => self.control(command),
+            Command::StopAndWait { ack, timeout } => self.stop_and_wait(&ack, timeout),
             Command::Prepared { ticket, result } => self.prepared(ticket, result),
             Command::Backend {
                 installation,
@@ -686,6 +703,25 @@ impl Actor {
         }
     }
 
+    fn stop_and_wait(&mut self, ack: &Sender<()>, timeout: Duration) {
+        match &self.session {
+            Session::Audio { queue, phase, .. } => {
+                let view = queue.view(phase.view());
+                self.end_session();
+                match self.live {
+                    Some(load_id) => {
+                        self.ending = Some(Ending { load_id, view });
+                    }
+                    None => self.emit_stopped(synthetic_stop(view, StopReason::Stop)),
+                }
+            }
+            Session::Video { .. } => self.end_session(),
+            Session::Idle => {}
+        }
+        let _ = self.shared.backend().stop_and_wait(timeout);
+        let _ = ack.send(());
+    }
+
     fn stop_audio(&mut self, reason: StopReason) {
         let Session::Audio { queue, phase, .. } = &self.session else {
             return;
@@ -756,6 +792,10 @@ mod tests {
         fn load(&self, _path: String, _fullscreen: FullscreenBehavior, _request: PlaybackRequest) {}
 
         fn control(&self, _command: PlayerCommand) {}
+
+        fn stop_and_wait(&self, _timeout: Duration) -> bool {
+            true
+        }
 
         fn set_preferences(&self, _preferences: PlayerPreferences) {}
 
