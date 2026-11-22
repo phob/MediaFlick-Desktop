@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -7,6 +8,7 @@ use crate::jellyfin::api::ApiError;
 use crate::jellyfin::session::{SessionScope, Stale};
 use crate::library::{CachedRatings, RatingTarget, now_unix};
 
+use super::in_flight::{is_cancelled, wait_for_flights};
 use super::schema::{
     NormalizedRating, normalize_rating_array, normalized_source_updated_at, rating_cache_value,
 };
@@ -40,9 +42,19 @@ struct ItemRatings {
 }
 
 impl RatingsService {
-    pub fn batch(&self, item_ids: &[String]) -> Result<RatingsBatchResponse, RatingsError> {
+    pub fn batch(
+        &self,
+        item_ids: &[String],
+        cancelled: Option<&AtomicBool>,
+    ) -> Result<RatingsBatchResponse, RatingsError> {
+        if is_cancelled(cancelled) {
+            return Err(RatingsError::Cancelled);
+        }
         let item_ids = bounded_item_ids(item_ids);
         let _ = self.companion.probe(false);
+        if is_cancelled(cancelled) {
+            return Err(RatingsError::Cancelled);
+        }
         if !self.companion.supports("ratings-v1") {
             return Ok(unavailable_ratings());
         }
@@ -68,20 +80,35 @@ impl RatingsService {
             .cloned()
             .collect::<Vec<_>>();
 
-        let owned = self.claim(&refresh);
-        let diagnostic = if owned.is_empty() {
+        let claim = self.in_flight.claim(&scope, &refresh);
+        let own_diagnostic = if let Some(guard) = claim.guard {
+            let result = self.refresh_plugin(&scope, &claim.owned).err();
+            guard.finish(result.clone());
+            result
+        } else {
+            None
+        };
+        let awaited_diagnostic = if claim.awaited.is_empty() {
             None
         } else {
-            let result = self.refresh_plugin(&scope, &owned).err();
-            self.release(&owned);
+            wait_for_flights(&self.session, &scope, &claim.awaited, cancelled)?
+        };
+        let diagnostic = own_diagnostic.or(awaited_diagnostic);
+
+        if is_cancelled(cancelled) {
+            return Err(RatingsError::Cancelled);
+        }
+        if !self.session.scope_is_current(&scope) {
+            return Err(RatingsError::AccountChanged);
+        }
+        if !claim.owned.is_empty() || !claim.awaited.is_empty() {
             cache = self
                 .library
                 .cached_ratings(&targets)
                 .map_err(storage_error)?;
             self.sanitize_cached(&targets, &mut cache)
                 .map_err(storage_error)?;
-            result
-        };
+        }
 
         let items = targets
             .iter()
@@ -140,25 +167,6 @@ impl RatingsService {
             Ok(())
         } else {
             self.library.save_rating_cache(&replacements)
-        }
-    }
-
-    fn claim(&self, targets: &[RatingTarget]) -> Vec<RatingTarget> {
-        let Ok(mut in_flight) = self.in_flight.lock() else {
-            return Vec::new();
-        };
-        targets
-            .iter()
-            .filter(|target| in_flight.insert(target_key(target)))
-            .cloned()
-            .collect()
-    }
-
-    fn release(&self, targets: &[RatingTarget]) {
-        if let Ok(mut in_flight) = self.in_flight.lock() {
-            for target in targets {
-                in_flight.remove(&target_key(target));
-            }
         }
     }
 
@@ -255,13 +263,6 @@ fn plugin_rating_error(error: &ApiError) -> String {
 
 fn storage_error(_: rusqlite::Error) -> RatingsError {
     RatingsError::Storage
-}
-
-fn target_key(target: &RatingTarget) -> String {
-    format!(
-        "{}:{}:{}",
-        target.provider, target.media_type, target.provider_id
-    )
 }
 
 fn normalize_plugin_batch(
@@ -535,7 +536,7 @@ mod tests {
             .map(|target| target.item_id.clone())
             .collect::<Vec<_>>();
 
-        let response = fixture.services.ratings.batch(&ids).expect("batch");
+        let response = fixture.services.ratings.batch(&ids, None).expect("batch");
 
         let batches = batches.lock().expect("batches").clone();
         assert_eq!(batches.len(), 1, "{batches:?}");
@@ -577,7 +578,7 @@ mod tests {
             .map(|target| target.item_id.clone())
             .collect::<Vec<_>>();
 
-        let response = fixture.services.ratings.batch(&ids).expect("batch");
+        let response = fixture.services.ratings.batch(&ids, None).expect("batch");
 
         assert_eq!(batches.lock().expect("batches").len(), 1);
         let served = response

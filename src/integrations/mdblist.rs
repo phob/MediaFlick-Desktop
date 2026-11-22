@@ -1,9 +1,9 @@
 mod cache;
+mod in_flight;
 mod schema;
 
-use std::collections::HashSet;
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde::Serialize;
 
@@ -11,6 +11,7 @@ use crate::companion::CompanionSession;
 use crate::jellyfin::session::Session;
 use crate::library::Library;
 
+use self::in_flight::InFlightCoordinator;
 use self::schema::{RatingSourceDefinition, known_source_definitions};
 
 pub use self::cache::RatingsBatchResponse;
@@ -53,6 +54,7 @@ struct RatingsPluginStatus {
 pub enum RatingsError {
     Storage,
     AccountChanged,
+    Cancelled,
 }
 
 impl fmt::Display for RatingsError {
@@ -60,6 +62,7 @@ impl fmt::Display for RatingsError {
         match self {
             Self::Storage => formatter.write_str("ratings storage is unavailable"),
             Self::AccountChanged => crate::jellyfin::api::ApiError::AccountChanged.fmt(formatter),
+            Self::Cancelled => crate::jellyfin::api::ApiError::Cancelled.fmt(formatter),
         }
     }
 }
@@ -70,7 +73,7 @@ pub struct RatingsService {
     library: Arc<Library>,
     session: Arc<Session>,
     companion: Arc<CompanionSession>,
-    in_flight: Mutex<HashSet<String>>,
+    in_flight: InFlightCoordinator,
 }
 
 impl RatingsService {
@@ -83,7 +86,7 @@ impl RatingsService {
             library: library.clone(),
             session: session.clone(),
             companion: companion.clone(),
-            in_flight: Mutex::new(HashSet::new()),
+            in_flight: InFlightCoordinator::default(),
         }
     }
 

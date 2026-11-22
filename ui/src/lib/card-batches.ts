@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 const UI_BATCH_SIZE = 100
-export const COALESCE_MS = 75
+const COALESCE_MS = 75
 
 type ActiveBatch = { ids: Set<string>; controller: AbortController }
 
 interface CardBatchOptions {
   enabled: () => boolean
   wanted: (id: string) => boolean
-  load: (ids: string[], signal: AbortSignal) => Promise<number>
+  load: (ids: string[], signal: AbortSignal) => Promise<void>
 }
 
 export function useCardBatches(options: CardBatchOptions) {
@@ -24,12 +24,12 @@ export function useCardBatches(options: CardBatchOptions) {
     latest.current = options
   })
 
-  const schedule = useCallback((delayMs: number = COALESCE_MS) => {
+  const schedule = useCallback(() => {
     if (timer.current !== null || pending.size === 0) return
     timer.current = window.setTimeout(() => {
       timer.current = null
       void flushRef.current()
-    }, delayMs)
+    }, COALESCE_MS)
   }, [pending])
 
   const flush = useCallback(async () => {
@@ -46,13 +46,12 @@ export function useCardBatches(options: CardBatchOptions) {
     const controller = new AbortController()
     const batch: ActiveBatch = { ids: new Set(ids), controller }
     batches.add(batch)
-    let delayMs = COALESCE_MS
     try {
-      delayMs = await latest.current.load(ids, controller.signal)
+      await latest.current.load(ids, controller.signal)
     } finally {
       batches.delete(batch)
       ids.forEach((id) => inFlight.delete(id))
-      if (pending.size > 0) schedule(delayMs)
+      if (pending.size > 0) schedule()
     }
   }, [active, batches, inFlight, pending, schedule])
 

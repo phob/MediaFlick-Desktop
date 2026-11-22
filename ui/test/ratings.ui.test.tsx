@@ -222,56 +222,84 @@ describe("configurable card ratings", () => {
     }
   })
 
-  test("an id omitted from an available response is retried and can land late", async () => {
+  test("an aborted batch re-requested on remount resolves in one call without polling retries", async () => {
     vi.useFakeTimers()
-    const batchCalls: string[][] = []
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    type PendingBatch = {
+      ids: string[]
+      signal: AbortSignal | null | undefined
+      resolve: (items: ItemRatings[]) => void
+    }
+    const pending: PendingBatch[] = []
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input)
       if (path.endsWith("/api/integrations/ratings")) {
-        return new Response(JSON.stringify(integrationStatus), { status: 200 })
+        return Promise.resolve(new Response(JSON.stringify(integrationStatus), { status: 200 }))
       }
       const { ids } = JSON.parse(String(init?.body)) as { ids: string[] }
-      batchCalls.push(ids)
-      const items = batchCalls.length < 2 ? [] : [{
-        ...item,
-        id: "movie-1",
-        ratings: [{ sourceId: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }],
-      }]
-      return new Response(JSON.stringify({
-        available: true,
-        effectiveOrigin: "plugin",
-        retryAt: null,
-        diagnostic: null,
-        items,
-      }), { status: 200 })
+      return new Promise<Response>((resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("aborted", "AbortError")))
+        pending.push({
+          ids,
+          signal: init?.signal,
+          resolve: (ratedItems) => resolve(new Response(JSON.stringify({
+            available: true,
+            effectiveOrigin: "plugin",
+            retryAt: null,
+            diagnostic: null,
+            items: ratedItems,
+          }), { status: 200 })),
+        })
+      })
     })
     vi.stubGlobal("fetch", fetchMock)
     const client = testQueryClient()
     client.setQueryData(queryKeys.settings, clientSettings)
     client.setQueryData(queryKeys.ratingsStatus, integrationStatus)
+    const harness = (ids: string[]) => (
+      <QueryClientProvider client={client}>
+        <RatingsProvider>
+          {ids.map((id) => <RatingProbe key={id} id={id} />)}
+        </RatingsProvider>
+      </QueryClientProvider>
+    )
     try {
-      render(
-        <QueryClientProvider client={client}>
-          <RatingsProvider>
-            <RatingProbe id="movie-1" />
-          </RatingsProvider>
-        </QueryClientProvider>,
-      )
+      const view = render(harness(["movie-1"]))
       await act(async () => { await vi.advanceTimersByTimeAsync(80) })
-      expect(batchCalls).toHaveLength(1)
-      expect(screen.getByText("movie-1:ready")).toBeTruthy()
-      await act(async () => { await vi.advanceTimersByTimeAsync(2_100) })
-      expect(batchCalls).toHaveLength(2)
+      expect(pending).toHaveLength(1)
+      expect(pending[0].ids).toEqual(["movie-1"])
+
+      view.rerender(harness([]))
+      expect(pending[0].signal?.aborted).toBe(true)
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      view.rerender(harness(["movie-1"]))
+      await act(async () => { await vi.advanceTimersByTimeAsync(80) })
+      expect(pending).toHaveLength(2)
+      expect(pending[1].ids).toEqual(["movie-1"])
+
+      await act(async () => {
+        pending[1].resolve([{
+          ...item,
+          id: "movie-1",
+          ratings: [{ sourceId: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }],
+        }])
+        await Promise.resolve()
+        await Promise.resolve()
+      })
       expect(screen.getByText("movie-1:1")).toBeTruthy()
       await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
-      expect(batchCalls).toHaveLength(2)
+      expect(pending).toHaveLength(2)
     } finally {
       vi.useRealTimers()
       vi.unstubAllGlobals()
     }
   })
 
-  test("retries for an id a response never answers stop after the bounded attempts", async () => {
+  test("an id absent from an available response is not polled again", async () => {
     vi.useFakeTimers()
     const batchCalls: string[][] = []
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -301,12 +329,9 @@ describe("configurable card ratings", () => {
         </QueryClientProvider>,
       )
       await act(async () => { await vi.advanceTimersByTimeAsync(80) })
-      await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
-      const settled = batchCalls.length
-      expect(settled).toBeGreaterThan(1)
-      expect(batchCalls.every((ids) => ids.includes("episode-1"))).toBe(true)
+      expect(batchCalls).toEqual([["episode-1"]])
       await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000) })
-      expect(batchCalls).toHaveLength(settled)
+      expect(batchCalls).toHaveLength(1)
       expect(screen.getByText("episode-1:ready")).toBeTruthy()
     } finally {
       vi.useRealTimers()
