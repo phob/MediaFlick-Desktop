@@ -41,6 +41,10 @@ impl PlayerBackend for MpvController {
         self.control(command);
     }
 
+    fn stop_and_wait(&self, timeout: Duration) -> bool {
+        self.stop_and_wait(timeout)
+    }
+
     fn set_preferences(&self, preferences: PlayerPreferences) {
         self.set_preferences(preferences);
     }

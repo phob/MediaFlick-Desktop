@@ -562,6 +562,71 @@ fn unix_now_ticks() -> i64 {
 }
 
 #[cfg(test)]
+pub(crate) struct TestHttpRequest {
+    pub(crate) request_line: String,
+    pub(crate) token: Option<String>,
+    pub(crate) body: String,
+}
+
+#[cfg(test)]
+pub(crate) fn read_test_http_request(stream: &mut std::net::TcpStream) -> TestHttpRequest {
+    use std::io::Read;
+
+    let mut raw = Vec::new();
+    let mut chunk = [0u8; 1024];
+    let mut header_end = None;
+    let mut content_length = 0usize;
+    while let Ok(read) = stream.read(&mut chunk) {
+        if read == 0 {
+            break;
+        }
+        raw.extend_from_slice(&chunk[..read]);
+        if header_end.is_none()
+            && let Some(pos) = raw.windows(4).position(|window| window == b"\r\n\r\n")
+        {
+            let end = pos + 4;
+            header_end = Some(end);
+            let head = String::from_utf8_lossy(&raw[..pos]);
+            for header in head.lines().skip(1) {
+                if let Some((name, value)) = header.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    content_length = value.trim().parse().unwrap_or(0);
+                }
+            }
+        }
+        if let Some(end) = header_end
+            && raw.len() >= end + content_length
+        {
+            break;
+        }
+    }
+
+    let Some(end) = header_end else {
+        return TestHttpRequest {
+            request_line: String::new(),
+            token: None,
+            body: String::new(),
+        };
+    };
+    let head = String::from_utf8_lossy(&raw[..end - 4]);
+    let mut lines = head.lines();
+    let request_line = lines.next().unwrap_or_default().trim().to_string();
+    let token = lines.find_map(|header| {
+        let (name, value) = header.split_once(':')?;
+        name.eq_ignore_ascii_case("x-emby-token")
+            .then(|| value.trim().to_string())
+    });
+    let body_end = (end + content_length).min(raw.len());
+    let body = String::from_utf8_lossy(&raw[end..body_end]).into_owned();
+    TestHttpRequest {
+        request_line,
+        token,
+        body,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::{
         PlaybackSession, ReportingState, playback_progress_body, playback_stop_body,

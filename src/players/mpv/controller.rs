@@ -83,6 +83,10 @@ enum ControllerMessage {
         launch: Box<PlaybackRequest>,
     },
     Control(PlayerCommand),
+    Stop {
+        ack: Sender<()>,
+        timeout: Duration,
+    },
     Preferences(PlayerPreferences),
     MediaSegmentsFetched {
         playback_id: i64,
@@ -419,6 +423,18 @@ impl MpvController {
         let _ = self.tx.send(ControllerMessage::Control(command));
     }
 
+    pub fn stop_and_wait(&self, timeout: Duration) -> bool {
+        let (ack, ack_rx) = mpsc::channel();
+        if self
+            .tx
+            .send(ControllerMessage::Stop { ack, timeout })
+            .is_err()
+        {
+            return false;
+        }
+        ack_rx.recv_timeout(timeout).is_ok()
+    }
+
     pub fn set_preferences(&self, preferences: PlayerPreferences) {
         let _ = self.tx.send(ControllerMessage::Preferences(preferences));
     }
@@ -562,6 +578,10 @@ impl ControllerState {
                 Ok(ControllerMessage::Control(command)) => {
                     tracing::debug!(target: "playback", ?command, "received playback control request");
                     self.control(&command);
+                }
+                Ok(ControllerMessage::Stop { ack, timeout }) => {
+                    tracing::debug!(target: "playback", "received synchronous playback stop request");
+                    self.stop_sync(&ack, timeout);
                 }
                 Ok(ControllerMessage::Preferences(preferences)) => {
                     self.apply_preferences(preferences);

@@ -163,14 +163,37 @@ async function signOutWhilePlaying(ctx, movie, expectIn) {
   const { deviceId } = await status(ctx)
   await openMovie(ctx, movie)
   await ctx.press({ role: "button", name: "Play" })
-  await playing(ctx, movie.id, 5000, "the movie playing")
+  await playing(ctx, movie.id, 2000, "the movie playing")
   await ctx.until(() => ctx.playstates().sent.some((entry) => entry.endpoint === "Sessions/Playing" && entry.itemId === movie.id && entry.status === 204), "Jellyfin to accept the start report")
 
+  const currentMs = (await ctx.player()).positionMs
+  const targetMs = Math.max(ticksToS(movie.runtimeTicks) * 1000 * 0.08, 60_000)
+  const presses = Math.max(1, Math.ceil((targetMs + 15_000 - currentMs) / 30_000))
+  for (let i = 0; i < presses; i += 1) await ctx.key("ArrowRight", { code: "ArrowRight", keyCode: 39 })
+  await ctx.until(async () => {
+    const now = await ctx.player()
+    return now?.active && now.itemId === movie.id && now.positionMs >= targetMs
+  }, "the movie past the resume minimum before sign-out", 20000)
+
+  const positionAtSignOutS = ((await ctx.player())?.positionMs ?? 0) / 1000
   const reportsBefore = ctx.playstates().queued.length
+  const sentBefore = ctx.playstates().sent.length
   await ctx.press(userMenu(ctx.account.userName, ctx.account.server))
   await ctx.press({ role: "menuitem", name: "Sign out" })
   await ctx.find(SERVER, { timeout: 30000 })
   await ctx.until(async () => !(await ctx.player())?.active, "playback to end with the sign-out", 15000)
+  const stoppedAccepted = await ctx
+    .until(
+      () => ctx.playstates().sent.slice(sentBefore).some((entry) => entry.endpoint === "Sessions/Playing/Stopped" && entry.itemId === movie.id && entry.status === 204),
+      "Jellyfin to accept the sign-out Stopped report (204)",
+      5000,
+    )
+    .catch(() => false)
+  const sentDuringSignOut = ctx.playstates().sent.slice(sentBefore)
+  expect(
+    stoppedAccepted,
+    `Jellyfin accepted the sign-out Stopped report with 204 (${sentDuringSignOut.map((entry) => `${entry.endpoint}:${entry.status}`).join(", ") || "none"})`,
+  )
   const signedOut = ctx.playstates().queued
   const duringSignOut = signedOut.slice(reportsBefore)
   expect(duringSignOut.every((entry) => entry.itemId === movie.id) && duringSignOut.filter((entry) => entry.endpoint === "Sessions/Playing").length === 0, `the sign-out reported only the end of this movie (${duringSignOut.map((entry) => entry.endpoint).join(", ") || "nothing"})`)
@@ -186,11 +209,15 @@ async function signOutWhilePlaying(ctx, movie, expectIn) {
   const sessions = await ctx.jellyfin(`/Sessions?deviceId=${encodeURIComponent(deviceId)}`)
   expect(!sessions.some((entry) => entry.NowPlayingItem), "Jellyfin shows no session of the app still playing")
   const after = brief(await userData(ctx, movie.id))
+  expect(
+    after.positionS > 0 && Math.abs(after.positionS - positionAtSignOutS) < 20,
+    `Jellyfin kept the resume point after sign-out (${after.positionS.toFixed(1)} s, signed out at ${positionAtSignOutS.toFixed(1)} s)`,
+  )
 
   await ctx.press(userMenu(DEMO.username, DEMO.server))
   await ctx.press({ role: "menuitem", name: "Sign out" })
   await ctx.find(SERVER, { timeout: 30000 })
-  return { "sign-out": { items: { [movie.id]: { name: movie.name, before, after } }, reports: { duringSignOut, afterSwitch: late } } }
+  return { "sign-out": { items: { [movie.id]: { name: movie.name, before, after, positionAtSignOutS } }, reports: { duringSignOut, sentDuringSignOut, afterSwitch: late } } }
 }
 
 export default async function playstate(ctx) {

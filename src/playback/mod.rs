@@ -124,6 +124,7 @@ pub trait PlayerBackend: Send + Sync {
     }
     fn load(&self, path: String, fullscreen: FullscreenBehavior, request: PlaybackRequest);
     fn control(&self, command: PlayerCommand);
+    fn stop_and_wait(&self, timeout: Duration) -> bool;
     fn set_preferences(&self, preferences: PlayerPreferences);
     fn snapshot(&self) -> PlayerSnapshot;
     fn shutdown(&self);
