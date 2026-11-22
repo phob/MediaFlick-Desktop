@@ -703,6 +703,7 @@ fn library_session_lost_delivers_deferred_stop_once_busy_mpv_catches_up() {
         "mpv was still busy during initial reconnect"
     );
 
+    state.ipc.next_reconnect_at = Some(Instant::now() - std::time::Duration::from_secs(1));
     assert!(!state.ensure_configured_mpv_running("poll while still busy"));
     assert_eq!(
         acknowledged_stops.load(std::sync::atomic::Ordering::SeqCst),
@@ -710,6 +711,7 @@ fn library_session_lost_delivers_deferred_stop_once_busy_mpv_catches_up() {
     );
 
     gate_open.store(true, std::sync::atomic::Ordering::SeqCst);
+    state.ipc.next_reconnect_at = Some(Instant::now() - std::time::Duration::from_secs(1));
     assert!(state.ensure_configured_mpv_running("poll after mpv catches up"));
     assert_eq!(
         acknowledged_stops.load(std::sync::atomic::Ordering::SeqCst),
@@ -792,4 +794,120 @@ fn library_ipc_reconnect_backs_off_and_caps_when_endpoint_is_gone() {
     } else {
         recovered.stop();
     }
+}
+
+#[test]
+fn library_loadfile_transport_failure_defers_stop_until_mpv_recovers() {
+    let gate_open = Arc::new(AtomicBool::new(false));
+    let gate_for_server = Arc::clone(&gate_open);
+    let acknowledged_stops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let stops_for_server = Arc::clone(&acknowledged_stops);
+    let fake = FakeMpv::start(move |command| {
+        if !gate_for_server.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            return vec![json!({
+                "request_id": command["request_id"].clone(),
+                "error": "success",
+            })];
+        }
+        if command["command"][0] == "stop" {
+            stops_for_server.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        vec![json!({
+            "request_id": command["request_id"].clone(),
+            "error": "success",
+        })]
+    });
+    let (mut state, stopped, handle, event_rx) = library_controller_with_fake_mpv(&fake);
+    state.ipc.command_timeout_override = Some(std::time::Duration::from_millis(30));
+
+    let launch = PlaybackRequest::new("https://example.test/video.mkv");
+    state.load(
+        "bundled-libmpv",
+        crate::preferences::FullscreenBehavior::Windowed,
+        launch,
+    );
+
+    assert!(!stopped.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        state
+            .runtime
+            .as_ref()
+            .and_then(crate::players::mpv::runtime::MpvRuntime::native_window),
+        Some(handle)
+    );
+    assert!(matches!(
+        next_terminal_event(&event_rx),
+        BackendEvent::Failed { .. }
+    ));
+    assert!(
+        state.ipc.pending_stop,
+        "loadfile transport failure must arm pending_stop for live libmpv"
+    );
+
+    gate_open.store(true, std::sync::atomic::Ordering::SeqCst);
+    state.ipc.next_reconnect_at = Some(Instant::now() - std::time::Duration::from_secs(1));
+    assert!(state.ensure_configured_mpv_running("poll after loadfile stall recovers"));
+    assert_eq!(
+        acknowledged_stops.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert!(!state.ipc.pending_stop);
+
+    if let Some(worker) = state.ipc.worker.take() {
+        fake.finish(worker);
+    } else {
+        fake.stop();
+    }
+}
+
+#[test]
+fn library_ipc_reconnect_caps_when_core_accepts_connections_but_never_replies() {
+    let fake = FakeMpv::start(|command| {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        vec![json!({
+            "request_id": command["request_id"].clone(),
+            "error": "success",
+        })]
+    });
+    let (mut state, stopped, handle, _event_rx) = library_controller_with_fake_mpv(&fake);
+    state.ipc.command_timeout_override = Some(std::time::Duration::from_millis(25));
+    state.ipc.pending_stop = true;
+    if let Some(worker) = state.ipc.worker.take() {
+        worker.disconnect();
+    }
+
+    assert!(!state.ensure_configured_mpv_running("first stalled reconnect"));
+    assert_eq!(state.ipc.reconnect_failures, 1);
+    assert!(state.ipc.next_reconnect_at.is_some());
+
+    for expected in 2..=super::super::LIBRARY_IPC_MAX_RECONNECT_ATTEMPTS {
+        state.ipc.next_reconnect_at = Some(Instant::now() - std::time::Duration::from_secs(1));
+        assert!(!state.ensure_configured_mpv_running("stalled retry"));
+        assert_eq!(state.ipc.reconnect_failures, expected);
+    }
+    assert!(state.ipc.next_reconnect_at.is_none());
+
+    let sessions_at_cap = fake.session_count();
+    let capped = Instant::now();
+    assert!(!state.ensure_configured_mpv_running("poll after hung-core cap"));
+    assert!(
+        capped.elapsed() < std::time::Duration::from_millis(25),
+        "capped hung-core poll should return immediately, took {:?}",
+        capped.elapsed()
+    );
+    assert_eq!(fake.session_count(), sessions_at_cap);
+    assert!(!stopped.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        state
+            .runtime
+            .as_ref()
+            .and_then(crate::players::mpv::runtime::MpvRuntime::native_window),
+        Some(handle)
+    );
+
+    if let Some(worker) = state.ipc.worker.take() {
+        worker.disconnect();
+    }
+    fake.stop();
 }

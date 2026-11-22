@@ -20,6 +20,7 @@ impl ControllerState {
         {
             if self.ipc.pending_stop {
                 if !self.flush_pending_library_stop() {
+                    self.record_library_ipc_reconnect_failure();
                     return false;
                 }
                 self.install_input_bindings();
@@ -146,8 +147,6 @@ impl ControllerState {
                 return false;
             }
         };
-        self.ipc.reconnect_failures = 0;
-        self.ipc.next_reconnect_at = None;
         if self.shutdown_requested.load(Ordering::SeqCst) {
             tracing::debug!(
                 target: "mpv.ipc",
@@ -168,9 +167,21 @@ impl ControllerState {
             "reconnected built-in libmpv IPC"
         );
         if self.ipc.pending_stop && !self.flush_pending_library_stop() {
+            self.record_library_ipc_reconnect_failure();
             return false;
         }
         self.install_input_bindings();
+        if !self
+            .ipc
+            .worker
+            .as_ref()
+            .is_some_and(IpcWorker::is_writer_alive)
+        {
+            self.record_library_ipc_reconnect_failure();
+            return false;
+        }
+        self.ipc.reconnect_failures = 0;
+        self.ipc.next_reconnect_at = None;
         true
     }
 }

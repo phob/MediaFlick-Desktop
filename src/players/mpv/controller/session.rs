@@ -207,8 +207,8 @@ impl ControllerState {
     }
 
     fn send_loadfile(&self, launch: &PlaybackRequest) -> Result<Option<i64>, IpcCommandFailure> {
-        let reply =
-            self.send_mpv_command_with_timeout(loadfile_command(launch), IPC_COMMAND_TIMEOUT)?;
+        let reply = self
+            .send_mpv_command_with_timeout(loadfile_command(launch), self.ipc_command_timeout())?;
         Ok(reply
             .get("playlist_entry_id")
             .and_then(serde_json::Value::as_i64))
@@ -775,7 +775,7 @@ impl ControllerState {
             "command": ["get_property", name],
             "request_id": next_request_id(),
         });
-        self.send_mpv_command_with_timeout(command, IPC_COMMAND_TIMEOUT)
+        self.send_mpv_command_with_timeout(command, self.ipc_command_timeout())
     }
 
     fn send_mpv_command_with_timeout(

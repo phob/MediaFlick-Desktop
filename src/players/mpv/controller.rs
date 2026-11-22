@@ -821,6 +821,7 @@ impl ControllerState {
             Err(error) => {
                 tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command after reconnect attempt: {error}");
                 self.mpv_playback_active = false;
+                self.ipc.pending_stop = true;
                 self.report_playback_failure(launch.load_id, REJECTED_LOAD);
                 self.handle_mpv_session_lost("loadfile transport failed");
             }
