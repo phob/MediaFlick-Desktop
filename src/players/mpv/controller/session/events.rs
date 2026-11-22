@@ -105,8 +105,15 @@ impl ControllerState {
                 }
                 self.handle_seek_event();
             }
-            #[cfg(target_os = "linux")]
-            "playback-restart" => self.fullscreen_gate.video_ready = true,
+            "playback-restart" => {
+                #[cfg(target_os = "linux")]
+                {
+                    self.fullscreen_gate.video_ready = true;
+                }
+                if self.mpv_playback_active && self.phase.pending().is_none() {
+                    self.playback_restarted = true;
+                }
+            }
             "property-change" => {
                 self.apply_property(event.property.as_deref(), event.data.as_ref());
             }
