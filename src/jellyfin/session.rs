@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use serde::Serialize;
@@ -14,7 +15,6 @@ use super::version::{ServerTooOld, ServerVersion};
 #[derive(Debug, Clone, Default)]
 struct SessionState {
     server_url: Option<String>,
-    server_name: Option<String>,
     server_id: Option<String>,
     user_id: Option<String>,
     user_name: Option<String>,
@@ -153,7 +153,6 @@ impl Session {
         let authenticated = stored.is_authenticated();
         let state = SessionState {
             server_url: stored.server_url.clone(),
-            server_name: None,
             server_id: stored.server_id,
             user_id: stored.user_id.clone(),
             user_name: stored.user_name.clone(),
@@ -315,15 +314,24 @@ impl Session {
         JellyfinClient::new(server_url, &self.read().device_id, None)
     }
 
-    pub fn connect(&self, server_url: &str) -> Result<ServerInfo, ApiError> {
+    pub fn connect(
+        &self,
+        server_url: &str,
+        cancelled: Option<Arc<AtomicBool>>,
+    ) -> Result<ServerInfo, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
-        let client = self.anonymous_client(&normalized);
+        let mut client = self.anonymous_client(&normalized);
+        if let Some(cancelled) = cancelled {
+            client = client.with_cancellation(cancelled);
+        }
         let (server_name, version) = identify(&client)?;
+        if client.is_cancelled() {
+            return Err(ApiError::Cancelled);
+        }
         let too_old = version.short_of(ServerVersion::DESKTOP_MINIMUM);
         let quick_connect = too_old.is_none() && auth::quick_connect_enabled(&client);
-        if let Ok(mut state) = self.state.write() {
-            state.server_url = Some(normalized.clone());
-            state.server_name = Some(server_name.clone());
+        if client.is_cancelled() {
+            return Err(ApiError::Cancelled);
         }
         Ok(ServerInfo {
             server_url: normalized,
@@ -544,7 +552,7 @@ impl Session {
                 && state.user_id.is_some(),
             expired: state.expired,
             server_url: state.server_url,
-            server_name: state.server_name,
+            server_name: None,
             user_id: state.user_id,
             user_name: state.user_name,
             device_id: state.device_id,
@@ -694,7 +702,7 @@ mod tests {
     fn connecting_to_an_unusable_url_is_rejected_before_any_request() {
         let session = session();
         assert!(matches!(
-            session.connect("file:///etc/passwd"),
+            session.connect("file:///etc/passwd", None),
             Err(ApiError::NotConfigured)
         ));
         assert!(matches!(

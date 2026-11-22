@@ -1,5 +1,6 @@
 use std::fmt;
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -13,6 +14,7 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(120);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_ATTEMPTS: u32 = 3;
 const RETRY_BUDGET: Duration = HTTP_TIMEOUT;
+const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 pub const BYTE_RESPONSE_LIMIT: u64 = 64 * 1024 * 1024;
 
 pub const CLIENT_NAME: &str = build_info::APP_NAME;
@@ -97,7 +99,7 @@ impl fmt::Display for ApiError {
             }
             Self::Storage(message) => write!(formatter, "the local library failed: {message}"),
             Self::NotConfigured => write!(formatter, "no Jellyfin server is configured"),
-            Self::Cancelled => write!(formatter, "the request was cancelled during shutdown"),
+            Self::Cancelled => write!(formatter, "the request was cancelled"),
             Self::AccountChanged => write!(
                 formatter,
                 "the Jellyfin account changed while the request was running"
@@ -127,6 +129,7 @@ pub struct JellyfinClient {
     device_id: String,
     device_name: String,
     token: Option<String>,
+    cancelled: Option<Arc<AtomicBool>>,
 }
 
 struct SharedAgents {
@@ -162,7 +165,19 @@ impl JellyfinClient {
                 .map(str::trim)
                 .filter(|token| !token.is_empty())
                 .map(str::to_string),
+            cancelled: None,
         }
+    }
+
+    pub fn with_cancellation(mut self, cancelled: Arc<AtomicBool>) -> Self {
+        self.cancelled = Some(cancelled);
+        self
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled
+            .as_deref()
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
     }
 
     pub fn base_url(&self) -> &str {
@@ -407,7 +422,31 @@ impl JellyfinClient {
         };
         match attempts {
             Attempts::Retried => self.with_retry(path, attempt),
-            Attempts::Once => attempt(),
+            Attempts::Once => {
+                if self.is_cancelled() {
+                    Err(ApiError::Cancelled)
+                } else {
+                    attempt()
+                }
+            }
+        }
+    }
+
+    fn sleep_backoff(&self, duration: Duration) -> bool {
+        let Some(flag) = &self.cancelled else {
+            std::thread::sleep(duration);
+            return false;
+        };
+        let deadline = Instant::now() + duration;
+        loop {
+            if flag.load(Ordering::Relaxed) {
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            std::thread::sleep(remaining.min(CANCEL_POLL_INTERVAL));
         }
     }
 
@@ -419,10 +458,16 @@ impl JellyfinClient {
         let deadline = Instant::now() + RETRY_BUDGET;
         let mut attempt = 0;
         loop {
+            if self.is_cancelled() {
+                return Err(ApiError::Cancelled);
+            }
             attempt += 1;
             match call() {
                 Ok(value) => return Ok(value),
                 Err(error) if error.is_retryable() && attempt < MAX_ATTEMPTS => {
+                    if self.is_cancelled() {
+                        return Err(ApiError::Cancelled);
+                    }
                     let backoff = error
                         .retry_after()
                         .unwrap_or_else(|| Duration::from_millis(250 * (1u64 << (attempt - 1))));
@@ -441,7 +486,9 @@ impl JellyfinClient {
                         attempt,
                         "retrying Jellyfin request after {error}"
                     );
-                    std::thread::sleep(backoff);
+                    if self.sleep_backoff(backoff) {
+                        return Err(ApiError::Cancelled);
+                    }
                 }
                 Err(error) => {
                     if error == ApiError::Unauthorized {
