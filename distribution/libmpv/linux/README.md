@@ -100,8 +100,8 @@ private audio plugins. NVIDIA's `libcuda.so.1` and `libnvcuvid.so.1` are loaded
 on demand from the host driver, so they are not needed just to load libmpv on
 an AMD/Intel system. Fontconfig uses the host's font configuration/fonts;
 GnuTLS uses the host's certificate trust store. A working X11/XWayland desktop
-and Vulkan or EGL/OpenGL driver are still required. Select **Built-in player**, save,
-and restart; Linux's existing backend preference/default is unchanged.
+and Vulkan or EGL/OpenGL driver are still required. Built-in player is the Linux
+default; a saved External mpv choice or `mpv_path` is kept.
 
 ```sh
 python3 -m unittest discover -s distribution/libmpv/linux -p 'test_*.py'

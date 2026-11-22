@@ -22,7 +22,7 @@
 
 MediaFlick runs mpv in two modes and reports playback start, progress, watched state, and resume points back to Jellyfin in both:
 
-- **Built-in player (default on Windows and Linux).** Windows releases and Linux AppImages bundle a focused `libmpv` runtime, so nothing else needs to be installed. Video renders natively inside the app window under MediaFlick's own controls. Windows auto-detects SVP 4. Linux renders over X11 or XWayland via Vulkan with an OpenGL fallback; unpackaged builds can also load system `libmpv.so.2`. See [Linux setup](docs/libmpv-integration.md#integrated-linux-rendering).
+- **Built-in player (default on Windows and Linux).** Windows releases and Linux AppImages bundle a focused `libmpv` runtime, so nothing else needs to be installed. Video renders natively inside the app window under MediaFlick's own controls. Windows auto-detects SVP 4. Linux renders over X11 or XWayland via Vulkan with an OpenGL fallback; unpackaged builds can also load system `libmpv.so.2`. See [Linux setup](BUILDING.md#build-linux-and-macos-release-packages).
 - **External mpv.** Point MediaFlick at your own `mpv` executable to keep your `mpv.conf`, GLSL shaders, Lua scripts, HDR profiles, SVP 4 setup, and `input.conf` bindings intact. Windows offers a one-click mpv download in Settings. Linux and macOS ([untested alpha](#macos-untested-alpha)) auto-detect a system `mpv`.
 
 Both modes default to original-quality direct playback. You can also choose Jellyfin's automatic quality limit or cap streams from 1.5 to 120 Mbps with server transcoding fallback. MediaFlick also registers as a Jellyfin cast target, so **Play On** from other Jellyfin apps can start and control movies, episodes, music, and audiobooks.

@@ -12,6 +12,7 @@
 - `README.md` describes product behavior; `BUILDING.md` covers build, toolchain, and packaging work. Read the sections relevant to the task and reuse context already gathered.
 - Treat `justfile`, `Cargo.toml`, `ui/package.json`, `global.json`, and `.github/workflows/ci.yml` as the authoritative commands and versions.
 - `plugin/README.md` is the reference for Companion API, credentials, provider calls, caching, and capability discovery changes.
+- `docs/adr/` records why the architecture is the way it is and which alternatives were rejected. Read the relevant record before changing the player backends, video composition, mpv control or resume, the Companion boundary, durable formats, or the Linux libmpv build and its runner. A change that reverses or adds a decision meeting the bar in `docs/adr/README.md` adds a record in the same PR and marks any record it supersedes. The rules in this file stay authoritative.
 
 ## Product decisions and supported targets
 
