@@ -756,4 +756,51 @@ mod tests {
         );
         server.join().expect("server");
     }
+
+    #[test]
+    fn get_bytes_range_allows_exact_limit_and_rejects_one_byte_over() {
+        let cases: &[(u64, &[u8], bool, bool)] = &[
+            (0, b"", false, true),
+            (0, b"x", false, false),
+            (5, b"hello", false, true),
+            (5, b"hello!", false, false),
+            (5, b"hello", true, true),
+            (5, b"hello!", true, false),
+        ];
+        for &(limit, payload, chunked, should_succeed) in cases {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let address = listener.local_addr().expect("address");
+            let body = payload.to_vec();
+            let server = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("accept");
+                read_request(&mut stream);
+                if chunked {
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(&body);
+                    let _ = stream.write_all(b"\r\n0\r\n\r\n");
+                } else {
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(&body);
+                }
+            });
+            let client = JellyfinClient::new(&format!("http://{address}"), "device", Some("token"));
+            let result = client.get_bytes_range("/Items/1/File", &[], Some("bytes=0-4"), limit);
+            if should_succeed {
+                let response = result.expect("exact limit should succeed");
+                assert_eq!(response.body, payload);
+            } else {
+                let error = result.expect_err("over limit should fail");
+                assert!(matches!(error, ApiError::Transport(_)), "{error:?}");
+            }
+            server.join().expect("server");
+        }
+    }
 }

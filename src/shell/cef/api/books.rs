@@ -130,7 +130,7 @@ fn read_range(
     range: &str,
 ) -> Result<ByteResponse, ApiResponse> {
     let response = fetch_current(services, scope, |client, _| {
-        items::fetch_book_bytes(client, item_id, range, BOOK_CHUNK_SIZE + 1)
+        items::fetch_book_bytes(client, item_id, range, BOOK_CHUNK_SIZE)
     })?;
     if response.status != 206 || response.content_range.is_none() {
         return Err(ApiResponse::error(
@@ -254,4 +254,56 @@ fn save_appearance(
                     )
                 })
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::net::TcpListener;
+    use std::thread;
+
+    use crate::app::services::test_support::TestServices;
+    use crate::shell::cef::api::tests::{read_request_with_headers, server_url};
+
+    use super::{BOOK_CHUNK_SIZE, read_range};
+
+    fn serve_book_chunk(length: usize) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let url = server_url(&listener);
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let _ = read_request_with_headers(&mut stream);
+            let total = length + 1024;
+            let last = length.saturating_sub(1);
+            let header = format!(
+                "HTTP/1.1 206 Partial Content\r\nContent-Type: application/epub+zip\r\nContent-Range: bytes 0-{last}/{total}\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
+            );
+            let _ = stream.write_all(header.as_bytes());
+            let _ = stream.write_all(&vec![0x5a; length]);
+        });
+        (url, server)
+    }
+
+    #[test]
+    fn read_range_accepts_exact_chunk_and_rejects_one_byte_over() {
+        let chunk_len = usize::try_from(BOOK_CHUNK_SIZE).expect("chunk size fits usize");
+
+        let (url, server) = serve_book_chunk(chunk_len);
+        let fixture = TestServices::signed_in(&url);
+        let scope = fixture.services.session.scope().expect("scope");
+        let range = format!("bytes=0-{}", BOOK_CHUNK_SIZE - 1);
+        let response = read_range(&fixture.services, &scope, "book-1", &range)
+            .expect("exact BOOK_CHUNK_SIZE chunk should succeed");
+        assert_eq!(response.body.len(), chunk_len);
+        server.join().expect("server");
+
+        let (url, server) = serve_book_chunk(chunk_len + 1);
+        let fixture = TestServices::signed_in(&url);
+        let scope = fixture.services.session.scope().expect("scope");
+        let Err(error) = read_range(&fixture.services, &scope, "book-1", &range) else {
+            panic!("BOOK_CHUNK_SIZE + 1 response should be rejected");
+        };
+        assert_eq!(error.status, 502);
+        server.join().expect("server");
+    }
 }
