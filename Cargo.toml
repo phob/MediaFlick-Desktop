@@ -24,7 +24,7 @@ roxmltree = "0.21.1"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-ureq = { version = "3", features = ["json"] }
+ureq = { version = "3.5.2", features = ["json"] }
 rusqlite = { version = "0.43", features = ["bundled", "functions"] }
 clap = { version = "4", default-features = false, features = [
     "std",
