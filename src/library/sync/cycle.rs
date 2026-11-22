@@ -39,14 +39,16 @@ pub(super) fn run_cycle_inner(
     let mut walked = MembershipReplaced::default();
 
     let result = (|| -> Result<(), ApiError> {
+        if let Some(control) = control {
+            control.set_phase(if initial_catalog {
+                SyncPhase::Catalog
+            } else {
+                SyncPhase::Reconciling
+            });
+        }
         let listed = list_libraries(library, session, &scope, control)?;
         if full_bootstrap_due(library)? {
             restart_bootstrap(library, session, &scope)?;
-        }
-        if meta(library, META_BOOTSTRAP_DONE)?.as_deref() != Some("1")
-            && let Some(control) = control
-        {
-            control.set_phase(SyncPhase::Catalog);
         }
         if initial_catalog {
             walk_membership(library, session, &scope, true, control, &mut walked)?;
@@ -130,7 +132,11 @@ fn restart_bootstrap(
     session: &Session,
     scope: &SessionScope,
 ) -> Result<(), ApiError> {
+    let has_bootstrap_at = meta(library, META_LAST_BOOTSTRAP)?.is_some();
     commit(session, scope, |live| {
+        if !has_bootstrap_at {
+            library.set_meta(live, META_LAST_BOOTSTRAP, "0")?;
+        }
         library.set_meta(live, META_BOOTSTRAP_DONE, "0")?;
         library.set_meta(live, META_BOOTSTRAP_OFFSET, "0")?;
         library.set_meta(live, META_BOOTSTRAP_TOTAL, "")?;

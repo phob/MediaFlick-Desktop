@@ -96,13 +96,7 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
                 }
                 Err(error) => {
                     tracing::warn!(target: "library.sync", "library sync cycle failed: {error}");
-                    backoff = next_backoff(
-                        backoff,
-                        !matches!(
-                            library.meta(super::META_BOOTSTRAP_DONE),
-                            Ok(Some(done)) if done == "1"
-                        ),
-                    );
+                    backoff = next_retry_backoff(library, backoff);
                     let delay = retry_delay(&error, jittered(backoff));
                     handle.set_retry(&error, delay, generation);
                     delay
@@ -129,8 +123,19 @@ fn startup_hold_deadline(until: Instant, window_ready: bool, now: Instant) -> In
     }
 }
 
-fn next_backoff(previous: Duration, incomplete: bool) -> Duration {
-    let (initial, maximum) = if incomplete {
+fn next_retry_backoff(library: &Library, previous: Duration) -> Duration {
+    let initial_download = super::first_catalog_download(library).unwrap_or_else(|error| {
+        tracing::warn!(
+            target: "library.sync",
+            "could not read catalog bootstrap state for retry backoff: {error}"
+        );
+        false
+    });
+    next_backoff(previous, initial_download)
+}
+
+fn next_backoff(previous: Duration, initial_download: bool) -> Duration {
+    let (initial, maximum) = if initial_download {
         (Duration::from_secs(5), Duration::from_secs(60))
     } else {
         (SYNC_INTERVAL * 2, Duration::from_secs(30 * 60))
@@ -185,6 +190,13 @@ fn jittered(base: Duration) -> Duration {
 mod tests {
     use std::time::Duration;
 
+    use crate::jellyfin::session::Live;
+    use crate::library::Library;
+    use crate::library::sync::{
+        META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_CATALOG_READY, META_LAST_BOOTSTRAP,
+        META_LATEST_FAILURE, SYNC_INTERVAL,
+    };
+
     #[test]
     fn a_server_retry_after_outlasts_the_local_backoff() {
         let limited = crate::jellyfin::api::ApiError::RateLimited {
@@ -193,6 +205,71 @@ mod tests {
         assert_eq!(
             super::retry_delay(&limited, Duration::from_secs(60)),
             Duration::from_secs(300)
+        );
+    }
+
+    #[test]
+    fn retry_backoff_uses_steady_state_schedule_during_daily_redownload() {
+        let live = Live::for_test();
+        let initial = Library::open_in_memory().expect("library");
+        assert_eq!(
+            super::next_retry_backoff(&initial, Duration::ZERO),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            super::next_retry_backoff(&initial, Duration::from_secs(40)),
+            Duration::from_secs(60)
+        );
+
+        initial
+            .set_meta(&live, META_CATALOG_READY, "1")
+            .expect("ready");
+        assert_eq!(
+            super::next_retry_backoff(&initial, Duration::ZERO),
+            Duration::from_secs(5)
+        );
+
+        let redownload = Library::open_in_memory().expect("library");
+        redownload
+            .set_meta(&live, META_BOOTSTRAP_DONE, "0")
+            .expect("done");
+        redownload
+            .set_meta(&live, META_LAST_BOOTSTRAP, "1000")
+            .expect("last bootstrap");
+        redownload
+            .set_meta(&live, META_BOOTSTRAP_OFFSET, "200")
+            .expect("offset");
+        redownload
+            .set_meta(&live, META_LATEST_FAILURE, "1")
+            .expect("latest failure");
+        assert_eq!(
+            super::next_retry_backoff(&redownload, Duration::ZERO),
+            SYNC_INTERVAL * 2
+        );
+        assert_eq!(
+            super::next_retry_backoff(&redownload, SYNC_INTERVAL * 2),
+            Duration::from_secs(30 * 60)
+        );
+
+        let settled = Library::open_in_memory().expect("library");
+        settled
+            .set_meta(&live, META_BOOTSTRAP_DONE, "1")
+            .expect("done");
+        settled
+            .set_meta(&live, META_LAST_BOOTSTRAP, "1000")
+            .expect("last bootstrap");
+        assert_eq!(
+            super::next_retry_backoff(&settled, Duration::ZERO),
+            SYNC_INTERVAL * 2
+        );
+
+        settled
+            .db
+            .with_connection(|connection| connection.execute_batch("DROP TABLE meta"))
+            .expect("drop meta");
+        assert_eq!(
+            super::next_retry_backoff(&settled, Duration::ZERO),
+            SYNC_INTERVAL * 2
         );
     }
 }

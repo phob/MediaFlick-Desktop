@@ -13,9 +13,10 @@ use crate::jellyfin::api::ApiError;
 use crate::jellyfin::session::Session;
 use crate::library::libraries::{LibraryId, LibraryRegistry, Membership};
 use crate::library::sync::{
-    IDENTITY_PAGE_SIZE, MAX_IDENTITY_PAGES, META_BOOTSTRAP_DONE, META_EMPTY_SWEEP_AT,
-    META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP, SyncHandle, SyncReport, Trigger,
-    bootstrap_progress, now_unix, ownership_available,
+    Bootstrap, IDENTITY_PAGE_SIZE, MAX_IDENTITY_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET,
+    META_BOOTSTRAP_TOTAL, META_CATALOG_READY, META_EMPTY_SWEEP_AT, META_LAST_BOOTSTRAP,
+    META_LAST_IDENTITY_SWEEP, META_LATEST_FAILURE, REBOOTSTRAP_INTERVAL, SyncHandle, SyncPhase,
+    SyncReport, Trigger, bootstrap_progress, first_catalog_download, now_unix, ownership_available,
 };
 use crate::library::{ItemQuery, Library, LibraryChangeBatch, StoredCredentials};
 
@@ -600,4 +601,264 @@ fn a_sweep_names_each_title_whose_watched_state_changed_on_the_server() {
     assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
     assert_eq!(report.user_data_refreshed, 0);
     assert_eq!(report.changes, LibraryChangeBatch::default());
+}
+
+fn paginated_catalog_bodies() -> (String, String, String) {
+    let first_items = (0..PAGE_SIZE)
+        .map(|index| {
+            json!({
+                "Id": format!("item-{index:03}"),
+                "Name": format!("Item {index}"),
+                "Type": "Movie",
+                "DateCreated": format!("2024-01-01T00:{:02}:00Z", index % 60),
+            })
+        })
+        .collect::<Vec<_>>();
+    let first_body = json!({
+        "Items": first_items,
+        "TotalRecordCount": PAGE_SIZE + 1,
+        "StartIndex": 0,
+    })
+    .to_string();
+    let second_body = json!({
+        "Items": [{
+            "Id": "item-last",
+            "Name": "Last item",
+            "Type": "Movie",
+            "DateCreated": "2024-02-01T00:00:00Z"
+        }],
+        "TotalRecordCount": PAGE_SIZE + 1,
+        "StartIndex": PAGE_SIZE,
+    })
+    .to_string();
+    let empty_body = json!({ "Items": [], "TotalRecordCount": PAGE_SIZE + 1 }).to_string();
+    (first_body, second_body, empty_body)
+}
+
+#[test]
+fn daily_redownload_keeps_ownership_and_reconciling_status_while_rebootstrap_runs() {
+    let library = settled_library(&[("m1", "Movie")]);
+    let stale_bootstrap = now_unix().saturating_sub(REBOOTSTRAP_INTERVAL.as_secs() + 60);
+    set_meta(&library, META_CATALOG_READY, "1");
+    set_meta(&library, META_LATEST_FAILURE, "0");
+    set_meta(&library, META_LAST_BOOTSTRAP, &stale_bootstrap.to_string());
+
+    let (first_body, second_body, empty_body) = paginated_catalog_bodies();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = listener.local_addr().expect("address");
+    let (second_started_tx, second_started_rx) = mpsc::channel();
+    let (continue_tx, continue_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let mut targets = Vec::new();
+        let (stream, target) = receive_target(&listener);
+        targets.push(target);
+        send_json(stream, EMPTY_PAGE);
+
+        let (stream, target) = receive_target(&listener);
+        targets.push(target);
+        send_json(stream, &first_body);
+
+        let (stream, target) = receive_target(&listener);
+        targets.push(target);
+        second_started_tx.send(()).expect("signal second page");
+        continue_rx.recv().expect("release second page");
+        send_json(stream, &second_body);
+
+        let (stream, target) = receive_target(&listener);
+        targets.push(target);
+        send_json(stream, &empty_body);
+        targets
+    });
+
+    let before_cycle = now_unix();
+    let session = authenticated_session(&library, &format!("http://{address}"));
+    let generation = session.generation();
+    let control = SyncHandle::detached();
+    control.running.store(true, Ordering::Relaxed);
+    let worker_library = library.clone();
+    let worker_control = control.clone();
+    let worker = thread::spawn(move || {
+        super::run_cycle_inner(
+            &worker_library,
+            &session,
+            Trigger::Scheduled,
+            Some(&worker_control),
+        )
+    });
+
+    second_started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("worker continued to page two");
+
+    assert_eq!(
+        library.meta(META_BOOTSTRAP_DONE).expect("meta").as_deref(),
+        Some("0")
+    );
+    assert!(!first_catalog_download(&library).expect("first download"));
+    assert!(ownership_available(&library));
+
+    let progress = bootstrap_progress(&library);
+    assert!(progress.complete);
+    assert!(progress.ready);
+
+    let running_status = control.status(progress.clone(), generation);
+    assert!(running_status.progress.active);
+    assert_eq!(running_status.progress.phase, SyncPhase::Reconciling);
+    assert!(running_status.progress.catalog.complete);
+    assert_eq!(running_status.bootstrap, Bootstrap::Ready);
+
+    let restarted_status = SyncHandle::detached().status(progress, generation);
+    assert!(!restarted_status.progress.active);
+    assert_eq!(restarted_status.progress.phase, SyncPhase::Complete);
+    assert!(restarted_status.progress.catalog.complete);
+    assert_eq!(restarted_status.bootstrap, Bootstrap::Ready);
+
+    continue_tx.send(()).expect("continue daily redownload");
+    let report = worker.join().expect("worker").expect("sync cycle");
+    control.running.store(false, Ordering::Relaxed);
+    assert_eq!(report.bootstrapped as i64, PAGE_SIZE + 1);
+    assert_eq!(
+        library.meta(META_BOOTSTRAP_DONE).expect("meta").as_deref(),
+        Some("1")
+    );
+    let refreshed_at = library
+        .meta(META_LAST_BOOTSTRAP)
+        .expect("meta")
+        .and_then(|value| value.parse::<u64>().ok())
+        .expect("refreshed timestamp");
+    assert!(refreshed_at >= before_cycle);
+    assert!(ownership_available(&library));
+
+    let targets = server.join().expect("server");
+    assert_eq!(
+        steps(&targets),
+        ["views", "bootstrap", "bootstrap", "incremental"]
+    );
+}
+
+#[test]
+fn daily_redownload_resumes_after_restart_and_preserves_settled_state_without_prior_timestamp() {
+    let library = settled_library(&[("m1", "Movie")]);
+    let stale_bootstrap = now_unix().saturating_sub(REBOOTSTRAP_INTERVAL.as_secs() + 60);
+    set_meta(&library, META_BOOTSTRAP_DONE, "0");
+    set_meta(&library, META_BOOTSTRAP_OFFSET, &PAGE_SIZE.to_string());
+    set_meta(&library, META_BOOTSTRAP_TOTAL, &(PAGE_SIZE + 1).to_string());
+    set_meta(&library, META_CATALOG_READY, "1");
+    set_meta(&library, META_LATEST_FAILURE, "0");
+    set_meta(&library, META_LAST_BOOTSTRAP, &stale_bootstrap.to_string());
+
+    assert!(ownership_available(&library));
+    let before = SyncHandle::detached().status(bootstrap_progress(&library), 0);
+    assert!(!before.progress.active);
+    assert_eq!(before.progress.phase, SyncPhase::Complete);
+    assert!(before.progress.catalog.complete);
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![ok(EMPTY_PAGE), ok(ONE_MOVIE), ok(EMPTY_PAGE)],
+    );
+    let report = result.expect("resumed daily redownload");
+    assert_eq!(report.bootstrapped, 1);
+    assert_eq!(steps(&requests), ["views", "bootstrap", "incremental"]);
+    assert!(
+        requests[1].contains(&format!("StartIndex={PAGE_SIZE}")),
+        "{}",
+        requests[1]
+    );
+    assert!(ownership_available(&library));
+    assert_eq!(
+        library.meta(META_BOOTSTRAP_DONE).expect("meta").as_deref(),
+        Some("1")
+    );
+
+    let legacy = Arc::new(Library::open_in_memory().expect("library"));
+    seed(
+        &legacy,
+        &[json!({ "Id": "m1", "Name": "M1", "Type": "Movie" })],
+    );
+    set_meta(&legacy, META_BOOTSTRAP_DONE, "1");
+    set_meta(&legacy, META_CATALOG_READY, "1");
+    set_meta(&legacy, META_LAST_IDENTITY_SWEEP, &now_unix().to_string());
+
+    let (result, _) = cycle(
+        &legacy,
+        Trigger::Scheduled,
+        vec![ok(EMPTY_PAGE), ok(NOT_JSON)],
+    );
+    assert!(matches!(result, Err(ApiError::Decode(_))), "{result:?}");
+    assert_eq!(
+        legacy.meta(META_BOOTSTRAP_DONE).expect("meta").as_deref(),
+        Some("0")
+    );
+    assert!(legacy.meta(META_LAST_BOOTSTRAP).expect("meta").is_some());
+    assert!(!first_catalog_download(&legacy).expect("first download"));
+    assert!(bootstrap_progress(&legacy).complete);
+}
+
+#[test]
+fn initial_catalog_download_keeps_ownership_disabled_and_catalog_phase_until_complete() {
+    let library = Arc::new(Library::open_in_memory().expect("library"));
+    set_meta(&library, META_LAST_IDENTITY_SWEEP, &now_unix().to_string());
+
+    let (first_body, second_body, empty_body) = paginated_catalog_bodies();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = listener.local_addr().expect("address");
+    let (second_started_tx, second_started_rx) = mpsc::channel();
+    let (continue_tx, continue_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (stream, _) = receive_target(&listener);
+        send_json(stream, EMPTY_PAGE);
+        let (stream, _) = receive_target(&listener);
+        send_json(stream, &first_body);
+        let (stream, _) = receive_target(&listener);
+        second_started_tx.send(()).expect("signal second page");
+        continue_rx.recv().expect("release second page");
+        send_json(stream, &second_body);
+        let (stream, _) = receive_target(&listener);
+        send_json(stream, &empty_body);
+    });
+
+    let session = authenticated_session(&library, &format!("http://{address}"));
+    let generation = session.generation();
+    let control = SyncHandle::detached();
+    control.running.store(true, Ordering::Relaxed);
+    let worker_library = library.clone();
+    let worker_control = control.clone();
+    let worker = thread::spawn(move || {
+        super::run_cycle_inner(
+            &worker_library,
+            &session,
+            Trigger::Scheduled,
+            Some(&worker_control),
+        )
+    });
+
+    second_started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("worker continued to page two");
+
+    assert!(first_catalog_download(&library).expect("first download"));
+    assert!(!ownership_available(&library));
+    let progress = bootstrap_progress(&library);
+    assert!(!progress.complete);
+    assert!(progress.ready);
+
+    let running_status = control.status(progress.clone(), generation);
+    assert!(running_status.progress.active);
+    assert_eq!(running_status.progress.phase, SyncPhase::Catalog);
+    assert!(!running_status.progress.catalog.complete);
+
+    let restarted_status = SyncHandle::detached().status(progress, generation);
+    assert!(restarted_status.progress.active);
+    assert_eq!(restarted_status.progress.phase, SyncPhase::Catalog);
+
+    continue_tx.send(()).expect("continue initial download");
+    worker.join().expect("worker").expect("sync cycle");
+    control.running.store(false, Ordering::Relaxed);
+    server.join().expect("server");
+
+    assert!(!first_catalog_download(&library).expect("first download"));
+    assert!(ownership_available(&library));
+    assert!(bootstrap_progress(&library).complete);
 }
