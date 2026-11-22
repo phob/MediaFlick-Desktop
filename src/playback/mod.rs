@@ -53,6 +53,12 @@ impl NativeOverlayFrame {
 #[cfg(target_os = "linux")]
 pub type NativeOverlayReply = std::sync::mpsc::Receiver<Result<NativeOverlayFrame, String>>;
 
+#[cfg(target_os = "linux")]
+pub enum OverlayPresentation {
+    Presented(NativeOverlayFrame),
+    TimedOut(NativeOverlayReply),
+}
+
 impl NativeWindowHandle {
     #[cfg(target_os = "windows")]
     pub fn new(raw: usize) -> Option<Self> {
@@ -76,6 +82,15 @@ impl NativeWindowHandle {
     #[cfg(target_os = "linux")]
     pub fn content(self) -> usize {
         self.content
+    }
+
+    #[cfg(test)]
+    pub fn test_handle(raw: usize) -> Self {
+        Self {
+            raw,
+            #[cfg(target_os = "linux")]
+            content: raw + 1,
+        }
     }
 }
 

@@ -536,6 +536,25 @@ fn configured_player_native_window(
     playback.native_window(timeout)
 }
 
+#[cfg(all(test, target_os = "linux"))]
+fn test_browser_state(playback: Arc<PlaybackCoordinator>) -> BrowserState {
+    Arc::new(Mutex::new(BrowserStateInner {
+        title: "Test".to_string(),
+        settings: AppSettings::default(),
+        browsers: Vec::new(),
+        main_window: None,
+        initial_show_state: ShowState::NORMAL,
+        main_window_reveal_requested: false,
+        main_window_revealed: false,
+        playback,
+        update_available: None,
+        update_download_started: false,
+        mpv_setup_started: false,
+        close: WindowCloseState::default(),
+        player_warmed: false,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

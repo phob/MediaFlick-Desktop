@@ -85,12 +85,27 @@ impl MpvEvent {
     }
 }
 
+#[cfg(all(unix, not(target_os = "windows")))]
+struct StreamCloser(std::os::unix::net::UnixStream);
+
+#[cfg(all(unix, not(target_os = "windows")))]
+impl StreamCloser {
+    fn close(&self) {
+        let _ = self.0.shutdown(std::net::Shutdown::Both);
+    }
+}
+
 pub(super) struct IpcWorker {
     path: String,
     command_tx: Sender<IpcCommand>,
     reader_thread: thread::JoinHandle<()>,
     writer_thread: thread::JoinHandle<()>,
     writer_alive: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+    #[cfg(all(unix, not(target_os = "windows")))]
+    reader_closer: Option<StreamCloser>,
+    #[cfg(all(unix, not(target_os = "windows")))]
+    writer_closer: Option<StreamCloser>,
 }
 
 type IpcCommand = (Value, Duration, Sender<Result<Value, IpcCommandFailure>>);
@@ -145,20 +160,25 @@ impl IpcWorker {
         tracing::trace!(target: "mpv.ipc", ipc_path = path, "connecting mpv IPC reader");
         let mut reader = connect_ipc(path)?;
         write_observe_commands(&mut reader)?;
+        #[cfg(all(unix, not(target_os = "windows")))]
+        let reader_closer = reader.try_clone().ok().map(StreamCloser);
         tracing::trace!(target: "mpv.ipc", ipc_path = path, "connecting mpv IPC command writer");
+        let command_stream =
+            connect_ipc_for_commands_with_timeout(path, IPC_COMMAND_CONNECT_TIMEOUT)?;
+        #[cfg(all(unix, not(target_os = "windows")))]
+        let writer_closer = command_stream.try_clone().ok().map(StreamCloser);
         let writer_alive = Arc::new(AtomicBool::new(true));
+        let stop = Arc::new(AtomicBool::new(false));
         let writer = IpcCommandWriter {
-            stream: BufReader::new(connect_ipc_for_commands_with_timeout(
-                path,
-                IPC_COMMAND_CONNECT_TIMEOUT,
-            )?),
+            stream: BufReader::new(command_stream),
             alive: writer_alive.clone(),
         };
         let (event_tx, event_rx) = mpsc::channel();
         let (command_tx, command_rx) = mpsc::channel();
+        let reader_stop = Arc::clone(&stop);
         let reader_thread = thread::Builder::new()
             .name("mpv-ipc-events".to_string())
-            .spawn(move || read_events(&reader, &event_tx))?;
+            .spawn(move || read_events(&reader, &event_tx, &reader_stop))?;
         let writer_thread = thread::Builder::new()
             .name("mpv-ipc-commands".to_string())
             .spawn(move || writer.write_commands(&command_rx))?;
@@ -169,6 +189,11 @@ impl IpcWorker {
                 reader_thread,
                 writer_thread,
                 writer_alive,
+                stop,
+                #[cfg(all(unix, not(target_os = "windows")))]
+                reader_closer,
+                #[cfg(all(unix, not(target_os = "windows")))]
+                writer_closer,
             },
             event_rx,
         ))
@@ -211,16 +236,62 @@ impl IpcWorker {
         }
     }
 
+    pub(super) fn disconnect(self) {
+        let Self {
+            path,
+            command_tx,
+            reader_thread,
+            writer_thread,
+            writer_alive,
+            stop,
+            #[cfg(all(unix, not(target_os = "windows")))]
+            reader_closer,
+            #[cfg(all(unix, not(target_os = "windows")))]
+            writer_closer,
+        } = self;
+        tracing::trace!(target: "mpv.ipc", ipc_path = %path, "disconnecting mpv IPC worker");
+        stop.store(true, Ordering::SeqCst);
+        writer_alive.store(false, Ordering::SeqCst);
+        drop(command_tx);
+        #[cfg(all(unix, not(target_os = "windows")))]
+        {
+            if let Some(closer) = reader_closer {
+                closer.close();
+            }
+            if let Some(closer) = writer_closer {
+                closer.close();
+            }
+            let _ = writer_thread.join();
+            let _ = reader_thread.join();
+        }
+        #[cfg(target_os = "windows")]
+        {
+            drop(writer_thread);
+            drop(reader_thread);
+        }
+    }
+
     pub(super) fn shutdown(self) {
         let Self {
             path,
             command_tx,
             reader_thread,
             writer_thread,
-            writer_alive: _,
+            writer_alive,
+            stop,
+            #[cfg(all(unix, not(target_os = "windows")))]
+            reader_closer,
+            #[cfg(all(unix, not(target_os = "windows")))]
+                writer_closer: _,
         } = self;
         tracing::trace!(target: "mpv.ipc", ipc_path = %path, "joining mpv IPC reader thread");
+        stop.store(true, Ordering::SeqCst);
+        writer_alive.store(false, Ordering::SeqCst);
         drop(command_tx);
+        #[cfg(all(unix, not(target_os = "windows")))]
+        if let Some(closer) = reader_closer {
+            closer.close();
+        }
         let _ = writer_thread.join();
         let _ = reader_thread.join();
     }
@@ -422,14 +493,17 @@ fn log_command_reply(value: &Value) {
     }
 }
 
-fn read_events(stream: &IpcConnection, tx: &Sender<MpvEvent>) {
+fn read_events(stream: &IpcConnection, tx: &Sender<MpvEvent>, stop: &AtomicBool) {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    loop {
+    while !stop.load(Ordering::SeqCst) {
         line.clear();
         match reader.read_line(&mut line) {
             Ok(0) => break,
             Ok(_) => {
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
                 let Ok(value) = serde_json::from_str::<Value>(&line) else {
                     tracing::trace!(
                         target: "mpv.ipc",
@@ -477,6 +551,9 @@ fn read_events(stream: &IpcConnection, tx: &Sender<MpvEvent>) {
                     io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
                 ) =>
             {
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
                 tracing::trace!(target: "mpv.ipc", "mpv IPC read timed out while waiting for events");
                 continue;
             }
@@ -585,305 +662,7 @@ fn set_ipc_command_read_timeout(stream: &IpcConnection, timeout: Duration) -> io
 }
 
 #[cfg(test)]
-pub(super) mod test_server {
-    use std::io::{BufRead, BufReader, Write};
-    use std::sync::mpsc::{self, Receiver};
-    use std::sync::{Arc, Mutex};
-    use std::thread;
-    use std::time::Duration;
-
-    use serde_json::Value;
-
-    use super::{IpcWorker, MpvEvent};
-
-    pub(in crate::players::mpv) const EVENT_CONNECTION: usize = 0;
-    pub(in crate::players::mpv) const COMMAND_CONNECTION: usize = 1;
-
-    const OBSERVED_PROPERTIES: usize = 15;
-
-    #[cfg(unix)]
-    type Stream = std::os::unix::net::UnixStream;
-    #[cfg(windows)]
-    type Stream = std::fs::File;
-
-    pub(in crate::players::mpv) struct FakeMpv {
-        path: String,
-        received: Receiver<(usize, Value)>,
-        events: Arc<Mutex<Option<Stream>>>,
-        server: thread::JoinHandle<()>,
-    }
-
-    impl FakeMpv {
-        pub(in crate::players::mpv) fn start(
-            reply: impl Fn(&Value) -> Vec<Value> + Send + 'static,
-        ) -> Self {
-            let path = super::make_ipc_path();
-            let (received_tx, received) = mpsc::channel();
-            let events = Arc::new(Mutex::new(None));
-            let (ready_tx, ready) = mpsc::channel();
-            let server_path = path.clone();
-            let server_events = Arc::clone(&events);
-            let server = thread::spawn(move || {
-                let mut listener = Listener::bind(&server_path);
-                let _ = ready_tx.send(());
-                let event_stream = listener.accept();
-                let mut observers = BufReader::new(clone(&event_stream));
-                let mut line = String::new();
-                for _ in 0..OBSERVED_PROPERTIES {
-                    line.clear();
-                    if observers.read_line(&mut line).unwrap_or(0) == 0 {
-                        return;
-                    }
-                    if let Ok(command) = serde_json::from_str(&line) {
-                        let _ = received_tx.send((EVENT_CONNECTION, command));
-                    }
-                }
-                drop(observers);
-                *server_events.lock().expect("event stream") = Some(event_stream);
-
-                let command_stream = listener.accept();
-                let mut commands = BufReader::new(clone(&command_stream));
-                let mut replies = command_stream;
-                loop {
-                    line.clear();
-                    if commands.read_line(&mut line).unwrap_or(0) == 0 {
-                        return;
-                    }
-                    let Ok(command) = serde_json::from_str::<Value>(&line) else {
-                        continue;
-                    };
-                    for answer in reply(&command) {
-                        let mut text = answer.to_string();
-                        text.push('\n');
-                        if replies.write_all(text.as_bytes()).is_err() {
-                            return;
-                        }
-                    }
-                    let _ = replies.flush();
-                    let _ = received_tx.send((COMMAND_CONNECTION, command));
-                }
-            });
-            ready
-                .recv_timeout(Duration::from_secs(5))
-                .expect("fake mpv IPC endpoint is ready");
-            Self {
-                path,
-                received,
-                events,
-                server,
-            }
-        }
-
-        pub(in crate::players::mpv) fn connect(&self) -> (IpcWorker, Receiver<MpvEvent>) {
-            IpcWorker::start(&self.path).expect("connect to fake mpv")
-        }
-
-        pub(in crate::players::mpv) fn next_command_on(&self, connection: usize) -> Value {
-            loop {
-                let (from, command) = self
-                    .received
-                    .recv_timeout(Duration::from_secs(5))
-                    .expect("fake mpv received a command");
-                if from == connection {
-                    return command;
-                }
-            }
-        }
-
-        pub(in crate::players::mpv) fn send_event(&self, event: &Value) {
-            let mut text = event.to_string();
-            text.push('\n');
-            let mut events = self.events.lock().expect("event stream");
-            let stream = events.as_mut().expect("event connection is open");
-            stream.write_all(text.as_bytes()).expect("write event");
-            stream.flush().expect("flush event");
-            drop(events);
-        }
-
-        pub(in crate::players::mpv) fn finish(self, worker: IpcWorker) {
-            self.events.lock().expect("event stream").take();
-            worker.shutdown();
-            let _ = self.server.join();
-            super::cleanup_ipc_path(&self.path);
-        }
-    }
-
-    fn clone(stream: &Stream) -> Stream {
-        stream.try_clone().expect("clone fake mpv connection")
-    }
-
-    #[cfg(unix)]
-    struct Listener(std::os::unix::net::UnixListener);
-
-    #[cfg(unix)]
-    impl Listener {
-        fn bind(path: &str) -> Self {
-            Self(std::os::unix::net::UnixListener::bind(path).expect("bind fake mpv socket"))
-        }
-
-        fn accept(&mut self) -> Stream {
-            self.0.accept().expect("accept fake mpv client").0
-        }
-    }
-
-    #[cfg(windows)]
-    struct Listener {
-        name: Vec<u16>,
-        next: Option<Stream>,
-    }
-
-    #[cfg(windows)]
-    impl Listener {
-        fn bind(path: &str) -> Self {
-            let name: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
-            let next = Some(Self::instance(&name));
-            Self { name, next }
-        }
-
-        fn instance(name: &[u16]) -> Stream {
-            use std::os::windows::io::FromRawHandle;
-
-            use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-            use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
-            use windows_sys::Win32::System::Pipes::{
-                CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES,
-                PIPE_WAIT,
-            };
-
-            // SAFETY: `name` is a NUL-terminated wide string that outlives the
-            // call, and null security attributes select the defaults.
-            let handle = unsafe {
-                CreateNamedPipeW(
-                    name.as_ptr(),
-                    PIPE_ACCESS_DUPLEX,
-                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                    PIPE_UNLIMITED_INSTANCES,
-                    64 * 1024,
-                    64 * 1024,
-                    0,
-                    std::ptr::null(),
-                )
-            };
-            assert_ne!(handle, INVALID_HANDLE_VALUE, "create fake mpv pipe");
-            // SAFETY: the handle is a new pipe instance nothing else owns.
-            unsafe { Stream::from_raw_handle(handle) }
-        }
-
-        fn accept(&mut self) -> Stream {
-            use std::os::windows::io::AsRawHandle;
-
-            use windows_sys::Win32::Foundation::{ERROR_PIPE_CONNECTED, GetLastError};
-            use windows_sys::Win32::System::Pipes::ConnectNamedPipe;
-
-            let stream = self
-                .next
-                .take()
-                .unwrap_or_else(|| Self::instance(&self.name));
-            // SAFETY: `stream` owns a live pipe instance; a null OVERLAPPED
-            // makes this a blocking wait for one client.
-            let connected =
-                unsafe { ConnectNamedPipe(stream.as_raw_handle(), std::ptr::null_mut()) };
-            // SAFETY: reads this thread's last error, set by ConnectNamedPipe.
-            let already = connected == 0 && unsafe { GetLastError() } == ERROR_PIPE_CONNECTED;
-            assert!(connected != 0 || already, "accept fake mpv client");
-            stream
-        }
-    }
-}
+pub(super) mod test_server;
 
 #[cfg(test)]
-mod tests {
-    use super::IpcCommandFailure;
-    use super::test_server::{COMMAND_CONNECTION, FakeMpv};
-    use serde_json::json;
-    use std::time::Duration;
-
-    #[test]
-    fn one_persistent_writer_carries_every_command_and_matches_replies_by_id() {
-        let fake = FakeMpv::start(|command| {
-            let id = command["request_id"].clone();
-            match command["command"][0].as_str() {
-                Some("first") => vec![
-                    json!({ "event": "property-change", "name": "pause", "data": true }),
-                    json!({ "request_id": 999_999, "error": "success" }),
-                    json!({ "request_id": id, "error": "success" }),
-                ],
-                Some("rejected") => {
-                    vec![json!({ "request_id": id, "error": "property unavailable" })]
-                }
-                Some("late") => Vec::new(),
-                Some("after-async") => vec![
-                    json!({ "request_id": 4, "error": "success" }),
-                    json!({ "request_id": id, "error": "success" }),
-                ],
-                _ => vec![json!({ "request_id": id, "error": "success" })],
-            }
-        });
-        let (worker, events) = fake.connect();
-        let send = |name: &str, id: i64| {
-            worker.send_with_timeout(
-                json!({ "command": [name], "request_id": id }),
-                Duration::from_secs(5),
-            )
-        };
-
-        assert!(send("first", 1).is_ok());
-        assert!(matches!(
-            send("rejected", 2),
-            Err(IpcCommandFailure::Rejected(_))
-        ));
-        assert!(
-            send("after-rejection", 3).is_ok(),
-            "a rejection keeps the writer"
-        );
-        assert!(worker.is_writer_alive());
-        for expected in ["first", "rejected", "after-rejection"] {
-            assert_eq!(
-                fake.next_command_on(COMMAND_CONNECTION)["command"][0],
-                expected
-            );
-        }
-
-        let asynchronous = worker.send_with_timeout(
-            json!({ "command": ["late"], "request_id": 4, "async": true }),
-            Duration::from_secs(5),
-        );
-        assert!(asynchronous.is_ok());
-        assert!(send("after-async", 5).is_ok());
-        for expected in ["late", "after-async"] {
-            assert_eq!(
-                fake.next_command_on(COMMAND_CONNECTION)["command"][0],
-                expected
-            );
-        }
-
-        fake.send_event(&json!({ "event": "file-loaded" }));
-        let event = events
-            .recv_timeout(Duration::from_secs(5))
-            .expect("event through the reader connection");
-        assert_eq!(event.name, "file-loaded");
-        fake.finish(worker);
-    }
-
-    #[test]
-    fn a_command_reply_slower_than_the_event_poll_is_accepted_within_its_deadline() {
-        let fake = FakeMpv::start(|command| {
-            std::thread::sleep(Duration::from_millis(2_500));
-            vec![json!({ "request_id": command["request_id"].clone(), "error": "success" })]
-        });
-        let (worker, _events) = fake.connect();
-
-        let reply = worker.send_with_timeout(
-            json!({ "command": ["sub-add", "https://example.test/sub.srt", "select"], "request_id": 1 }),
-            Duration::from_secs(10),
-        );
-
-        assert!(
-            reply.is_ok(),
-            "{:?}",
-            reply.err().map(|error| error.to_string())
-        );
-        assert!(worker.is_writer_alive());
-        fake.finish(worker);
-    }
-}
+mod tests;

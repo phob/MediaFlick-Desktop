@@ -215,11 +215,18 @@ impl PlaybackCoordinator {
     pub fn present_overlay(
         &self,
         frame: super::NativeOverlayFrame,
-    ) -> Result<super::NativeOverlayFrame, String> {
+        timeout: Duration,
+    ) -> Result<super::OverlayPresentation, String> {
         let response = self.shared.backend().submit_overlay(frame)?;
-        response
-            .recv_timeout(Duration::from_secs(5))
-            .map_err(|error| format!("native UI presentation did not complete: {error}"))?
+        match response.recv_timeout(timeout) {
+            Ok(result) => result.map(super::OverlayPresentation::Presented),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                Ok(super::OverlayPresentation::TimedOut(response))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err("native UI presentation did not complete: channel disconnected".to_string())
+            }
+        }
     }
 
     pub fn open(

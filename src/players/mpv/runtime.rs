@@ -53,6 +53,12 @@ impl LibmpvProfile {
 pub(super) enum MpvRuntime {
     External(Child),
     Library(Box<LibMpvRuntime>),
+    #[cfg(test)]
+    TestRuntime {
+        alive: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        native_window: Option<NativeWindowHandle>,
+    },
 }
 
 impl MpvRuntime {
@@ -68,6 +74,8 @@ impl MpvRuntime {
         match self {
             Self::Library(runtime) => runtime.window.set_fullscreen(mode),
             Self::External(_) => Ok(()),
+            #[cfg(test)]
+            Self::TestRuntime { .. } => Ok(()),
         }
     }
 
@@ -76,6 +84,8 @@ impl MpvRuntime {
         match self {
             Self::Library(runtime) => runtime.window.fullscreen(),
             Self::External(_) => Ok(false),
+            #[cfg(test)]
+            Self::TestRuntime { .. } => Ok(false),
         }
     }
     #[cfg(target_os = "linux")]
@@ -83,6 +93,8 @@ impl MpvRuntime {
         match self {
             Self::Library(runtime) => runtime.ui_exposes_video,
             Self::External(_) => false,
+            #[cfg(test)]
+            Self::TestRuntime { .. } => false,
         }
     }
     #[cfg(target_os = "linux")]
@@ -106,6 +118,8 @@ impl MpvRuntime {
                 Ok(frame)
             }
             Self::External(_) => Err("UI composition requires built-in libmpv".into()),
+            #[cfg(test)]
+            Self::TestRuntime { .. } => Ok(frame),
         }
     }
     pub(super) fn start(
@@ -136,6 +150,8 @@ impl MpvRuntime {
         match self {
             Self::External(_) => None,
             Self::Library(runtime) => runtime.native_window,
+            #[cfg(test)]
+            Self::TestRuntime { native_window, .. } => *native_window,
         }
     }
 
@@ -143,6 +159,8 @@ impl MpvRuntime {
         match self {
             Self::External(child) => child.try_wait().map(|status| status.is_none()),
             Self::Library(runtime) => Ok(runtime.is_alive()),
+            #[cfg(test)]
+            Self::TestRuntime { alive, .. } => Ok(alive.load(std::sync::atomic::Ordering::SeqCst)),
         }
     }
 
@@ -151,6 +169,8 @@ impl MpvRuntime {
         match self {
             Self::External(child) => Some(child.id()),
             Self::Library(_) => None,
+            #[cfg(test)]
+            Self::TestRuntime { .. } => None,
         }
     }
 
@@ -163,6 +183,11 @@ impl MpvRuntime {
                 let _ = child.wait();
             }
             Self::Library(runtime) => runtime.terminate(),
+            #[cfg(test)]
+            Self::TestRuntime { alive, stopped, .. } => {
+                alive.store(false, std::sync::atomic::Ordering::SeqCst);
+                stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
         }
     }
 }
