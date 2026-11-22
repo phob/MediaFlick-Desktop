@@ -18,6 +18,7 @@ use super::{CollectionMode, CollectionProfile, CollectionSnapshot, MediaType, Re
 
 const SCHEDULER_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const FRANCHISE_MEMBERSHIP_TTL_SECONDS: i64 = 30 * 24 * 60 * 60;
+pub(crate) const FAILURE_BACKOFF_SECONDS: i64 = 5 * 60;
 static FRANCHISE_FLIGHTS: OnceLock<Mutex<HashSet<AccountKey>>> = OnceLock::new();
 
 struct FranchiseFlight {
@@ -72,7 +73,7 @@ pub fn request_after_library_sync(services: Arc<Services>) {
     });
 }
 
-fn refresh_due_work(services: &Arc<Services>) {
+pub(crate) fn refresh_due_work(services: &Arc<Services>) {
     let Some(account) = active_mediaflick_account(services) else {
         return;
     };
@@ -119,7 +120,7 @@ fn refresh_due_profiles_for_account(services: &Services, account: &AccountKey) -
                 continue;
             }
         };
-        if !is_due(state.last_success, profile.cadence, now) {
+        if !is_due(state.last_success, profile.cadence, now) || in_failure_backoff(&state, now) {
             continue;
         }
         changed |= refresh_profile(services, &repository, account, &profile, now);
@@ -137,6 +138,19 @@ pub fn refresh_franchises(services: &Services, account: &AccountKey) -> bool {
     };
     let attempted_at = crate::library::now_unix();
     let repository = SnapshotRepository::new(&services.library);
+    let refresh = match repository.franchise_refresh_state(account) {
+        Ok(refresh) => refresh,
+        Err(error) => {
+            tracing::warn!(
+                target: "collections",
+                "could not read the movie franchise refresh state: {error}"
+            );
+            return false;
+        }
+    };
+    if in_failure_backoff(&refresh, attempted_at) {
+        return false;
+    }
     hydrate_identity_map(services);
     if !services.session.scope_is_current(&scope) {
         return false;
@@ -162,57 +176,19 @@ pub fn refresh_franchises(services: &Services, account: &AccountKey) -> bool {
     if !ids.is_empty() && plan.stale_movie_ids.is_empty() {
         return false;
     }
-    let mut memberships = Vec::new();
-    let snapshots = if ids.is_empty() {
-        Vec::new()
+    let (snapshots, memberships) = if ids.is_empty() {
+        (Vec::new(), Vec::new())
     } else {
-        let value = match services.companion.resolve_franchises(
-            &scope,
-            &plan.stale_movie_ids,
-            &plan.known_collection_ids,
-        ) {
-            Ok(value) => value,
-            Err(error) => {
-                services.session.note_scoped_error(&scope, &error);
-                save_failed_franchise_refresh(services, &scope, &repository, account, attempted_at);
-                tracing::debug!(
-                    target: "collections",
-                    "automatic movie franchise refresh failed: {error}"
-                );
-                return true;
-            }
+        let Some(resolved) = fetch_franchise_resolution(services, &scope, &plan) else {
+            return save_failed_franchise_refresh(
+                services,
+                &scope,
+                &repository,
+                account,
+                attempted_at,
+            );
         };
-        let Some(rows) = value.get("franchises").cloned() else {
-            save_failed_franchise_refresh(services, &scope, &repository, account, attempted_at);
-            tracing::warn!(target: "collections", "movie franchise response has no results");
-            return true;
-        };
-        memberships = value
-            .get("memberships")
-            .cloned()
-            .and_then(|rows| serde_json::from_value::<Vec<FranchiseMembership>>(rows).ok())
-            .unwrap_or_default();
-        let expected = plan.stale_movie_ids.iter().copied().collect::<HashSet<_>>();
-        let resolved = memberships
-            .iter()
-            .map(|membership| membership.tmdb_id)
-            .collect::<HashSet<_>>();
-        if resolved != expected || memberships.len() != expected.len() {
-            save_failed_franchise_refresh(services, &scope, &repository, account, attempted_at);
-            tracing::warn!(target: "collections", "movie franchise response has incomplete membership results");
-            return true;
-        }
-        match serde_json::from_value::<Vec<FranchiseSnapshot>>(rows) {
-            Ok(snapshots) => snapshots,
-            Err(error) => {
-                save_failed_franchise_refresh(services, &scope, &repository, account, attempted_at);
-                tracing::warn!(
-                    target: "collections",
-                    "could not read movie franchise results: {error}"
-                );
-                return true;
-            }
-        }
+        resolved
     };
     commit_franchise_refresh(
         services,
@@ -223,6 +199,56 @@ pub fn refresh_franchises(services: &Services, account: &AccountKey) -> bool {
         &memberships,
         attempted_at,
     )
+}
+
+fn fetch_franchise_resolution(
+    services: &Services,
+    scope: &crate::jellyfin::session::SessionScope,
+    plan: &super::snapshots::FranchiseResolutionPlan,
+) -> Option<(Vec<FranchiseSnapshot>, Vec<FranchiseMembership>)> {
+    let value = match services.companion.resolve_franchises(
+        scope,
+        &plan.stale_movie_ids,
+        &plan.known_collection_ids,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            services.session.note_scoped_error(scope, &error);
+            tracing::debug!(
+                target: "collections",
+                "automatic movie franchise refresh failed: {error}"
+            );
+            return None;
+        }
+    };
+    let Some(rows) = value.get("franchises").cloned() else {
+        tracing::warn!(target: "collections", "movie franchise response has no results");
+        return None;
+    };
+    let memberships = value
+        .get("memberships")
+        .cloned()
+        .and_then(|rows| serde_json::from_value::<Vec<FranchiseMembership>>(rows).ok())
+        .unwrap_or_default();
+    let expected = plan.stale_movie_ids.iter().copied().collect::<HashSet<_>>();
+    let resolved = memberships
+        .iter()
+        .map(|membership| membership.tmdb_id)
+        .collect::<HashSet<_>>();
+    if resolved != expected || memberships.len() != expected.len() {
+        tracing::warn!(target: "collections", "movie franchise response has incomplete membership results");
+        return None;
+    }
+    match serde_json::from_value::<Vec<FranchiseSnapshot>>(rows) {
+        Ok(snapshots) => Some((snapshots, memberships)),
+        Err(error) => {
+            tracing::warn!(
+                target: "collections",
+                "could not read movie franchise results: {error}"
+            );
+            None
+        }
+    }
 }
 
 fn commit_franchise_refresh(
@@ -259,20 +285,24 @@ fn save_failed_franchise_refresh(
     repository: &SnapshotRepository<'_>,
     account: &AccountKey,
     attempted_at: i64,
-) {
-    let _ = services.session.commit_if_current(
-        scope,
-        || (),
-        |_live| {
-            if let Err(error) = repository.save_franchise_refresh_failure(account, attempted_at) {
-                tracing::warn!(
-                    target: "collections",
-                    "could not save movie franchise refresh failure: {error}"
-                );
-            }
-            Ok(())
-        },
-    );
+) -> bool {
+    services
+        .session
+        .commit_if_current(
+            scope,
+            || false,
+            |_live| match repository.save_franchise_refresh_failure(account, attempted_at) {
+                Ok(changed) => Ok(changed),
+                Err(error) => {
+                    tracing::warn!(
+                        target: "collections",
+                        "could not save movie franchise refresh failure: {error}"
+                    );
+                    Ok(false)
+                }
+            },
+        )
+        .unwrap_or(false)
 }
 
 pub fn hydrate_identity_map(services: &Services) {
@@ -341,8 +371,12 @@ fn refresh_profile(
                     &scope,
                     || false,
                     |_live| {
-                        save_failed_refresh(repository, account, &profile.id, attempt);
-                        Ok(true)
+                        Ok(save_failed_refresh(
+                            repository,
+                            account,
+                            &profile.id,
+                            attempt,
+                        ))
                     },
                 )
                 .unwrap_or(false);
@@ -358,13 +392,13 @@ fn refresh_profile(
         items: result.items,
     };
     if let Err(error) = repository.commit_profile(account, &snapshot) {
-        save_failed_refresh(repository, account, &profile.id, attempt);
+        let changed = save_failed_refresh(repository, account, &profile.id, attempt);
         tracing::warn!(
             target: "collections",
             profile_id = profile.id,
             "could not save automatic collection refresh: {error}"
         );
-        return true;
+        return changed;
     }
     let state = RefreshState {
         last_attempt: Some(attempt),
@@ -401,21 +435,35 @@ pub(crate) fn save_failed_refresh(
     account: &AccountKey,
     profile_id: &str,
     attempt: i64,
-) {
+) -> bool {
+    const FAILURE: &str = "Results unavailable";
     let recorded = repository
         .refresh_state(account, profile_id)
         .and_then(|mut state| {
+            let changed = state.latest_failure.as_deref() != Some(FAILURE);
             state.last_attempt = Some(attempt);
-            state.latest_failure = Some("Results unavailable".to_string());
-            repository.save_refresh_state(account, profile_id, &state)
+            state.latest_failure = Some(FAILURE.to_string());
+            repository.save_refresh_state(account, profile_id, &state)?;
+            Ok(changed)
         });
-    if let Err(error) = recorded {
-        tracing::warn!(
-            target: "collections",
-            profile_id,
-            "could not record the failed collection refresh: {error}"
-        );
+    match recorded {
+        Ok(changed) => changed,
+        Err(error) => {
+            tracing::warn!(
+                target: "collections",
+                profile_id,
+                "could not record the failed collection refresh: {error}"
+            );
+            false
+        }
     }
+}
+
+pub(crate) fn in_failure_backoff(state: &RefreshState, now: i64) -> bool {
+    state.latest_failure.is_some()
+        && state.last_attempt.is_some_and(|attempt| {
+            attempt <= now && now.saturating_sub(attempt) < FAILURE_BACKOFF_SECONDS
+        })
 }
 
 pub fn next_due_at(last_success: i64, cadence: RefreshCadence) -> Option<i64> {
@@ -499,5 +547,36 @@ mod tests {
     fn manual_profiles_never_become_due() {
         assert!(!is_due(None, RefreshCadence::Manual, i64::MAX));
         assert_eq!(next_due_at(0, RefreshCadence::Manual), None);
+    }
+
+    #[test]
+    fn failure_backoff_respects_boundaries_and_clears_without_attempt_or_failure() {
+        let base = 10_000;
+        let failed = RefreshState {
+            last_attempt: Some(base),
+            last_success: None,
+            latest_failure: Some("Results unavailable".to_string()),
+            next_due: None,
+            initialized: false,
+        };
+        assert!(in_failure_backoff(&failed, base));
+        assert!(in_failure_backoff(
+            &failed,
+            base + FAILURE_BACKOFF_SECONDS - 1
+        ));
+        assert!(!in_failure_backoff(&failed, base + FAILURE_BACKOFF_SECONDS));
+        assert!(!in_failure_backoff(&failed, base - 1));
+
+        let cleared = RefreshState {
+            last_attempt: None,
+            ..failed.clone()
+        };
+        assert!(!in_failure_backoff(&cleared, base));
+
+        let succeeded = RefreshState {
+            latest_failure: None,
+            ..failed
+        };
+        assert!(!in_failure_backoff(&succeeded, base));
     }
 }
