@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom"
+import { toast } from "sonner"
 import { afterEach, expect, test, vi } from "vitest"
 import type { LetterboxdProfile } from "../src/lib/api"
 import * as api from "../src/lib/api"
@@ -112,4 +113,86 @@ test("Reset restores Letterboxd profile enablement and Save commits it", async (
   fireEvent.click(screen.getByRole("button", { name: "Restore defaults" }))
   fireEvent.click(screen.getByRole("button", { name: "Save" }))
   await waitFor(() => expect(setEnabled).toHaveBeenCalledWith(profile.id, true))
+})
+
+test("in-flight refresh returning 404 after removing the profile does not toast an error or resurrect it", async () => {
+  let rejectRefresh: (error: Error) => void = () => {}
+  const refresh = vi.spyOn(api.api.letterboxd, "refresh").mockImplementation(
+    () => new Promise((_, reject) => {
+      rejectRefresh = reject
+    }),
+  )
+  const remove = vi.spyOn(api.api.letterboxd, "remove").mockResolvedValue({ removed: true })
+  const toastError = vi.spyOn(toast, "error").mockImplementation(() => "")
+  const client = renderProfiles()
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh profile" }))
+  await waitFor(() => expect(refresh).toHaveBeenCalledWith(profile.id))
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove profile" }))
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(remove).toHaveBeenCalledWith(profile.id))
+  await waitFor(() => expect(screen.queryByRole("switch", { name: "Enable Neo" })).toBeNull())
+
+  rejectRefresh(new api.ApiError("profile not found", 404))
+  await waitFor(() =>
+    expect(client.getMutationCache().getAll().some((mutation) => mutation.state.status === "error")).toBe(true),
+  )
+  expect(screen.getByText("No Letterboxd profiles connected yet.")).toBeTruthy()
+  expect(screen.queryByRole("switch", { name: "Enable Neo" })).toBeNull()
+  expect(toastError).not.toHaveBeenCalled()
+})
+
+test("refresh returning 404 for a still-listed profile refreshes the list and reports the error", async () => {
+  vi.spyOn(api.api.letterboxd, "refresh").mockRejectedValue(new api.ApiError("profile not found", 404))
+  const toastError = vi.spyOn(toast, "error").mockImplementation(() => "")
+  const client = renderProfiles()
+  const fetchProfiles = vi.spyOn(api.api.letterboxd, "profiles").mockResolvedValue({ profiles: [] })
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh profile" }))
+  await waitFor(() => expect(toastError).toHaveBeenCalledWith("profile not found"))
+  await waitFor(() => expect(fetchProfiles).toHaveBeenCalled())
+  expect(client.getQueryData<{ profiles: LetterboxdProfile[] }>(queryKeys.letterboxdProfiles)?.profiles).toEqual([])
+})
+
+test("in-flight refresh completing after disabling the profile keeps it disabled and updates verification fields", async () => {
+  const enabledProfile: LetterboxdProfile = { ...profile, enabled: true, verificationStatus: "unverified" }
+  const disabledProfile: LetterboxdProfile = { ...enabledProfile, enabled: false }
+  const refreshedProfile: LetterboxdProfile = {
+    ...disabledProfile,
+    displayName: "Neo Verified",
+    verificationStatus: "verified",
+    lastCheckedAt: 2,
+  }
+  let storedProfiles = [enabledProfile]
+  let resolveRefresh: (value: { profile: LetterboxdProfile }) => void = () => {}
+  const refresh = vi.spyOn(api.api.letterboxd, "refresh").mockImplementation(
+    () => new Promise((resolve) => {
+      resolveRefresh = resolve
+    }),
+  )
+  const setEnabled = vi.spyOn(api.api.letterboxd, "setEnabled").mockImplementation(async () => {
+    storedProfiles = [disabledProfile]
+    return { profile: disabledProfile }
+  })
+  const client = testQueryClient()
+  client.setQueryData(queryKeys.status, appStatus({ authenticated: true, userId: "account-1" }))
+  client.setQueryData(queryKeys.letterboxdProfiles, { profiles: storedProfiles })
+  vi.spyOn(api.api.letterboxd, "profiles").mockImplementation(async () => ({ profiles: storedProfiles }))
+  render(<TestProviders client={client} initialEntries={["/settings/integrations/letterboxd"]}>
+    <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
+  </TestProviders>)
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh profile" }))
+  await waitFor(() => expect(refresh).toHaveBeenCalledWith(enabledProfile.id))
+
+  fireEvent.click(screen.getByRole("switch", { name: "Enable Neo" }))
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(setEnabled).toHaveBeenCalledWith(enabledProfile.id, false))
+  expect(screen.getByRole("switch", { name: "Enable Neo" }).getAttribute("aria-checked")).toBe("false")
+
+  storedProfiles = [refreshedProfile]
+  resolveRefresh({ profile: refreshedProfile })
+  const updatedSwitch = await screen.findByRole("switch", { name: "Enable Neo Verified" })
+  expect(updatedSwitch.getAttribute("aria-checked")).toBe("false")
 })

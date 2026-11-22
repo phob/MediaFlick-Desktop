@@ -172,6 +172,14 @@ fn letterboxd_refresh_profile(
     services: &Arc<Services>,
     id: &str,
 ) -> Result<LetterboxdProfileSaved, ApiResponse> {
+    letterboxd_refresh_profile_with(services, id, letterboxd_integration::verify)
+}
+
+fn letterboxd_refresh_profile_with(
+    services: &Arc<Services>,
+    id: &str,
+    verify: impl FnOnce(&letterboxd_integration::Profile) -> letterboxd_integration::Verification,
+) -> Result<LetterboxdProfileSaved, ApiResponse> {
     if !valid_profile_id(id) {
         return Err(ApiResponse::error(404, "profile not found"));
     }
@@ -190,23 +198,22 @@ fn letterboxd_refresh_profile(
             ));
         }
     };
-    let verification = letterboxd_integration::verify(&source);
-    let display_name = verification
-        .display_name()
-        .map(str::to_string)
-        .unwrap_or_else(|| existing.display_name.clone());
-    let record = ExternalProfile {
-        canonical_url: source.canonical_url,
-        display_name,
-        verification_status: verification.as_str().to_string(),
-        last_checked_at: Some(unix_now()),
-        ..existing
+    let verification = verify(&source);
+    let update = crate::preferences::LetterboxdProfileVerification {
+        canonical_url: &source.canonical_url,
+        display_name: verification.display_name(),
+        verification_status: verification.as_str(),
+        checked_at: unix_now(),
     };
     services
         .session
         .commit_if_current(&scope, stale_account_response, |_live| {
-            match services.accounts.save_letterboxd_profile(&account, &record) {
-                Ok(profile) => Ok(LetterboxdProfileSaved { profile }),
+            match services
+                .accounts
+                .update_letterboxd_profile_verification(&account, id, &update)
+            {
+                Ok(Some(profile)) => Ok(LetterboxdProfileSaved { profile }),
+                Ok(None) => Err(ApiResponse::error(404, "profile not found")),
                 Err(error) => Err(account_config_failure(&error)),
             }
         })
@@ -293,7 +300,37 @@ fn account_config_failure(error: &std::io::Error) -> ApiResponse {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::services::test_support::TestServices;
+    use crate::integrations::letterboxd::{Verification, VerificationStatus};
+
     use super::*;
+
+    fn stored_profile(id: &str, enabled: bool) -> ExternalProfile {
+        ExternalProfile {
+            id: id.to_string(),
+            provider: "letterboxd".to_string(),
+            profile_key: "alice".to_string(),
+            display_name: "Alice".to_string(),
+            canonical_url: "https://letterboxd.com/alice/".to_string(),
+            enabled,
+            verification_status: "unverified".to_string(),
+            created_at: 100,
+            last_checked_at: Some(100),
+            jellyfin_server_id: String::new(),
+            jellyfin_user_id: String::new(),
+        }
+    }
+
+    fn signed_in_with_profile(id: &str, enabled: bool) -> (TestServices, AccountKey) {
+        let fixture = TestServices::signed_in("http://127.0.0.1:8096");
+        let account = fixture.services.session.account_key().expect("account");
+        fixture
+            .services
+            .accounts
+            .save_letterboxd_profile(&account, &stored_profile(id, enabled))
+            .expect("seed profile");
+        (fixture, account)
+    }
 
     #[test]
     fn discovered_letterboxd_lookups_require_a_positive_tmdb_movie_id() {
@@ -302,5 +339,157 @@ mod tests {
         for invalid in ["", "0", "+603", "-1", "603.0", "movie-603"] {
             assert_eq!(canonical_tmdb_movie_id(invalid), None, "{invalid}");
         }
+    }
+
+    #[test]
+    fn in_flight_refresh_does_not_resurrect_a_deleted_profile() {
+        let id = "0123456789abcdef";
+        let (fixture, account) = signed_in_with_profile(id, true);
+        let services = fixture.services.clone();
+        let accounts_path = fixture.accounts_path();
+        let mut after_delete_bytes = Vec::new();
+
+        let result = letterboxd_refresh_profile_with(&services, id, |_profile| {
+            let removed = letterboxd_remove_profile(&services, id).expect("remove while in flight");
+            assert!(removed.removed);
+            after_delete_bytes = std::fs::read(&accounts_path).expect("accounts after delete");
+            after_delete_bytes.extend_from_slice(b"\n\n");
+            crate::preferences::store::atomic_write(&accounts_path, &after_delete_bytes)
+                .expect("mark accounts file");
+            Verification::new(
+                VerificationStatus::Verified,
+                Some("Alice Verified".to_string()),
+            )
+        });
+
+        let response = result.err().expect("deleted profile must fail refresh");
+        assert_eq!(response.status, 404);
+        assert!(services.accounts.letterboxd_profiles(&account).is_empty());
+        assert_eq!(
+            std::fs::read(&accounts_path).expect("accounts after refresh"),
+            after_delete_bytes,
+            "a 404 refresh must not rewrite accounts.json"
+        );
+    }
+
+    #[test]
+    fn in_flight_refresh_does_not_overwrite_a_readded_profile_with_a_new_id() {
+        let old_id = "0123456789abcdef";
+        let new_id = "fedcba9876543210";
+        let (fixture, account) = signed_in_with_profile(old_id, true);
+        let services = fixture.services.clone();
+
+        let result = letterboxd_refresh_profile_with(&services, old_id, |_profile| {
+            letterboxd_remove_profile(&services, old_id).expect("remove old profile");
+            let mut replacement = stored_profile(new_id, false);
+            replacement.display_name = "Alice Replacement".to_string();
+            replacement.created_at = 200;
+            services
+                .accounts
+                .save_letterboxd_profile(&account, &replacement)
+                .expect("add replacement profile");
+            Verification::new(
+                VerificationStatus::Verified,
+                Some("Stale Alice".to_string()),
+            )
+        });
+
+        let response = result.err().expect("old id must fail refresh");
+        assert_eq!(response.status, 404);
+        let profiles = services.accounts.letterboxd_profiles(&account);
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].id, new_id);
+        assert!(!profiles[0].enabled);
+        assert_eq!(profiles[0].display_name, "Alice Replacement");
+        assert_eq!(profiles[0].verification_status, "unverified");
+    }
+
+    #[test]
+    fn in_flight_refresh_preserves_disabled_state_and_patches_only_verification_fields() {
+        let id = "0123456789abcdef";
+        let (fixture, account) = signed_in_with_profile(id, true);
+        let services = fixture.services.clone();
+
+        let saved = letterboxd_refresh_profile_with(&services, id, |_profile| {
+            let disabled = services
+                .accounts
+                .set_letterboxd_profile_enabled(&account, id, false)
+                .expect("disable in flight")
+                .expect("existing profile");
+            assert!(!disabled.enabled);
+            Verification::new(
+                VerificationStatus::Verified,
+                Some("Alice Verified".to_string()),
+            )
+        })
+        .expect("refresh succeeds on existing profile");
+
+        assert!(!saved.profile.enabled);
+        assert_eq!(saved.profile.display_name, "Alice Verified");
+        assert_eq!(saved.profile.verification_status, "verified");
+        assert_eq!(saved.profile.canonical_url, "https://letterboxd.com/alice/");
+        assert!(saved.profile.last_checked_at.is_some_and(|ts| ts >= 100));
+        assert_eq!(saved.profile.created_at, 100);
+
+        let stored = services
+            .accounts
+            .letterboxd_profile(&account, id)
+            .expect("profile remains stored");
+        assert_eq!(stored, saved.profile);
+    }
+
+    #[test]
+    fn in_flight_unverified_refresh_keeps_latest_display_name_and_disabled_state() {
+        let id = "0123456789abcdef";
+        let (fixture, account) = signed_in_with_profile(id, true);
+        let services = fixture.services.clone();
+
+        let saved = letterboxd_refresh_profile_with(&services, id, |_profile| {
+            let mut concurrent = services
+                .accounts
+                .letterboxd_profile(&account, id)
+                .expect("profile");
+            concurrent.enabled = false;
+            concurrent.display_name = "Alice Concurrent".to_string();
+            services
+                .accounts
+                .save_letterboxd_profile(&account, &concurrent)
+                .expect("concurrent edit");
+            Verification::new(VerificationStatus::Unverified, None)
+        })
+        .expect("unverified refresh succeeds");
+
+        assert!(!saved.profile.enabled);
+        assert_eq!(saved.profile.display_name, "Alice Concurrent");
+        assert_eq!(saved.profile.verification_status, "unverified");
+    }
+
+    #[test]
+    fn in_flight_refresh_after_sign_out_returns_409_without_mutating_profile() {
+        let id = "0123456789abcdef";
+        let (fixture, account) = signed_in_with_profile(id, true);
+        let services = fixture.services.clone();
+
+        let result = letterboxd_refresh_profile_with(&services, id, |_profile| {
+            services
+                .session
+                .clear_local(false)
+                .expect("sign out in flight");
+            Verification::new(
+                VerificationStatus::Verified,
+                Some("Alice Verified".to_string()),
+            )
+        });
+
+        let response = result.err().expect("signed-out refresh must fail");
+        assert_eq!(response.status, 409);
+        let body: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
+        assert_eq!(body["accountChanged"], true);
+        let stored = services
+            .accounts
+            .letterboxd_profile(&account, id)
+            .expect("stored profile unchanged");
+        assert_eq!(stored.verification_status, "unverified");
+        assert_eq!(stored.display_name, "Alice");
     }
 }

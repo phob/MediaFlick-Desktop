@@ -325,6 +325,14 @@ pub struct AccountConfigurationService {
     recovery: Mutex<Option<RecoveryNotice>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct LetterboxdProfileVerification<'a> {
+    pub canonical_url: &'a str,
+    pub display_name: Option<&'a str>,
+    pub verification_status: &'a str,
+    pub checked_at: i64,
+}
+
 impl AccountConfigurationService {
     pub fn open(path: PathBuf) -> io::Result<Self> {
         let loaded =
@@ -552,6 +560,41 @@ impl AccountConfigurationService {
         })
     }
 
+    pub fn update_letterboxd_profile_verification(
+        &self,
+        key: &AccountKey,
+        id: &str,
+        update: &LetterboxdProfileVerification<'_>,
+    ) -> io::Result<Option<ExternalProfile>> {
+        self.mutate_some(|document| {
+            let Some(account) = document
+                .accounts
+                .iter_mut()
+                .find(|account| account.key == *key)
+            else {
+                return Ok(None);
+            };
+            let Some(profile) = account
+                .letterboxd_profiles
+                .iter_mut()
+                .find(|profile| profile.id == id && profile.provider == "letterboxd")
+            else {
+                return Ok(None);
+            };
+            update.canonical_url.clone_into(&mut profile.canonical_url);
+            if let Some(display_name) = update.display_name {
+                display_name.clone_into(&mut profile.display_name);
+            }
+            update
+                .verification_status
+                .clone_into(&mut profile.verification_status);
+            profile.last_checked_at = Some(update.checked_at);
+            let mut saved = profile.clone();
+            apply_scope(&mut saved, key);
+            Ok(Some(saved))
+        })
+    }
+
     pub fn set_letterboxd_profile_enabled(
         &self,
         key: &AccountKey,
@@ -624,23 +667,31 @@ impl AccountConfigurationService {
         })
     }
 
-    fn mutate_if_changed(
+    fn mutate_some<T>(
         &self,
-        change: impl FnOnce(&mut AccountConfigurationFile) -> io::Result<bool>,
-    ) -> io::Result<()> {
+        change: impl FnOnce(&mut AccountConfigurationFile) -> io::Result<Option<T>>,
+    ) -> io::Result<Option<T>> {
         let mut current = self
             .document
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut next = current.clone();
-        if !change(&mut next)? {
-            return Ok(());
-        }
+        let Some(result) = change(&mut next)? else {
+            return Ok(None);
+        };
         validate_document(&mut next)?;
         save_document(&self.path, &next)?;
         *current = next;
         drop(current);
-        Ok(())
+        Ok(Some(result))
+    }
+
+    fn mutate_if_changed(
+        &self,
+        change: impl FnOnce(&mut AccountConfigurationFile) -> io::Result<bool>,
+    ) -> io::Result<()> {
+        self.mutate_some(|document| Ok(change(document)?.then_some(())))
+            .map(|_| ())
     }
 }
 
