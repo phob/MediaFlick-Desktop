@@ -1,7 +1,3 @@
-// Off Home the sidebar is collapsed to icons and expands under the pointer.
-// Expanding must not move any icon, so the control under the pointer stays
-// under it.
-//   just verify sidebar-stable-icons
 const DEMO = "https://demo.jellyfin.org/stable"
 const MOVIES = { role: "link", name: "Movies" }
 const LIBRARY_ROUTE = /^\/library\/[0-9a-f]+$/

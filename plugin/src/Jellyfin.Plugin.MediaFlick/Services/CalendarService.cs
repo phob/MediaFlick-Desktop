@@ -8,9 +8,6 @@ namespace Jellyfin.Plugin.MediaFlick.Services;
 
 public sealed class CalendarService
 {
-    // Radarr can return its complete movie list in one request. Sonarr's
-    // calendar requires dates, so this bounded century covers real TV history
-    // and every plausible announced episode without per-series requests.
     internal static readonly DateOnly CalendarStart = new(1900, 1, 1);
     internal static readonly DateOnly CalendarEnd = new(2100, 1, 1);
     internal static readonly TimeSpan CacheLifetime = TimeSpan.FromHours(24);
@@ -184,11 +181,6 @@ public sealed class CalendarService
         }
     }
 
-    /// <summary>
-    /// The Desktop-visible reason for a failed source refresh. It is chosen
-    /// from the failure category alone, so no upstream or transport text is
-    /// relayed.
-    /// </summary>
     internal static string FailureReason(ServiceFailure failure)
         => failure switch
         {
@@ -282,12 +274,6 @@ public sealed class CalendarService
         return result;
     }
 
-    /// <summary>
-    /// The TMDB file path of an *arr item's poster, for Desktop to load through
-    /// the Companion's TMDB artwork proxy. Only a single-file image.tmdb.org
-    /// URL qualifies; Radarr's local MediaCover path and every other host are
-    /// dropped, so no service address reaches Desktop.
-    /// </summary>
     internal static string? TmdbPosterPath(JsonObject? owner)
     {
         if (owner?["images"] is not JsonArray images)

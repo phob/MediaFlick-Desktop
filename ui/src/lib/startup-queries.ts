@@ -4,11 +4,6 @@ import { queryKeys } from "./query-client"
 import { accountKey } from "./session-queries"
 import { browsingQueryOptions, viewingQueryOptions } from "./settings-queries"
 
-/**
- * Seeds the queries the first frame reads from one `/api/startup` request, so
- * they need not wait on status one round trip at a time. Anything missing or
- * failed is left to its own query.
- */
 export async function primeStartupQueries(client: QueryClient, pathname: string) {
   let startup
   try {

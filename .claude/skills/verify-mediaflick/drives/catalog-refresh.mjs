@@ -1,10 +1,3 @@
-// While the first catalog download runs, each committed catalog page refreshes
-// an open movies or TV shows grid, and never an open grid Jellyfin serves
-// directly. The app signs in through a loopback proxy that holds every catalog
-// page for a few seconds, so the download lasts long enough to watch a live
-// grid and then a catalog grid each across two committed pages, counting the
-// page's own requests for that grid. Read-only.
-//   just verify catalog-refresh --account https://jellyfin.example.com --signed-out
 const PAGE_HOLD_MS = 3000
 const PAGES_PER_WINDOW = 2
 const PAGE_NOTICE = "bootstrapped a library page"

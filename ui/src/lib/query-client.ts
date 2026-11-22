@@ -3,15 +3,6 @@ import { ApiError, type ItemQuery, type PlayerState } from "./api"
 import type { TitleKind } from "./kinds"
 import type { BrowseSource } from "./libraries"
 
-/**
- * The app's one cache, created by `main.tsx` and handed to the provider. React
- * code reaches it through `useQueryClient()`, and the helpers below take it as
- * a parameter, so a test can render against its own client.
- *
- * `refetchOnWindowFocus` is off because the library cache is local and the
- * sync thread is the source of change; a focus-driven refetch storm buys
- * nothing here.
- */
 export function createQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -21,9 +12,6 @@ export function createQueryClient() {
         refetchOnWindowFocus: false,
         refetchOnReconnect: true,
         retry: (failureCount, error) => {
-          // An expired token will not resolve itself by retrying — the shell
-          // needs to fall back to sign-in instead. A failed startup is final
-          // until the app restarts or the user recreates the library.
           if (error instanceof ApiError && (error.expired || error.status === 401 || error.startupFailed)) return false
           return failureCount < 1
         },
@@ -38,11 +26,6 @@ const LIBRARY_LATEST_ROOT = "library-latest"
 
 declare const minted: unique symbol
 
-/**
- * A key from `queryKeys` below. Registered with TanStack Query, so every
- * `queryKey` the app hands a hook, a filter or the cache must come from this
- * registry: a raw `["seerr", ...]` literal no longer type-checks.
- */
 type MintedQueryKey = readonly unknown[] & { readonly [minted]: true }
 
 declare module "@tanstack/react-query" {
@@ -52,12 +35,9 @@ declare module "@tanstack/react-query" {
 }
 
 function key<const Parts extends readonly unknown[]>(...parts: Parts) {
-  // SAFETY: the brand is a phantom type with no runtime field. Minting it here,
-  // and only here, is the fact it records.
   return parts as Parts & MintedQueryKey
 }
 
-/** Roots whose every key one invalidation covers. */
 type QueryRoot =
   | typeof ITEMS_ROOT
   | typeof BROWSE_ROOT
@@ -94,9 +74,6 @@ export const queryKeys = {
   officialRatings: (kinds: readonly TitleKind[]) => key("official-ratings", kinds),
   serverInfo: (server: string) => key("server-info", server),
   quickConnect: (secret: string) => key("quick-connect", secret),
-  // Live exact-person pages are not local SQLite projections. Keeping their
-  // root separate prevents every committed sync batch from re-running the
-  // same Jellyfin filmography query.
   items: (query: ItemQuery) =>
     query.personId ? key("person-items", query) : key(ITEMS_ROOT, query),
   browsePage: (source: BrowseSource, offset: number, limit: number) =>
@@ -115,8 +92,6 @@ export const queryKeys = {
   media: (id: string) => key("item", id, "media"),
   trailer: (id: string) => key("item", id, "trailer"),
   nextUp: (id: string) => key("item", id, "nextup"),
-  // Live Jellyfin answers like person items, under their own root so a
-  // watched change can refresh the cards without naming the page's item.
   similar: (id: string) => key("similar", id),
   playbackNeighbors: (id: string) => key("player", "neighbors", id),
   playerState: key("player", "state"),
@@ -155,14 +130,6 @@ export const queryKeys = {
     key("collections", account, "movie", tmdbId),
 }
 
-/**
- * Options for a query on an id the caller may not have yet: it runs once the id
- * is there, and every observer of the key carries the real fetcher.
- *
- * Use it instead of `id!` in a fetcher. Do not stand in `skipToken` for the
- * missing id: observers of one key share its options, so a `skipToken`
- * observer leaves the others nothing to refetch with (b2926ab).
- */
 export function optionalIdQuery<Id, Data>(
   id: Id | null | undefined,
   queryKey: MintedQueryKey,
@@ -171,8 +138,6 @@ export function optionalIdQuery<Id, Data>(
 ) {
   return queryOptions({
     queryKey,
-    // Pass the context through untouched: reading `signal` makes TanStack cancel
-    // the query when its last observer unmounts, so only fetchers that read it opt in.
     queryFn: (context) => (id ? fetch(id, context) : Promise.reject(new Error("query ran without its id"))),
     enabled: Boolean(id) && enabled,
   })
@@ -209,11 +174,6 @@ export function removeAccountQueryData(client: QueryClient) {
   })
 }
 
-/**
- * Everything that changes when a request is made or cancelled. Kept apart from
- * `invalidateMediaSurfaces`: a Seerr write changes nothing about the local
- * library, and refetching the grid over it would be wasted work.
- */
 export function invalidateSeerrSurfaces(client: QueryClient) {
   const active = { refetchType: "active" as const }
   void client.invalidateQueries({ queryKey: queryKeys.seerrScope("requests"), ...active })
@@ -225,25 +185,12 @@ export function invalidateSeerrSurfaces(client: QueryClient) {
   void client.invalidateQueries({ queryKey: queryKeys.seerrStatus, ...active })
 }
 
-/**
- * Applies a control's expected outcome to the player snapshot right away, so a
- * button does not look like it did nothing until mpv pushes the new state.
- */
 export function patchPlayerState(client: QueryClient, patch: Partial<PlayerState>) {
   client.setQueryData<PlayerState>(queryKeys.playerState, (previous) =>
     previous ? { ...previous, ...patch } : previous,
   )
 }
 
-/**
- * The user-state invalidation entry point. Watched/favorite/playback changes
- * refresh only projections that display that state; live prose, credits,
- * trailers, and technical media facts are independent and stay cached.
- *
- * Takes several ids because the item whose state changed is often not the one
- * on screen: marking an episode watched from a season page has to refresh the
- * season's child list, and the series' Next Up, as well as the episode itself.
- */
 export function invalidateMediaSurfaces(
   client: QueryClient,
   ...itemIds: (string | null | undefined)[]
@@ -251,9 +198,6 @@ export function invalidateMediaSurfaces(
   const active = { refetchType: "active" as const }
   const exactActive = { ...active, exact: true }
   void client.invalidateQueries({ queryKey: queryKeys.home, ...active })
-  // Billboard slides come from a randomized endpoint. Their user-data controls
-  // are patched by the mutations, so refreshing that query here would replace
-  // the active title instead of merely updating it.
   void client.invalidateQueries({ queryKey: queryKeys.root(ITEMS_ROOT), ...active })
   void client.invalidateQueries({ queryKey: queryKeys.root("person-items"), ...active })
   void client.invalidateQueries({ queryKey: queryKeys.root("similar"), ...active })
@@ -288,14 +232,6 @@ const LIBRARY_CHANGE_REFRESHES: Record<
     home: "all" | "summary" | "none"
     details: "named" | "all"
     grids: (source: BrowseSource) => boolean
-    /**
-     * Whether every "Latest in <library>" shelf refreshes, live ones included;
-     * a library the batch names refreshes either way. `catalog-changed` (the
-     * bootstrap's pages) refreshes only the catalog libraries it names;
-     * `library-changed` (incremental cycles, pushed changes) and
-     * `live-changed` (live and resync scopes) refresh every shelf once per
-     * event.
-     */
     shelves: boolean
   }
 > = {
@@ -329,13 +265,6 @@ function isBrowseSource(value: unknown): value is BrowseSource {
   return value.scope === "titles" || value.scope === "library" || value.scope === "children"
 }
 
-/**
- * One committed native batch becomes one React Query invalidation operation.
- * The predicate covers aggregate projections, diagnostics/status, changed
- * details, and parent/series/season contexts while preserving active-only
- * refetch behavior. `libraryIds` names libraries whose grids and Latest
- * shelves refresh beyond the scope's own.
- */
 export function invalidateLibraryChanged(
   client: QueryClient,
   itemIds: readonly string[],
@@ -359,8 +288,6 @@ export function invalidateLibraryChanged(
           || (id.scope === "library" && namedLibraries.has(id.libraryId))
       }
       if (root === "item" && details === "all") return query.queryKey.length === 2 || part === "children"
-      // The billboard endpoint is random. A committed sync batch may update
-      // shelves around it, but must not replace a selected slide or its video.
       return root === "item" && relevant.has(String(id))
     },
   })

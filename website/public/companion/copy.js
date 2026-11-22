@@ -1,6 +1,3 @@
-// The install guide's copy button. Without this script the URL is still
-// plain, selectable text and the button stays hidden.
-
 const button = document.querySelector("[data-copy]")
 const source = document.querySelector("[data-copy-source]")
 const label = document.querySelector("[data-copy-label]")

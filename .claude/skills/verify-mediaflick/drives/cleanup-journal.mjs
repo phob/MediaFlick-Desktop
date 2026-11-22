@@ -1,12 +1,3 @@
-// Proves a test favorite is removed from the server even when its run never
-// finishes. --account only. Favorites the most recently added movie that is
-// not a favorite on its detail page, then fails on purpose, so the after-run
-// task must take the favorite off again. With MEDIAFLICK_VERIFY_HARD_EXIT=1 it
-// instead ends the session process right after the write, as a kill would;
-// the favorite then stays listed in build/verify/pending-favorites.json until
-// the next --account run reconciles it before launch. Both modes fail by design.
-//   just verify cleanup-journal --account https://jellyfin.example.com
-//   $env:MEDIAFLICK_VERIFY_HARD_EXIT = "1"; just verify cleanup-journal --account https://jellyfin.example.com
 import { isFavorite, readJournal } from "../scripts/favorites.mjs"
 
 export default async function cleanupJournal(ctx) {

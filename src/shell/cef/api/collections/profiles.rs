@@ -16,8 +16,6 @@ use crate::collections::{
 };
 use crate::preferences::FranchiseSettings;
 
-/// `/api/collections/settings`: which collection experience the account
-/// sees, and whether MediaFlick collections can be offered.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(in super::super) struct CollectionSettings {
@@ -29,7 +27,6 @@ pub(in super::super) struct CollectionSettings {
     readiness: ProviderReadiness,
 }
 
-/// A damaged `collections.json` was set aside on load.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 struct CollectionRecovery {
@@ -37,7 +34,6 @@ struct CollectionRecovery {
     restored_backup: bool,
 }
 
-/// `/api/collections/templates`: every template, in category order.
 #[derive(Serialize, ts_rs::TS)]
 pub(in super::super) struct CollectionTemplates {
     categories: Vec<TemplateCategory>,
@@ -48,12 +44,9 @@ pub(in super::super) struct CollectionTemplates {
 #[derive(Serialize, ts_rs::TS)]
 struct CollectionTemplateOption {
     template: CollectionTemplate,
-    /// The provider the template reads from is ready.
     available: bool,
 }
 
-/// The account's collection profiles, with each invalid one's reason by
-/// profile id.
 #[derive(Serialize, ts_rs::TS)]
 pub(in super::super) struct CollectionProfilesIndex {
     pub(super) profiles: Vec<CollectionProfile>,
@@ -69,16 +62,12 @@ impl CollectionProfilesIndex {
     }
 }
 
-/// A profile whose results were fetched and committed, with the number of
-/// titles the account can see.
 #[derive(Serialize, ts_rs::TS)]
 pub(in super::super) struct CommittedProfile {
     profile: CollectionProfile,
     total: u32,
 }
 
-/// `PATCH /api/collections/profiles/{id}`: a change to what the collection
-/// lists fetches and commits its results; any other change only saves it.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(untagged)]
 pub(in super::super) enum ProfileEdit {

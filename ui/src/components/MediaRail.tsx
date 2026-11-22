@@ -4,15 +4,6 @@ import { Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { Pressable } from "@/components/ui/pressable"
 
-/**
- * One horizontally scrolling shelf: a heading, an optional "Browse all", and
- * edge arrows that only appear on hover and only on the side there is more to
- * see.
- *
- * The cards are passed in rather than derived from a list of items, because the
- * shelves differ in what a card is — a poster, a wide progress card, a ranked
- * pair of numeral and poster — while the scrolling is identical in all of them.
- */
 export function MediaRail({
   title,
   viewAll,
@@ -50,10 +41,6 @@ export function MediaRail({
     return () => observer.disconnect()
   }, [measure, itemCount])
 
-  // A shelf always reads from its first position: at mount, because the browser
-  // may otherwise restore a stale horizontal offset across a reload, and when
-  // the leading item changes, so a freshly synced title is visibly the new
-  // first card while everything after it shifts one slot to the right.
   useLayoutEffect(() => {
     const node = rail.current
     if (node && node.scrollLeft !== 0) node.scrollLeft = 0

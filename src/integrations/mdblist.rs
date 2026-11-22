@@ -1,13 +1,3 @@
-//! Companion-mediated MDBList ratings for desktop cards.
-//!
-//! Catalog queries never call this module. Mounted cards request IDs after they
-//! render; those IDs are deduplicated, resolved to stable TMDB/IMDb identities,
-//! served stale-while-revalidate from SQLite, and refreshed in bounded batches.
-//! The versioned Companion boundary owns all provider access and never returns
-//! the plugin administrator's credential. Every response and cache value is
-//! rebuilt through a fixed public rating schema before persistence or desktop
-//! serialization.
-
 mod cache;
 mod schema;
 
@@ -25,14 +15,12 @@ use self::schema::{RatingSourceDefinition, known_source_definitions};
 
 pub use self::cache::RatingsBatchResponse;
 
-/// Where a card's ratings came from. The Companion is the only source.
 #[derive(Clone, Copy, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 enum RatingOrigin {
     Plugin,
 }
 
-/// Where new ratings come from, `none` while the Companion offers none.
 #[derive(Clone, Copy, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 enum EffectiveOrigin {
@@ -40,8 +28,6 @@ enum EffectiveOrigin {
     None,
 }
 
-/// `/api/integrations/ratings`: whether card ratings are available and which
-/// sources the app knows.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RatingsIntegrationStatus {
@@ -66,7 +52,6 @@ struct RatingsPluginStatus {
 #[derive(Debug)]
 pub enum RatingsError {
     Storage,
-    /// The account was switched before the batch was answered.
     AccountChanged,
 }
 

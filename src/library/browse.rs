@@ -138,9 +138,6 @@ pub fn library_options(library: &Library, id: &LibraryId) -> Result<FilterOption
     }
 }
 
-/// A library's newest titles, with the library sort its "All" opens: the
-/// shelf's own order for catalog and newest-first libraries, date added for
-/// grouped ones, whose shelf groups new items into their parents.
 pub struct Latest {
     pub grid: Grid,
     pub sort: SortKey,
@@ -220,7 +217,6 @@ pub enum LiveDetail<'a> {
     Title(LiveTitle<'a>),
 }
 
-/// A book the reader opens. An audiobook, or a folder of books, is not one.
 pub fn is_book(dto: &BaseItemDto) -> bool {
     dto.item_type.as_deref() == Some("Book") && !dto.is_folder
 }
@@ -256,7 +252,6 @@ pub fn write_live_title(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChildrenSource {
     Folder,
-    /// The owner's manual order, which only the playlist route keeps.
     Playlist,
 }
 

@@ -2,7 +2,6 @@ pub const INPUT_SECTION_NAME: &str = "mediaflick_desktop_input";
 pub const MARK_WATCHED_NEXT_COMMAND: &str = "mark-watched-next";
 pub const NEXT_TRACK_COMMAND: &str = "next-track";
 pub const PREVIOUS_TRACK_COMMAND: &str = "previous-track";
-/// The media keys skip through the app's audio queue, not mpv's playlist.
 const TRACK_BINDINGS: &[(&str, &str)] = &[
     ("NEXT", NEXT_TRACK_COMMAND),
     ("PREV", PREVIOUS_TRACK_COMMAND),

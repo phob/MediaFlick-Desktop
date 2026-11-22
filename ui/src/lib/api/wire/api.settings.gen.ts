@@ -13,9 +13,6 @@ export type AppearanceView = {
   reducedMotion: boolean,
   cardPreviews: boolean,
   showMediaInfo: boolean,
-  /**
-   * Canonical IDs from the fixed public MDBList source catalog.
-   */
   ratingSources: Array<string>,
 };
 
@@ -85,9 +82,6 @@ export type ViewingView = {
   spoilerProtection: boolean,
   nextEpisode: NextEpisode,
   countdownSeconds: number,
-  /**
-   * Zero leaves continuous playback unlimited.
-   */
   episodeLimit: number,
   audioLanguages: Array<string>,
   subtitleLanguages: Array<string>,

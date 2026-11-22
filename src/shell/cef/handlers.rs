@@ -62,11 +62,6 @@ wrap_jsdialog_handler! {
     }
 
     impl JsdialogHandler {
-        // CEF has no visible beforeunload dialog for the windowless browser,
-        // and the page's renderer blocks until one is answered. Cancel the
-        // unload and let the page ask with its own dialog; leaving then calls
-        // window.close(). A forced close (exit for an update, or a vanished
-        // native window) proceeds without asking.
         fn on_before_unload_dialog(
             &self,
             _browser: Option<&mut Browser>,
@@ -347,8 +342,6 @@ wrap_life_span_handler! {
             };
 
             if should_quit {
-                // Every way out ends here: the window's close button, Exit,
-                // Cmd+Q and the quit Apple event.
                 tracing::info!(target: "app", "last window closed; shutting down");
                 if let Some(surface) = &self.overlay_surface {
                     surface.destroy();
@@ -392,9 +385,6 @@ wrap_load_handler! {
             apply_scrollbar_settings_to_frame(frame, &self.state);
             show_pending_update_to_frame(frame, &self.state);
 
-            // Main-frame navigation failures are replaced with the native
-            // recovery document below. It has no React startup cover to report
-            // readiness, so reveal it once CEF confirms that document loaded.
             let frame_url = CefString::from(&frame.url()).to_string();
             if frame_url.starts_with("data:text/html") {
                 reveal_main_window(&self.state);
@@ -528,12 +518,6 @@ wrap_resource_request_handler! {
             if app_scheme::is_app_url(&request_url) {
                 return ReturnValue::CONTINUE;
             }
-            // YouTube rejects embeds from custom schemes with player error 153
-            // because Chromium has no HTTP origin to send as the referrer.
-            // This one validated frame is the app's only remote embed; give its
-            // initial request a conventional local-app HTTP origin so YouTube
-            // receives the client identity it requires. Nested player requests
-            // then carry their normal web referrer.
             if request_url.starts_with("https://www.youtube-nocookie.com/embed/") {
                 request.set_referrer(
                     Some(&CefString::from("http://localhost/")),

@@ -133,8 +133,6 @@ fn auth_logout(
     Ok(app_status(services))
 }
 
-/// A deletion left pending by a failure is finished before anyone signs in,
-/// or it would delete the new session's account data at the next launch.
 fn finish_pending_deletions(services: &Arc<Services>) -> Result<(), ApiResponse> {
     crate::app::services::finish_pending_deletions(services).map_err(|error| {
         ApiResponse::error(

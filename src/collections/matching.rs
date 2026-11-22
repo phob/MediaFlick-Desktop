@@ -122,8 +122,6 @@ pub fn save_identity_mappings(
     })
 }
 
-/// The Companion request that builds a profile's results. A TMDB collection
-/// also carries the movies this library owns.
 pub fn provider_request(
     library: &Library,
     profile: &CollectionProfile,

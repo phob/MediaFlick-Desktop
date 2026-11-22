@@ -264,11 +264,6 @@ public sealed class RatingsService : IDisposable
             StateFromResponse(response, previous, now, preserveValidOnTransientFailure));
     }
 
-    /// <summary>
-    /// Only a 401/403 rejects the key. Rate limits, timeouts, and outages
-    /// leave a saved key's validity unchanged, but a new key that could not
-    /// be verified is not saved.
-    /// </summary>
     private async Task ValidateTmdbAsync(
         string key,
         bool preserveValidOnTransientFailure,
@@ -336,11 +331,6 @@ public sealed class RatingsService : IDisposable
             }
             catch (Exception exception)
             {
-                // Background stale refresh is strictly best-effort. The next
-                // request can retry after the persisted provider backoff.
-                // Upstream HTTP outcomes are logged by the transport; this is
-                // an unexpected failure, reported once per exception type and
-                // never with text that could carry the API key.
                 _logger.Log(
                     _backgroundFailures.Failure(
                         BackgroundRefreshSubject,
@@ -483,8 +473,6 @@ public sealed class RatingsService : IDisposable
             };
         }
 
-        // MDBList authenticates before rate limiting, so a quota answer still
-        // validates even a newly saved key; it does not grant extra requests.
         return ProviderHealthPolicy.AfterValidation(
             previous,
             outcome,

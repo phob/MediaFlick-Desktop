@@ -1,11 +1,5 @@
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-/// <summary>
-/// A thread-safe in-memory cache with a fixed lifetime and entry cap. Expired
-/// entries are dropped when read or when the cache fills; past the cap the
-/// oldest entries are evicted, so memory stays bounded however many distinct
-/// keys clients request.
-/// </summary>
 internal sealed class BoundedCache<TKey, TValue>
     where TKey : notnull
 {
@@ -79,8 +73,6 @@ internal sealed class BoundedCache<TKey, TValue>
                 }
             }
 
-            // Trim a little below the cap so a full cache does not rescan on
-            // every insert.
             var excess = _entries.Count - Math.Max(1, _capacity - (_capacity / 10));
             if (excess <= 0)
             {

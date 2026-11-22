@@ -1,9 +1,3 @@
-// A load the player refuses ends the audio queue. With External mpv pointed
-// at an executable that does not exist, Play on the `Test Tones` album must
-// reach the UI as one playback failure and then one Stopped, the queue's
-// terminal event, describing the queue with an error; the bar must be gone
-// within 3 s and the player idle. Writes audio-refused.json and a screenshot.
-//   just verify audio-refused --account SERVER --seed .claude/skills/verify-mediaflick/seeds/missing-mpv
 const ALBUM = "Test Tones"
 const ALBUM_ARTIST = "MediaFlick Fixtures"
 const MISSING_MPV = "/nonexistent/mpv"

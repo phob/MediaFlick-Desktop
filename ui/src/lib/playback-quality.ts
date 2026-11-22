@@ -1,14 +1,6 @@
 import { useSyncExternalStore } from "react"
 import type { StreamingQualityId } from "./api"
 
-/**
- * The per-session streaming-quality override, carried over from the
- * hand-written UI's `state.quality`. The persisted default lives in Client
- * Settings (the native dialog); this only redirects the *next* playback, so it
- * is deliberately module state rather than something written back to disk.
- *
- * `null` means "use the saved Settings default".
- */
 let override: StreamingQualityId | null = null
 const listeners = new Set<() => void>()
 

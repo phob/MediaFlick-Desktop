@@ -1,22 +1,3 @@
-// End-to-end check of the Home "Release Timeline" shelf (built-in id `upcoming`).
-//
-// Drives a running, signed-in MediaFlick Desktop through its real path:
-// Desktop -> Jellyfin library and Companion calendar (Sonarr, Radarr). Start
-// the app with `--remote-debugging-port 9334` (or set CDP_PORT) with the
-// Release Timeline shelf enabled on Home, then run:
-//
-//   node scripts/e2e/upcoming-shelf.mjs [output-dir] [scenario]
-//
-// Scenario `live` (default) checks the server's real calendar. Scenario
-// `missing` covers a release that has not arrived even when the server has
-// none: it rewrites the app's calendar response in flight so the latest
-// released movie has no file and no library match, and expects its card to
-// say Missing. Everything else still runs through the real app.
-//
-// The output directory (default build/e2e/upcoming-shelf[-missing]) receives
-// report.json and screenshots of the shelf at its start and at the first
-// upcoming card. The script exits non-zero when an invariant fails.
-
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 
@@ -74,10 +55,6 @@ const check = (condition, message) => {
   if (!condition) failures.push(message)
 }
 
-// The `missing` scenario: the latest movie released in the window loses its
-// file and library match in every calendar response the app receives. CDP
-// request interception does not see the app's custom scheme, so the page's
-// own fetch is wrapped before the app loads.
 if (scenario === "missing") {
   await send("Page.addScriptToEvaluateOnNewDocument", {
     source: `(() => {

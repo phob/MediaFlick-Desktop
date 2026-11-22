@@ -11,12 +11,6 @@ const libarchive = path.dirname(require.resolve("libarchive.js/dist/libarchive.j
 const libarchiveWasm = path.resolve(import.meta.dirname, "../distribution/libarchive-wasm/bundle")
 const libarchiveWasmRecipe = path.resolve(import.meta.dirname, "../distribution/libarchive-wasm/build.sh")
 
-/**
- * foliate runs as unbundled ES modules that find their vendor files by
- * `import.meta.url`, and pdf.js and libarchive.js each need a worker script,
- * so none of this can go into `app.js`. License files stay out: the notices
- * are in THIRD-PARTY-NOTICES.md.
- */
 const READER_FILES: { from: string; to: string; files: readonly string[] }[] = [
   {
     from: foliate,
@@ -41,8 +35,6 @@ function readerAssets(): Plugin {
   return {
     name: "mediaflick-reader-assets",
     apply: "build",
-    // The package's libarchive.js and the vendored worker talk one protocol,
-    // so both halves must come from the same libarchive.js release.
     buildStart() {
       const manifest: unknown = require("libarchive.js/package.json")
       const npm = typeof manifest === "object" && manifest !== null && "version" in manifest ? String(manifest.version) : null
@@ -69,11 +61,6 @@ function readerAssets(): Plugin {
   }
 }
 
-// The bundle is embedded in the Rust binary and served from memory over the
-// `mediaflick-desktop://app/` scheme, so there is no network between the bundle
-// and the renderer: code splitting and content hashing buy nothing. Emitting
-// fixed `app.js` / `app.css` names keeps `static_asset` in
-// `src/shell/cef/api/assets.rs` a small match.
 export default defineConfig({
   plugins: [react(), tailwindcss(), readerAssets()],
   resolve: {

@@ -335,9 +335,6 @@ impl LibmpvOverlaySurface {
         }
         if let Some(host) = self.browser_host() {
             if !scale_changed && (old.width != geometry.width || old.height != geometry.height) {
-                // Release the retained old-size frame before CEF allocates the
-                // replacement. In particular, don't hold a fullscreen buffer
-                // while returning to a small window.
                 *self.frame.borrow_mut() = Vec::new();
                 self.frame_size.set((0, 0));
                 host.was_resized();
@@ -363,7 +360,6 @@ impl LibmpvOverlaySurface {
             self.close();
             return false;
         }
-        // Drain a bounded batch so continuous input cannot starve CEF tasks.
         for _ in 0..256 {
             let event = self
                 .window

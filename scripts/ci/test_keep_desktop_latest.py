@@ -1,21 +1,3 @@
-"""Tests for the Latest release guard's decision.
-
-The expected values come from the rule Martin set on 2026-11-15, not from the
-code: GitHub's Latest release must carry a desktop tag `v<digits>.<digits>.<digits>`,
-because the desktop updater (`src/maintenance/updater.rs`) and the flick.media
-download buttons both read `releases/latest`. When it does not, Latest goes back
-to the newest published, non-prerelease desktop release and the run fails.
-
-Ways the decision could go wrong, each covered below:
-- a Companion tag, a suffixed desktop tag or a near miss counts as a desktop tag;
-- non-ASCII digits or surrounding whitespace pass the pattern;
-- a desktop Latest that is not the newest gets overridden;
-- a missing Latest (404) passes silently;
-- a draft, a prerelease, a Companion or a suffixed release is chosen to restore;
-- "newest" compares tags as text (v0.10.0 < v0.9.0) or by publish order;
-- no candidate leads to a crash or a silent pass.
-"""
-
 import random
 import unittest
 
@@ -48,8 +30,8 @@ class DesktopTagTests(unittest.TestCase):
             "v0.2.0 ",
             "v0.2.0\n",
             " v0.2.0",
-            "v０.2.0",  # fullwidth digit zero
-            "v0.٢.0",  # Arabic-Indic digit two
+            "v０.2.0",
+            "v0.٢.0",
             "",
         ):
             self.assertFalse(is_desktop_tag(tag), repr(tag))
@@ -60,7 +42,6 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(decide("v0.1.6", DESKTOP), Keep("v0.1.6"))
 
     def test_an_older_desktop_latest_is_kept(self):
-        # The rule only asks for a desktop tag; an older one may be deliberate.
         releases = [*DESKTOP, release("v0.2.0", id=20)]
         self.assertEqual(decide("v0.1.6", releases), Keep("v0.1.6"))
 
@@ -99,9 +80,6 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(decide(None, []), NoCandidate(None))
 
     def test_restore_target_is_always_the_highest_stable_desktop_release(self):
-        # Invariant over generated release lists: whatever the mix, a non-desktop
-        # Latest is restored to the highest x.y.z among published, non-prerelease
-        # desktop releases, and a desktop Latest is kept.
         generator = random.Random(20261115)
         for _ in range(500):
             releases = []
@@ -123,7 +101,7 @@ class DecisionTests(unittest.TestCase):
                 self.assertEqual(decision, NoCandidate(latest))
             else:
                 self.assertIsInstance(decision, Restore)
-                assert isinstance(decision, Restore)  # narrows the type for the next line
+                assert isinstance(decision, Restore)
                 self.assertEqual(decision.target.tag, best.tag)
 
 

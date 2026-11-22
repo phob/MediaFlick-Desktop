@@ -46,15 +46,9 @@ pub struct Services {
     playback: RwLock<Option<Arc<PlaybackCoordinator>>>,
 }
 
-/// Native work requested by the React application. The app-scheme API runs on
-/// CEF background threads, while file dialogs and player installation must run
-/// on CEF's UI thread; this narrow queue is the boundary between the two.
 #[derive(Debug, Clone)]
 pub enum ShellRequest {
-    /// The startup cover has left the DOM and the completed initial route has
-    /// painted. Revealing the native window must happen on CEF's UI thread.
     MainWindowReady,
-    /// Choose the external mpv executable for the Player settings draft.
     FilePicker {
         request_id: String,
     },
@@ -65,34 +59,22 @@ pub enum ShellRequest {
         item_ids: Vec<String>,
         context_ids: Vec<String>,
     },
-    /// Items and folders the server changed that only Jellyfin serves.
     LiveChanged {
         item_ids: Vec<String>,
         context_ids: Vec<String>,
     },
-    /// The event stream was lost and is back, so any page Jellyfin serves
-    /// directly may have missed changes.
     LiveResynced,
-    /// A bootstrap page changed local catalog projections only, so of the
-    /// library grids only those of the catalog-tier libraries can change.
     CatalogChanged {
         item_ids: Vec<String>,
         context_ids: Vec<String>,
         library_ids: Vec<String>,
     },
     CollectionsChanged,
-    /// The account's library list changed: a library was added, removed,
-    /// renamed or moved, or the list was read for the first time.
     LibrariesChanged,
-    /// A library's membership walk landed. After its first walk a library no
-    /// longer reports its membership pending; its titles may not have changed.
     LibraryMembershipsSettled,
     SessionExpired,
 }
 
-/// The queue from background work to the CEF UI thread. The services that
-/// change what the UI shows hold it directly; until CEF subscribes, requests
-/// are dropped, which is safe because no page can have read the old state.
 #[derive(Default)]
 pub struct ShellBridge {
     sender: Mutex<Option<mpsc::Sender<ShellRequest>>>,
@@ -167,8 +149,6 @@ impl ShellBridge {
         let _ = self.request(ShellRequest::LibraryMembershipsSettled);
     }
 
-    /// Refreshes aggregate watch-state projections once after a full catalog
-    /// observation, including user data learned during a daily rebootstrap.
     pub fn library_sync_completed(&self) {
         let _ = self.request(ShellRequest::LibraryChanged {
             item_ids: Vec::new(),
@@ -178,8 +158,6 @@ impl ShellBridge {
 }
 
 impl Services {
-    /// The playback coordinator is created with the browser state, after the
-    /// services exist, so it is attached rather than injected.
     pub fn attach_playback(&self, playback: Arc<PlaybackCoordinator>) {
         if let Ok(mut slot) = self.playback.write() {
             *slot = Some(playback);
@@ -191,19 +169,14 @@ impl Services {
     }
 }
 
-/// Why the services did not open: the reason the user reads and, when
-/// `library.db` was what failed, how it was refused.
 pub struct StartupFailure {
     pub reason: String,
     pub library: Option<LibraryRefusal>,
 }
 
-/// How `library.db` was refused. Either way the file was left as it was.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LibraryRefusal {
-    /// A newer MediaFlick wrote it.
     NewerSchema,
-    /// SQLite could not open it, or its schema change failed and rolled back.
     Unusable,
 }
 
@@ -216,8 +189,6 @@ impl From<String> for StartupFailure {
     }
 }
 
-/// Builds the services and resumes interrupted account deletions. The caller
-/// publishes them before `start` lets background work reach the shell.
 pub fn open(
     _: &InitPermit,
     initial_settings: AppSettings,
@@ -309,8 +280,6 @@ pub fn open(
     Ok(services)
 }
 
-/// Opens `library.db`, or says how it was refused. A refused file was left
-/// as it was; its reason goes to the log in full.
 fn open_library() -> Result<Arc<Library>, StartupFailure> {
     let path = paths::library_db_path();
     let error = match Library::open(&path) {
@@ -337,10 +306,6 @@ fn open_library() -> Result<Arc<Library>, StartupFailure> {
     })
 }
 
-/// How a failed open refused `library.db`, for Recreate library. `None` when
-/// another program holds the file (SQLite's BUSY or LOCKED): moving a
-/// database another connection has open can corrupt it, so that one is only
-/// explained.
 fn library_refusal(error: &OpenError) -> Option<LibraryRefusal> {
     let sqlite = match error {
         OpenError::NewerSchema { .. } => return Some(LibraryRefusal::NewerSchema),
@@ -361,9 +326,6 @@ pub fn start(_: &InitPermit, services: &Arc<Services>) {
     );
 }
 
-/// `open` runs under the shell's init lock, which the CEF UI thread waits on,
-/// so the probe must not wait on the network there; it warms the cache from
-/// its own thread and the API paths re-check lazily.
 fn warm_restored_session(session: Arc<Session>, companion: Arc<CompanionSession>) {
     crate::app::threads::spawn_named("session-restore", move || {
         session.refresh_user_policy();
@@ -388,8 +350,6 @@ fn connect_app_hooks(services: &Arc<Services>) {
     }));
 }
 
-/// Completes every journaled account deletion, at launch and before a sign-in,
-/// so an account signed into again is never deleted at the next launch.
 pub fn finish_pending_deletions(services: &Arc<Services>) -> Result<(), String> {
     let mut first_error = None;
     for deletion in services.pending_deletions.pending() {
@@ -630,17 +590,10 @@ pub(crate) mod test_support {
 mod tests {
     use super::*;
 
-    /// A failure with SQLite's result code `code`, as rusqlite reports one.
     fn sqlite(code: i32) -> rusqlite::Error {
         rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None)
     }
 
-    /// The codes are SQLite's documented result codes
-    /// (https://sqlite.org/rescode.html): SQLITE_BUSY 5, SQLITE_LOCKED 6 and
-    /// their extended codes SQLITE_BUSY_RECOVERY 261, SQLITE_BUSY_SNAPSHOT
-    /// 517, SQLITE_BUSY_TIMEOUT 773 and SQLITE_LOCKED_SHAREDCACHE 262 mean
-    /// another connection holds the file; SQLITE_ERROR 1, SQLITE_CANTOPEN 14,
-    /// SQLITE_CORRUPT 11 and SQLITE_NOTADB 26 do not.
     #[test]
     fn a_library_another_program_holds_is_never_offered_for_recreation() {
         for code in [5, 6, 261, 517, 773, 262] {

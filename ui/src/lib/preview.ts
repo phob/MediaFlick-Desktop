@@ -1,7 +1,3 @@
-// The expanded-card layer's context, kept apart from the component that renders
-// it so that file exports components and nothing else — which is what lets Vite
-// hot-replace the panel without dropping the provider's state.
-
 import { createContext, useContext, useSyncExternalStore } from "react"
 import type React from "react"
 import type { ItemSummary } from "./api"
@@ -20,11 +16,6 @@ export interface PreviewApi {
   enabled: boolean
 }
 
-/**
- * The expanded id lives outside the context value. A context update would
- * re-render every card under the provider on each open and close; a store lets
- * each card subscribe to whether it alone is the expanded one.
- */
 export interface ExpandedStore {
   current: () => string | null
   set: (id: string | null) => void
@@ -63,13 +54,6 @@ interface PreviewState {
   previewsEnabled: boolean
 }
 
-/**
- * Hover handlers for one card, plus whether that card is the expanded one.
- *
- * Outside a `PreviewProvider` — or with `enabled` off — this hands back empty
- * handlers rather than throwing, so a card can be rendered anywhere without the
- * caller having to know whether the layer is mounted above it.
- */
 export function usePreview(
   item: ItemSummary,
   enabled = true,
@@ -86,13 +70,8 @@ export function usePreview(
     expanded,
     previewsEnabled: preview.enabled,
     handlers: {
-      // Pointer, not mouse: a touch drag across a rail would otherwise arm the
-      // timer for every card it passed and pop a panel nothing can dismiss.
       onPointerEnter: (event) => {
         if (event.pointerType !== "mouse") return
-        // A pointer arriving with a button already held is mid-drag — a text
-        // selection or a press that wandered. A panel opened under it would
-        // read the eventual release as a click it was never meant to receive.
         if (event.buttons !== 0) return
         preview.open(item, event.currentTarget)
       },

@@ -1,9 +1,3 @@
-//! MediaFlick Companion discovery and provider selection.
-//!
-//! The server plugin is optional. Its API is probed with the authenticated
-//! Jellyfin client and cached for the life of that login; every feature then
-//! selects the plugin backend only when the advertised v1 capability exists.
-
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -28,9 +22,6 @@ const MAX_API_VERSION: i64 = 1;
 const FAILED_PROBE_RETRY: Duration = Duration::from_secs(30);
 const SUCCESSFUL_PROBE_REUSE: Duration = Duration::from_secs(5 * 60);
 const FRANCHISE_MEMBERSHIPS_CAPABILITY: &str = "franchise-memberships-v1";
-/// The oldest Jellyfin the Companion installs on. `plugin/package.py` writes
-/// the Jellyfin.Controller version the plugin compiles against as its
-/// `targetAbi`, which Jellyfin reads as the minimum server version.
 pub const MINIMUM_SERVER: ServerVersion = ServerVersion::new(12, 0, 0);
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, ts_rs::TS)]
@@ -65,8 +56,6 @@ pub struct CompanionStatus {
     pub info: Option<CompanionInfo>,
     pub error: Option<String>,
     pub supported_api: SupportedApi,
-    /// Set when the Companion was not found and the server is older than
-    /// the Companion needs, so it cannot be installed there.
     pub server_too_old: Option<ServerTooOld>,
 }
 
@@ -194,8 +183,6 @@ impl CompanionSession {
                 Ok(Some(info))
             }
             Err(ApiError::Status { status: 404 } | ApiError::Remote { status: 404, .. }) => {
-                // Only says why it is missing, so a failed read leaves the
-                // plain "not found" instead of failing the probe.
                 let server = scope
                     .fetch(|client, _| auth::public_system_info(client))
                     .inspect_err(|error| {
@@ -223,9 +210,6 @@ impl CompanionSession {
                 Ok(None)
             }
             Err(error) => {
-                // The capability/status object is browser-visible. The info
-                // client already strips HTTP diagnostics; retain only a fixed
-                // state label so logs and telemetry cannot reintroduce them.
                 let previous = self.read();
                 self.replace_scoped(&scope, |_live| {
                     let state = ProbeState {
@@ -274,8 +258,6 @@ impl CompanionSession {
         }
     }
 
-    /// Asks for server ratings as `scope`. The answer stays sealed so the
-    /// ratings cache can open it under the commit that stores it.
     pub fn ratings_v1(
         &self,
         scope: &SessionScope,
@@ -518,8 +500,6 @@ impl CompanionSession {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = state;
     }
 
-    /// Stores the probe state `build` makes, while `scope` is still the
-    /// signed-in account, and returns what `build` returned with it.
     fn replace_scoped<T>(
         &self,
         scope: &SessionScope,
@@ -541,9 +521,6 @@ impl CompanionSession {
         Ok(answer)
     }
 
-    /// Calls the Companion as `scope` and opens the answer for the caller.
-    /// An answer or failure for an account that is no longer signed in is
-    /// [`ApiError::AccountChanged`].
     fn fetch<T>(
         &self,
         scope: &SessionScope,
@@ -639,7 +616,6 @@ fn join_calendar(library: &Library, value: &mut Value) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// The Companion calendar lists movies and episodes.
 fn calendar_kind(entry: &Value) -> Option<CatalogKind> {
     match entry["kind"].as_str()? {
         "movie" => Some(CatalogKind::Movie),
@@ -663,9 +639,6 @@ mod tests {
     use crate::library::Library;
     use serde_json::json;
 
-    /// The plugin's project file is the source: Jellyfin refuses a plugin
-    /// whose targetAbi is newer than the server, and package.py takes that
-    /// targetAbi from this reference.
     #[test]
     fn minimum_server_is_the_jellyfin_the_plugin_builds_against() {
         let project = include_str!(
@@ -786,10 +759,6 @@ mod tests {
 
     #[test]
     fn failed_probes_are_retried_and_successes_refreshed_after_a_while() {
-        // Failure modes: a failure stays cached until logout, so Companion
-        // features remain off after a plugin restart; a failure or success is
-        // re-probed on every read; a transient failure signs the user out; a
-        // success is never refreshed, so a removed plugin still looks present.
         const MUCH_LATER: Duration = Duration::from_secs(10 * 60);
         let server = ScriptedServer::start(503, "");
         let (session, companion) = companion_at(server.url.clone());

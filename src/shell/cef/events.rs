@@ -127,9 +127,6 @@ fn playback_event_needs_log(
     true
 }
 
-/// Settings are persisted from an app-scheme background thread.  CEF's player
-/// and frame APIs are UI-thread-only, so relay its apply plan before touching
-/// either of them.
 pub(super) fn start_preferences_event_bridge(state: &BrowserState, services: &Services) {
     let receiver = services.preferences.subscribe();
     let state = Arc::downgrade(state);
@@ -364,11 +361,6 @@ fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent, log_even
     }
 }
 
-/// Refreshes the stopped item from Jellyfin after its final playstate report.
-/// This lets the server — including any administrator-configured resume
-/// thresholds — decide whether the item belongs in Continue Watching.
-///
-/// Runs off the UI thread because both network and database work can block.
 fn mirror_playback_progress(state: &BrowserState, snapshot: &crate::playback::PlayerSnapshot) {
     let (Some(item_id), Some(services)) = (snapshot.item_id.clone(), locator::services()) else {
         return;

@@ -1,8 +1,3 @@
-// The `ctx` a drive receives. Elements are found the way assistive technology
-// sees them (CDP Accessibility.queryAXTree: role + accessible name) and
-// operated with real CDP mouse and keyboard input, so React sees the same
-// events a user produces.
-
 import { execFileSync } from "node:child_process"
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import net from "node:net"
@@ -116,9 +111,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return (await find(target, options)).properties
   }
 
-  // A click can close the app (`Discard and leave`). The app may then exit
-  // before CEF answers the mouse event, and the CDP client never settles a
-  // request on a closed socket, so each event also ends when the app exits.
   async function mouseAt(x, y) {
     const event = { x, y, button: "left", clickCount: 1 }
     const exited = currentChild().exited
@@ -146,23 +138,11 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     await sleep(400)
   }
 
-  // Scrolling only into view leaves a target at the viewport's edge, where a
-  // sticky bar (the settings save bar, once a draft exists) can cover it.
   async function centre(backendNodeId) {
     const { object } = await app.send("DOM.resolveNode", { backendNodeId })
     await app.send("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: "function () { this.scrollIntoView({ block: 'center', inline: 'nearest' }) }" })
   }
 
-  // Scrolls the element into view and returns a point the pointer really hits.
-  // The element must hold still first: leaving Home turns the pinned sidebar
-  // into a collapsed overlay and slides the content left, and a click at the
-  // old position lands on nothing. A toast covering it is waited out. Any
-  // other covered target first gets time to settle (transitions end, the
-  // expanding sidebar finishes), then is scrolled to the middle of the
-  // viewport, out from under sticky bars; only then is the pointer parked, because
-  // moving it away also closes hover-opened UI such as the sidebar. React may
-  // re-mount the element meanwhile; a detached node is found again rather
-  // than reported.
   async function reach(target, options) {
     let covered = 0
     let moving = 0
@@ -184,8 +164,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
         if (hit === true) return { element, rect }
         if (typeof hit === "string" && hit.startsWith("toast: ")) {
           if (++toasted === 30) throw new Error(`${describe(target)} is covered by ${hit}`)
-          // Sonner pauses a toast while the pointer rests on it, and the
-          // pointer is often still where Save was pressed, under the toast.
           if (toasted === 1) await park()
           await sleep(300)
           continue
@@ -274,8 +252,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return lines.join("\n")
   }
 
-  // Reads app state through the same /api the UI uses. For verifying results
-  // only: a proof must not perform its action through this.
   async function api(apiPath) {
     return app.evaluate(`fetch(${JSON.stringify(apiPath)}).then(async (response) => ({ status: response.status, body: await response.json().catch(() => null) }))`)
   }
@@ -296,12 +272,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return (await api("/api/player/state")).body
   }
 
-  // The pipe to read mpv on. mpv's own scripts can move its IPC server after
-  // the app has connected: SVP's mpvSockets.lua, shipped in many Windows mpv
-  // bundles and loaded by External mpv (`--load-scripts=yes`), re-points
-  // input-ipc-server to <TEMP>\mpvSockets\<pid>. The logged pipe's name
-  // lingers, but a new client there never connects. Follow the move to the
-  // pipe named after the mpv process launched with the logged one.
   function mpvSocketPath(logged) {
     if (!isWindows) return logged
     const prefix = "\\\\.\\pipe\\"
@@ -312,8 +282,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return `${prefix}${moved}`
   }
 
-  // One connection per mpv IPC path, kept for the drive, so a read never
-  // depends on mpv accepting a new client mid-playback.
   let mpvClient = null
   function mpvConnection(logged) {
     if (mpvClient?.logged === logged && !mpvClient.socket.destroyed) return mpvClient
@@ -343,8 +311,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return mpvClient
   }
 
-  // Reads one mpv property over mpv's IPC socket, beside the app's own
-  // connection. Reads only: the app must stay mpv's single command writer.
   async function mpv(property) {
     const socketPath = [...appLog().matchAll(/mpv IPC connected ipc_path=(\S+)/g)].at(-1)?.[1]
     if (!socketPath) throw new Error("app.log has no `mpv IPC connected` line yet")
@@ -388,9 +354,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     }
   }
 
-  // Linux only: the whole X display as the user would see it, including the
-  // mpv video that CDP screenshots (the CEF layer alone) do not contain. With
-  // `seconds`, an MP4 clip instead of a PNG.
   function displayCapture(name, { seconds } = {}) {
     if (!isLinux) throw new Error("displayCapture uses ffmpeg x11grab and runs on Linux only")
     const file = path.join(evidence, seconds ? `${name}.mp4` : `${name}.png`)
@@ -401,10 +364,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return file
   }
 
-  // Signs in through the sign-in form. With no server given, the field must
-  // already hold one (pass `--url` to the session). Under `--account` the app
-  // starts signed in, so this only confirms the cached account and ignores
-  // the arguments.
   async function signIn({ server, username, password = "" }) {
     if (account?.signedOut) {
       await quickConnect({ approve: true, timeout: 60000 })
@@ -426,12 +385,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     log(`signed in as ${username}`)
   }
 
-  // Signs in through the sign-in screen's Quick Connect and waits for the
-  // user to approve the code in Jellyfin. The server comes from the Server
-  // field (`--url`, or the server `just verify-login` was given).
-  // With `approve` (only under `--account … --signed-out`) the harness approves
-  // the code itself as the cached account. `signedIn` is what shows once the
-  // app is signed in, the sidebar's Settings link unless a dialog covers it.
   async function quickConnect({ timeout = 600000, approve = false, signedIn = { role: "link", name: "Settings" } } = {}) {
     const server = await find({ role: "textbox", name: "Server" }, { timeout: 30000 })
     const useQuickConnect = { role: "button", name: "Use Quick Connect" }
@@ -466,10 +419,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return jellyfinGet({ server: stored.server_url, serverUrl: stored.server_url, token: stored.token }, apiPath)
   }
 
-  // The token the app holds right now (`--account … --signed-out` only), as
-  // a handle that outlives the app forgetting it: `status()` is the HTTP
-  // status of GET /Users/Me with it, `revoke()` signs it out on the server
-  // from outside, as another device or an administrator would.
   function appSession() {
     if (!account?.signedOut) throw new Error("ctx.appSession needs --account SERVER --signed-out")
     const stored = readStoredSession(dataDir)
@@ -505,10 +454,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     })
   }
 
-  // Puts a test item back once the app has exited, whatever happened in the
-  // drive: a run that fails mid-playback still reports its stop at teardown.
-  // The drive's own user-path cleanup comes first; this only acts if the
-  // server still shows the item played or with a resume point.
   const restoredItems = new Set()
   function restoreItemAfterRun(itemId) {
     if (!cachedAccount) throw new Error("restoreItemAfterRun needs --account SERVER")
@@ -649,14 +594,9 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return started
   }
 
-  // `--account` only: "Play On" from another client. `command` is the path
-  // after `/Sessions/<the app's session>/`, such as `Playing` (with
-  // `{ playCommand: "PlayNow", itemIds, startIndex }`) or `Playing/NextTrack`.
   async function remoteCommand(command, query = {}) {
     if (!cachedAccount) throw new Error("remoteCommand needs --account SERVER")
     const { deviceId } = (await api("/api/status")).body
-    // The harness reads with the app's token, so the device can list a second
-    // session; the app's own is the one that announced media control.
     const sessions = await jellyfin(`/Sessions?deviceId=${encodeURIComponent(deviceId)}`)
     const target = sessions.find((entry) => entry.SupportsMediaControl)
     if (!target) throw new Error(`Jellyfin lists no session for the app's device that takes remote control (${sessions.length} sessions)`)

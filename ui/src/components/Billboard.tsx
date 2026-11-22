@@ -22,19 +22,7 @@ import { Pressable } from "@/components/ui/pressable"
 
 const NO_TRAILER_DWELL_MS = 12_000
 const TRAILER_DELAY_MS = 2_500
-/**
- * A trailer that has not confirmed playback within this window is treated as
- * unavailable. Its stage has stayed hidden the whole time, so the slide simply
- * advances as if the title had no trailer at all.
- */
 const TRAILER_CONFIRM_MS = 15_000
-/**
- * YouTube redraws its centre play/pause chrome on every transition into the
- * playing state — including the deferred seek to the embed's start offset,
- * which lands seconds after the first reveal. Every playing event therefore
- * restarts this concealment window so the overlay always finishes behind the
- * still image instead of over visible footage.
- */
 const YOUTUBE_PLAYING_GRACE_MS = 2_200
 const YOUTUBE_ORIGINS = new Set(["https://www.youtube-nocookie.com", "https://www.youtube.com"])
 
@@ -74,30 +62,14 @@ function episodeLabel(item: ItemSummary) {
   return [code, item.name].filter(Boolean).join(" · ")
 }
 
-/**
- * The home page's billboard: a rotating stack of full-bleed backdrops with one
- * title's copy over them.
- *
- * Only the slides that have actually been shown are mounted. A billboard of
- * five titles is five backdrops at `BACKDROP_WIDTH`, and mounting them all up
- * front would spend that bandwidth before the first one has even painted —
- * `opacity: 0` does not stop an `<img>` from being fetched. Growing the stack as
- * the rotation reaches each slide spreads that cost across the current title's
- * dwell or trailer instead.
- */
 export function Billboard({ items }: { items: ItemSummary[] }) {
   const systemReducedMotion = usePrefersReducedMotion()
   const { data: settings } = useSettings()
-  // Do not start automatic movement until the saved setting is known. Once it
-  // is, either the in-app preference or the operating system can veto motion.
   const reducedMotion = systemReducedMotion || settings?.appearance.reducedMotion !== false
   const [paused, setPaused] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [advancePending, setAdvancePending] = useState(false)
   const [mounted, setMounted] = useState<Set<number>>(() => new Set([0]))
-  // A shorter list must not strand the billboard on an index that no longer
-  // exists. The stored selection can stay untouched until the next user or
-  // playback event because every render uses this safe index.
   const index = selectedIndex < items.length ? selectedIndex : 0
   const current = items[index]
   const interaction = useRef({
@@ -131,9 +103,6 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
     [showSlide],
   )
 
-  // Playback completion can happen while the pointer or keyboard focus is in
-  // the hero. Remember it, then advance once interacting with the hero is no
-  // longer able to make a button change underneath the user.
   const finishCurrent = useCallback(
     (itemId: string) => {
       const currentInteraction = interaction.current
@@ -164,8 +133,6 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
   }
   const synopsis = useItemSynopsis(current?.id)
   const nextUp = useNextUp(current?.id, current?.kind === "Series")
-  // Warm the next title's trailer record while the current slide plays so the
-  // next slide can mount its player without waiting on an API round trip.
   const upcoming = items.length > 1 ? items[(index + 1) % items.length] : undefined
   useTrailer(upcoming?.id, !reducedMotion)
   if (!current) return null
@@ -227,7 +194,6 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
 interface TrailerPlaybackState {
   session: string
   armed: boolean
-  /** The player itself reported that footage is actually rolling. */
   started: boolean
   playing: boolean
 }
@@ -236,11 +202,6 @@ function initialTrailerPlayback(session: string): TrailerPlaybackState {
   return { session, armed: false, started: false, playing: false }
 }
 
-/**
- * One slide's artwork. Both gradients are on this layer rather than over the
- * whole stack so that a fading slide takes its own scrim with it — a shared
- * scrim would sit at full strength over a backdrop that is half gone.
- */
 function BillboardBackdrop({
   item,
   active,
@@ -342,10 +303,6 @@ function BillboardBackdrop({
     trailerId,
   ])
 
-  // YouTube's embedded player reports state 0 when the video ends. Listen only
-  // to the exact iframe window and its two documented origins; no remote script
-  // is loaded into the privileged app page. Listening starts as soon as the
-  // frame exists so an early playing event is never missed.
   useEffect(() => {
     const frame = youtubeFrame.current
     if (!active || !trailerEmbed || !frame) return
@@ -484,7 +441,6 @@ function BillboardCopy({
 }: {
   item: ItemSummary
   overview: string | null
-  /** Always the row's own entry — what the buttons act on. */
   summary: ItemSummary
   playTarget?: ItemSummary | null
 }) {
@@ -512,10 +468,6 @@ function BillboardCopy({
       <p className="data-label text-primary">{kicker}</p>
 
       <div className="flex flex-col gap-2">
-        {/* The heading is always in the document — a wordmark is artwork, and a
-            page whose <h1> is an image is a page with no title. When the logo
-            loads it takes the heading's place visually and the text stays for
-            anything reading the page rather than looking at it. */}
         <h1 id="billboard-title" className={cn(logo && !logoFailed && "sr-only")}>
           <span className="block max-w-xl text-4xl leading-[0.96] font-black tracking-[-0.04em] text-balance drop-shadow-lg sm:text-5xl lg:text-6xl">
             {title}

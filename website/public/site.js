@@ -1,8 +1,3 @@
-// flick.media behaviour. The page is complete without it; this adds the
-// accent switch, scroll reveals, in-view video playback, the hero's readouts,
-// the scroll walkthrough, the player and Companion tabs, the gallery lightbox
-// and release-aware download links.
-
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)")
 const root = document.documentElement
 
@@ -318,7 +313,6 @@ if (showcase) {
     clearTimeout(timer)
     progress.removeAttribute("data-running")
     if (!auto || !inView || paused) return
-    // Restart the bar's animation for the new slide.
     void progress.offsetWidth
     progress.style.setProperty("--showcase-ms", `${SHOWCASE_MS}ms`)
     progress.setAttribute("data-running", "")

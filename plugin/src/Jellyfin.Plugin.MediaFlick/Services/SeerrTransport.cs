@@ -3,20 +3,10 @@ using Jellyfin.Plugin.MediaFlick.Configuration;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-/// <summary>
-/// The Seerr calls <see cref="SeerrGateway"/> makes. The gateway builds only
-/// fixed, validated API paths; this seam supplies the administrator-configured
-/// origin and key, so tests can drive the gateway without a live Seerr.
-/// </summary>
 internal interface ISeerrTransport
 {
     bool AutoImportUsers { get; }
 
-    /// <summary>
-    /// Sends one request. <paramref name="seerrUserId"/> scopes the call to
-    /// that Seerr user; null uses the administrator key's own identity.
-    /// Failures surface as <see cref="GatewayException"/> with fixed wording.
-    /// </summary>
     Task<JsonNode?> SendAsync(
         HttpMethod method,
         string path,

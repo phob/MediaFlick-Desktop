@@ -25,12 +25,6 @@ internal interface ITmdbTransport
         CancellationToken cancellationToken);
 }
 
-/// <summary>
-/// Fixed-origin TMDB transport. Credentials are added after the relative path
-/// is fixed and no request URI is ever relayed through an exception or log.
-/// Diagnostics log only status codes and error categories, never the request
-/// URI, the exception text, or the response body.
-/// </summary>
 internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
 {
     private const int MaxResponseBytes = 8 * 1024 * 1024;
@@ -255,8 +249,6 @@ internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
             subject,
             RequestTimeout.TotalSeconds);
 
-    // Never log the exception itself: its message can include the request URI,
-    // which carries a v3 API key. Its error category is safe.
     private void ReportUnreachable(string subject, HttpRequestException exception)
         => _logger.Log(
             _failures.Failure(subject, "unreachable"),

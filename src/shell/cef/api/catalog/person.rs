@@ -62,9 +62,6 @@ fn person_identity(dto: &BaseItemDto, fallback_tmdb_id: Option<i64>) -> PersonId
     }
 }
 
-/// Bridges Jellyfin and TMDB person namespaces without ever treating a fuzzy
-/// name match as identity. A missing provider id may use one unambiguous exact
-/// name; a known conflicting id is always excluded.
 pub(super) fn resolve_person(
     services: &Arc<Services>,
     request: &ApiRequest,
@@ -116,9 +113,6 @@ pub(super) fn resolve_person(
     let exact = response
         .items
         .into_iter()
-        // `/Persons` is already type-scoped. Some older servers omit
-        // `Type` in this lightweight response, so require its stable id
-        // and exact name rather than rejecting a valid candidate.
         .filter(|person| !person.id.trim().is_empty())
         .filter(|person| person.display_name().eq_ignore_ascii_case(name.trim()))
         .filter(|person| seen.insert(person.id.clone()))

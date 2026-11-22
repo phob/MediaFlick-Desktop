@@ -1,9 +1,3 @@
-// Reading a book while an album plays, on the Built-in player under Linux:
-// real X11 media keys pressed with the focus inside the book's iframe must
-// pause and resume the music, while Next/Previous track turn the book's
-// chapters and leave the queue where it is; the remote's Back leaves the reader
-// and the music keeps playing. Writes the test user's playstate and puts it back.
-//   just verify reader-with-music --account SERVER --timeout 600
 import { execFileSync } from "node:child_process"
 
 const ALBUM = "Test Tones"

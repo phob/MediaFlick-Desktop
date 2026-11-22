@@ -42,7 +42,6 @@ class BundleTests(unittest.TestCase):
         moved.parent.mkdir(parents=True)
         shutil.move(self.output / "lib", moved)
         self.assertEqual({p.name for p in moved.iterdir()}, {"libmpv.so.2", "libfixture-codec.so.1"})
-        # A fresh process prevents a previously loaded library hiding bad RPATHs.
         subprocess.run(
             ["python3", "-c", "import ctypes, sys; assert ctypes.CDLL(sys.argv[1]).playback() == 42",
              str(moved / "libmpv.so.2")],

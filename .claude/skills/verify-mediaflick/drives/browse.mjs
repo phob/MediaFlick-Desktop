@@ -1,8 +1,3 @@
-// Sign in, browse, sign out against Jellyfin's public demo server, read-only:
-// Home shelves, the Movies library, sidebar search, a movie and a series
-// detail page, then Sign out from the user menu. The demo account is shared
-// by everyone, so this drive never favorites, marks watched or plays.
-//   just verify browse
 const DEMO = "https://demo.jellyfin.org/stable"
 const MOVIE = "Night of the Living Dead"
 const SERIES = "Pioneer One"

@@ -45,14 +45,6 @@ interface LibraryProps {
   components?: Partial<LibraryComponents>
 }
 
-/**
- * A search term that exactly names one Jellyfin person gets their titles as a
- * live section under the instant local results. Cast is not indexed locally,
- * so this is the only way "tom hanks" finds his films — and it resolves over
- * the same exact-identity path the cast pages use, never a fuzzy name match.
- * The server query is scoped to movies and series, so episode credits cannot
- * crowd actual titles out of the row.
- */
 export function SearchPersonSection({ term }: { term: string }) {
   const resolution = usePersonResolution({ name: term }, Boolean(term.trim()))
   const person = resolution.data?.person ?? null

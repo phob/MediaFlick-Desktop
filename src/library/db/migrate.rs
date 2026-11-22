@@ -1,13 +1,3 @@
-//! Opening `library.db` at the schema this build reads.
-//!
-//! Schema 23, which MediaFlick 0.2.0 shipped, is the first one real users
-//! have. From it on, a schema change bumps `SCHEMA_VERSION` and appends one
-//! step to `MIGRATIONS`, and a database is never recreated. Released builds
-//! run their own SQL against a newer file, so a step only adds: tables,
-//! nullable or defaulted columns, indexes and triggers (AGENTS.md,
-//! "Persistence and compatibility"). Development schemas below 23 are
-//! recreated with their session.
-
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use super::OpenError;
@@ -16,13 +6,8 @@ use super::schema::SCHEMA;
 
 pub const SCHEMA_VERSION: i32 = 23;
 
-/// The schema MediaFlick 0.2.0 shipped, the first that real users have.
 pub(super) const FIRST_RELEASED_SCHEMA: i32 = 23;
 
-/// One forward step: `MIGRATIONS[i]` moves schema `23 + i` to `24 + i`. A
-/// step that has shipped is never edited, reordered or removed; the next step
-/// fixes it. A step only changes the database: no file, network or other side
-/// effect, since a failure rolls back the database alone.
 pub(super) type Migration = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
 pub(super) const MIGRATIONS: &[Migration] = &[];
@@ -36,7 +21,6 @@ pub(super) fn user_version(connection: &Connection) -> rusqlite::Result<i32> {
     connection.query_row("PRAGMA user_version", [], |row| row.get(0))
 }
 
-/// Refuses a database a newer MediaFlick wrote. Reads only.
 pub(super) fn refuse_newer(connection: &Connection) -> Result<(), OpenError> {
     let version = user_version(connection)?;
     if version > SCHEMA_VERSION {
@@ -49,8 +33,6 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), OpenError> {
     migrate_with(connection, MIGRATIONS)
 }
 
-/// Opens at the schema `migrations` lead to from schema 23: `MIGRATIONS` in
-/// the app, a list a test chooses in the tests.
 pub(super) fn migrate_with(
     connection: &Connection,
     migrations: &[Migration],
@@ -90,8 +72,6 @@ pub(super) fn migrate_with(
     Ok(())
 }
 
-/// Runs `migrations` from schema `from` on, all in one transaction, and
-/// stamps `to`, the version after the last one.
 fn upgrade(
     connection: &Connection,
     from: i32,
@@ -102,8 +82,6 @@ fn upgrade(
         .ok()
         .and_then(|first| migrations.get(first..))
         .ok_or(OpenError::NewerSchema { found: from })?;
-    // The step that runs when the change fails; the whole range once every
-    // step ran, for a failed integrity check or commit.
     let mut running = from..to;
     change_schema(connection, to, |transaction| {
         for (version, step) in (from..).zip(steps) {
@@ -122,17 +100,11 @@ fn upgrade(
     Ok(())
 }
 
-/// The current schema, on an empty database.
 pub(super) fn create(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
     transaction.execute_batch(SCHEMA)?;
     transaction.execute_batch(&super::super::sort_indexes())
 }
 
-/// Runs `change` and stamps `to` in one `BEGIN IMMEDIATE` transaction, with
-/// foreign keys off for its duration: SQLite ignores `PRAGMA foreign_keys`
-/// inside a transaction, and with them on, dropping a parent table to rebuild
-/// it deletes its children. The result must pass `foreign_key_check` and
-/// `quick_check` before it commits; otherwise nothing of it stays.
 fn change_schema(
     connection: &Connection,
     to: i32,

@@ -1,0 +1,31 @@
+# 0008. Local SQLite is a thin catalog index refreshed by three-pass sync while rich metadata stays live
+
+Status: Accepted (2026-11-22). Consolidated from codebase audit of `src/library/`, `src/jellyfin/api/items.rs`, `src/jellyfin/socket.rs`, and `ui/src/lib/`.
+
+## Context
+
+Desktop browsing, sorting, filtering, A-Z jumping, and instant search need sub-frame local queries across large libraries, while Jellyfin has no working "changed since" sort (`DateLastSaved` is returned empty and rejected by `ItemSortBy`). At the same time, storing prose, full cast lists, and media streams in SQLite bloats the database, goes stale on remuxes or metadata edits, and still cannot guarantee that an episode was not deleted on the server.
+
+## Decision
+
+- **Thin catalog index vs live rich metadata.** `library.db`'s `items` table stores only lightweight browse, sort, filter, card-render, and join fields (`tmdb_id`, `imdb_id`, `tvdb_id`). Rich metadata (synopses, cast/crew via live `PersonIds`, full `MediaSources`, card `MediaStreams`, critic ratings) is intentionally excluded and fetched live from Jellyfin by the surfaces that need it; the UI's in-memory query/provider cache is their sole cache, and `TechnicalProvider` runs a low-cadence scan over visible cards to catch in-place remuxes that leave catalog columns unchanged. Live Jellyfin queries (`person-items`, `similar`) use separate TanStack Query roots so committed sync batches do not refetch them.
+- **Three-pass background sync.** Because Jellyfin lacks `DateLastSaved` ordering, sync runs three passes:
+  1. Incremental `DateCreated` descending sweep (catches new items and replaced files, since Jellyfin assigns replaced files a new ID and `DateCreated`; ISO-8601 UTC strings compare chronologically by string order).
+  2. Hourly unified identity, watch-state, and deletion sweep (`walk_identity` folds watch-state mirroring and live-ID collection into one pass at zero extra request cost). Explicit user refreshes (`Trigger::Requested`) bypass the hourly gate so deletions show up immediately.
+  3. 24-hour full re-bootstrap to pick up in-place metadata edits, guarded by `META_BOOTSTRAP_DONE == "1"` so interrupted initial bootstraps resume from `META_BOOTSTRAP_OFFSET` rather than resetting. `first_catalog_download` checks `META_LAST_BOOTSTRAP.is_none()` so daily re-bootstraps do not hide an already-populated catalog.
+- **Deletion safety and runaway caps.** `MAX_BOOTSTRAP_PAGES` and `MAX_IDENTITY_PAGES` (1,000 pages) act as runaway safety valves; hitting a cap marks the pass incomplete and skips deletion. When an identity sweep returns zero items while catalog libraries remain listed, a two-pass confirmation window (`META_EMPTY_SWEEP_AT` within `[MIN_CONFIRM_GAP, MAX_CONFIRM_AGE]`) prevents a transient empty server answer from wiping the cache. `Library::tmdb_candidates` is strictly a pre-filter requiring live Jellyfin verification before treating items as owned.
+- **On-demand child reconciliation and WebSocket acceleration.** Series and season detail pages perform one non-recursive live child fetch per visit (`CHILD_RECONCILE_INTERVAL = 60s` throttles revisits and absorbs the self-triggered `library_changed` refetch) to remove ghost episodes and supply live synopses; single-parent empty responses delete immediately because the blast radius is one container. Jellyfin's `/socket` WebSocket is strictly an acceleration layer (using explicit `TcpStream` connect/handshake timeouts before `tungstenite::client_tls`): reconnects trigger background sync and emit `live_resynced` for uncached live pages, while uncached `LibraryChanged` IDs forward as `live_changed`. `library_sync_completed` dispatches an empty `LibraryChanged` event to refresh aggregate watch-state projections.
+- **Startup hold and membership states.** Catalog libraries track three membership states (`Unwalked`, `Owed`, `Current`) so cached memberships remain usable while a re-walk is owed. On a warm start with a ready catalog, the sync worker holds its first cycle until initial Home paint finishes (`startup_hold`); on an unready catalog, no hold is set because initial catalog readiness gates showing the window. `announce_outcome` emits shell notifications before `session.note_scoped_error` so a 401 expiry does not drop notifications for already-committed pages.
+- **SQLite mechanics.** `ItemSort::ReleaseDate` leads `items_kind_year` with `(kind, year, premiere_date)` so the same index satisfies decade range filters; `ItemSort::DatePlayed` wraps two-arg scalar `max()` with `COALESCE(..., '')` and `NULLIF(..., '')` because SQLite's scalar `max` returns `NULL` if either operand is `NULL`; unfiltered `facet_values` uses a `WITH RECURSIVE` `min()` jump CTE to emulate a loose index scan; `IN (...)` clauses chunk at 400 parameters to stay below `SQLITE_MAX_VARIABLE_NUMBER`; `Database::optimize()` retires idle pooled connections so reopened connections load fresh `sqlite_stat1`; dev drops remove FTS5 `items_fts` before iterating shadow tables; `OpenError` `{}` strips SQL statements from `SqlInputError` for the startup error screen while `{:#}` keeps them in `app.log`; `civil_from_days` uses Howard Hinnant's algorithm to avoid a datetime crate dependency.
+
+## Rejected alternatives
+
+- Caching full metadata, cast, and media streams in SQLite: multiplies sync payload size, creates stale badges after remuxes, and requires fragile name-based person joins.
+- Polling Jellyfin live for every library grid page and sort: introduces network latency on every scroll/filter and prevents instant FTS search.
+- Deleting cached items on a single empty identity sweep: a transient Jellyfin outage or misconfigured reverse proxy would wipe the user's catalog until the next 24-hour re-bootstrap.
+
+## Consequences
+
+- Detail pages and card technical badges require live Jellyfin connectivity and must degrade gracefully when offline or slow.
+- `TitleDetail::library_id` always points to a catalog library (never a live library) because only catalog libraries populate `item_libraries`, which UI genre links rely on.
+- Changing sort index key prefixes (such as `items_kind_year`) requires checking dependent range-filter queries.

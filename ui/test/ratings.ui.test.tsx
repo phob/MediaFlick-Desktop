@@ -156,7 +156,6 @@ describe("configurable card ratings", () => {
       if (path.endsWith("/api/integrations/ratings")) {
         return Promise.resolve(new Response(JSON.stringify(integrationStatus), { status: 200 }))
       }
-      // SAFETY: the provider under test always posts a JSON `{ ids }` body.
       const { ids } = JSON.parse(String(init?.body)) as { ids: string[] }
       return new Promise<Response>((resolve, reject) => {
         init?.signal?.addEventListener("abort", () =>
@@ -231,7 +230,6 @@ describe("configurable card ratings", () => {
       if (path.endsWith("/api/integrations/ratings")) {
         return new Response(JSON.stringify(integrationStatus), { status: 200 })
       }
-      // SAFETY: the provider under test always posts a JSON `{ ids }` body.
       const { ids } = JSON.parse(String(init?.body)) as { ids: string[] }
       batchCalls.push(ids)
       const items = batchCalls.length < 2 ? [] : [{
@@ -281,7 +279,6 @@ describe("configurable card ratings", () => {
       if (path.endsWith("/api/integrations/ratings")) {
         return new Response(JSON.stringify(integrationStatus), { status: 200 })
       }
-      // SAFETY: the provider under test always posts a JSON `{ ids }` body.
       batchCalls.push((JSON.parse(String(init?.body)) as { ids: string[] }).ids)
       return new Response(JSON.stringify({
         available: true,

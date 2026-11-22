@@ -35,7 +35,6 @@ pub fn build_query(pairs: &[(&str, String)]) -> String {
         .join("&")
 }
 
-/// Decode a percent-encoded query component. `+` decodes to a space.
 pub fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -76,8 +75,6 @@ pub fn query_param(query: &str, key: &str) -> Option<String> {
     })
 }
 
-/// Drop every query parameter whose decoded name matches one of `keys` (ASCII
-/// case-insensitively). Other pairs and any fragment are kept byte-for-byte.
 pub fn remove_query_params(url: &str, keys: &[&str]) -> String {
     let (without_fragment, fragment) = match url.split_once('#') {
         Some((head, fragment)) => (head, Some(fragment)),

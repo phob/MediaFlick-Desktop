@@ -24,13 +24,6 @@ interface HeroGenre {
   to?: To
 }
 
-/**
- * The shared visual contract for both library and discovery details.
- *
- * Page-specific components supply data and actions, but the back action,
- * artwork, title, facts, genres, synopsis, and spacing all live here. Keeping that dominant structure in one component prevents the two
- * routes from drifting into lookalike-but-different pages again.
- */
 export function DetailHeroLayout({
   back,
   poster,

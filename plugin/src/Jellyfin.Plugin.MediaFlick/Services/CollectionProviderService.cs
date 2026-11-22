@@ -399,11 +399,6 @@ public sealed class CollectionProviderService
                 await _mdbList.ValidateAsync(credential, token).ConfigureAwait(false)),
             cancellationToken);
 
-    /// <summary>
-    /// Returns the saved credential once it has been proven valid in this
-    /// plugin run. Validation is serialized per provider and respects the
-    /// persisted retry timing; outages keep an established key valid.
-    /// </summary>
     private async Task<string> ValidCredentialAsync(
         string provider,
         string unavailable,
@@ -471,11 +466,6 @@ public sealed class CollectionProviderService
         }
         catch (GatewayException exception)
         {
-            // Readiness is represented by TmdbReady/MdbListReady. The info
-            // probe remains successful when an optional provider is down.
-            // Every info probe repeats this check, so warn once per state;
-            // the transport logs the upstream cause. Gateway messages on this
-            // path are fixed plugin text, never upstream content.
             var validation = _health.Health(provider).Validation;
             _logger.Log(
                 _readinessFailures.Failure(provider, validation),
@@ -486,8 +476,6 @@ public sealed class CollectionProviderService
         }
         catch (InvalidOperationException exception)
         {
-            // An unreadable saved secret is unavailable without exposing its
-            // storage failure to an authenticated Desktop client.
             _logger.Log(
                 _readinessFailures.Failure(provider, "unreadable"),
                 exception,
@@ -646,8 +634,6 @@ public sealed class CollectionProviderService
         HttpStatusCode status,
         long? upstreamRetryAt)
     {
-        // MDBList answers 401/403 for private lists, which says nothing about
-        // the administrator key; TMDB uses them only for a rejected key.
         var rejectionInvalidatesKey = provider != CredentialProviders.MdbList;
         var next = ProviderHealthPolicy.AfterRequest(
             _health.Health(provider),
@@ -889,19 +875,11 @@ public sealed class CollectionProviderService
         }
     }
 
-    /// <summary>
-    /// A `private` marker that is not clearly false hides the list, so an
-    /// unreadable marker fails closed rather than exposing a private list.
-    /// </summary>
     internal static bool IsPrivateList(JsonObject detail)
         => (detail["private"] is { } marker && JsonRead.Flag(marker) != false)
             || JsonRead.String(detail, "privacy")?.Trim()
                 .Equals("private", StringComparison.OrdinalIgnoreCase) == true;
 
-    /// <summary>
-    /// `includeUnreleased` is client input: it must be a JSON boolean when
-    /// present, and anything else is a request error rather than a crash.
-    /// </summary>
     internal static bool IncludeUnreleased(JsonObject source)
     {
         var node = source["includeUnreleased"];

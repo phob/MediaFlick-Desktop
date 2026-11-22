@@ -4,12 +4,6 @@ using System.Text.Json.Nodes;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-/// <summary>
-/// The one set of type-tolerant reads for upstream JSON. A field with an
-/// unexpected type is reported as absent instead of throwing, so one malformed
-/// provider value cannot fail a whole request. Numbers are read from their
-/// JSON text, which works for parsed documents and constructed nodes alike.
-/// </summary>
 internal static class JsonRead
 {
     private const int MaxNumericTextLength = 32;
@@ -35,10 +29,6 @@ internal static class JsonRead
 
     public static bool? Bool(JsonObject? value, string name) => Bool(value?[name]);
 
-    /// <summary>
-    /// A boolean that providers variously encode as a JSON boolean, a 0/1
-    /// number, or a "true"/"false"/"0"/"1" string. Anything else is null.
-    /// </summary>
     public static bool? Flag(JsonNode? node)
     {
         if (node is not JsonValue value)
@@ -85,10 +75,6 @@ internal static class JsonRead
 
     public static ulong? UInt64(JsonObject? value, string name) => UInt64(value?[name]);
 
-    /// <summary>
-    /// A whole number sent either as an integral JSON number or as a short
-    /// numeric string, which several providers use for ids and counters.
-    /// </summary>
     public static long? Integer(JsonNode? node)
     {
         var text = NumberText(node) ?? String(node)?.Trim();

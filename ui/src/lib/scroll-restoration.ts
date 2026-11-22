@@ -54,8 +54,6 @@ export function useScrollRestoration(element: HTMLElement | null, scope: string,
     element.addEventListener("pointerdown", takeOver)
     element.addEventListener("keydown", takeOver)
     return () => {
-      // Save on scroll, not unmount: React may already have removed the tall
-      // content and the browser may have clamped scrollTop back to zero.
       mutations.disconnect()
       resize.disconnect()
       element.removeEventListener("scroll", save)

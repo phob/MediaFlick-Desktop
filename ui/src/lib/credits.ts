@@ -10,10 +10,6 @@ const CREW_JOBS = [
   { kind: "Composer", label: "Composer" },
 ] as const
 
-/**
- * `Type` is Jellyfin's own field and is occasionally absent, in which case a
- * name with a role is still a performance credit worth showing.
- */
 export function castOf(people: Person[]) {
   return people.filter(
     (person) =>
@@ -26,10 +22,6 @@ export interface CrewMember {
   jobs: string[]
 }
 
-/**
- * One entry per person, ordered by their highest-ranked key job and then by
- * Jellyfin's credit order, so a writer-director appears once.
- */
 export function crewOf(people: Person[]): CrewMember[] {
   const members = new Map<string, { person: Person; ranks: Set<number>; order: number }>()
   people.forEach((person, order) => {

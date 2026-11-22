@@ -52,7 +52,6 @@ checkout() {
     fi
 }
 
-# Match the Windows mpv and FFmpeg releases, with a Linux-only feature profile.
 checkout mpv https://github.com/mpv-player/mpv.git 41f6a645068483470267271e1d09966ca3b9f413
 checkout ffmpeg https://github.com/FFmpeg/FFmpeg.git 894da5ca7d742e4429ffb2af534fcda0103ef593
 checkout libplacebo https://github.com/haasn/libplacebo.git 3188549fba13bbdf3a5a98de2a38c2e71f04e21e \
@@ -87,7 +86,6 @@ meson setup --wipe "$work_dir/placebo-build" "$sources/libplacebo" \
 ninja -C "$work_dir/placebo-build" -j "$jobs"
 meson install -C "$work_dir/placebo-build" --strip
 
-# Upstream mpv's X11 support requires its GPL build; FFmpeg stays LGPL-only.
 meson setup --wipe "$work_dir/mpv-build" "$sources/mpv" \
     --prefix="$prefix" --libdir=lib --buildtype=release --default-library=shared \
     --wrap-mode=nodownload -Dauto_features=disabled \
@@ -102,8 +100,6 @@ meson setup --wipe "$work_dir/mpv-build" "$sources/mpv" \
 ninja -C "$work_dir/mpv-build" -j "$jobs"
 meson install -C "$work_dir/mpv-build" --strip
 
-# Header-only and statically linked build dependencies are invisible to ldd,
-# but their corresponding sources/notices belong in the payload too.
 python3 "$script_dir/bundle.py" "$prefix" "$output_dir" "$sources/debian" \
     glslang-dev spirv-tools libffmpeg-nvenc-dev libvulkan-dev
 cp "$script_dir/THIRD-PARTY-NOTICES.md" "$output_dir/licenses/"

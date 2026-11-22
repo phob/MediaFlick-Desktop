@@ -1,18 +1,3 @@
-// Playback hand-offs on your own server, through a loopback proxy that can hold
-// one title's video stream so its load stays pending in the controller.
-//   just verify playback-handoff --account SERVER --signed-out --timeout 600 --log-level "debug,jellyfin.playstate=trace,playback=trace,mpv.ipc=debug"
-// Built-in player (the default):
-// 1. Mark watched (the `w` key) on a movie, which has no next item: mpv must stop
-//    instead of playing on untracked.
-// 3. Mark watched on episode 1, so episode 2 loads with its stream held, press
-//    `w` again and then `q`: episode 2 must not be marked watched, Stop must end
-//    its load at once, and it must never start once its stream is released.
-// External mpv (add `--seed .claude/skills/verify-mediaflick/seeds/external-mpv`):
-// 2. Play movie A with its stream held, then Play movie B from its page: B must
-//    replace the pending load and play; A must never start. Only External mpv
-//    leaves the app's pages usable while a title loads, and only the Built-in
-//    player bar takes the `w` key, so each backend runs its own phases.
-// Writes the test user's playstate and restores every title it played after the run.
 const ticksToS = (ticks) => ticks / 1e7
 const playable = (item) => {
   const video = item.MediaStreams?.find((stream) => stream.Type === "Video")
@@ -72,8 +57,6 @@ async function openEpisode(ctx, series, episode) {
   await ctx.until(async () => (await ctx.pathname()) === `/item/${episode.id}`, "the episode page")
 }
 
-// Running means mpv has passed two seconds of this title; while it loads, the
-// app's position can still be the previous title's.
 async function playing(ctx, id, description) {
   await ctx.until(async () => {
     const now = await ctx.player()
@@ -91,7 +74,6 @@ const starts = (ctx, id) => ctx.playstates().queued.filter((entry) => entry.endp
 
 let expect = () => {}
 
-// 2. Play B while A's load is pending (External mpv).
 async function replacePendingLoad(ctx, { gate, proxy, a, b, report }) {
   await openTitle(ctx, a.Name)
   gate.hold(a.Id)
@@ -113,8 +95,6 @@ async function replacePendingLoad(ctx, { gate, proxy, a, b, report }) {
   await ctx.until(async () => !(await ctx.player())?.active, "playback to stop", 30000)
 }
 
-// The player bar shows its own Stop from 1536 px; narrower, Stop moves into
-// the overflow menu.
 async function stopFromBar(ctx) {
   const stop = { role: "button", name: "Stop" }
   const more = { role: "button", name: "More playback controls" }
@@ -128,7 +108,6 @@ async function stopFromBar(ctx) {
 export default async function playbackHandoff(ctx) {
   if (!ctx.account?.signedOut) throw new Error("playback-handoff needs --account SERVER --signed-out")
   const report = { checks: [] }
-  // Every check is recorded and the run fails at the end, so one run shows each phase.
   expect = (condition, message) => {
     report.checks.push({ ok: Boolean(condition), message })
     ctx.step(`${condition ? "ok" : "FAIL"}: ${message}`)
@@ -146,7 +125,6 @@ export default async function playbackHandoff(ctx) {
       const now = (await ctx.api("/api/status")).body
       return now?.bootstrap?.state === "ready" && now.syncProgress?.active === false
     }, "the first sync to finish", 300000)
-    // Each backend picks only the titles its phases play.
     if (builtIn) {
       const [movie] = await pickMovies(ctx, 1)
       const show = await pickEpisodes(ctx)
@@ -172,7 +150,6 @@ export default async function playbackHandoff(ctx) {
 }
 
 async function builtInPhases(ctx, { gate, proxy, movie, show, report }) {
-  // 1. Mark watched with no next item.
   await openTitle(ctx, movie.Name)
   await ctx.press({ role: "button", name: "Play" })
   await playing(ctx, movie.Id, "the movie playing")
@@ -184,7 +161,6 @@ async function builtInPhases(ctx, { gate, proxy, movie, show, report }) {
   ctx.displayCapture("01-after-mark-watched")
   expect(idle, "mpv stops after the movie is marked watched")
 
-  // 3. Mark watched again, then Stop, while the next episode loads.
   const [first, second] = show.episodes
   await openEpisode(ctx, show.series, first)
   await ctx.press({ role: "button", name: "Play" })

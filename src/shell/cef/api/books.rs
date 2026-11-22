@@ -35,19 +35,14 @@ pub(super) struct BookManifest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct BookPositionWrite {
     location: ReadingLocation,
-    /// The book's last content is on screen: Jellyfin marks it played.
     finished: bool,
 }
 
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct BookPositionSaved {
-    /// `false` when only this app kept the position because Jellyfin's write
-    /// failed; the next save writes it again.
     synced: bool,
 }
 
-/// `?from=start` opens the book at its beginning (Read again). Opening a book
-/// is what lets the reader read its bytes and keep its place.
 fn book_manifest(
     services: &Arc<Services>,
     item_id: &str,
@@ -134,8 +129,6 @@ fn read_range(
     item_id: &str,
     range: &str,
 ) -> Result<ByteResponse, ApiResponse> {
-    // ureq fails a read that reaches its limit, so one byte more lets a full
-    // chunk through and still stops any longer answer.
     let response = fetch_current(services, scope, |client, _| {
         items::fetch_book_bytes(client, item_id, range, BOOK_CHUNK_SIZE + 1)
     })?;
@@ -160,14 +153,6 @@ fn file_size(response: &ByteResponse) -> Result<u64, ApiResponse> {
         .ok_or_else(|| ApiResponse::error(502, "Jellyfin did not say how long the book's file is"))
 }
 
-/// Bytes `start..=end` of a book the reader opened. A request without both, or a
-/// longer one, gets at most `BOOK_CHUNK_SIZE` bytes from where it starts, as
-/// a 206 whose `Content-Range` names the file's size.
-///
-/// The range comes in the query, not a `Range` header: CEF answers a
-/// request's `Range` itself by skipping that far into the handler's answer,
-/// which here already is the range, so every read past the first chunk
-/// would fail as unsatisfiable.
 fn book_bytes(
     services: &Arc<Services>,
     item_id: &str,

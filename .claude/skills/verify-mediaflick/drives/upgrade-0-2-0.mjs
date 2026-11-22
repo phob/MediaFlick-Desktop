@@ -1,31 +1,3 @@
-// One start on a profile MediaFlick 0.2.0 made, as `scripts/e2e/upgrade-0-2-0.mjs`
-// runs it: the update to this build, the way back to the real 0.2.0, and the
-// update again. Run that script rather than this drive alone; it passes:
-//
-//   MEDIAFLICK_VERIFY_UPGRADE_BEFORE   before.json: what the profile held before this start
-//   MEDIAFLICK_VERIFY_UPGRADE_PRESYNC  pre-sync.json: the script's comparison of library.db
-//                                      after the same binary opened a copy of the profile with
-//                                      --library-stats, which migrates and exits before any sync
-//   MEDIAFLICK_VERIFY_UPGRADE_PHASE    update | back | forward
-//   MEDIAFLICK_VERIFY_UPGRADE_SCHEMA   the schema this binary leaves library.db at
-//   MEDIAFLICK_VERIFY_UPGRADE_LAUNCHED_AFTER  Unix time just before the session launched the app
-//
-// with --account SERVER, --seed and --seed-data of that profile. The session
-// puts the cached token into the profile's own credentials row.
-//
-// Every expectation comes from before.json, which the real 0.2.0 (or the
-// previous start) wrote: the user, the Jellyfin device, the JSON files and
-// custom posters byte for byte (accounts.json without the page it last
-// showed, which the app saves on every navigation; scripts/user-files.mjs),
-// and each choice the 0.2.0 drive made in the
-// UI. The checks: it starts signed in as that user on that device without a
-// sign-in screen; no user file was rewritten by starting; library.db was not
-// recreated and kept every row value for value up to the point a sync could
-// refill it (pre-sync.json); the accent, Player, Application and Viewing
-// choices, the Letterboxd profile, the collection with its poster bytes and
-// the movie's subtitle choice all show; a sync then completes without a
-// failure; and after a relaunch nothing migrates again. Every check is in
-// upgrade-0-2-0.json and the run fails at the end listing each failed one.
 import { readFileSync, readdirSync } from "node:fs"
 import path from "node:path"
 import { readDatabaseCopy, userFileDigests } from "../scripts/profile-state.mjs"
@@ -63,7 +35,6 @@ async function steps(ctx, { before, presync, phase, schema, report, record }) {
   const dataDir = path.join(configDir, "../../data/mediaflick-desktop")
   const launchedAfter = Number(required("MEDIAFLICK_VERIFY_UPGRADE_LAUNCHED_AFTER"))
 
-  // Before the drive navigates anywhere.
   report.userFiles = userFileDigests(configDir)
   for (const name of new Set([...Object.keys(before.files), ...Object.keys(report.userFiles)])) {
     const now = report.userFiles[name] ?? null

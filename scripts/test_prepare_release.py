@@ -26,7 +26,6 @@ def frozen_schema(version):
     return f"fixtures/library-db/released/schema-{version}.sql"
 
 
-# The state of main before 0.2.0: v0.1.6 is published and GitHub's Latest release.
 RELEASE_FILES = {
     "CHANGELOG.md": "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Upcoming feature.\n",
     "Cargo.toml": '[package]\nname = "mediaflick-desktop"\nversion = "0.1.6"\n',
@@ -64,7 +63,6 @@ def git(root, *arguments):
 
 
 def commit_base(root, files):
-    """A repository whose HEAD holds `files`, the state of main before a merge."""
     write_release_files(root, files)
     git(root, "init", "-q")
     git(root, "add", "-A")
@@ -78,14 +76,12 @@ def outputs(stdout):
 def load_script():
     spec = importlib.util.spec_from_file_location("prepare_release", SCRIPT)
     module = importlib.util.module_from_spec(spec)
-    # dataclasses resolve their module through sys.modules.
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
 def prepared_files(version, channel="prerelease", base=RELEASE_FILES):
-    """The release files a release-notes PR for `version` leaves behind."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         write_release_files(root, base)
@@ -141,7 +137,6 @@ class PrepareReleaseTests(unittest.TestCase):
             "release section without entries": RELEASE_FILES | bumped | {"CHANGELOG.md": "# Changelog\n\n## [Unreleased]\n\n## [0.2.0] - 2026-11-12\n\n### Added\n" + OLDER_RELEASE},
             "release.toml left at the old version": prepared_files("0.2.0") | {"release.toml": RELEASE_FILES["release.toml"]},
             "release.toml missing": {name: text for name, text in prepared_files("0.2.0").items() if name != "release.toml"},
-            # A Latest release was published long ago; rebuilding it would publish it a second time.
             "version already flipped to latest": prepared_files("0.2.0", "latest"),
         }
         for name, files in unprepared.items():
@@ -154,8 +149,6 @@ class PrepareReleaseTests(unittest.TestCase):
                 self.assertEqual(read_files(root), files)
 
     def test_check_requires_the_published_schema_to_be_frozen(self):
-        # Operator decision (2026-11-17, D6): a library.db schema counts as released once its
-        # first prerelease is published, so that release must carry its frozen schema.
         prepared = prepared_files("0.2.0")
         for name, files in {
             "no frozen schema": {path: text for path, text in prepared.items() if path != frozen_schema(23)},
@@ -188,12 +181,6 @@ class PrepareReleaseTests(unittest.TestCase):
 
 
 class ReleaseFileTests(unittest.TestCase):
-    """release.toml: a merged PR decides whether a version ships as a prerelease or becomes Latest.
-
-    Expectations come from the operator's rules (2026-11-15): a new version ships first as a
-    published prerelease; a later PR that changes only the channel to "latest" makes it Latest;
-    versions only move forward and always match Cargo.toml; nothing else releases anything.
-    """
 
     def prepare(self, base, version):
         with tempfile.TemporaryDirectory() as directory:
@@ -218,7 +205,6 @@ class ReleaseFileTests(unittest.TestCase):
             "the version main is already at": (RELEASE_FILES, "0.1.6"),
             "an older version": (RELEASE_FILES, "0.1.5"),
             "a version 0.9.0 sorts after as text": ({name: text.replace("0.1.6", "0.10.0") for name, text in RELEASE_FILES.items()}, "0.9.0"),
-            # The channel says prerelease; a suffix would be a second, unchecked way to say it.
             "a suffixed version": (RELEASE_FILES, "0.2.0-rc.1"),
         }
         for name, (base, version) in refused.items():
@@ -228,7 +214,6 @@ class ReleaseFileTests(unittest.TestCase):
                 self.assertEqual(files, base)
 
     def plan(self, base, merged, since="HEAD"):
-        """Run --transition in a checkout of `merged` against a base commit holding `base`."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             commit_base(root, base)
@@ -271,7 +256,6 @@ class ReleaseFileTests(unittest.TestCase):
         self.assert_action(self.plan(without, RELEASE_FILES), "none", "0.1.6")
 
     def test_compares_against_where_the_change_left_base(self):
-        # A branch cut before main published 0.2.0 does not undo it: only its own change counts.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             prerelease = prepared_files("0.2.0")
@@ -291,7 +275,6 @@ class ReleaseFileTests(unittest.TestCase):
         prerelease = prepared_files("0.2.0")
         latest = prepared_files("0.2.0", "latest")
         rejected = {
-            # A new version ships first as a prerelease.
             "new version straight to latest": (RELEASE_FILES, latest),
             "latest back to prerelease": (latest, prerelease),
             "older version": (prerelease, prepared_files("0.1.5", base=RELEASE_FILES | {name: text.replace("0.1.6", "0.1.4") for name, text in RELEASE_FILES.items() if name != "CHANGELOG.md"})),
@@ -324,7 +307,6 @@ class ReleaseFileTests(unittest.TestCase):
             return tuple(int(part) for part in version.split("."))
 
         def expected(before, after):
-            """The operator's rules, with versions ordered by number. None means refused."""
             if before is None or before == after:
                 return "none"
             if number(after.version) > number(before.version):

@@ -6,7 +6,6 @@ use crate::collections::{ClassifiedTitle, CollectionProfile, NormalizedTitle, co
 
 use super::profiles::CollectionProfilesIndex;
 
-/// Whether a collection's results can be shown yet.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 enum ResultsStatus {
@@ -15,7 +14,6 @@ enum ResultsStatus {
     Ready,
 }
 
-/// `/api/collections/mine/{id}`: one profile and its classified results.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(in super::super) struct CollectionProfileDetail {
@@ -25,18 +23,15 @@ pub(in super::super) struct CollectionProfileDetail {
     missing: Vec<NormalizedTitle>,
     items: Vec<NormalizedTitle>,
     library_items: Vec<ItemSummary>,
-    /// Sent only once results are ready.
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     ownership_available: Option<bool>,
     refresh: RefreshState,
-    /// Sent only once results are ready.
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     overdue: Option<bool>,
 }
 
-/// `/api/collections/franchises`: the movie franchises the account sees.
 #[derive(Serialize, ts_rs::TS)]
 pub(in super::super) struct FranchiseCollectionsIndex {
     status: ResultsStatus,
@@ -55,8 +50,6 @@ struct FranchiseCollectionSummary {
     ownership_available: bool,
 }
 
-/// `/api/collections/franchises/{id}`: one movie franchise. Without library
-/// ownership its titles are in `items`; with it, in `owned` and `missing`.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(in super::super) struct FranchiseCollection {
@@ -71,7 +64,6 @@ pub(in super::super) struct FranchiseCollection {
     ownership_available: bool,
 }
 
-/// `/api/collections/movie/{tmdbId}`: the franchise a movie belongs to.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(in super::super) struct MovieCollection {
@@ -85,7 +77,6 @@ struct MovieFranchise {
     name: String,
 }
 
-/// `/api/collections/title/{mediaType}/{tmdbId}`.
 #[derive(Serialize, ts_rs::TS)]
 pub(in super::super) struct CollectionTitle {
     item: NormalizedTitle,

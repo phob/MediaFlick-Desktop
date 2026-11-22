@@ -1,32 +1,3 @@
-// The one-time "What's new" for a device updated from MediaFlick 0.1.6, and
-// the Companion install guide link (operator decisions of 2026-11-15).
-//
-// The profile decides what is expected: seeded with 0.1.6's config.json
-// (`--seed .claude/skills/verify-mediaflick/seeds/upgrade-0-1-6`, shared with
-// the `upgrade-0-1-6` drive, as 0.1.6 wrote it) the dialog
-// must open once after sign-in, never on the sign-in screen, and stay closed
-// after a relaunch; on a fresh profile it must never open. The server decides
-// the rest, read with the app's own token: `/Users/Me`'s
-// `Policy.IsAdministrator`, whether `/MediaFlick/info` answers 404, and the
-// server's version. The Companion needs Jellyfin 12.0.0 (operator decision of
-// 2026-11-15), so it can be added only from there. An administrator whose
-// server can add it and has not gets the install offer with the guide link,
-// anyone else no offer and, on such a server, one line about their
-// administrator. Settings → MediaFlick Companion links to the guide whenever
-// the Companion is missing from a server that can run it. The external guide
-// link is read, never pressed.
-//
-// Server and account come from the environment, so no credentials live here:
-// MEDIAFLICK_VERIFY_WHATS_NEW_SERVER (default the demo server),
-// MEDIAFLICK_VERIFY_WHATS_NEW_USER (default `demo`) and
-// MEDIAFLICK_VERIFY_WHATS_NEW_PASSWORD (default empty). Under
-// `--account SERVER --signed-out` it signs in to that server with Quick
-// Connect instead, approved as the cached account, and signs the app's token
-// out after the run. Writes only the profile's settings.json. Every check is
-// recorded in whats-new.json and the run fails at the end listing each failed
-// one.
-//   just verify whats-new --seed .claude/skills/verify-mediaflick/seeds/upgrade-0-1-6
-//   just verify whats-new --account https://jellyfin.example.com --signed-out --seed …
 import { readFileSync } from "node:fs"
 
 const GUIDE = "https://flick.media/companion/"
@@ -78,8 +49,6 @@ async function steps(ctx, report, record) {
     await (upgraded ? ctx.quickConnect({ approve: true, timeout: 60000, signedIn: DIALOG }) : ctx.signIn({}))
     ctx.revokeAppSessionAfterRun()
   } else if (upgraded) {
-    // ctx.signIn waits for the sidebar, which the open modal hides from the
-    // accessibility tree; wait for the dialog instead.
     await ctx.fill({ role: "textbox", name: "Server" }, server)
     await ctx.fill({ role: "textbox", name: "Username" }, username)
     if (password) await ctx.fill({ role: "textbox", name: "Password" }, password)
@@ -109,14 +78,12 @@ async function steps(ctx, report, record) {
     else if (companionMissing) await ctx.until(async () => (await text(ctx, "[role=dialog]"))?.includes(MEMBER_LINE), "the line about the server administrator", 30000)
     await ctx.snapshot("01-whats-new")
     await ctx.screenshot("01-whats-new")
-    // The dialog scrolls; show its end, where the Companion offer or line sits.
     await ctx.app.evaluate(`document.querySelector("[role=dialog]").scrollTop = 1e6`)
     await ctx.screenshot("01b-whats-new-end")
     const body = await text(ctx, "[role=dialog]")
     report.dialogText = body
     for (const claim of CLAIMS) record(body.includes(claim), `the dialog mentions ${claim}`)
     for (const name of SETTINGS_LINKS) record((await ctx.count({ role: "link", name, within: DIALOG })) === 1, `the dialog links ${name}`)
-    // The Companion probe settles a moment after the dialog opens.
     if (!offer) await ctx.until(() => ctx.api("/api/companion/info").then(({ body }) => body?.checked === true), "the Companion check", 30000)
     const offered = await ctx.count({ role: "heading", name: "Add MediaFlick Companion" })
     record(offered === (offer ? 1 : 0), offer ? "an administrator without the Companion is offered it" : companionInstalled ? "no Companion offer where the Companion is installed" : companionSupported ? "no Companion offer for this account" : "no Companion offer on a server older than Jellyfin 12.0.0", offered)
@@ -127,7 +94,6 @@ async function steps(ctx, report, record) {
     record(!ctx.readConfig("settings.json")?.whats_new_seen, "settings.json does not record What's new as seen while it is open")
 
     if (administrator) {
-      // Following a link opens the real settings page and closes the dialog.
       await ctx.press({ role: "link", name: "Companion settings", within: DIALOG })
       await ctx.until(async () => (await ctx.pathname()) === "/settings/integrations/companion", "the Companion settings page from the dialog")
     } else {
@@ -158,8 +124,6 @@ async function steps(ctx, report, record) {
   record(Buffer.compare(readFileSync(ctx.configFile("config.json")), legacy) === 0, "0.1.6's config.json is left byte for byte")
 }
 
-// Opens Settings → MediaFlick Companion from the sidebar, which a still-open
-// modal dialog would block.
 async function companionSettings(ctx, report, record, { administrator, companionInstalled, companionSupported, name }) {
   const missing = !companionInstalled && companionSupported
   if ((await ctx.pathname()) !== "/settings/integrations/companion") {
@@ -173,8 +137,6 @@ async function companionSettings(ctx, report, record, { administrator, companion
   }
   if (missing) await ctx.find(GUIDE_LINK, { timeout: 30000 })
   if (missing) {
-    // A relaunched session learns the administrator flag from the policy read
-    // that follows the start, so the wording may settle a moment later.
     const line = administrator ? ADMIN_LINE : MEMBER_LINE
     const shown = await ctx.until(async () => (await text(ctx, ".settings-page"))?.includes(line), `the Companion page's ${administrator ? "administrator" : "non-administrator"} wording`, 20000).then(() => true, () => false)
     record(shown, administrator ? "Companion settings tell an administrator what the guide covers" : "Companion settings point a non-administrator to their administrator")

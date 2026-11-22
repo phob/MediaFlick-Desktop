@@ -1,18 +1,3 @@
-// Makes a MediaFlick 0.2.0 profile for `just upgrade-e2e-0-2-0` with the
-// RELEASED v0.2.0 AppImage. Not a proof drive: it sets user intent through
-// the real UI so the kept profile holds every kind of state 0.2.0 writes, and
-// records what it set in fixture-intent.json. fixtures/library-db/README.md
-// has the command.
-//
-// Writes: settings.json (Player: Default fullscreen Windowed; Application:
-// Show scrollbars on), accounts.json (Viewing: Hide watched, audio languages
-// en,de; Appearance: Cobalt accent, IMDb + Rotten Tomatoes Critics ratings;
-// Letterboxd: davidehrlich), collections.json (one My Collection from a TMDB
-// template with a custom poster in custom-art/), playback-preferences.json (a
-// subtitle or audio choice on one movie), and in library.db the synced
-// catalog, franchise and collection snapshots and rating_cache rows. Needs
-// --account on a server with the MediaFlick Companion (TMDB and MDBList).
-// Nothing is written to Jellyfin.
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import path from "node:path"
 
@@ -62,7 +47,6 @@ export default async function makeFixture(ctx) {
   intent.status = (await ctx.api("/api/status")).body
   await ctx.screenshot("01-home-synced")
 
-  // Device settings (settings.json).
   await ctx.press({ role: "link", name: "Settings" })
   await ctx.until(async () => (await ctx.pathname()) === "/settings/client/player", "the Player shelf")
   await ctx.find({ role: "combobox", name: "Player backend" }, { timeout: 30000 })
@@ -75,7 +59,6 @@ export default async function makeFixture(ctx) {
   intent.settings = ctx.readConfig("settings.json")
   ctx.check(intent.settings?.default_fullscreen === "windowed" && intent.settings?.show_scrollbars === true, "settings.json holds Windowed and Show scrollbars")
 
-  // Account settings (accounts.json).
   await openShelf(ctx, "Viewing")
   await ctx.find({ role: "switch", name: "Hide watched by default" }, { timeout: 20000 })
   await ctx.press({ role: "switch", name: "Hide watched by default" })
@@ -96,7 +79,6 @@ export default async function makeFixture(ctx) {
   ctx.check(intent.account?.viewing?.hideWatched === true && intent.account?.appearance?.accent === "cobalt", "accounts.json holds Viewing and Appearance")
   await ctx.screenshot("02-letterboxd-saved")
 
-  // Franchises (franchise_* snapshots and membership in library.db).
   await sidebarLink(ctx, "Movie Franchises")
   const franchises = await ctx.until(async () => {
     const body = (await ctx.api(`/api/collections/franchises?localDate=${today()}`)).body
@@ -106,7 +88,6 @@ export default async function makeFixture(ctx) {
   await ctx.park()
   await ctx.screenshot("03-franchises")
 
-  // My Collections with a custom poster (collections.json, custom-art/, collection_snapshot*).
   await sidebarLink(ctx, "My Collections")
   await ctx.find({ role: "heading", name: "No collections yet" }, { timeout: 30000 })
   await ctx.press({ role: "link", name: "Choose templates" })
@@ -134,8 +115,6 @@ export default async function makeFixture(ctx) {
   await ctx.until(() => ctx.app.evaluate(`document.querySelectorAll("main a[aria-label]").length > 0`), "the collection's titles", 120000)
   await ctx.screenshot("05-my-collection")
 
-  // Ratings on movie cards and a detail page (rating_cache), and a playback
-  // preference on a movie with a subtitle or second audio track.
   const movies = await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&recursive=true&includeItemTypes=Movie&fields=MediaStreams,ProviderIds&sortBy=SortName&limit=300`)
   const streams = (item, type) => (item.MediaStreams ?? []).filter((stream) => stream.Type === type).length
   const movie = movies.Items.find((item) => streams(item, "Subtitle") > 0 && item.ProviderIds?.Imdb) ?? movies.Items.find((item) => streams(item, "Audio") > 1)

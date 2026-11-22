@@ -1,6 +1,3 @@
-//! Read the physical/logical output relationship from the Wayland compositor.
-//! XWayland's integer DPI can oversample fractional-scale monitors; the UI
-//! needs that DPI for layout, but doesn't need more pixels than the output.
 use std::collections::BTreeMap;
 
 use wayland_client::{Connection, Dispatch, QueueHandle, WEnum, delegate_noop, protocol::*};
@@ -22,7 +19,6 @@ impl Output {
         if [width, height, pw, ph].into_iter().any(|v| v <= 0) {
             return None;
         }
-        // Output modes are unrotated; logical dimensions include rotation.
         for (pw, ph) in [(pw, ph), (ph, pw)] {
             let x = f64::from(pw) / f64::from(width);
             let y = f64::from(ph) / f64::from(height);
@@ -58,8 +54,6 @@ fn read_outputs() -> Option<Vec<Output>> {
     let handle = queue.handle();
     let _registry = connection.display().get_registry(&handle, ());
     let mut state = State::default();
-    // Registry globals, bound outputs, then xdg logical geometry. No surfaces,
-    // input devices, or desktop settings are created or modified.
     for _ in 0..3 {
         queue.roundtrip(&mut state).ok()?;
     }

@@ -1,31 +1,3 @@
-// A response that was in flight while the user switched accounts must not be
-// answered with the old account's data, expire the new account, or write to
-// either account's local state. The app answers it 409 (`the Jellyfin
-// account changed while the request was running`) with `accountChanged: true`
-// in the body, which tells it apart from the route's own 409s.
-// The app signs in to account A through a loopback proxy that holds chosen
-// upstream requests on gates. While they are held the user signs out through
-// the user menu and signs in to the demo server as `demo` (account B); then
-// the gates open. Three cases:
-// - reads whose response arrives after the switch (media info, a series'
-//   Next Up, Home's resume row, a movie's trailer, a technical batch, a
-//   Companion Seerr search, and the reads the detail page of another A movie
-//   sends by itself);
-// - a read the proxy answers 401 after the switch, which must not expire B;
-// - a playback-preference save and a favorite toggle whose upstream request
-//   lands after the switch, which must answer 409 and leave
-//   playback-preferences.json and B's cache alone.
-// A second round signs in to A again, presses the favorite toggle on the
-// detail page with its upstream request held, and switches to B again: the
-// UI's own mutation must answer 409 and show no error toast on B.
-// The proxy answers A's `POST /Sessions/Logout` itself, so A's token stays
-// valid for the held requests to reach Jellyfin as they would on a slow
-// server; the after-run tasks sign both A tokens out. The released favorites
-// do reach A's server, and the journaled after-run tasks remove them. Every
-// check is recorded in `account-switch.json`; the run fails at the end
-// listing each failed one. Signs out of B at the end. Read-only on the demo
-// server.
-//   just verify account-switch --account https://jellyfin.ph0c.de --signed-out
 import { createHash } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
@@ -67,8 +39,6 @@ const upstream = {
   seerrSearch: (query) => ({ label: `GET /MediaFlick/seerr/search?query=${query}`, match: (url, method) => method === "GET" && url.pathname === "/MediaFlick/seerr/search" && url.searchParams.get("query") === query }),
 }
 
-// A gate holds the first upstream request it matches. A `delay` gate forwards
-// it to Jellyfin on release; an `answer` gate replies with `reply` instead.
 function gates() {
   const all = []
   const arm = (name, { label, match }, { hook = "delay", reply = null } = {}) => {
@@ -119,10 +89,6 @@ async function waitHeld(ctx, gate) {
   }
 }
 
-// Keeps the answer to the first request the page itself sends for each of
-// `paths`, so the drive can read its body. The first request is the held
-// one; a later request for the same path (the kept route under the next
-// account) can be answered sooner, so first-to-resolve would be wrong.
 async function recordPageAnswers(ctx, paths) {
   await ctx.app.evaluate(`(() => {
     const watched = ${JSON.stringify(paths)}
@@ -165,9 +131,6 @@ async function cached(ctx, kind) {
   return body?.items ?? []
 }
 
-// Asks the demo server itself, as the demo session the app holds and
-// read-only, whether it has a title named like `name`. The app's own cache
-// can't decide this: a leaked A title there would exclude itself.
 async function demoHasTitle(session, name) {
   const query = new URLSearchParams({ userId: session.user_id, searchTerm: name, Recursive: "true", IncludeItemTypes: "Movie,Series,Episode", Limit: "50" })
   const response = await fetch(`${DEMO}/Items?${query}`, { headers: { Authorization: `MediaBrowser Token="${session.token}"`, Accept: "application/json" }, signal: AbortSignal.timeout(20000) })
@@ -175,8 +138,6 @@ async function demoHasTitle(session, name) {
   return ((await response.json()).Items ?? []).some((item) => item.Name.toLowerCase().includes(name.toLowerCase()))
 }
 
-// The sign-in screen keeps the route it replaced, so after a sign-out from a
-// detail page the window title is that title's, not `Sign in`.
 async function signInThroughProxy(ctx, proxyUrl) {
   await ctx.find(SERVER, { timeout: 30000 })
   await ctx.fill(SERVER, proxyUrl)
@@ -191,8 +152,6 @@ async function signInThroughProxy(ctx, proxyUrl) {
   return a
 }
 
-// Signs out of `from` through the user menu, signs in to the demo server as
-// `demo` and waits for its Home to show cards.
 async function switchToDemo(ctx, from, shot) {
   await ctx.hover({ css: '[data-sidebar="sidebar"]' })
   await ctx.press(userMenu(from.userName, from.serverUrl))

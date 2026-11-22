@@ -43,14 +43,6 @@ export const RELEASE_DECADES = {
   tv: releaseDecades(1900),
 }
 
-/**
- * One immutable identity for everything that can change a discovery wall.
- *
- * TanStack hashes objects stably, but making this boundary a scalar also lets
- * React key the whole result subtree to the exact same identity. In
- * particular, the local library filter must be represented even though it is
- * applied after the Seerr response has been joined to the local library.
- */
 export function discoveryResultSetKey(
   row: SeerrDiscoverRow,
   filters: SeerrDiscoverFilters,
@@ -74,12 +66,6 @@ export function discoveryCardKey(resultSetKey: string, result: SeerrResult) {
   return `${resultSetKey}:${result.mediaType}-${result.tmdbId}`
 }
 
-/**
- * Flatten only pages fetched for the currently rendered result set. The query
- * key already isolates these in normal operation; retaining the identity on
- * each page makes that invariant explicit at the final infinite-page join and
- * also removes an upstream duplicate if a moving catalogue straddles pages.
- */
 export function discoveryResultsForSet(
   resultSetKey: string,
   pages: readonly { resultSetKey: string; results: SeerrResult[] }[] | undefined,
@@ -114,10 +100,6 @@ function positiveInteger(value: string | null) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
-/**
- * A studio or network from the URL. The name only labels the active-filter
- * chip; Seerr filters by the id.
- */
 function readCompany(params: URLSearchParams, key: "studio" | "network"): SeerrCompany | undefined {
   const id = positiveInteger(params.get(key))
   if (!id) return undefined
@@ -203,7 +185,6 @@ export function writeDiscoveryFilters(
   return next
 }
 
-/** Discover's catalog for one studio's films or one network's series. */
 export function discoverCompanyPath(filter: { studio: SeerrCompany } | { network: SeerrCompany }) {
   const row = "studio" in filter ? "movies" : "tv"
   const params = writeDiscoveryFilters(new URLSearchParams({ row }), row, filter)

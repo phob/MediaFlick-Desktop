@@ -558,7 +558,6 @@ fn server_base_url(media_url: &str) -> Option<String> {
 }
 
 fn unix_now_ticks() -> i64 {
-    // A Jellyfin tick is 100 ns.
     i64::try_from(crate::app::clock::since_epoch().as_nanos() / 100).unwrap_or(i64::MAX)
 }
 

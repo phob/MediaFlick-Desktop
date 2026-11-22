@@ -19,12 +19,6 @@ import { cn } from "@/lib/utils"
 
 const TECHNICAL_PREFETCH_MARGIN = "160px"
 
-/**
- * Horizontal shelves mount every card so they can scroll smoothly, including
- * cards far outside both the viewport and a shelf's clipped edge. Observe the
- * actual link before registering its live technical metadata; a small margin
- * lets badges arrive just before a card scrolls into view.
- */
 function useTechnicalVisibility() {
   const intersectionSupported = globalThis.IntersectionObserver !== undefined
   const [element, setElement] = useState<HTMLElement | null>(null)
@@ -56,12 +50,6 @@ function subtitleFor(item: ItemSummary) {
   return item.year ? String(item.year) : ""
 }
 
-/**
- * Memoised because the windowed grid re-renders on every scroll tick: without
- * it a full screen of cards reconciles ~60 times a second for nothing. `item`
- * comes straight out of the query cache, whose structural sharing keeps the
- * reference stable between renders, so the comparison actually holds.
- */
 export const MediaCard = memo(function MediaCard({
   item: originalItem,
   className,
@@ -84,9 +72,6 @@ export const MediaCard = memo(function MediaCard({
   const progress = progressFraction(item)
   const subtitle = subtitleFor(item)
   const remaining = landscape ? formatRemaining(item.positionTicks, item.runtimeTicks) : null
-  // A cached `primaryImageTag` can outlive the artwork on the server, and a
-  // failing <img> re-requests on every re-render — which means a fresh round
-  // trip to Jellyfin each time. Fall back to the title placeholder instead.
   const [imageIndex, setImageIndex] = useState(0)
   const images = protectedEpisode ? [] : landscape
     ? landscapeImageCandidates(item)
@@ -125,14 +110,6 @@ export const MediaCard = memo(function MediaCard({
             <img
               src={image}
               alt=""
-              // No `loading="lazy"`: the virtualizer already mounts only the rows
-              // near the viewport, so lazy loading just adds a second deferral —
-              // the overscan rows would wait for an intersection check instead of
-              // fetching ahead, and the poster would land after the row is
-              // already on screen. `decoding="async"` keeps the decode off the
-              // main thread so a newly revealed row cannot drop a scroll frame.
-              // No zoom on hover: the card is framed rather than enlarged, so a
-              // shelf keeps its rhythm while the pointer runs along it.
               decoding="async"
               onError={() => setImageIndex((current) => current + 1)}
               className={cn(
@@ -169,9 +146,6 @@ export const MediaCard = memo(function MediaCard({
             </div>
           )}
           <CardTechnicalReadout item={item} active={technicalVisible} />
-          {/* Watched is drawn as a finished progress rule rather than a corner
-              badge. The two states use the same thickness and accent fill;
-              watched simply fills the track completely. */}
           {(progress > 0 || item.played) && (
             <div
               className="absolute inset-x-0 bottom-0 z-[7] h-[3px] bg-scrim/65"

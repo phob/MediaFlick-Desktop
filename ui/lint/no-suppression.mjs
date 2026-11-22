@@ -1,8 +1,3 @@
-// Fails on any comment in src/ that silences a lint or type check. An oxlint
-// rule could not enforce this: `/* oxlint-disable */` silences that rule too.
-// A rule that misfires on a whole file is turned off for that file in
-// `.oxlintrc.json` overrides, where the exception is reviewed once.
-
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 

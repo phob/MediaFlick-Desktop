@@ -2,10 +2,6 @@ using System.Text.Json;
 
 namespace Jellyfin.Plugin.MediaFlick.Models;
 
-/// <summary>
-/// The MediaFlick API contract is camelCase. Jellyfin's host-wide MVC options
-/// serialize PascalCase, so every typed response must opt in explicitly.
-/// </summary>
 public static class CompanionJson
 {
     public static JsonSerializerOptions CamelCase { get; } = new(JsonSerializerDefaults.Web);

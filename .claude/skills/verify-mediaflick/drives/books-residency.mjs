@@ -1,21 +1,3 @@
-// Memory while reading fixed pages (`--account`, Linux): turns 250 pages
-// of the 85-page PDF (bouncing between its ends, so pages are read again)
-// and 540 of the 271-page CBZ (to its end and back), and every 10 turns records the renderer processes' resident memory (from
-// /proc), the JS heap, the document and frame counts, the page's live blob URLs, workers and iframes, and how many PDF page load
-// results are still reachable after garbage collection (checked: only the shown page's), and the page's unnamed native functions
-// (checked: no growth after the first 10 turns; every reaction left on a pending promise keeps two). A curve that keeps rising with pages read,
-// rather than levelling off, means pages are kept after they leave the
-// screen. Then it opens and closes each book three more times: what the reader
-// leaves alive after it closed must not grow with opens.
-//
-// Then the races, each checked: the PDF is opened and closed five times while
-// pdf.js waits on a range read of the file, which must leave no worker, and each book takes
-// 40 rapid double presses of ArrowRight (the second before the first page has
-// loaded) and one held ArrowLeft, after which only the shown page may hold blob
-// URLs. Last, the CBZ turns ahead until a page waits on a held read of the
-// file, queues a turn back behind it and closes: no blob URL or iframe may
-// outlive that. MEDIAFLICK_VERIFY_RESIDENCY=races runs only the races. Writes
-// books-residency.json.
 import { readdirSync, readFileSync } from "node:fs"
 
 const BOOKS = [
@@ -26,14 +8,7 @@ const REOPENS = 3
 const CLOSES_WHILE_OPENING = 5
 const DOUBLE_PRESSES = 40
 const HELD_REPEATS = 20
-/** A shown page's document and image, twice over for a page whose image has not loaded yet. */
 const MAX_SHOWN_BLOBS = 4
-/**
- * Counts the page's live blob URLs and workers: the reader's engines run in
- * the page itself. Armed with `closeAtRange`, the next read of a book's file
- * past its first block (pdf.js asking for a range once its worker runs)
- * leaves the reader while that read is still in flight.
- */
 const INSTRUMENT = `(() => {
   if (window.__residency) return
   const blobs = new Map()
@@ -81,7 +56,6 @@ const LIVE = `({
   workers: window.__residency.workers.size,
   iframes: window.__residency.iframes.filter((ref) => ref.deref()).length,
 })`
-/** How many heap objects with `prototype` (an expression) pass `filter` (a function's source). */
 async function countObjects(ctx, prototype, filter) {
   const group = "residency-count"
   const { result } = await ctx.app.send("Runtime.evaluate", { expression: prototype, objectGroup: group })
@@ -91,18 +65,11 @@ async function countObjects(ctx, prototype, filter) {
   if (counted.exceptionDetails) throw new Error(`counting ${prototype} objects failed: ${counted.exceptionDetails.exception?.description ?? counted.exceptionDetails.text}`)
   return counted.result.value
 }
-/**
- * PDF page load results (`{ src, onZoom, images }`), and the page's unnamed
- * native functions: a promise's resolve and reject functions are those, and
- * every reaction left on a promise that stays pending keeps a pair.
- */
 const heapCounts = async (ctx) => ({
   pageResults: await countObjects(ctx, "Object.prototype", `(object) => Object.hasOwn(object, "src") && Object.hasOwn(object, "onZoom") && Object.hasOwn(object, "images")`),
   nativeUnnamedFunctions: await countObjects(ctx, "Function.prototype", `(fn) => { try { return fn.name === "" && Function.prototype.toString.call(fn).includes("[native code]") } catch { return false } }`),
 })
-/** The shown PDF page's load result. */
 const MAX_SHOWN_PAGE_RESULTS = 1
-/** Noise in the page's count of unnamed native functions (one sample rose 62 above its neighbours); a leak per page read grew it by 486. */
 const MAX_FUNCTION_GROWTH = 150
 const PAGES = 100
 const SAMPLE_EVERY = 10
@@ -115,12 +82,6 @@ function read(path) {
   }
 }
 
-/**
- * Resident memory of the app's child processes (renderers, GPU, utilities),
- * found as descendants of the browser process, whose environment names this
- * run's profile. A sandboxed renderer's /proc entry may refuse reads; those
- * are counted in `unreadable` instead of being skipped silently.
- */
 function childMemory(profile) {
   const processes = readdirSync("/proc")
     .filter((name) => /^\d+$/.test(name))
@@ -219,7 +180,6 @@ async function close(ctx, book, label) {
   return ctx.app.evaluate(LIVE)
 }
 
-/** What the page still holds 2 s after the reader left, once garbage is collected. */
 async function settledLive(ctx) {
   await pause(2000)
   await ctx.app.send("HeapProfiler.collectGarbage")
@@ -239,11 +199,6 @@ async function closeWhileOpening(ctx, book, report, check) {
   check(rounds.every((entry) => entry.blobUrls === before.blobUrls), `${book.key}: no blob URL outlives a reader closed during its range read`, { before: before.blobUrls, after: rounds.map((entry) => entry.blobUrls) })
 }
 
-/**
- * Turns ahead until a turn's page needs a read of the file, holds that read,
- * queues a turn back behind it, and leaves the reader: the held read fails
- * when the reader leaves, and the queued turn must not load a page then.
- */
 async function closeWithTurnQueued(ctx, book, report, check) {
   const before = await settledLive(ctx)
   await open(ctx, book, " to leave with a turn queued")
@@ -263,10 +218,6 @@ async function closeWithTurnQueued(ctx, book, report, check) {
   check(after.blobUrls === before.blobUrls && after.iframes <= before.iframes, `${book.key}: a turn queued behind a pending page leaves nothing once the reader left`, { before, after })
 }
 
-/**
- * Two presses back to back, so the second reaches the reader while the
- * first page is still loading, then one key held for HELD_REPEATS repeats.
- */
 async function race(ctx, book, report, check) {
   const before = await ctx.app.evaluate(LIVE)
   await open(ctx, book, " for the races")
@@ -323,8 +274,6 @@ async function traverse(ctx, profile, book, report, check) {
     await ctx.until(async () => (await ctx.app.evaluate(`document.querySelector("[data-reader-footer]").innerText`)) !== before, `${book.key}: turn ${turn} to page ${page + 1}`, 20000, { quiet: true })
     if (turn % SAMPLE_EVERY === 0) samples.push({ ...(await sample(ctx, profile, turn)), page: page + 1 })
   }
-  // A critical memory-pressure signal makes Chromium drop its caches; what
-  // stays after it is held by the page, not cached.
   await ctx.app.send("Memory.simulatePressureNotification", { level: "critical" })
   const settle = Date.now() + 3000
   await ctx.until(async () => Date.now() > settle, `${book.key}: 3 s after memory pressure`, 5000, { quiet: true })

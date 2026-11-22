@@ -5,11 +5,6 @@ using Jellyfin.Plugin.MediaFlick.Models;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-/// <summary>
-/// The only shape allowed to cross from MDBList data into the desktop-facing
-/// ratings boundary. Upstream JSON is data, never a response DTO: every field
-/// below is reconstructed from a fixed catalog and bounded primitive values.
-/// </summary>
 internal static partial class RatingsContract
 {
     public const int BoundaryVersion = 1;
@@ -18,7 +13,7 @@ internal static partial class RatingsContract
     public const string Origin = "server_mdblist";
     public const long MaxVotes = 1_000_000_000_000;
     public const long MaxQuotaValue = 1_000_000_000_000;
-    public const long MaxUnixTimestamp = 4_102_444_800; // 2100-01-01 UTC
+    public const long MaxUnixTimestamp = 4_102_444_800;
 
     public static IReadOnlyList<RatingSourceResponse> SourceCatalog { get; } =
     [
@@ -116,10 +111,6 @@ internal static partial class RatingsContract
         return result;
     }
 
-    /// <summary>
-    /// Rebuilds ratings from the fixed public source catalog. Unknown source
-    /// labels, arbitrary upstream fields, and original strings are discarded.
-    /// </summary>
     public static JsonArray NormalizeMedia(JsonNode? node)
     {
         var item = node as JsonObject;
@@ -144,10 +135,6 @@ internal static partial class RatingsContract
         return new JsonArray(bySource.Values.Select(value => (JsonNode)value).ToArray());
     }
 
-    /// <summary>
-    /// Revalidates persisted records before they can be returned. This repairs
-    /// cache records from earlier releases as well as rejecting any tampering.
-    /// </summary>
     public static JsonArray NormalizeCachedRatings(JsonArray? ratings)
     {
         var bySource = new SortedDictionary<string, JsonObject>(StringComparer.Ordinal);

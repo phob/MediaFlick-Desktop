@@ -1,23 +1,3 @@
-// Runs the real MediaFlick 0.1.6 Linux AppImage once on a profile directory
-// and records what it did there. Run it inside the verify-mediaflick Xvfb
-// wrapper, which keeps it off the user's screen; scripts/e2e/upgrade-0-1-6.mjs
-// does that:
-//
-//   bash .claude/skills/verify-mediaflick/scripts/isolate-linux.sh node scripts/e2e/run-0-1-6.mjs \
-//     --appimage <0.1.6 AppImage> --profile <dir> --out <dir> [--url SERVER] [--mpv-path PATH] [--web-user NAME [--web-password PASSWORD]]
-//
-// The profile directory has the verify layout: config/ and data/ are the
-// XDG config and data roots, so the app's own directories are
-// config/mediaflick-desktop and data/mediaflick-desktop. A missing profile
-// starts empty, which is how a 0.1.6 profile is made for the upgrade checks.
-//
-// 0.1.6 shows Jellyfin Web in CEF. The script waits for its page over CDP,
-// with --web-user signs in to Jellyfin Web as a 0.1.6 user did (the session
-// then lives in the cef-cache), captures the page and the whole display, closes the window the way the page's
-// own close does (0.1.6 saves config.json then), and writes run.json to the
-// output directory: the page it showed, how it exited, and every file it
-// added, changed or removed in the config dir and the data dir (cef-cache
-// summarized), with the part of mediaflick-desktop.log it wrote as app.log.
 import { execFileSync, spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs"
@@ -60,11 +40,9 @@ function walk(dir, prefix = "") {
   }
   return entries
 }
-// The cef-cache holds hundreds of Chromium files; its version stamp and size say what matters.
 function manifest() {
   const data = walk(dataDir)
   const cache = Object.entries(data).filter(([name]) => name.startsWith("cef-cache/"))
-  // Chromium stamps the profile with the last browser version that opened it.
   const preferences = path.join(dataDir, "cef-cache", "Default", "Preferences")
   const stamp = existsSync(preferences) ? JSON.parse(readFileSync(preferences, "utf8")) : null
   return {
@@ -113,7 +91,6 @@ const env = {
   XDG_DATA_HOME: path.join(profile, "data"),
   XDG_CACHE_HOME: path.join(profile, "cache"),
   XDG_STATE_HOME: path.join(profile, "state"),
-  // Chromium's singleton socket must fit the 107-byte Unix path limit.
   TMPDIR: process.env.XDG_RUNTIME_DIR,
 }
 for (const name of ["LD_PRELOAD", "LD_LIBRARY_PATH", "JELLYFIN_URL", "MEDIAFLICK_DESKTOP_MPV_PATH", "MEDIAFLICK_DESKTOP_LOG_FILE", "MEDIAFLICK_DESKTOP_LOG_LEVEL", "MEDIAFLICK_DESKTOP_REMOTE_DEBUGGING_PORT"]) delete env[name]
@@ -148,7 +125,6 @@ try {
   await page.waitFor("document.readyState === 'complete'", { timeout: 60000 }).catch(() => run.problems.push("the page never finished loading"))
   await sleep(Number(options.settle) * 1000)
   if (options["web-user"]) {
-    // Jellyfin Web's own manual sign-in form; the user cards hide it behind "Manual Login".
     const visible = (selector) => `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return !!e && e.offsetParent !== null })()`
     await page.evaluate(`document.querySelector(".btnManual")?.click()`)
     await page.waitFor(visible("#txtManualName"), { timeout: 30000 })
@@ -167,8 +143,6 @@ try {
   writeFileSync(path.join(out, "page.png"), Buffer.from(shot.data, "base64"))
   run.screenshot = "page.png"
   run.display = capture("display.png")
-  // The page's own close is the window's close: CEF closes the browser and 0.1.6 saves config.json on the way out.
-  // The page goes away with the window, so the call may never be answered.
   await Promise.race([page.evaluate("window.close()").catch(() => {}), sleep(2000)])
   page.close()
 } catch (error) {
@@ -187,7 +161,6 @@ if (!closed) {
     run.exit = { ...(await exited), how: "SIGKILL" }
   }
 }
-// CEF helpers carry --user-data-dir inside the profile; none may outlive the app.
 await sleep(1000)
 const leftovers = listProcesses().filter((row) => row.cmd.includes(`--user-data-dir=${profile}`))
 run.leftovers = leftovers.map(({ pid, name }) => ({ pid, name }))

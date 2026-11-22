@@ -135,17 +135,12 @@ impl PlaybackPreferenceService {
         &self,
         change: impl FnOnce(&mut PlaybackPreferenceFile) -> io::Result<T>,
     ) -> io::Result<T> {
-        let mut current = self
-            .document
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut next = current.clone();
-        let result = change(&mut next)?;
-        validate(&next)?;
-        save_with_backup(&self.path, &next)?;
-        *current = next;
-        drop(current);
-        Ok(result)
+        super::json_file::mutate_locked(
+            &self.document,
+            change,
+            |next| validate(next),
+            |next| save_with_backup(&self.path, next),
+        )
     }
 }
 

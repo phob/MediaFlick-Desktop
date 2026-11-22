@@ -127,7 +127,6 @@ fn a_pushed_change_fetched_before_an_account_switch_is_not_cached() {
         targets.push(target);
         stale_fetch_tx.send(()).expect("signal the in-flight fetch");
 
-        // Sign-in reads the server version before it sends credentials.
         let (stream, target) = receive_request(&listener);
         targets.push(target);
         send_json(

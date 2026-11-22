@@ -15,7 +15,6 @@ const HEADER: &str =
 struct Decl {
     module: String,
     text: String,
-    /// The wire types the declaration names.
     deps: Vec<String>,
 }
 
@@ -25,16 +24,12 @@ struct Collect<'a> {
     decls: BTreeMap<String, Decl>,
 }
 
-/// The defining module without the crate, as the generated file's name:
-/// `mediaflick_desktop::shell::cef::api::wire::ErrorBody` is `api.wire`.
 fn module_of<T: ?Sized>() -> String {
     let path = std::any::type_name::<T>();
     let path = path.split_once('<').map_or(path, |(path, _)| path);
     module_name(path.rsplit_once("::").map_or("", |(module, _)| module))
 }
 
-/// A module path without the crate: `mediaflick_desktop::shell::cef::api`
-/// is `api`.
 fn module_name(path: &str) -> String {
     let module = path.split_once("::").map_or("", |(_, module)| module);
     let module = module.strip_prefix("shell::cef::").unwrap_or(module);
@@ -55,9 +50,6 @@ impl TypeVisitor for Collect<'_> {
                 .map(|dep| dep.ts_name)
                 .collect(),
         };
-        // Each instantiation of a generic type renders the same
-        // declaration; a different declaration is a second type. Names
-        // stay unique across files because the index re-exports them all.
         if let Some(seen) = self.decls.get(&name) {
             assert!(
                 seen.text == decl.text,
@@ -70,10 +62,6 @@ impl TypeVisitor for Collect<'_> {
     }
 }
 
-/// Calls `visit(index, byte, depth)` for each byte of `text` outside
-/// string literals and comments, so a `,` or `|` in a doc comment or a
-/// string never splits a declaration. `depth` counts the brackets that
-/// enclose the byte.
 fn scan(text: &str, mut visit: impl FnMut(usize, u8, usize)) {
     let bytes = text.as_bytes();
     let (mut depth, mut index) = (0usize, 0);
@@ -119,9 +107,6 @@ fn split_top_level(text: &str, separator: u8) -> Vec<&str> {
     parts
 }
 
-/// ts-rs prints each declaration on one line, with doc comments inline.
-/// One field or variant per line keeps a review diff to the part that
-/// changed.
 fn format_decl(decl: &str) -> String {
     let Some((head, rhs)) = decl.split_once(" = ") else {
         return decl.to_string();
@@ -141,8 +126,6 @@ fn format_decl(decl: &str) -> String {
             object_end = Some(index);
         }
     });
-    // A mapped type, `{ [key in string]: T }`, is one member and takes no
-    // comma.
     let object = rhs
         .strip_prefix('{')
         .filter(|body| !body.trim_start().starts_with('['));
@@ -182,8 +165,6 @@ fn format_field(field: &str) -> String {
     format!("  /**\n{lines}   */\n  {},\n", tidy_inline(field.trim()))
 }
 
-/// Drops the comma ts-rs leaves before an inline object's closing brace:
-/// `{ "command": "seek", positionMs: number, }`.
 fn tidy_inline(text: &str) -> String {
     let mut dangling = Vec::new();
     scan(text, |index, byte, _| {
@@ -198,8 +179,6 @@ fn tidy_inline(text: &str) -> String {
     out
 }
 
-/// The name of a module's route map: `api.collections` is
-/// `ApiCollectionsRoutes`.
 fn route_map_name(module: &str) -> String {
     let words = module
         .split(['.', '_'])
@@ -221,11 +200,6 @@ fn camel_case(name: &str) -> String {
     first + &words.map(capitalized).collect::<String>()
 }
 
-/// One route as a member of its module's route map, keyed by its method
-/// and path. `kind` says how the UI reads the answer: as the generated
-/// `response` type (`json`), as Companion JSON it describes by hand
-/// (`relay`), or not at all, because it only links to the bytes
-/// (`binary`).
 fn route_member(route: &Route, mut name: impl FnMut(&WireRef) -> String) -> String {
     let mut path = String::from("/api");
     let mut params = Vec::new();
@@ -260,9 +234,6 @@ fn route_member(route: &Route, mut name: impl FnMut(&WireRef) -> String) -> Stri
     )
 }
 
-/// Every generated file by its path from the repository root: one per
-/// Rust module, importing what it names from the others, and the index
-/// that re-exports them and joins the modules' route maps into `Routes`.
 fn render() -> BTreeMap<String, String> {
     let cfg = Config::new().with_large_int("number");
     let mut collect = Collect {
@@ -346,8 +317,6 @@ fn render() -> BTreeMap<String, String> {
     files
 }
 
-/// The generated files on disk, with the line endings a Windows checkout
-/// may give them normalized.
 fn committed(root: &Path) -> BTreeMap<String, String> {
     let names = std::fs::read_dir(root.join(GENERATED_DIR))
         .into_iter()

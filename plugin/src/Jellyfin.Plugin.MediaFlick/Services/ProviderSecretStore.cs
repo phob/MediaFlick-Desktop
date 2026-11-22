@@ -31,10 +31,6 @@ internal interface IProviderSecretStore
     void Remove(string provider);
 }
 
-/// <summary>
-/// Stores only purpose-bound ASP.NET Data Protection ciphertext in Jellyfin's
-/// established plugin configuration persistence. No controller exposes Get().
-/// </summary>
 internal sealed class DataProtectedProviderSecretStore : IProviderSecretStore
 {
     private const string ProtectionPurpose =
@@ -95,9 +91,6 @@ internal sealed class DataProtectedProviderSecretStore : IProviderSecretStore
         }
         catch (CryptographicException exception)
         {
-            // Every status probe reads the secret; report each unreadable
-            // credential once until it is replaced or removed. Data
-            // Protection messages name key ids, never the protected value.
             if (_reportedUnreadable.TryAdd(normalized, 0))
             {
                 _logger.LogWarning(
@@ -175,8 +168,6 @@ internal sealed class DataProtectedProviderSecretStore : IProviderSecretStore
         }
         catch (IOException exception)
         {
-            // Protection still succeeds when a filesystem does not implement
-            // Unix modes (for example, a mounted NAS configuration volume).
             _logger.LogInformation(
                 exception,
                 "Could not restrict MediaFlick key-ring file modes; protect the plugin data directory with host permissions");

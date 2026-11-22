@@ -9,22 +9,14 @@ use crate::playback::{
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
 
-// FFmpeg reads forward through a gap this size instead of sending a new HTTP
-// request. Its mov demuxer seeks to every chapter title of an .m4b; one TLS
-// connection per seek kept a 285-chapter audiobook loading for 45-125 s from a
-// remote server (2-5 s with this).
 const HTTP_SHORT_SEEK_BYTES: u32 = 1 << 20;
 
 pub fn loadfile_command(launch: &PlaybackRequest) -> Value {
     let mut options = Map::new();
-    // Appended, so External mpv keeps a user's own stream-lavf-o settings.
     options.insert(
         "stream-lavf-o-append".to_string(),
         json!(format!("short_seek_size={HTTP_SHORT_SEEK_BYTES}")),
     );
-    // Intentionally do not set mpv's `start` or `pause` options here. Every
-    // runtime resumes with a delayed absolute seek after file-loaded; see
-    // `kick_start_playback`.
     if let Some(title) = non_empty(launch.title.as_deref()) {
         options.insert(
             "force-media-title".to_string(),
@@ -32,9 +24,6 @@ pub fn loadfile_command(launch: &PlaybackRequest) -> Value {
         );
     }
     if launch.content.is_audio() {
-        // File-local, so the next video load selects its picture again. The
-        // player window keeps hosting the app; it shows no cover art, and
-        // external mpv opens no window at all.
         options.insert("vid".to_string(), json!("no"));
         options.insert("audio-display".to_string(), json!("no"));
     }
@@ -42,9 +31,6 @@ pub fn loadfile_command(launch: &PlaybackRequest) -> Value {
         options.insert("aid".to_string(), json!(audio_id.to_string()));
     }
     if non_empty(launch.subtitle_url.as_deref()).is_some() {
-        // Avoid briefly showing an automatically selected embedded subtitle;
-        // the selected external Jellyfin subtitle is added with `sub-add select`
-        // after mpv reports file-loaded.
         options.insert("sid".to_string(), json!("no"));
     } else if let Some(subtitle_id) = launch.subtitle_mpv_id {
         let value = if subtitle_id > 0 {
@@ -173,11 +159,6 @@ pub fn control_command(command: &PlayerCommand) -> Option<Value> {
     }))
 }
 
-/// On-screen text. It uses mpv's async IPC mode: the writer acknowledges it
-/// once written instead of holding the controller thread for mpv's reply, and a
-/// later command's reply wait drains the completion. Only cosmetic commands
-/// whose result is merely logged may do this; seeks, `loadfile` and `sub-add`
-/// stay reply-validated because playback depends on their outcome.
 pub(super) fn osd_text_command(text: &str, duration_ms: i64) -> Value {
     json!({
         "command": ["show-text", text, duration_ms, 1],
@@ -323,9 +304,6 @@ mod tests {
         );
     }
 
-    /// mpv's `seek` takes seconds, and a negative absolute target counts from
-    /// the end of the file, so a UI position must arrive as a non-negative
-    /// absolute+exact seek in seconds.
     #[test]
     fn seeks_are_absolute_exact_seconds_that_never_count_from_the_end() {
         let seek = control_command(&PlayerCommand::SeekMilliseconds(12_345.0)).expect("seek");

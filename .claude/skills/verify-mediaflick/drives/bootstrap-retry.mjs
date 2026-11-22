@@ -1,9 +1,3 @@
-// A server that accepts sign-in but cannot deliver the first catalog page.
-// The user gets a retry screen with a plain reason, the next attempt, Retry
-// now and Sign out, also after a relaunch on the same profile; Retry now loads
-// Home once the server recovers. A loopback proxy in front of the demo server
-// drops only the bootstrap's catalog pages. Read-only against the demo server.
-//   just verify bootstrap-retry
 const DEMO = "https://demo.jellyfin.org/stable"
 const SERVER = { role: "textbox", name: "Server" }
 const COVER = { role: "progressbar", name: "Loading MediaFlick" }

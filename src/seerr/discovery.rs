@@ -32,19 +32,13 @@ impl DiscoverKind {
     }
 }
 
-/// The small, allowlisted set of Seerr discovery controls exposed by the UI.
-///
-/// Keeping these as application-level names means neither the app scheme nor
-/// the Companion plugin becomes a general query-string proxy to Seerr.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiscoverOptions {
     genre: Option<i64>,
     sort: Option<DiscoverSort>,
     min_rating: Option<u8>,
     release_decade: Option<u16>,
-    /// A TMDB company id; the movie catalog only.
     studio: Option<i64>,
-    /// A TMDB network id; the TV catalog only.
     network: Option<i64>,
     media_type: Option<TrendingMediaType>,
     time_window: Option<TrendingWindow>,
@@ -71,9 +65,7 @@ enum TrendingWindow {
 }
 
 impl DiscoverOptions {
-    /// Reads the UI's discovery query parameters, by name, from `param`.
     pub fn from_query(param: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
-        // TMDB ids, which the Companion reads as 32-bit integers.
         let positive = |name: &str, message: &str| {
             param(name)
                 .map(|value| {
@@ -202,8 +194,6 @@ impl DiscoverOptions {
         query
     }
 
-    /// The movie and TV catalogs take the same filters and differ only in the
-    /// field TMDB sorts by for "newest".
     fn push_catalog_filters(
         &self,
         query: &mut Vec<(&'static str, String)>,
@@ -222,8 +212,6 @@ impl DiscoverOptions {
                 DiscoverSort::Newest => newest_sort,
             };
             query.push(("sortBy", value.to_string()));
-            // TMDB's vote-average sort otherwise promotes titles with
-            // a single perfect vote above established favourites.
             if sort == DiscoverSort::Rating {
                 query.push(("voteCountGte", "50".to_string()));
             }

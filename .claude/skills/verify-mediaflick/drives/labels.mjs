@@ -1,9 +1,3 @@
-// The UI's shared labels against Jellyfin's public demo server, read-only:
-// the sign-in screen's settings link and the way back, the settings save bar
-// and its disabled Save, Favorites, the watched and favorites toggles on a
-// movie and on episode cards, and the Releases startup destination (opened,
-// never chosen). Never presses Play, a favorites toggle or a watched toggle.
-//   just verify labels
 const DEMO = "https://demo.jellyfin.org/stable"
 const MOVIE = "Night of the Living Dead"
 const SERIES = "Pioneer One"
@@ -89,8 +83,6 @@ export default async function labels(ctx) {
   ctx.writeEvidence("episode-watch-buttons.json", JSON.stringify(watchButtons, null, 2))
   ctx.check(watchButtons.length > 0, `the series page has watched toggles (${watchButtons.length})`)
   ctx.check(watchButtons.every((name) => WATCHED_ACTIONS.has(name)), `every watched toggle is Mark watched or Mark unwatched: ${JSON.stringify([...new Set(watchButtons)])}`)
-  // An episode title link's name gains " (Next up)" whenever that query lands,
-  // so target the first title link by its number prefix instead of its name.
   await ctx.hover({ css: 'a[href^="/item/"]:has(> span.tabular-nums)' }, { nth: 0 })
   await ctx.screenshot("06-series-episode-actions")
   await ctx.park()

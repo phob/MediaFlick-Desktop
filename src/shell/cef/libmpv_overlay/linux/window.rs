@@ -228,9 +228,6 @@ impl OverlayWindow {
         self.conn.flush().map_err(io::Error::other)
     }
 
-    /// Treat the native frame, video child, and browser input child as one
-    /// focus scope. X11 emits FocusOut during transfers between these windows
-    /// and during grabs even though the application still owns keyboard focus.
     pub fn focus_browser(&self) -> io::Result<bool> {
         let focus = self
             .conn
@@ -254,8 +251,6 @@ impl OverlayWindow {
     }
 
     fn owns_focus(&self, mut focus: u32) -> io::Result<bool> {
-        // gpu-next creates its own child inside content. Treat that subtree as
-        // the same focus scope, including after the VO recreates its surface.
         for _ in 0..32 {
             if focus == self.parent || focus == self.content {
                 return Ok(true);
@@ -454,8 +449,6 @@ impl Drop for OverlayWindow {
     }
 }
 
-// Keep intermediate WM sizes away from the video renderer. In particular,
-// entering fullscreen can first produce a work-area size, then the full size.
 #[derive(Clone, Copy)]
 struct ResizeState {
     committed: (u16, u16),

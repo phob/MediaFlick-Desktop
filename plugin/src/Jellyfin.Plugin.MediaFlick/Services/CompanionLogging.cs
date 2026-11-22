@@ -3,11 +3,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-/// <summary>
-/// Keeps a failing dependency from flooding the Jellyfin log. The first
-/// failure of a kind for a subject is a Warning, repeats of that kind are
-/// Debug, and <see cref="Recovered"/> reports the first success afterwards.
-/// </summary>
 internal sealed class FailureLogGate
 {
     private readonly ConcurrentDictionary<string, string> _active =
@@ -37,16 +32,11 @@ internal sealed class FailureLogGate
         }
     }
 
-    /// <summary>Returns true when the subject was previously failing.</summary>
     public bool Recovered(string subject) => _active.TryRemove(subject, out _);
 }
 
 internal static class CompanionLogging
 {
-    /// <summary>
-    /// Returns the exception only when its rendered text cannot reveal the
-    /// secret. Callers then log the exception type instead of the object.
-    /// </summary>
     public static Exception? WithoutSecret(Exception exception, string? secret)
     {
         if (string.IsNullOrEmpty(secret))

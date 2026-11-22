@@ -5,11 +5,6 @@ export interface WindowTitleContext {
   itemTitle?: string | null
 }
 
-/**
- * The native window title for a route. CEF mirrors `document.title` onto the
- * OS window, so alt-tab and the taskbar read like an application rather than
- * one eternal page.
- */
 export function windowTitle(pathname: string, context: WindowTitleContext): string {
   if (pathname === "/") {
     return context.authenticated ? `Home — ${APP_NAME}` : `Sign in — ${APP_NAME}`

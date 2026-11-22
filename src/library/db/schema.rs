@@ -1,11 +1,3 @@
-//! The schema a fresh `library.db` is created with.
-
-/// The complete current schema.
-///
-/// `items` is a thin catalog index: one row per Movie/Series/Season/Episode
-/// with only what browsing, sorting, filtering, joining, and drawing cards
-/// needs. Rich metadata — synopsis, cast, technical streams, critic ratings —
-/// is fetched live from Jellyfin when a surface asks for it.
 pub(super) const SCHEMA: &str = r#"
 CREATE TABLE credentials (
     id           INTEGER PRIMARY KEY CHECK (id = 1),

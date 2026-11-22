@@ -14,6 +14,16 @@ them.
 | [0004](0004-companion-trust-boundary.md) | Provider credentials and calls live only in the server-side Companion | Accepted |
 | [0005](0005-expand-only-persistence.md) | `library.db` evolves expand-only because older releases keep opening it; JSON formats only add defaulted fields | Accepted |
 | [0006](0006-linux-libmpv-runtime-baseline.md) | Linux AppImage libmpv keeps GPU paths and builds on Ubuntu 24.04 | Accepted |
+| [0007](0007-cef-custom-scheme-and-bridge-boundary.md) | Embedded UI runs on a custom CEF scheme with strict origin, CSP, and thread boundaries | Accepted |
+| [0008](0008-thin-sqlite-catalog-and-three-pass-sync.md) | Local SQLite is a thin catalog index refreshed by three-pass sync while rich metadata stays live | Accepted |
+| [0009](0009-type-enforced-account-scoping-and-session-lifecycle.md) | Account scoping, startup lifecycle, and single-writer persistence are enforced structurally | Accepted |
+| [0010](0010-generated-wire-contracts-and-embedded-ui-build.md) | Wire contracts are generated from Rust and the UI bundle is owned by Cargo builds | Accepted |
+| [0011](0011-jellyfin-protocol-compatibility-and-quirks.md) | Jellyfin client accommodates server version floors, header-only auth, and API quirks | Accepted |
+| [0012](0012-companion-providers-seerr-and-letterboxd.md) | Companion provider integrations, Seerr joins, and direct public Letterboxd RSS | Accepted |
+| [0013](0013-playback-coordinator-and-mpv-runtime-constraints.md) | Playback coordinator actor model and mpv runtime constraints | Accepted |
+| [0014](0014-embedded-book-reader-and-archive-wasm.md) | Embedded book reader uses unbundled foliate-js, no-crypto libarchive.wasm, and query-param ranges | Accepted |
+| [0015](0015-react-ui-rendering-caching-and-interaction.md) | React UI caching, virtualization, portal isolation, and interaction patterns | Accepted |
+| [0016](0016-release-packaging-and-verification-harness.md) | Release state machine, v0.1.6 migration, packaging, and isolated E2E verification | Accepted |
 
 ## When to add a record
 

@@ -110,7 +110,6 @@ test("Player saves a W/stop shortcut swap in one request", async () => {
   expect(playbackSave).not.toHaveBeenCalled()
 })
 
-/** Mirrors `/api/startup`, whose `serde_json::Value` round trip sorts object keys. */
 function sortedKeys<T>(value: T): T {
   if (Array.isArray(value)) return value.map(sortedKeys) as T
   if (typeof value !== "object" || value === null) return value

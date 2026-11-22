@@ -1,15 +1,3 @@
-// Seerr rows are joined to the library by media kind. The app signs in
-// through a loopback proxy that answers the Companion's Seerr search for one
-// query with a crafted page: a person whose TMDB id is a library series' TMDB
-// id, a series row for that series, a movie row, and a row of an unknown kind
-// with the same TMDB id as the series. Desktop drops the person and the
-// unknown row; the series and movie rows keep their library ids in
-// `/api/seerr/search`, and Discover search shows them without an application
-// error. The proxy also answers the Companion's Seerr requests list with a
-// request whose media type Seerr left out (the Companion sends `""`) and the
-// series' TMDB id, and a `tv` request for the series: Requests keeps both,
-// and only the `tv` one is the library series. Read-only.
-//   just verify seerr-kinds --account https://jellyfin.example.com --signed-out
 const SIDEBAR = { css: '[data-sidebar="sidebar"]' }
 const QUERY = "mediaflick seerr kinds probe"
 const SEARCH_PATH = "/MediaFlick/seerr/search"
@@ -38,8 +26,6 @@ const row = (mediaType, tmdbId, title) => ({
   activity4k: null,
 })
 
-// Titles whose TMDB id no other title of the same kind shares, so the cache
-// maps that id to exactly one item.
 function uniqueByTmdb(items) {
   const counts = new Map()
   for (const item of items) counts.set(item.tmdb, (counts.get(item.tmdb) ?? 0) + 1)
@@ -58,7 +44,6 @@ async function cached(ctx, kind) {
   return null
 }
 
-// What the Companion's ShapeRequest answers for one Seerr request.
 const request = (id, mediaType, tmdbId) => ({
   id,
   status: "approved",

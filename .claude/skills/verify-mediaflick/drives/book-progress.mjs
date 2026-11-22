@@ -1,7 +1,3 @@
-// A book's place while Jellyfin's progress writes fail or are slow. The app
-// signs in through a loopback proxy that refuses or holds the book's
-// `POST /UserItems/<id>/UserData`. Writes the test user's progress and puts it back.
-//   just verify book-progress --account SERVER --signed-out --timeout 600
 const BOOK = "Shen of the Sea - Arthur Bowie Chrisman"
 const PAGES = 271
 const SERVER_PAGE = 3

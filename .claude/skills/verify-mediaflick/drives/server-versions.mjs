@@ -1,30 +1,3 @@
-// The supported Jellyfin versions, against real servers: Desktop signs in to
-// Jellyfin 10.11.0 and newer, and the Companion needs Jellyfin 12.0.0.
-//
-//   python3 .claude/skills/verify-mediaflick/scripts/jellyfin-version-servers.py 10.10.7 10.11.0 10.11.11 &
-//   just verify server-versions --timeout 900 --log-level "debug,jellyfin.playstate=trace,playback=trace"
-//
-// The servers come from build/e2e/jellyfin-version-servers/servers.json, which
-// that script writes (MEDIAFLICK_VERIFY_VERSION_SERVERS names another file).
-// The demo server (12.x) runs last, read-only.
-//
-// - Older than 10.11.0: typing the address shows the refusal with both
-//   versions, Sign in and Use Quick Connect stay disabled, the app's own
-//   login and Quick Connect routes refuse with the same message, and the
-//   server never sees a MediaFlick Desktop device (no credentials were sent).
-// - 10.11.0 and newer, below 12: sign-in, Home, the Movies and Shows
-//   libraries, a movie and a series detail page, Settings → MediaFlick
-//   Companion saying it needs Jellyfin 12.0.0, then the movie plays for a few
-//   seconds and stops, and sign-out.
-// - The demo server: sign-in, the Companion page keeps its plain "not found".
-//
-// Seeded with the 0.1.6 profile the script writes (a config.json naming the
-// first server, older than 10.11.0), the sign-in screen must show the
-// refusal before anything is typed: the upgrade scenario "a server below the
-// floor gets an explanation on the sign-in screen".
-//   just verify server-versions --seed build/e2e/jellyfin-version-servers/upgrade-0-1-6 …
-//
-// Writes server-versions.json and a screenshot per state.
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 
@@ -64,8 +37,6 @@ async function jellyfinAdmin(server) {
   }
 }
 
-// Each server names its titles from whatever metadata it found online, so
-// the drive asks it for the movie and the series the script added.
 async function titles(server) {
   const admin = await jellyfinAdmin(server)
   const first = async (type) => (await admin.get(`/Items?Recursive=true&IncludeItemTypes=${type}&SortBy=SortName`)).Items[0].Name
@@ -81,8 +52,6 @@ async function desktopDevices(server) {
   return Items.filter((device) => device.AppName === "MediaFlick Desktop").map((device) => device.Name)
 }
 
-// The app's own routes, posted from the page as the UI would. A backstop for
-// a sign-in sent before the address probe answered; the screen never sends it.
 const postFromPage = (ctx, route, body) => ctx.app.evaluate(`fetch(${JSON.stringify(route)}, { method: "POST", headers: { "Content-Type": "application/json" }, body: ${JSON.stringify(JSON.stringify(body))} }).then(async (reply) => ({ status: reply.status, body: await reply.json() }))`)
 
 async function refusal(ctx) {
@@ -136,8 +105,6 @@ async function companionPage(ctx) {
 }
 
 async function signOut(ctx, server) {
-  // Signed out on a Settings page, the app stays in Settings; from Home it
-  // returns to the sign-in screen.
   await ctx.hover(SIDEBAR)
   await ctx.press({ role: "link", name: "Home", within: SIDEBAR })
   await ctx.park()
@@ -151,11 +118,8 @@ async function signOut(ctx, server) {
   ctx.check((await ctx.api("/api/status")).body.authenticated === false, `signed out of ${server.version}`)
 }
 
-// The sign-in form, as ctx.signIn fills it; a 0.1.6 profile then opens its
-// one-time What's new over Home, which hides the sidebar until it is closed.
 async function signIn(ctx, server) {
   await ctx.fill({ role: "textbox", name: "Username" }, server.username)
-  // A refused server's password may still be in the field; the demo's is empty.
   await ctx.fill({ role: "textbox", name: "Password" }, server.password)
   if (!server.password) await ctx.key("Backspace", { keyCode: 8 })
   await ctx.press(SIGN_IN)

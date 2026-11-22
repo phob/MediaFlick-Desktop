@@ -1,8 +1,3 @@
-// Read-only preflight for verify-mediaflick: is this checkout ready to drive,
-// and is anything left over? Changes nothing. Exit code 1 lists problems.
-//
-//   just verify-doctor
-
 import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import net from "node:net"

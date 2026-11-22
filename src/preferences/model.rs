@@ -9,10 +9,6 @@ const MIN_WEBUI_WINDOW_HEIGHT: i32 = 360;
 const DEFAULT_LOG_LEVEL: &str = "debug";
 pub const DEFAULT_MARK_WATCHED_NEXT: &str = "w";
 
-/// Parses a settings value by the enum's serde name, ignoring ASCII case and
-/// surrounding whitespace, so it accepts what the generated TypeScript names.
-/// It lowercases the value first, so it suits only enums whose serde names
-/// are lowercase.
 fn from_serde_name<T: serde::de::DeserializeOwned>(value: &str) -> Option<T> {
     let name = value.trim().to_ascii_lowercase();
     let deserializer: StrDeserializer<'_, serde::de::value::Error> =
@@ -28,9 +24,6 @@ pub struct AppSettings {
     pub jellyfin_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mpv_path: Option<String>,
-    /// `None` preserves the legacy migration rule: an existing `mpv_path`
-    /// selects external mpv. Fresh Windows installs select bundled libmpv;
-    /// other platforms keep using external mpv until they ship a bundle.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -60,8 +53,6 @@ pub struct AppSettings {
     pub skip_recap: SegmentSkipMode,
     #[serde(default, skip_serializing_if = "SegmentSkipMode::is_default")]
     pub skip_commercial: SegmentSkipMode,
-    /// The mark-watched-and-play-next key, or `None` when disabled (stored as
-    /// an empty string).
     #[serde(
         default = "default_mark_watched_next",
         serialize_with = "serialize_binding",
@@ -70,8 +61,6 @@ pub struct AppSettings {
     pub mark_watched_next: Option<String>,
     #[serde(default, skip_serializing_if = "AppearanceSettings::is_default")]
     pub appearance: AppearanceSettings,
-    /// The one-time What's new for a device updated from 0.1.6 was closed
-    /// (`carries_0_1_6_data`).
     #[serde(default, skip_serializing_if = "is_false")]
     pub whats_new_seen: bool,
 }
@@ -98,10 +87,6 @@ pub struct AppearanceSettings {
     pub card_previews: bool,
     #[serde(default = "default_show_media_info", skip_serializing_if = "is_true")]
     pub show_media_info: bool,
-    /// Canonical rating source IDs chosen for card overlays. This is ordinary
-    /// presentation state; credentials remain in the operating-system vault.
-    /// IDs are limited to the fixed public source catalog so a prior or
-    /// tampered server response cannot remain as desktop-visible metadata.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rating_sources: Vec<String>,
 }
@@ -276,18 +261,14 @@ impl SegmentSkipMode {
 pub struct PlayerPreferences {
     pub segment_skip: SegmentSkipConfig,
     pub subtitles: SubtitleAppearance,
-    /// The mark-watched-and-play-next key, or `None` when disabled.
     pub mark_watched_next: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubtitleAppearance {
-    /// Percent of mpv's default size.
     pub size: u16,
     pub outline: u8,
-    /// Percent opacity of the box behind the text; 0 keeps outlined text.
     pub background: u8,
-    /// Vertical position, 0 (top) to 100 (bottom).
     pub position: u8,
 }
 
@@ -351,10 +332,6 @@ impl PlayerBackend {
     }
 }
 
-/// Reads the saved backend. 0.1.6 could save MPC-HC, which 0.2.0 dropped; that
-/// user moves to the built-in player, chosen explicitly because a saved
-/// `mpv_path` alone would select external mpv. Any other unknown value is
-/// still rejected.
 fn deserialize_player_backend<'de, D>(deserializer: D) -> Result<Option<PlayerBackend>, D::Error>
 where
     D: Deserializer<'de>,
@@ -748,11 +725,6 @@ mod tests {
         assert_eq!(settings.player_path(), Some("C:/mpv/mpv.exe"));
     }
 
-    /// 0.1.6 saved MPC-HC as `"player_backend": "mpchc"` (`PlayerBackend` in
-    /// v0.1.6:src/preferences/model.rs, `rename_all = "snake_case"`). The
-    /// operator decided on 2026-11-15 that such a user moves to the built-in
-    /// player, also when an mpv path is saved, which alone would select
-    /// external mpv.
     #[test]
     fn a_saved_mpchc_backend_selects_the_built_in_player() {
         for document in [
@@ -770,9 +742,6 @@ mod tests {
         }
     }
 
-    /// Only the one removed value is mapped: any other backend this build does
-    /// not know is still rejected, as the settings store requires to leave a
-    /// newer version's file untouched.
     #[test]
     fn an_unknown_saved_backend_is_still_rejected() {
         for value in ["vlc", "mpc-hc", "built_in", "", "MPCHC"] {

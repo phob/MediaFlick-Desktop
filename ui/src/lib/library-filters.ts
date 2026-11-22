@@ -149,7 +149,6 @@ export function readLibraryFilters(
   }
 }
 
-/** Applies a filter patch without discarding the route's search or media kind. */
 export function writeLibraryFilters(
   previous: URLSearchParams,
   patch: Partial<LibraryFilterState>,

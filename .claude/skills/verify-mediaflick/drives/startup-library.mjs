@@ -1,12 +1,3 @@
-// Where the app starts for a stored startup destination, and that neither
-// starting nor saving another setting rewrites it. Run once per seed from
-// scripts/startup-destination-seed.mjs: `movies` (legacy) must open the first
-// movies library, `library` the TV shows library it names, and `missing` (an
-// id no library has) Home.
-//   node .claude/skills/verify-mediaflick/scripts/startup-destination-seed.mjs https://demo.jellyfin.org/stable build/verify-seeds/startup-demo
-//   just verify startup-library --seed build/verify-seeds/startup-demo/movies
-//   node .claude/skills/verify-mediaflick/scripts/startup-destination-seed.mjs https://jellyfin.example.com build/verify-seeds/startup-account
-//   just verify startup-library --account https://jellyfin.example.com --seed build/verify-seeds/startup-account/library
 import { createHash } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 

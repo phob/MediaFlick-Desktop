@@ -15,10 +15,6 @@ export interface ItemPlayAction {
   onPlay: () => void
 }
 
-/**
- * `card` sits over artwork, so it carries its own dark backing; `panel` sits on
- * the expanded preview's card surface above its stretched details link.
- */
 type ItemActionVariant = "card" | "panel"
 
 const VARIANTS = {
@@ -40,10 +36,6 @@ const VARIANTS = {
   },
 } satisfies Record<ItemActionVariant, Record<string, string>>
 
-/**
- * Play, favorites, and watched for one title. Each toggle is named for what it
- * will do and reports the current state through `aria-pressed`.
- */
 export function ItemActionButtons({
   item,
   play,
@@ -60,8 +52,6 @@ export function ItemActionButtons({
   variant: ItemActionVariant
 }) {
   const styles = VARIANTS[variant]
-  // The panel's background is itself a details link; its controls must not
-  // also reach that handler.
   const act = (action: () => void) => (event: MouseEvent) => {
     if (variant === "panel") event.stopPropagation()
     action()

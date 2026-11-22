@@ -3,30 +3,19 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::json_file::{RecoveryNotice, load_with_recovery, save_with_backup};
-// Clippy 1.100 needs a separate import to resolve the AppSettings method paths in clippy.toml.
 use super::AppSettings;
 use super::PlayerBackend;
+use super::json_file::{RecoveryNotice, load_with_recovery, save_with_backup};
 
 static SETTINGS_TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 static DEVICE_RECOVERY: std::sync::Mutex<Option<RecoveryNotice>> = std::sync::Mutex::new(None);
-/// Why the settings file could not be read, while this process runs on
-/// defaults instead. Saving then would replace the user's settings (often
-/// those of a newer app version) with those defaults, so saves are refused.
 static DEVICE_FILE_HELD: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 impl AppSettings {
-    /// Reads settings.json for startup. `main` reads it once per process, and
-    /// the shell's service locator reads it again for an API request that
-    /// arrives before the services have opened or failed to open. Once they
-    /// are open, runtime code receives settings from `PreferencesService`
-    /// instead of reading the file.
     pub fn load_at_startup() -> Self {
         Self::load()
     }
 
-    /// Applies what the command line asked to change at launch and saves an
-    /// explicit change through the same guarded path as every settings write.
     pub fn apply_launch_overrides(
         &mut self,
         jellyfin_url: Option<String>,
@@ -105,9 +94,6 @@ impl AppSettings {
 fn device_settings(settings: &AppSettings) -> AppSettings {
     let mut settings = settings.clone();
     settings.sanitize();
-    // The runtime snapshot carries the active account's appearance so all
-    // consumers can keep one concrete settings type. It belongs only in
-    // accounts.json and must never leak back into the device file.
     settings.appearance = Default::default();
     settings
 }
@@ -226,9 +212,6 @@ mod tests {
         assert_eq!(device.log_level, "debug");
     }
 
-    /// Each banned call carries its own expectation, so an entry in
-    /// `clippy.toml` that stops resolving fails clippy with
-    /// `unfulfilled_lint_expectations`. The closure is never run.
     #[test]
     fn every_disallowed_method_entry_still_fires() {
         let _never_called = || {

@@ -1,7 +1,3 @@
-// A movie's Crew rail against Jellyfin's public demo server, read-only: the
-// rail's headshot links, one entry for a writer-director, no crew lines left in
-// Details, then a crew face opens the person page with the titles they directed.
-//   just verify detail-crew
 const DEMO = "https://demo.jellyfin.org/stable"
 const MOVIE = "Night of the Living Dead"
 const DIRECTOR = "George A. Romero"

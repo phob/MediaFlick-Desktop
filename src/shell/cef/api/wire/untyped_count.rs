@@ -1,7 +1,3 @@
-//! The count of untyped API bodies, with the limits it may only fall below,
-//! and the source scan every wire guard reads. Lower a limit when the count
-//! falls; never raise one.
-
 use std::path::{Path, PathBuf};
 
 use syn::visit::Visit;
@@ -9,13 +5,8 @@ use syn::visit::Visit;
 use super::super::MODULES;
 use super::super::routes::AnswerSpec;
 
-/// Calls to `ApiResponse::untyped`: the one that answers every `Relay`
-/// route. Nothing raises these, and request bodies, all typed now, stay at
-/// zero.
 const UNTYPED_RESPONSES: usize = 1;
 const UNTYPED_BODIES: usize = 0;
-/// Routes declared `-> Relay`, which pass Companion JSON through without a
-/// generated type.
 const UNTYPED_ROUTES: usize = 12;
 
 fn rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
@@ -46,8 +37,6 @@ pub(super) fn parsed_sources() -> Vec<(PathBuf, syn::File)> {
         .collect()
 }
 
-/// Calls to the untyped escapes, by name. Their definitions are items,
-/// not calls, so they do not count.
 #[derive(Default)]
 struct UntypedCalls {
     responses: usize,

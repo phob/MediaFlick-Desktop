@@ -1,24 +1,3 @@
-//! Opening `library.db`. Released schemas keep every row, development schemas
-//! are recreated with the session, and a newer schema is refused.
-//!
-//! Expected values come from the frozen fixtures in
-//! `fixtures/library-db/released/`, which hold what the released MediaFlick
-//! 0.2.0 AppImage wrote (sanitized by `scripts/fixtures/freeze_release.py`), or
-//! from the invariant a test names. Failure modes covered here, written down
-//! before the code:
-//!
-//! - a released schema goes down the development drop-and-recreate path;
-//! - a migration leaves a different structure than a fresh install;
-//! - a frozen released schema is edited;
-//! - a migration loses or changes a row of a released table: the token,
-//!   device id, cache owner, staged imports, catalog or provider caches;
-//! - a migration that rebuilds a parent table cascades its children away;
-//! - a failing step leaves a half-migrated file or a raised `user_version`;
-//! - a migration commits a broken foreign key;
-//! - a newer schema is opened, or written to;
-//! - the development recreation fails after its drop and loses the session;
-//! - an unreadable development session is treated as no session.
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -33,16 +12,11 @@ use super::migrate::{
     user_version,
 };
 
-/// The SHA-256 of each released schema file, added when the schema's first
-/// prerelease was published. A released schema never changes; a new release
-/// adds a row, and `scripts/prepare-release.py` refuses to publish a schema
-/// that has none.
 const RELEASED_SCHEMAS: &[(i32, &str)] = &[(
     23,
     "c163dffd97f343bc1e6ec01611f8d1b15f04f15bf569da9988e997ab7cf82853",
 )];
 
-/// The synthetic sign-in token `rows-23.sql` holds.
 const FIXTURE_TOKEN: &str = "fixture-token-0f1e2d3c4b5a69788796a5b4c3d2e1f0";
 
 fn released_dir() -> PathBuf {
@@ -56,7 +30,6 @@ fn sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// A released schema's DDL, checked against its frozen hash.
 fn released_schema(version: i32) -> String {
     let text = std::fs::read_to_string(released_dir().join(format!("schema-{version}.sql")))
         .expect("released schema file");
@@ -96,15 +69,12 @@ impl Drop for Scratch {
     }
 }
 
-/// A connection configured as the app configures its own.
 fn open(path: &Path) -> Connection {
     let connection = Connection::open(path).expect("open library.db");
     configure(&connection).expect("configure");
     connection
 }
 
-/// The database a released version left: its frozen schema and, when the
-/// release has them, its frozen rows, stamped with its `user_version`.
 fn released_database(path: &Path, version: i32) -> Connection {
     let connection = open(path);
     connection
@@ -144,8 +114,6 @@ fn strings(connection: &Connection, sql: &str) -> Vec<String> {
         .expect("rows")
 }
 
-/// Tables SQLite owns: its statistics and the shadow tables of each virtual
-/// table, which it creates and fills itself.
 fn sqlite_owned(connection: &Connection) -> impl Fn(&str) -> bool + use<> {
     let virtual_tables = names(
         connection,
@@ -169,8 +137,6 @@ fn names(connection: &Connection, sql: &str) -> Vec<String> {
         .expect("names")
 }
 
-/// The structure a schema defines: every object's normalized SQL, and each
-/// table's columns and foreign keys as SQLite reports them.
 fn shape(connection: &Connection) -> BTreeMap<String, Vec<String>> {
     let owned = sqlite_owned(connection);
     let normalize = |sql: &str| {
@@ -227,7 +193,6 @@ fn shape(connection: &Connection) -> BTreeMap<String, Vec<String>> {
     shape
 }
 
-/// The columns each table had in the released schema.
 fn columns(connection: &Connection) -> BTreeMap<String, Vec<String>> {
     let owned = sqlite_owned(connection);
     names(
@@ -246,8 +211,6 @@ fn columns(connection: &Connection) -> BTreeMap<String, Vec<String>> {
     .collect()
 }
 
-/// Every row of every table, projected onto the given columns, in a stable
-/// order. A table or column that no longer exists fails the query.
 fn rows(
     connection: &Connection,
     columns: &BTreeMap<String, Vec<String>>,
@@ -346,17 +309,12 @@ fn every_released_schema_opens_at_the_structure_of_a_fresh_install() {
     }
 }
 
-/// While `MIGRATIONS` is empty this opens schema 23 as it is; the next bump
-/// makes it the real upgrade. `released_rows_survive_a_migration_to_the_next_schema`
-/// covers the upgrade path until then.
 #[test]
 fn released_rows_survive_opening_value_for_value() {
     let scratch = Scratch::new();
     let connection = released_database(&scratch.database(), FIRST_RELEASED_SCHEMA);
     let released_columns = columns(&connection);
     let before = rows(&connection, &released_columns);
-    // The comparison below is only as strong as the fixture: every table the
-    // released schema has must hold a row, the token included.
     for (table, found) in &before {
         assert!(!found.is_empty(), "rows-23.sql leaves {table} empty");
     }
@@ -385,7 +343,6 @@ fn released_rows_survive_opening_value_for_value() {
 
 #[test]
 fn released_rows_survive_a_migration_to_the_next_schema() {
-    // With MIGRATIONS still empty, this is the path the next schema bump takes.
     let (_scratch, result, reopened) = upgrade_released(&[add_a_column]);
     result.expect("the migration commits");
     assert_eq!(
@@ -423,8 +380,6 @@ fn fail(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
     transaction.execute_batch("SELECT * FROM a_table_no_schema_has;")
 }
 
-/// SQLite's documented way to change a table's definition: create the new
-/// table, copy, drop the old one, rename.
 fn rebuild_collection_snapshots(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
     transaction.execute_batch(
         "CREATE TABLE collection_snapshots_new (
@@ -447,8 +402,6 @@ fn orphan_a_snapshot_item(transaction: &Transaction<'_>) -> rusqlite::Result<()>
     )
 }
 
-/// Opens the released schema 23 with `steps` as the migrations, then reopens
-/// the file the way the next start would.
 fn upgrade_released(steps: &[Migration]) -> (Scratch, Result<(), OpenError>, Connection) {
     let scratch = Scratch::new();
     let connection = released_database(&scratch.database(), FIRST_RELEASED_SCHEMA);
@@ -503,11 +456,6 @@ fn create_the_credentials_table_again(transaction: &Transaction<'_>) -> rusqlite
     transaction.execute_batch("CREATE TABLE credentials (id INTEGER PRIMARY KEY);")
 }
 
-/// The reason the startup error screen shows for a failed step (the
-/// operator's rule on PR #369): the step, from schema to schema, and SQLite's
-/// own error, without the statement it ran; the alternate form keeps the
-/// statement for `app.log`. "table credentials already exists" is SQLite's
-/// wording for creating a table that is there.
 #[test]
 fn a_failed_migration_names_its_step_and_the_sqlite_error_without_the_statement() {
     let (_scratch, result, _reopened) = upgrade_released(&[create_the_credentials_table_again]);
@@ -529,9 +477,6 @@ fn a_failed_migration_names_its_step_and_the_sqlite_error_without_the_statement(
     );
 }
 
-/// The reason names the failing step's own range, and the schema the file
-/// was left at is where it started (the operator's rule on PR #369). "no such
-/// table: a_table_no_schema_has" is SQLite's wording for `fail`'s query.
 #[test]
 fn a_failed_second_step_names_its_own_range_and_where_the_file_was_left() {
     let (_scratch, result, _reopened) = upgrade_released(&[add_a_column, fail]);
@@ -608,7 +553,6 @@ fn a_migration_that_breaks_a_foreign_key_is_rolled_back() {
 
 #[test]
 fn the_migration_list_covers_every_released_schema() {
-    // Also a compile-time assertion in migrate.rs; this names the rule.
     assert_eq!(
         i32::try_from(MIGRATIONS.len()).expect("count"),
         SCHEMA_VERSION - FIRST_RELEASED_SCHEMA
@@ -647,8 +591,6 @@ fn a_newer_database_is_refused_and_left_untouched() {
 
 #[test]
 fn a_newer_database_in_rollback_mode_keeps_its_bytes() {
-    // The app's own files are in WAL mode, but a refused file is not this
-    // build's to change in any way, its journal mode included.
     let scratch = Scratch::new();
     {
         let connection = Connection::open(scratch.database()).expect("open");
@@ -677,9 +619,6 @@ fn a_newer_database_in_rollback_mode_keeps_its_bytes() {
 
 #[test]
 fn a_newer_database_with_an_unmerged_wal_keeps_its_bytes() {
-    // A newer app that stopped without checkpointing leaves committed pages
-    // in library.db-wal. Closing a writable connection would merge them into
-    // library.db; a refused file must not be written that way either.
     let writer_dir = Scratch::new();
     let scratch = Scratch::new();
     let writer = Connection::open(writer_dir.database()).expect("open");
@@ -725,9 +664,6 @@ fn a_newer_database_with_an_unmerged_wal_keeps_its_bytes() {
     assert_eq!(std::fs::read(&wal).expect("wal bytes"), before.1);
 }
 
-/// A schema-13 development database whose staged playback choice holds a
-/// media source the current schema's CHECK rejects. Restoring it fails after
-/// the old tables were dropped: where a crash would leave the file.
 fn development_database_failing_after_its_drop(path: &Path) -> Connection {
     let connection = open(path);
     connection

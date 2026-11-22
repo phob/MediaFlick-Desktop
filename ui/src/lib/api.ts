@@ -1,10 +1,3 @@
-// The UI's view of the native app: wire types (`api/types/`, one file per API
-// area), the typed client (`api/client.ts`), locally built URLs (`api/urls.ts`),
-// and tick conversions (`api/ticks.ts`). Types generated from the Rust handlers
-// live in `api/wire/`, re-exported by `api/wire.gen.ts`; `api/types/` aliases
-// them. The answers it still hand-writes describe Companion JSON that the
-// native app relays unchanged.
-
 export * from "./api/client.ts"
 export * from "./api/ticks.ts"
 export * from "./api/types/auth.ts"

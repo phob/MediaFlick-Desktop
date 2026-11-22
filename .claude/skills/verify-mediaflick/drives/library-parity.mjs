@@ -176,7 +176,6 @@ export default async function libraryParity(ctx) {
     if (landed.maxScroll >= landed.targetRowStart) {
       ctx.check(landed.firstVisible === items[landed.targetRow * landed.columns].name, `${label}: ${landed.firstVisible} heads the grid after Jump to ${target}`)
     } else {
-      // scrollTop is fractional at a fractional device scale (125 % on Windows).
       ctx.check(Math.abs(landed.scrollTop - landed.maxScroll) <= 2, `${label}: the grid scrolled as far as it can (${landed.scrollTop}px of ${landed.maxScroll}px) towards row ${landed.targetRow}`)
     }
     const first = present.find((letter) => letters[letter] === 0)
@@ -283,9 +282,6 @@ export default async function libraryParity(ctx) {
     const app = (await libraryItems(moviesLibrary, "watched=progress")).total
     const ui = await gridReady("In progress")
     const own = movies.Items.filter((item) => item.UserData?.PlaybackPositionTicks > 0 && !item.UserData?.Played).length
-    // The app's In progress is "part-way through": a resume point and not
-    // played. Jellyfin's IsResumable also counts played titles with a resume
-    // point (rewatches), so it is recorded, not asserted.
     report.moviesInProgressDefinition = { jellyfinIsResumable: resumable, positionAndUnplayed: own }
     return { app: [app, ui], server: [own, own] }
   })

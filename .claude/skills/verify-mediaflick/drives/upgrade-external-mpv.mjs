@@ -1,17 +1,3 @@
-// A MediaFlick 0.1.6 user of external mpv after the update: their config.json
-// names the mpv executable and, as 0.1.6 saved its default player, no
-// player_backend (v0.1.6:src/preferences/model.rs skips a default field). The
-// operator's expectation: they still play through external mpv.
-//
-// Seed the profile with that config.json and run on your own server (the app
-// starts signed in from the cached session). Closes the one-time What's new
-// the 0.1.6 profile brings, checks the imported player before anything is
-// saved, then runs the `playback` drive unchanged while it watches for an mpv
-// process of its own outside the app: Play, seek, pause, stop, Resume and the
-// startup seek rules, on the external player. Seed `default_fullscreen:
-// "windowed"`, since fullscreen external mpv freezes CDP mouse input.
-//   just verify upgrade-external-mpv --account https://jellyfin.example.com --seed <dir with config.json> --log-level "debug,jellyfin.playstate=trace,playback=trace"
-// Writes upgrade-external-mpv.json; the playback drive writes playback.json.
 import { readFileSync } from "node:fs"
 import { listProcesses } from "../scripts/platform.mjs"
 import playback from "./playback.mjs"
@@ -52,8 +38,6 @@ async function steps(ctx, report, record) {
   record(client.player.playerBackend === "mpv", "the app plays with external mpv", client.player.playerBackend)
   record(client.player.mpvPath === config.mpv_path, "with the mpv executable 0.1.6 saved", client.player.mpvPath)
 
-  // An mpv process outside the app is what external mpv means; the Built-in
-  // player runs inside the app's own process.
   const seen = new Map()
   const sample = () => {
     for (const row of listProcesses()) if (row.name === "mpv" && row.cmd.includes("--input-ipc-server")) seen.set(row.pid, row.cmd)

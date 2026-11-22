@@ -15,10 +15,6 @@ import { discoveryResultSetKey, type DiscoveryAvailability } from "./discovery"
 import { reportError } from "./mutation-failure"
 import { invalidateSeerrSurfaces, optionalIdQuery, queryKeys } from "./query-client"
 
-/**
- * Whether Companion mapped this Jellyfin user to Seerr, and what they may ask
- * for. Every Seerr feature gates on this shared answer.
- */
 export function useSeerrStatus(enabled = true) {
   return useQuery({
     queryKey: queryKeys.seerrStatus,
@@ -29,11 +25,6 @@ export function useSeerrStatus(enabled = true) {
   })
 }
 
-/**
- * The "not in your library" search, which is a *separate* query from the local
- * one on purpose: local FTS answers at SQLite speed and must never wait on a
- * round trip to Seerr.
- */
 export function useSeerrSearch(term: string, enabled = true) {
   return useQuery({
     queryKey: queryKeys.seerrSearch(term),
@@ -59,10 +50,6 @@ export function useSeerrPersonCredits(
   })
 }
 
-// Keep a browsing snapshot for Back navigation. Refetching a stale infinite
-// query walks every loaded page again; only explicit invalidation should do
-// that during this visit. Inactive snapshots expire after ten minutes, and
-// account changes remove them through the existing Seerr query root.
 const seerrBrowseCache = { staleTime: Infinity, gcTime: 10 * 60_000 }
 
 export function useInfiniteSeerrSearch(term: string, enabled = true) {
@@ -141,11 +128,6 @@ export function useSeerrRequestOptions(
   })
 }
 
-/**
- * The user's own requests. Polled while the view is mounted — Seerr has no push
- * channel, so an approval or a finished download only lands on a refetch — and
- * nothing polls once the view is gone.
- */
 export function useSeerrRequests(filter: string, enabled = true) {
   return useQuery({
     queryKey: queryKeys.seerrRequests(filter),

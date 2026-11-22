@@ -1,9 +1,3 @@
-// Collections on your own server with the Companion: Movie Franchises (owned
-// and missing titles), a My Collections entry built from a TMDB template,
-// then Jellyfin mode with the server's BoxSets and the route guard.
-//   just verify collections --account https://jellyfin.example.com
-// Writes only the disposable profile's collections.json; the template preview
-// and refresh are Companion provider reads (TMDB quota), never Jellyfin writes.
 const SIDEBAR = { css: '[data-sidebar="sidebar"]' }
 const COLLECTION_SETTINGS = { role: "link", name: "Collections", within: { role: "navigation", name: "Settings navigation" } }
 const TARGET = { css: "[data-verify-target]" }

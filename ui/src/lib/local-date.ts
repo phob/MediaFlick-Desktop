@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react"
 
-/** `date` as `YYYY-MM-DD` in the local time zone. */
 export function localDate(date = new Date()) {
   return [
     date.getFullYear(),

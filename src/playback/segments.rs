@@ -336,9 +336,6 @@ mod tests {
         })
     }
 
-    /// README: per-type auto-skip; a segment's end is exclusive. The skip is
-    /// for this segment only while the position is inside it, it is not yet
-    /// skipped and its type is still set to Always skip.
     #[test]
     fn a_pending_automatic_skip_never_fires_once_its_reason_is_gone() {
         let ask_me = SegmentSkipConfig::default();
@@ -370,8 +367,6 @@ mod tests {
         }
     }
 
-    /// README: auto-skip with a countdown, one step per second down to the
-    /// skip.
     #[test]
     fn the_automatic_skip_counts_down_once_a_second_then_skips() {
         let segments = vec![segment(SegmentType::Intro, 100, 200)];
@@ -399,8 +394,6 @@ mod tests {
         }
     }
 
-    /// Playback reports its position several times a second; that must not
-    /// restart the countdown, or the skip would never come.
     #[test]
     fn position_updates_inside_the_segment_keep_the_countdown_running() {
         let segments = vec![segment(SegmentType::Intro, 100, 200)];
@@ -430,9 +423,6 @@ mod tests {
         );
     }
 
-    /// features/playback.md: "Only Ask me sends Seek to Skip Intro to the
-    /// OSD, every 3 s inside the segment", proven by the `segments` drive.
-    /// Entering another segment prompts at once.
     #[test]
     fn ask_me_prompts_every_three_seconds_and_at_once_in_a_new_segment() {
         let segments = vec![
@@ -462,8 +452,6 @@ mod tests {
         );
     }
 
-    /// Same source: the prompt belongs to an Ask me segment that is not yet
-    /// skipped, from its start up to, not including, its end.
     #[test]
     fn ask_me_prompts_only_inside_an_unskipped_ask_me_segment() {
         let mut segments = vec![
@@ -491,9 +479,6 @@ mod tests {
         assert_eq!(prompt_segment_at(&segments, &config, 150), None);
     }
 
-    /// The mpv controller cancels a pending skip when the skip settings
-    /// change, and clears the state when it stores a new segment list, which
-    /// then prompts at once.
     #[test]
     fn cancel_stops_a_pending_skip_and_clear_starts_afresh() {
         let segments = vec![segment(SegmentType::Intro, 100, 200)];

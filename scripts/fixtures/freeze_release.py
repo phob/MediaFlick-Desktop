@@ -48,7 +48,6 @@ SYNTHETIC_TOKEN = "fixture-token-0f1e2d3c4b5a69788796a5b4c3d2e1f0"
 
 
 class Fakes:
-    """One fake per real value and kind, numbered in order of first appearance."""
 
     def __init__(self) -> None:
         self.seen: dict[tuple[str, str], int] = {}
@@ -125,8 +124,6 @@ def rows(db: sqlite3.Connection, fakes: Fakes) -> str:
     credentials = select("SELECT * FROM credentials WHERE id = 1")[0]
     server, user = credentials["server_id"], credentials["user_id"]
 
-    # Movies: the one with the saved playback choice, two franchise members, a
-    # movie with no franchise, and a series with a season and two episodes.
     playback_item = "00c25f6893ad550b7f44d74d74291d7e"
     members = select(
         """SELECT i.jellyfin_id FROM items i JOIN franchise_movie_membership m
@@ -270,7 +267,6 @@ def rows(db: sqlite3.Connection, fakes: Fakes) -> str:
         {
             **row,
             "provider_id": fakes.tmdb(row["provider_id"]) if row["provider"] == "tmdb" else fakes.imdb(str(row["provider_id"])),
-            # Vote counts would name the title; the scores alone do not.
             "ratings": json.dumps(
                 [{**entry, "votes": None if entry["votes"] is None else 1000} for entry in json.loads(str(row["ratings"]))],
                 separators=(",", ":"),
@@ -398,7 +394,7 @@ def preferences(config: Path, fakes: Fakes) -> dict[str, str]:
             })
         return {"items": items}
 
-    pretty = lambda value: json.dumps(value, indent=2, ensure_ascii=False)  # noqa: E731
+    pretty = lambda value: json.dumps(value, indent=2, ensure_ascii=False)
     return {
         "settings.json": pretty(load("settings.json")),
         "accounts.json": pretty(accounts(load("accounts.json"), account_settings)),
@@ -408,7 +404,6 @@ def preferences(config: Path, fakes: Fakes) -> dict[str, str]:
 
 
 def open_read_only(database: Path) -> sqlite3.Connection:
-    # immutable=1: a read-only open of a WAL database still writes its -shm file.
     return sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro&immutable=1", uri=True)
 
 

@@ -59,9 +59,6 @@ public sealed class InfoController : ControllerBase
         PluginConfiguration configuration,
         bool ratingsAvailable)
     {
-        // These name versioned contracts implemented by this plugin build.
-        // Definitions and service configuration can change while Desktop is
-        // signed in, so they must not make the capability itself disappear.
         var capabilities = new List<string>
         {
             "collection-experience-v1",
@@ -195,10 +192,6 @@ public sealed class SeerrController : ControllerBase
         CancellationToken cancellationToken = default)
         => RunAsync(userId => _gateway.CompaniesAsync(userId, query, page, cancellationToken));
 
-    /// <summary>
-    /// The curated TV networks for the TV catalog's network filter. Static
-    /// plugin data: no Seerr call and no user mapping.
-    /// </summary>
     [HttpGet("networks")]
     public IActionResult Networks()
         => new JsonResult(new SeerrNetworksResponse(SeerrNetworks.All), CompanionJson.CamelCase);
@@ -268,9 +261,6 @@ public sealed class SeerrController : ControllerBase
         }
         catch (GatewayException exception)
         {
-            // Authentication already succeeded at Jellyfin's middleware. A
-            // 401 from here is Seerr's overloaded permission response, not a
-            // reason for the desktop to discard its Jellyfin session.
             var status = exception.StatusCode == StatusCodes.Status401Unauthorized
                 ? StatusCodes.Status403Forbidden
                 : exception.StatusCode;
@@ -410,8 +400,6 @@ public sealed class AdminController : ControllerBase
             ProtectedMdbListApiKey = current.ProtectedMdbListApiKey,
             ProtectedTmdbApiKey = current.ProtectedTmdbApiKey
         });
-        // The config page reads the response as JSON, and an empty 204 body
-        // would make that read fail after a successful save.
         return Ok(new { saved = true });
     }
 
@@ -457,8 +445,6 @@ public sealed class AdminController : ControllerBase
     private static object Redact(ServiceConfiguration service)
         => new
         {
-            // Named explicitly: projected members would serialize with the
-            // host's PascalCase and the config page reads camelCase.
             enabled = service.Enabled,
             baseUrl = service.BaseUrl,
             hasApiKey = !string.IsNullOrWhiteSpace(service.ApiKey)

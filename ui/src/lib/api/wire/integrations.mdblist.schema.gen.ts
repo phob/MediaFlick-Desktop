@@ -3,9 +3,6 @@
 export type NormalizedRating = {
   sourceId: string,
   value: number,
-  /**
-   * The source's 0 to 100 score, when it reports one.
-   */
   score: number | null,
   votes: number | null,
   scaleMax: number,

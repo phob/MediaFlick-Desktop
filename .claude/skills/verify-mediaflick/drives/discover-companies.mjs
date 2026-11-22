@@ -1,15 +1,7 @@
-// Discover's studio and network filters through the MediaFlick Companion on
-// your own server (`seerr-discovery-v5`): a studio searched and applied on
-// Popular movies, a network picked on Popular series, each combined with a
-// genre and cleared through its chip, then a studio link on a movie's
-// Discover page and a network link on a series' Discover page.
-//   just verify discover-companies --account https://jellyfin.example.com
-// Read-only: it makes no Seerr request.
 const SIDEBAR = { css: '[data-sidebar="sidebar"]' }
 const STUDIO_QUERY = "Marvel Studios"
 const NETWORK = "Netflix"
 
-// A card links to /discover/<kind>/<id>, with Discover's own query on it.
 const cardIds = (ctx, kind) =>
   ctx.app.evaluate(`[...new Set([...document.querySelectorAll('main a[href^="/discover/${kind}/"]')].map((a) => Number(a.getAttribute("href").split("?")[0].split("/")[3])))]`)
 
@@ -23,8 +15,6 @@ async function waitCards(ctx, kind, description) {
   }, description, 30000)
 }
 
-// The wall must be exactly Seerr's first page for the same filters, and its
-// first titles must name the company in their own Discover details.
 async function proveWall(ctx, { kind, row, query, refKey, companyId, label }) {
   const page = (await ctx.api(`/api/seerr/discover/${row}?page=1&${query}`)).body
   const expected = page.results.map((result) => result.tmdbId)
@@ -62,7 +52,6 @@ export default async function discoverCompanies(ctx) {
   await ctx.press({ role: "link", name: "Discover" })
   await ctx.until(async () => (await ctx.pathname()) === "/discover", "/discover")
 
-  // Studio: search, apply, combine with a genre, clear through the chip.
   await ctx.press({ role: "tab", name: "Popular movies" })
   await ctx.until(async () => (await params(ctx)).row === "movies", "row=movies")
   await waitCards(ctx, "movie", "Popular movies")
@@ -95,7 +84,6 @@ export default async function discoverCompanies(ctx) {
   ctx.check(JSON.stringify(afterClear.slice(0, genreOnly.length)) === JSON.stringify(genreOnly), "after clearing, the wall is the genre-only first page")
   await ctx.screenshot("04-studio-cleared")
 
-  // Network: pick from the Companion's list, combine with a genre, clear.
   await ctx.press({ role: "tab", name: "Popular series" })
   await ctx.until(async () => (await params(ctx)).row === "tv", "row=tv")
   await waitCards(ctx, "tv", "Popular series")
@@ -120,7 +108,6 @@ export default async function discoverCompanies(ctx) {
   await ctx.until(async () => { const p = await params(ctx); return !p.network && !p.networkName && p.genre === String(tvGenre.id) }, "the chip to clear the network and keep the genre")
   await ctx.screenshot("07-network-cleared")
 
-  // Detail links: a movie's studio and a series' network open Discover filtered.
   await ctx.press({ role: "tab", name: "Popular movies" })
   const movies = await waitCards(ctx, "movie", "Popular movies again")
   let movieId = null

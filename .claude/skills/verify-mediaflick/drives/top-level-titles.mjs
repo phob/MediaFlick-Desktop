@@ -1,21 +1,3 @@
-// Library views without a media kind (sidebar search, Favorites, its A–Z
-// rail, Home's Favorites shelf) list only movies and series, never seasons or
-// episodes, while `kind=Episode` still lists episodes.
-// Both modes: a sidebar search for a word from a season name that zero to six
-// movies or series share, and one for a word from an episode name that one to
-// six share, must each show exactly those titles (the empty state when there
-// are none) and no season or episode card or API row. The kindless
-// `favorite=false` reads and A–Z letters must match `kind=Movie,Series`, and
-// Home rows hold only movies and series (Recently Added Shows: series and
-// episodes).
-// With --account only: favorites a movie and an episode that were not
-// favorites, on their detail pages, then checks Favorites, its A–Z letters and
-// Home's Favorites shelf list the movie and not the episode, and removes both
-// favorites again the same way (with a journaled after-run fallback). The
-// Favorites card check reads the rendered cards of a virtualized grid, so it
-// assumes the account has few favorites.
-//   just verify top-level-titles
-//   just verify top-level-titles --account https://jellyfin.example.com
 import { isFavorite } from "../scripts/favorites.mjs"
 
 const TOP_LEVEL = new Set(["Movie", "Series"])

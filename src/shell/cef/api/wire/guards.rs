@@ -34,11 +34,8 @@ fn is_option(ty: &syn::Type) -> bool {
 
 struct AttrKey {
     name: String,
-    /// The value when it is a `true` or `false` literal.
     flag: Option<bool>,
-    /// The value when it is a string literal or a single word.
     text: Option<String>,
-    /// Written as `key(...)` rather than `key` or `key = value`.
     nested: bool,
 }
 
@@ -91,10 +88,6 @@ fn last_key<'a>(keys: &'a [AttrKey], name: &str) -> Option<&'a AttrKey> {
     keys.iter().rfind(|key| key.name == name)
 }
 
-/// The serde keys ts-rs 12 reads for each kind of item
-/// (`ts-rs-macros/src/attr`). It skips any other key (silently, with the
-/// `no-serde-warnings` feature this crate enables), and it drops the whole
-/// `#[serde(...)]` attribute when a key it knows is written as `key(...)`.
 const STRUCT_SERDE: &[&str] = &[
     "rename",
     "rename_all",
@@ -124,8 +117,6 @@ const FIELD_SERDE: &[&str] = &[
     "default",
     "borrow",
 ];
-/// Keys that only change how input is matched, so ts-rs skipping them
-/// leaves the TypeScript right.
 const DECODE_ONLY_SERDE: &[&str] = &["alias", "deny_unknown_fields"];
 
 struct SerdeFidelity<'a> {
@@ -133,30 +124,18 @@ struct SerdeFidelity<'a> {
     found: Vec<String>,
 }
 
-/// The attributes of one item as ts-rs will read them.
 struct Seen {
     ts: Vec<AttrKey>,
-    /// The serde keys ts-rs reads for this kind of item.
     serde: Vec<AttrKey>,
-    /// The keys of `#[serde(...)]` attributes ts-rs drops whole. serde
-    /// still obeys them.
     dropped: Vec<AttrKey>,
-    /// `#[ts(type = ...)]` or `#[ts(as = ...)]` states the TypeScript.
     overridden: bool,
 }
 
-/// What a type's own attributes mean for each of its fields.
 #[derive(Clone, Copy)]
 struct Container {
-    /// `#[ts(optional_fields)]` makes each `Option` field `?: T`, and
-    /// `#[ts(optional_fields = nullable)]` makes it `?: T | null`.
     optional_fields: bool,
-    /// Decoded by a derived `Deserialize`, so every key the TypeScript lets
-    /// the UI leave out must be one serde can do without.
     decoded: bool,
-    /// Only decoded, never sent, so a `None` may be typed as an absent key.
     decoded_only: bool,
-    /// `#[serde(default)]` on the type makes every field optional to serde.
     default: bool,
 }
 
@@ -165,9 +144,6 @@ fn optional_fields(seen: &Seen) -> Option<bool> {
 }
 
 impl Container {
-    /// serde sends `null` for a `None` field it does not skip, so only a type
-    /// that is never sent may drop `null` from its `Option` fields; serde
-    /// decodes a missing key and `null` the same way.
     fn new(
         fidelity: &mut SerdeFidelity<'_>,
         at: &str,
@@ -192,8 +168,6 @@ impl Container {
         }
     }
 
-    /// A variant takes the enum's derives, and its `optional_fields` unless
-    /// it sets its own.
     fn variant(self, fidelity: &mut SerdeFidelity<'_>, at: &str, seen: &Seen) -> Self {
         let variant = Self {
             optional_fields: optional_fields(seen).unwrap_or(self.optional_fields),
@@ -231,8 +205,6 @@ impl SerdeFidelity<'_> {
             .flatten()
             .collect::<Vec<_>>();
         let overridden = has_key(&ts, "type") || has_key(&ts, "as");
-        // A field's override replaces only its value type; ts-rs still
-        // takes the key and the `?` from the serde attributes it reads.
         let reports_nested = !overridden || accepted == FIELD_SERDE;
         let (mut serde, mut dropped) = (Vec::new(), Vec::new());
         for keys in self.keys(at, attrs, "serde") {
@@ -262,16 +234,6 @@ impl SerdeFidelity<'_> {
         }
     }
 
-    /// serde leaves out a `skip_serializing_if` field, but ts-rs types it
-    /// as a present key unless the field says `#[ts(optional)]` or carries
-    /// `#[serde(default)]`. The last `#[ts(optional ...)]` wins over both,
-    /// as in ts-rs, and a `#[ts(type = ...)]` changes the value type only.
-    /// A skip in an attribute ts-rs drops still omits the key. The UI
-    /// would otherwise read `undefined` as `T | null`.
-    ///
-    /// A decoded type must not let the UI leave out a key serde requires,
-    /// or the request is rejected. The reverse is safe: the TypeScript may
-    /// require a key serde could do without.
     fn fields(&mut self, owner: &str, fields: &syn::Fields, container: Container) {
         for (index, field) in fields.iter().enumerate() {
             let name = field
@@ -285,8 +247,6 @@ impl SerdeFidelity<'_> {
             let omitted = [&serde, &dropped].into_iter().any(|keys| {
                 has_key(keys, "skip_serializing_if") || has_key(keys, "skip_serializing")
             });
-            // ts-rs reads `Option` from the `#[ts(as = ...)]` type, and a
-            // `#[ts(type = ...)]` field does not inherit `optional_fields`.
             let ts_type = last_key(&ts, "as")
                 .and_then(|key| key.text.as_deref())
                 .and_then(|text| syn::parse_str::<syn::Type>(text).ok())
@@ -365,15 +325,8 @@ fn generated_typescript_follows_serde() {
     );
 }
 
-/// Why a settings patch field may name an enum while taking a string.
 const FROM_ID: &str = "`from_id` decodes the enum by its serde name, which the TypeScript names";
 
-/// What `generated_typescript_follows_serde` cannot check, each with why
-/// the TypeScript still matches serde: a `TS` type whose `Serialize` or
-/// `Deserialize` is written by hand, and a `#[ts(type = ...)]` or
-/// `#[ts(as = ...)]` on a type the app decodes, on its variants or on its
-/// fields. `unchecked_claims_are_listed` fails on one missing here and on
-/// an entry nothing claims any more.
 const UNCHECKED_CLAIMS: &[(&str, &str)] = &[
     ("AppearanceSettingsPatch.accent", FROM_ID),
     ("AppearanceSettingsPatch.density", FROM_ID),
@@ -435,8 +388,6 @@ const UNCHECKED_CLAIMS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Hand-written serde impls by type name, then every claim as a name in
-/// [`UNCHECKED_CLAIMS`].
 #[derive(Default)]
 struct Claims {
     hand_serialize: BTreeSet<String>,
@@ -475,8 +426,6 @@ impl Claims {
         }
     }
 
-    /// Records the claims of one `TS` type and reports whether it is
-    /// decoded, so the caller can look at its fields.
     fn item(&mut self, name: &str, attrs: &[syn::Attribute]) -> bool {
         if self.hand_serialize.contains(name) || self.hand_deserialize.contains(name) {
             self.found.insert(name.to_string());
@@ -569,10 +518,6 @@ fn describe(route: &Route) -> String {
     format!("{} /api/{path}", route.method)
 }
 
-/// `route` tries the declarations in order and answers with the first that
-/// takes the method and path, so one that an earlier declaration covers
-/// never runs. Its path with every parameter set to a value no literal
-/// segment has reaches it unless such a declaration comes first.
 #[test]
 fn every_declared_route_is_reachable() {
     let routes = MODULES
@@ -604,9 +549,6 @@ fn every_declared_route_is_reachable() {
     );
 }
 
-/// The files that may build a success `ApiResponse` or reach past a route's
-/// declaration, and why. Everywhere else a handler answers through its
-/// route's declared type and reads only the body its route declares.
 const ROUTER_FILES: &[(&str, &str)] = &[
     (
         "src/shell/cef/api/routes.rs",
@@ -623,10 +565,6 @@ const ROUTER_FILES: &[(&str, &str)] = &[
     ),
 ];
 
-/// Paths only [`ROUTER_FILES`] may name: the success builders, the body a
-/// route declares, and the trait that turns a declared answer into a
-/// response, by name, through the answers that are not wire types, or
-/// through a glob of `routes`.
 const ROUTER_ONLY: &[[&str; 2]] = &[
     ["ApiResponse", "ok"],
     ["ApiResponse", "untyped"],
@@ -641,7 +579,6 @@ const ROUTER_ONLY: &[[&str; 2]] = &[
     ["Binary", "success"],
 ];
 
-/// What one file does that only [`ROUTER_FILES`] may.
 struct RouterOnly {
     api: bool,
     found: Vec<String>,
@@ -690,9 +627,6 @@ fn use_paths(tree: &syn::UseTree, prefix: &mut Vec<String>, paths: &mut Vec<Vec<
     }
 }
 
-/// The `a::b::c` paths written in a macro's tokens, which syn leaves
-/// unparsed, such as a `vec![..]`'s elements. A turbofish is skipped, so
-/// `a::<T>::b` reads as `a::b`.
 fn macro_paths(mut cursor: syn::buffer::Cursor<'_>, paths: &mut Vec<Vec<String>>) {
     let mut current = Vec::new();
     let mut colons = 0;
@@ -734,7 +668,6 @@ fn macro_paths(mut cursor: syn::buffer::Cursor<'_>, paths: &mut Vec<Vec<String>>
     }
 }
 
-/// The cursor past the `>` that closes a turbofish's `<`.
 fn past_generics(mut cursor: syn::buffer::Cursor<'_>) -> syn::buffer::Cursor<'_> {
     let (mut depth, mut arrow) = (1_usize, false);
     while depth > 0 && !cursor.eof() {
@@ -754,9 +687,6 @@ fn past_generics(mut cursor: syn::buffer::Cursor<'_>) -> syn::buffer::Cursor<'_>
     cursor
 }
 
-/// A `routes!` table's request bodies, answers and calls, so the checks on
-/// ordinary code run on them too. A table names `|services, request|`, or
-/// `|request|` for routes that need no services.
 struct RouteTable(Vec<(Option<syn::Type>, syn::Type, syn::Expr)>);
 
 impl syn::parse::Parse for RouteTable {
@@ -882,9 +812,6 @@ impl Visit<'_> for RouterOnly {
     }
 }
 
-/// A handler's success answer is the type its route declares, and nothing
-/// else: `Answer::respond` turns it into the response in `routes.rs`, and a
-/// handler's error side must not smuggle a 2xx past it.
 #[test]
 fn only_the_router_answers_with_success() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));

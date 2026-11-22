@@ -24,9 +24,6 @@ routes! {
 
 const TECHNICAL_BATCH_SIZE: usize = 40;
 
-/// How many titles the detail page's "More like this" rail shows. Jellyfin is
-/// asked for twice as many, so trailers and Live TV programs it may mix in do
-/// not take the places of titles further down its answer.
 const SIMILAR_LIMIT: usize = 20;
 
 #[derive(Deserialize, ts_rs::TS)]
@@ -165,10 +162,6 @@ pub(super) struct FavoriteState {
     favorite: bool,
 }
 
-/// Live technical stream descriptors for visible cards, batched by the UI's
-/// badge scheduler. Container ids (Series, Season) answer with the streams of
-/// a representative episode. Nothing is persisted; a failure is silent on
-/// cards.
 fn technical_batch(
     services: &Arc<Services>,
     body: Body<'_, IdsBody>,
@@ -188,10 +181,6 @@ fn technical_batch(
     if ids.is_empty() {
         return Ok(TechnicalBatch { items: Vec::new() });
     }
-    // Series and Season cards advertise the same badges as movies, but their
-    // rows are containers Jellyfin reports without streams. Each is answered
-    // by a representative cached episode; a container with no cached episode
-    // is dropped rather than queried uselessly.
     let sources = match services.library.technical_stream_sources(&ids) {
         Ok(sources) => sources,
         Err(error) => return Err(storage_failure(&error)),
@@ -211,10 +200,6 @@ fn technical_batch(
     let scope = session_scope(services)?;
     let mut results = Vec::new();
     for chunk in source_ids.chunks(TECHNICAL_BATCH_SIZE) {
-        // The UI aborts a batch once none of its cards remains mounted; the
-        // fetch dies in the browser, but this handler is already blocked in
-        // upstream calls. Checking between chunks keeps rapid scrolling from
-        // running every remaining request for an answer nobody will read.
         if request.is_cancelled() {
             return Err(ApiResponse::error(499, "the browser abandoned the request"));
         }
@@ -234,10 +219,6 @@ fn technical_batch(
     Ok(TechnicalBatch { items: results })
 }
 
-/// Only fields useful to a concise technical readout are retained. Subtitle
-/// tracks, paths, delivery URLs, and playback-negotiation flags never reach
-/// the card-badge channel; the media endpoint serves those from full sources.
-/// Nothing here is persisted — this shapes live DTO streams for the UI.
 fn technical_streams(streams: &[MediaStream]) -> Vec<MediaStreamView> {
     streams
         .iter()
@@ -257,10 +238,6 @@ fn cached_kind(services: &Services, item_id: &str) -> Result<Option<CatalogKind>
         .map_err(|error| storage_failure(&error))
 }
 
-/// Container, codec, and track detail for the detail page.
-///
-/// Folders have no streams of their own, so they are answered from here without
-/// a round trip rather than letting the server return an empty source list.
 fn media_info(services: &Arc<Services>, item_id: &str) -> Result<MediaInfoResponse, ApiResponse> {
     if matches!(
         cached_kind(services, item_id)?,
@@ -282,11 +259,6 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> Result<MediaInfoRespon
     })
 }
 
-/// Saves one complete source/audio/subtitle selection for an exact item.
-///
-/// The browser only submits indices. Metadata snapshots are rebuilt from the
-/// current Jellyfin response here, so persisted language/accessibility intent
-/// cannot drift from the track the user actually selected.
 fn set_item_playback_preference(
     services: &Arc<Services>,
     item_id: &str,
@@ -456,10 +428,6 @@ fn youtube_embed_url(value: &str) -> Option<String> {
     ))
 }
 
-/// Authenticated, byte-range-aware access to one local trailer.
-///
-/// The UI receives only an opaque item id. The Jellyfin token stays in the
-/// native client, just as it does for artwork and full playback.
 fn trailer_stream(
     services: &Arc<Services>,
     trailer_id: &str,
@@ -497,11 +465,6 @@ impl MediaSourceView {
             id: source.id.clone(),
             name: source.display_name().to_string(),
             container: source.container.clone(),
-            // Only the file name: the server's directory layout is not the UI's
-            // business, but "which file is this" is exactly what this page is for.
-            // Jellyfin answers non-admin users with an opaque id in `Path`, which
-            // `file_name_of` filters out — the source name carries the release
-            // there, and the UI falls back to it.
             file_name: source
                 .path
                 .as_deref()
@@ -543,11 +506,6 @@ impl MediaStreamView {
     }
 }
 
-/// The basename of a real file path.
-///
-/// `Path` is admin-only in Jellyfin; ordinary users get an opaque id there
-/// instead, so a name with no extension is not a file name and is dropped
-/// rather than printed as if it were one.
 fn file_name_of(path: &str) -> Option<&str> {
     let name = path.rsplit(['/', '\\']).next()?;
     let extension = name.rsplit_once('.')?.1;
@@ -555,12 +513,6 @@ fn file_name_of(path: &str) -> Option<&str> {
         .then_some(name)
 }
 
-/// The episode a series' Play button should start.
-///
-/// Next Up is server-side logic, exactly as on the home screen, so a series
-/// page agrees with the Next Up row. It runs out on a fully watched show and is
-/// unavailable offline, and in both cases the first episode is a better answer
-/// than a page with nothing to play.
 fn next_up(services: &Arc<Services>, item_id: &str) -> Result<NextUpResponse, ApiResponse> {
     if cached_kind(services, item_id)? != Some(CatalogKind::Series) {
         return Ok(NextUpResponse { item: None });
@@ -588,8 +540,6 @@ fn next_up(services: &Arc<Services>, item_id: &str) -> Result<NextUpResponse, Ap
     Ok(NextUpResponse { item })
 }
 
-/// Live from Jellyfin and never cached: similarity is the server's judgement
-/// over the whole library, not something the local index can reproduce.
 fn similar_items(services: &Arc<Services>, item_id: &str) -> Result<SimilarItems, ApiResponse> {
     let scope = session_scope(services)?;
     let response = fetch_current(services, &scope, |client, user_id| {
@@ -662,11 +612,6 @@ impl ExternalProvider {
     }
 }
 
-/// Opens an item's exact provider page in the default browser.
-///
-/// The UI names a provider, never a URL: the id and the item kind both come
-/// from the cached row here, so nothing the page can say turns into a launched
-/// address.
 fn open_external(
     services: &Arc<Services>,
     item_id: &str,
@@ -848,8 +793,6 @@ mod tests {
         );
     }
 
-    /// An episode's TMDb id is an episode id, so there is no `/tv/` page for it
-    /// and offering one would link an unrelated show.
     #[test]
     fn external_links_are_absent_where_the_id_does_not_address_a_page() {
         assert_eq!(external_url("tmdb", "12345", "Episode"), None);

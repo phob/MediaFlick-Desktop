@@ -49,10 +49,6 @@ function CollectionChip({ tmdbId }: { tmdbId: number }) {
   )
 }
 
-/**
- * Which episode a series' Play button will start, spelled out under the hero.
- * The button itself only has room for the code.
- */
 function NextUpNote({ episode }: { episode: ItemSummary }) {
   const hidden = useSpoilerProtection(episode)
   return (
@@ -137,10 +133,6 @@ function TitleItemPage({
 
   const seasons = seasonRailOrder(childItems.filter((child) => child.kind === "Season"))
   const nextUpItem = isSeries ? (nextUp.data?.item ?? null) : null
-  // Which season the episode grid shows: the URL wins, then the season Next Up
-  // lives in, then the first regular season. While Next Up is still loading
-  // there is no honest default, so the grid holds its skeleton instead of
-  // painting season one and jumping. A single season has nowhere to jump to.
   const selectedSeason = !isSeries
     ? null
     : (seasons.find((season) => season.id === searchParams.get("season")) ??
@@ -169,12 +161,6 @@ function TitleItemPage({
   const playTarget = isSeries ? nextUpItem : undefined
 
   return (
-    // `isolate` scopes the page backdrop, which is painted at a negative
-    // z-index: it has to sit behind every section on this page and in front of the
-    // app shell's opaque background, and this stacking context is what pins it
-    // between the two. `min-h-full` stretches short pages to the viewport so
-    // the backdrop reaches the window's bottom edge instead of stopping with
-    // the content.
     <div className="detail-page relative isolate flex min-h-full min-w-0 flex-col gap-12 pb-16">
       {!hidden && backdrop && <DetailBackdrop src={backdrop} />}
       {hidden && <Button className="relative z-10" variant="outline" onClick={() => setRevealed(true)}>Reveal episode spoilers</Button>}
@@ -238,10 +224,6 @@ function TitleItemPage({
   )
 }
 
-/**
- * A series' Play button starts one particular episode, so it names it rather
- * than leaving the user to guess which one — and whether it will resume.
- */
 function playLabelFor(item: Item, target: ItemSummary | null) {
   if (item.kind !== "Series" || !target) return undefined
   const verb = target.positionTicks > 0 ? "Resume" : "Play"

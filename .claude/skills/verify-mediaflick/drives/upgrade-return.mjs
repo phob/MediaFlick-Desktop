@@ -1,15 +1,3 @@
-// Updating again after going back to 0.1.6: MediaFlick starts on a profile it
-// used before, on which the real 0.1.6 has run since (scripts/e2e/upgrade-0-1-6.mjs
-// seeds its config and data dirs). Expected, by the rule that the device file
-// is settings.json and 0.1.6's config.json is read only while settings.json is
-// missing (src/preferences/v0_1_6.rs):
-//
-// - the app starts signed in as before, on Home, with no What's new (it was
-//   seen before going back);
-// - the Player shelf shows what settings.json says, not what 0.1.6 changed;
-// - neither settings.json nor 0.1.6's config.json is rewritten by starting.
-//
-// Writes upgrade-return.json.
 import { readFileSync } from "node:fs"
 
 const DIALOG = { role: "dialog", name: "What's new since MediaFlick 0.1.6" }
@@ -42,7 +30,6 @@ async function steps(ctx, report, record) {
   const status = (await ctx.api("/api/status")).body
   report.status = { authenticated: status.authenticated, userName: status.userName, server: status.server ?? null }
   record(status.authenticated === true, "the app starts signed in as before going back", status.userName)
-  // What's new opens right after start when it is due; give it the time it takes there.
   const dialog = await ctx.until(async () => (await ctx.count(DIALOG)) > 0, "What's new (it must not open)", 8000).then(() => true, () => false)
   record(!dialog, "no What's new on the return")
   record((await ctx.api("/api/settings/whats-new")).body.pending === false, "/api/settings/whats-new has nothing pending")

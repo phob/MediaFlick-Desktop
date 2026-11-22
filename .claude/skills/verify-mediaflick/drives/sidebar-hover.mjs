@@ -1,17 +1,5 @@
 import { execFileSync } from "node:child_process"
 
-// Off Home the sidebar is collapsed and expands under the pointer. It must
-// stay expanded while the real X11 pointer moves slowly down its entries and
-// back up over their labels, and also when each step first leaves the window
-// and comes back 10 ms later: macOS Screen Sharing delivers every pointer move
-// that way (a leave, then the entry at the real position), which collapsed
-// and re-expanded the sidebar on each move (mediaflick-mac-test run
-// 44769479069). It still collapses once the pointer really leaves it. Linux
-// only (xdotool on the session's Xvfb display); CDP's Input domain would skip
-// the native window's own mouse handling.
-//   just verify sidebar-hover
-// Writes sidebar-hover.json: each pass's expand and collapse transitions and
-// the pointer events around them.
 const DEMO = "https://demo.jellyfin.org/stable"
 const LIBRARY_ROUTE = /^\/library\/[0-9a-f]+$/
 const STEP_MS = 20
@@ -22,7 +10,6 @@ const xdotool = (...args) => execFileSync("xdotool", args.map(String), { encodin
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const sidebarState = (ctx) => ctx.app.evaluate(`document.querySelector('[data-slot="sidebar"]')?.dataset.state ?? null`)
 
-/** The app's top-level window: the largest child of the root. */
 function appWindow() {
   const tree = execFileSync("xwininfo", ["-root", "-children"], { encoding: "utf8" })
   return [...tree.matchAll(/^\s+(0x[0-9a-f]+) .*?(\d+)x(\d+)\+/gm)]
@@ -30,7 +17,6 @@ function appWindow() {
     .sort((a, b) => b.area - a.area)[0].id
 }
 
-/** Moves the real pointer in 1 px steps, STEP_MS apart, as a slow hand does. */
 async function glide(window, from, to) {
   const steps = Math.max(1, Math.round(Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y))))
   for (let step = 1; step <= steps; step++) {
@@ -40,9 +26,6 @@ async function glide(window, from, to) {
   }
 }
 
-// Records, in the page, every sidebar expand and collapse and the pointer
-// events that cross the sidebar's edge or go to nothing (relatedTarget null,
-// which React reads as the pointer leaving the window).
 const PROBE = `(() => {
   const sidebar = document.querySelector('[data-slot="sidebar"]')
   const container = document.querySelector('[data-slot="sidebar-container"]')
@@ -113,8 +96,6 @@ export default async function sidebarHover(ctx) {
       await glide(window, { x: icons.x, y: icons.bottom }, { x: labels.x, y: icons.bottom })
       await glide(window, { x: labels.x, y: icons.bottom }, { x: labels.x, y: icons.top })
     }),
-    // Each step leaves the window and comes back AWAY_MS later, as a pointer
-    // move over macOS Screen Sharing arrives.
     await pass(ctx, "down-icons-leaving-the-window", async () => {
       for (let y = icons.top; y <= icons.bottom; y += BOUNCE_STEP_PX) {
         xdotool("mousemove", "--window", window, outside.x, outside.y)

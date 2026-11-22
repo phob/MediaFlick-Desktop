@@ -18,9 +18,6 @@ pub fn set_native_window_icon(raw_hwnd: usize) {
         SM_CXSMICON, SM_CYICON, SM_CYSMICON, SendMessageW, WM_SETICON,
     };
 
-    // build.rs embeds distribution/windows/app.ico in the executable with
-    // winresource's default numeric ID. Load it from this executable so
-    // libmpv's top-level HWND does not inherit mpv's own icon.
     const APPLICATION_ICON_RESOURCE_ID: u16 = 1;
 
     let hwnd = raw_hwnd as HWND;
@@ -99,9 +96,6 @@ pub fn set_window_icon(window: &cef::Window) {
         return;
     }
 
-    // CEF otherwise supplies Chromium's built-in images. The app icon is the
-    // fallback used by X11 window managers. Wayland desktop shells resolve
-    // the app id through the desktop entry registered by app::desktop.
     window.set_window_icon(Some(&mut window_icon));
     window.set_window_app_icon(Some(&mut app_icon));
 }

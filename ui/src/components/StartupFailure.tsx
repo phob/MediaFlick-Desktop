@@ -18,12 +18,6 @@ import { api, ApiError, type RefusedLibrary } from "@/lib/api"
 import { toastFailure } from "@/lib/failure-toast"
 import { queryKeys } from "@/lib/query-client"
 
-/**
- * Shown instead of the app, sign-in included, when the services failed to
- * open at startup. The reason says what to do. When `library.db` was what
- * failed, it also offers to open the folder holding it and, only after the
- * user confirms, to move it aside and start on a new one.
- */
 export function StartupFailure({ reason }: { reason: string }) {
   const recovery = useQuery({ queryKey: queryKeys.recovery, queryFn: api.recovery.status })
   const library = recovery.data?.library
@@ -39,14 +33,12 @@ function LibraryRecovery({ library }: { library: RefusedLibrary }) {
   const client = useQueryClient()
   const recreate = useMutation({
     mutationFn: api.recovery.recreateLibrary,
-    // The services are open now: every query that failed with them asks again.
     onSuccess: ({ backup }) => {
       toast.success(`The old library.db was moved to ${backup}.`)
       void client.resetQueries()
     },
     onError: (error: Error) => {
       toastFailure(error)
-      // The file was moved but the services failed again: show the new reason.
       if (error instanceof ApiError && error.startupFailed) void client.resetQueries()
     },
   })

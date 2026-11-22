@@ -1,11 +1,6 @@
 import type * as Wire from "../wire.gen.ts"
 import { sameJson } from "../../json.ts"
 
-/**
- * A settings patch as a shelf sends it: every key, each typed as the shelf's
- * view types it. Rust also takes `null` for "keep the stored value", which no
- * shelf sends.
- */
 type SettingsWrite<Patch, View extends Record<keyof Patch, unknown>> = Patch & Pick<View, keyof Patch>
 
 export type PlayerSettings = Wire.PlayerView

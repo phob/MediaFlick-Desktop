@@ -36,12 +36,9 @@ pub struct SessionStatus {
     pub user_id: Option<String>,
     pub user_name: Option<String>,
     pub device_id: String,
-    /// The signed-in user administers the server, as the last policy read
-    /// showed. A restored session reads `false` until its policy is read.
     pub administrator: bool,
 }
 
-/// The Jellyfin server at a normalized address, before sign-in.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerInfo {
@@ -49,12 +46,9 @@ pub struct ServerInfo {
     pub server_name: String,
     pub version: ServerVersion,
     pub quick_connect: bool,
-    /// Set when the server is older than Desktop supports. Sign-in to it is
-    /// refused, so Quick Connect is not checked.
     pub too_old: Option<ServerTooOld>,
 }
 
-/// A Quick Connect code to show the user, and the secret to poll it with.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct QuickConnectStart {
@@ -66,7 +60,6 @@ pub struct QuickConnectStart {
 #[derive(Serialize, ts_rs::TS)]
 pub struct QuickConnectPoll {
     pub authenticated: bool,
-    /// Sent once the code was approved and the session signed in.
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<SessionStatus>,
@@ -96,9 +89,6 @@ impl SessionScope {
         &self.account
     }
 
-    /// The raw client, for the socket, remote control and playback start,
-    /// which check the scope themselves. Everything else calls
-    /// [`Self::fetch`], whose answer can't be read before it is confirmed.
     pub(in crate::jellyfin) fn client(&self) -> &JellyfinClient {
         &self.client
     }
@@ -107,10 +97,6 @@ impl SessionScope {
         &self.user_id
     }
 
-    /// Calls Jellyfin as this account. The answer stays sealed until
-    /// [`Session::confirm`] or [`Live::open`] checks that this account is
-    /// still the signed-in one. A failure is not sealed; route it through
-    /// [`Session::scoped_error`] before answering with it.
     pub fn fetch<T>(
         &self,
         call: impl FnOnce(&JellyfinClient, &str) -> Result<T, ApiError>,
@@ -124,9 +110,6 @@ impl SessionScope {
     }
 }
 
-/// A Jellyfin answer fetched for one account. It opens only through
-/// [`Session::confirm`] or [`Live::open`], so an answer that outlived an
-/// account switch can reach neither the UI nor the cache.
 #[must_use = "a fetched answer must be opened with Session::confirm or Live::open"]
 pub struct Scoped<T> {
     generation: u64,
@@ -134,21 +117,9 @@ pub struct Scoped<T> {
     value: T,
 }
 
-/// The account a [`Scoped`] answer was fetched for is no longer signed in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stale;
 
-/// Proof that the signed-in account still matched a [`SessionScope`] while
-/// [`Session::commit_if_current`] held the operation gate. Only that method
-/// mints one, and only for the closure it runs, so a writer of account-owned
-/// cache state that requires `&Live` can't run for an account that was
-/// switched, signed out or deleted after its answer was fetched. The private
-/// fields keep every other module from making one.
-///
-/// The proof covers the typed `Library` writers only.
-/// `Library::with_connection` and `with_transaction` are `pub(crate)` and take
-/// no proof, so raw SQL can still write catalog tables; today only the
-/// collection snapshot and identity-map writers use them for writes.
 pub struct Live {
     generation: u64,
     account: AccountKey,
@@ -159,7 +130,6 @@ impl Live {
         &self.account
     }
 
-    /// Opens an answer fetched for the account this proof was minted for.
     pub fn open<T>(&self, scoped: Scoped<T>) -> Result<T, Stale> {
         if scoped.generation == self.generation && scoped.account == self.account {
             Ok(scoped.value)
@@ -189,8 +159,6 @@ impl Session {
             user_name: stored.user_name.clone(),
             device_id: stored.device_id.clone(),
             token: stored.token,
-            // Restored sessions hide Missing and offer no server setup until a
-            // live user-policy read proves otherwise.
             access: UserAccess::UNVERIFIED,
             expired: false,
             generation: u64::from(authenticated),
@@ -317,11 +285,6 @@ impl Session {
         })
     }
 
-    /// Opens a fetched answer if its account is still the signed-in one.
-    /// Otherwise the error says why, as [`Self::scoped_error`] would for a
-    /// failure: [`ApiError::Unauthorized`] while the account's own rejected
-    /// token expired it and nothing replaced it, so the UI shows sign-in, and
-    /// [`ApiError::AccountChanged`] after a switch, sign-out or deletion.
     pub fn confirm<T>(&self, scoped: Scoped<T>) -> Result<T, ApiError> {
         let _gate = self
             .operation_gate
@@ -337,9 +300,6 @@ impl Session {
         }
     }
 
-    /// Calls Jellyfin as `scope` and opens the answer for the caller, which
-    /// answers the UI with it. Any answer or failure for an account that is
-    /// no longer signed in comes back as [`ApiError::AccountChanged`].
     pub fn fetch_current<T>(
         &self,
         scope: &SessionScope,
@@ -542,23 +502,10 @@ impl Session {
         true
     }
 
-    /// Routes an API failure made for `scope`. A rejected token pauses sync and
-    /// sends the UI back to the login view without discarding the cache, once,
-    /// and only while `scope` is still the signed-in account.
-    ///
-    /// The UI is told through the shell event here, on the first rejection,
-    /// because many callers swallow their errors by design (card badges, the
-    /// about panel); without the push the app could sit on authenticated
-    /// screens with dead controls until something re-read `/api/status`.
     pub fn note_scoped_error(&self, scope: &SessionScope, error: &ApiError) {
         drop(self.scoped_error(scope, error.clone()));
     }
 
-    /// Routes an API failure made for `scope` like [`Self::note_scoped_error`]
-    /// and returns the error to answer with. A failure for an account that
-    /// is no longer signed in is [`ApiError::AccountChanged`], so a late
-    /// rejection of the previous account's token never reaches the account
-    /// that replaced it.
     pub fn scoped_error(&self, scope: &SessionScope, error: ApiError) -> ApiError {
         let expired = {
             let _gate = self
@@ -622,15 +569,10 @@ impl SessionState {
             && self.account_key().as_ref() == Some(account)
     }
 
-    /// Whether a failure for `scope` still belongs to the signed-in account:
-    /// the scope is current, or its own rejected token expired it and nothing
-    /// has replaced it since.
     fn owns_failure(&self, scope: &SessionScope) -> bool {
         self.matches(scope) || self.expired_itself(scope.generation, scope.account())
     }
 
-    /// Whether the account fetched at `generation` is still signed in, but
-    /// expired by its own rejected token, with nothing replacing it since.
     fn expired_itself(&self, generation: u64, account: &AccountKey) -> bool {
         self.expired
             && !self.deleting
@@ -639,9 +581,6 @@ impl SessionState {
     }
 }
 
-/// Reads the server's name and version from its public system info. A
-/// Jellyfin server always reports its version, except for the stand-in that
-/// answers while it migrates at startup and refuses everything else.
 fn identify(client: &JellyfinClient) -> Result<(String, ServerVersion), ApiError> {
     let info = auth::public_system_info(client)?;
     let version = info.version.ok_or_else(|| {
@@ -653,8 +592,6 @@ fn identify(client: &JellyfinClient) -> Result<(String, ServerVersion), ApiError
     Ok((info.server_name, version))
 }
 
-/// Refuses a server older than Desktop supports before any credentials or
-/// Quick Connect request reach it.
 fn require_supported(client: &JellyfinClient) -> Result<(), ApiError> {
     let (_, version) = identify(client)?;
     match version.short_of(ServerVersion::DESKTOP_MINIMUM) {

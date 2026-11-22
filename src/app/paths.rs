@@ -1,10 +1,6 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-/// A data root handed to us by the environment is only usable when it is
-/// absolute. An empty or relative value would put `library.db` under whatever
-/// the working directory happens to be, where the next launch — started from
-/// somewhere else — would silently find a different, empty database.
 fn trusted_root(value: Option<OsString>) -> Option<PathBuf> {
     let path = PathBuf::from(value?);
     path.is_absolute().then_some(path)

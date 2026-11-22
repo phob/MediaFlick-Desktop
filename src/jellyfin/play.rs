@@ -1,9 +1,3 @@
-//! Turns "play this item" into a fully-formed [`PlaybackRequest`].
-//!
-//! This is the work jellyfin-web used to do before the bridge captured its
-//! stream URL: negotiate `PlaybackInfo` with a device profile, pick a media
-//! source, and build the direct-stream or transcoding URL ourselves.
-
 use std::sync::{Arc, Weak};
 
 mod audio;
@@ -28,9 +22,6 @@ pub struct PlayOptions {
     pub resume: bool,
     pub start_ticks: Option<i64>,
     pub media_source_id: Option<String>,
-    /// Used only when a Jellyfin source has no stable id. Persisted choices
-    /// retain the source's position and identity so playback can still select
-    /// the same source from the negotiated response.
     pub media_source_index: Option<usize>,
     pub audio_stream_index: Option<i64>,
     pub subtitle_stream_index: Option<i64>,
@@ -54,13 +45,6 @@ pub enum StartError {
     Api(ApiError),
 }
 
-/// Negotiates `options` and launches the configured external player.
-///
-/// This is the one launch path shared by the UI's play endpoints and
-/// remote-control Play messages, so both start playback identically.
-/// `scope` is the account the request came from: its preferences shape the
-/// play, its token negotiates it, and the player only opens while it is still
-/// the signed-in account.
 pub fn start(
     services: &Arc<Services>,
     scope: &SessionScope,
@@ -115,8 +99,6 @@ pub fn start(
     Ok(prepared)
 }
 
-/// The account a playback was started from, so the coordinator can stop it
-/// once that account signs out or another one signs in.
 struct AccountOwner {
     services: Weak<Services>,
     scope: SessionScope,
@@ -316,9 +298,6 @@ fn apply_saved_preference(options: &mut PlayOptions, resolved: ResolvedPlaybackP
     options.media_source_id = resolved.media_source_id;
     options.media_source_index = Some(resolved.media_source_index);
     options.audio_stream_index = resolved.audio_stream_index;
-    // Existing preference + no resolved subtitle is an explicit/current
-    // subtitles-off result. Carry the sentinel through both Jellyfin and
-    // player mapping.
     options.subtitle_stream_index = Some(resolved.subtitle_stream_index.unwrap_or(-1));
 }
 
@@ -405,9 +384,6 @@ fn select_source<'a>(
     {
         return Some(source);
     }
-    // A positional fallback is only safe for a source that had no stable id.
-    // If a saved id disappeared between validation and negotiation, the same
-    // position can now be a different file and must use the ordinary default.
     if preferred_id.is_none()
         && let Some(preferred_index) = preferred_index
         && let Some(source) = info.media_sources.get(preferred_index)
@@ -441,9 +417,6 @@ fn stream_url(
             .filter(|container| !container.is_empty())
             .and_then(|container| container.split(',').next())
             .unwrap_or("mkv");
-        // No `api_key`: the token travels in `request.headers` instead, so it
-        // stays out of the player's command line, its recent-files list, and
-        // its logs.
         let mut query = vec![("static", "true".to_string())];
         if let Some(media_source_id) = &source.id {
             query.push(("mediaSourceId", media_source_id.clone()));
@@ -475,10 +448,6 @@ fn stream_url(
     }
 
     if let Some(transcoding_url) = &source.transcoding_url {
-        // Jellyfin embeds the access token (`ApiKey`) in the transcoding URL.
-        // Strip it like the direct-stream URL above: the token travels in
-        // `request.headers`, which mpv forwards to the HLS playlists and
-        // segments, so it stays out of mpv's `path` property, scripts, and logs.
         let url = remove_query_params(
             &absolute_url(client.base_url(), transcoding_url),
             TOKEN_QUERY_KEYS,
@@ -493,7 +462,6 @@ fn stream_url(
     )))
 }
 
-/// Jellyfin returns transcoding and subtitle URLs relative to the server root.
 fn absolute_url(base_url: &str, url: &str) -> String {
     if url.starts_with("http://") || url.starts_with("https://") {
         url.to_string()
@@ -536,8 +504,6 @@ fn choose_stream<'a>(
     None
 }
 
-/// Players address embedded tracks by their one-based position among tracks of
-/// the same type, not by Jellyfin's absolute stream index.
 fn embedded_ordinal(source: &MediaSourceInfo, kind: &str, index: i64) -> Option<i64> {
     source
         .streams_of_type(kind)

@@ -1,9 +1,3 @@
-//! Item queries, user-data writes, and playback negotiation.
-//!
-//! Endpoints that Jellyfin moved out of `/Users/{userId}/…` in 10.9 are tried
-//! at the modern path first and fall back to the legacy one, so the app works
-//! against both current and older servers.
-
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -20,15 +14,6 @@ use super::model::{
     UserViewDto, UserViewsResponse,
 };
 
-/// Lightweight fields required to browse, sort, filter, join, and draw cards.
-/// Name, id, type, year, runtime, hierarchy, and image tags are part of
-/// Jellyfin's base item shape; the fields below opt into only the additional
-/// catalog signals the local index needs. Studios and tags feed the library
-/// filters. Rich prose, cast and media streams are never cached.
-///
-/// `DateLastSaved` is deliberately absent: it is a valid `ItemFields` value but
-/// servers return it empty, and it is not a valid `ItemSortBy` value, so the
-/// cache keys freshness on `DateCreated` instead. See `library::sync`.
 pub const CATALOG_FIELDS: &str = "ProviderIds,Genres,Studios,Tags,DateCreated,OriginalTitle,\
 SortName,PremiereDate,OfficialRating,CommunityRating,ChildCount,ParentId";
 
@@ -125,8 +110,6 @@ pub fn fetch_user_views(
     Ok(response.items)
 }
 
-/// An item's own `ParentId` is its folder, never its library, so this walk is
-/// the only way to learn membership.
 pub fn fetch_library_member_ids(
     client: &JellyfinClient,
     user_id: &str,
@@ -147,8 +130,6 @@ pub fn fetch_library_member_ids(
             ("EnableImages", "false".to_string()),
             ("StartIndex", start_index.to_string()),
             ("Limit", page_size.to_string()),
-            // SortName breaks DateCreated ties so pages neither skip nor
-            // repeat titles. Jellyfin ignores an `Id` sort.
             ("SortBy", "DateCreated,SortName".to_string()),
             ("SortOrder", "Ascending".to_string()),
         ],
@@ -176,11 +157,6 @@ fn children_query(user_id: &str, parent_id: &str, start_index: i64) -> Vec<(&'st
     ]
 }
 
-/// The direct children of one series or season, as the server sees them now.
-///
-/// Used to reconcile a detail page against the server, which is the only way
-/// the season view can avoid showing episodes that were deleted since the last
-/// sweep.
 pub fn fetch_children(
     client: &JellyfinClient,
     user_id: &str,
@@ -277,8 +253,6 @@ pub fn fetch_live_children(
     )
 }
 
-/// Every Audio and AudioBook item under `parent_id`, at most `limit`, in
-/// disc and track order.
 pub fn fetch_audio_tracks(
     client: &JellyfinClient,
     user_id: &str,
@@ -379,8 +353,6 @@ fn live_page_query(user_id: &str, page: &LivePage) -> Vec<(&'static str, String)
     query
 }
 
-/// `/Items/Latest` answers a bare array, so its total is the number of items
-/// it returned.
 pub fn fetch_live(
     client: &JellyfinClient,
     user_id: &str,
@@ -401,7 +373,6 @@ pub fn fetch_live(
                     ("Limit", limit.to_string()),
                 ],
             )?;
-            // A grouped row's ChildCount counts its new items, not its seasons or tracks.
             for item in &mut items {
                 item.child_count = None;
             }
@@ -479,8 +450,6 @@ pub fn fetch_box_set_children(
     client.get_json("/Items", &box_set_children_query(user_id, parent_id))
 }
 
-/// One item's live about-panel metadata. Images stay enabled because cast
-/// entries carry their headshot tags through the `People` field.
 pub fn fetch_item_about(
     client: &JellyfinClient,
     user_id: &str,
@@ -526,9 +495,6 @@ fn person_items_query(
         user_query(user_id),
         ("Recursive", "true".to_string()),
         ("PersonIds", person_id.to_string()),
-        // Cast surfaces promise titles. Jellyfin also credits people on
-        // seasons and episodes, and those rows would consume the visible
-        // result window without naming anything a card can represent.
         (
             "IncludeItemTypes",
             CatalogKind::wire_list(&CatalogKind::TOP_LEVEL),
@@ -543,11 +509,6 @@ fn person_items_query(
     ]
 }
 
-/// Every visible library item Jellyfin credits one exact person on, as cast or
-/// crew.
-///
-/// Cast is not cached locally at all: names can be ambiguous, while Jellyfin's
-/// `PersonIds` relation is exact and complete immediately.
 pub fn fetch_person_items(
     client: &JellyfinClient,
     user_id: &str,
@@ -578,11 +539,6 @@ pub fn fetch_people(
     )
 }
 
-/// Container, codec, and track detail for one item.
-///
-/// Paths, source negotiation, and subtitle delivery data never enter the thin
-/// index. The detail page reads full sources here, while cards use the separate
-/// live `MediaStreams` batch above.
 pub fn fetch_media_sources(
     client: &JellyfinClient,
     user_id: &str,
@@ -606,11 +562,6 @@ pub fn fetch_media_sources(
         .unwrap_or_default())
 }
 
-/// Local trailer items attached to one film.
-///
-/// Remote trailer URLs are deliberately not returned: the app scheme's
-/// content policy keeps browsing self-contained, while local trailers can be
-/// fetched through the authenticated byte-range proxy.
 pub fn fetch_local_trailers(
     client: &JellyfinClient,
     user_id: &str,
@@ -653,11 +604,6 @@ pub fn fetch_remote_trailers(
         .unwrap_or_default())
 }
 
-/// Titles Jellyfin rates as similar to one film or series, best match first.
-///
-/// The server picks the kinds from the source item, but with
-/// `EnableExternalContentInSuggestions` it can mix trailers and Live TV
-/// programs into a film's answer, so callers keep only the kinds they draw.
 pub fn fetch_similar_items(
     client: &JellyfinClient,
     user_id: &str,
@@ -720,9 +666,6 @@ pub fn fetch_upcoming(
     client.get_json("/Shows/Upcoming", &upcoming_query(user_id, limit))
 }
 
-/// One range of a book's file (`range` is an HTTP `Range` value), read only
-/// up to `limit` bytes. `/Items/{id}/File` needs only the session, unlike
-/// `/Download`, which needs the download permission.
 pub fn fetch_book_bytes(
     client: &JellyfinClient,
     item_id: &str,
@@ -741,9 +684,6 @@ struct BookProgress {
     played: Option<bool>,
 }
 
-/// Writes a book's position the way jellyfin-web does, through the user
-/// data route. Session play reports would mark a book without a runtime
-/// played and zero its position. `played: None` leaves the played state.
 pub fn write_book_progress(
     client: &JellyfinClient,
     user_id: &str,

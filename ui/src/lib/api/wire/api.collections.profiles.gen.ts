@@ -42,9 +42,6 @@ export type CollectionSettingsPatch = {
 
 export type CollectionTemplateOption = {
   template: CollectionTemplate,
-  /**
-   * The provider the template reads from is ready.
-   */
   available: boolean,
 };
 

@@ -42,25 +42,15 @@ export function RouteScrollViewport({ children }: { children: ReactNode }) {
   )
 }
 
-/**
- * The Built-in player's chrome (brand and player bar) and the cursor show
- * together when the pointer moves past a deadzone anywhere over the window,
- * and hide after a few seconds without such a move. They stay while paused,
- * while a bar menu is open, and while the pointer or keyboard focus is in the
- * bar.
- */
 function IntegratedPlayerOverlay({ paused }: { paused: boolean }) {
   const [pointerIdle, setPointerIdle] = useState(false)
   const [playerMenuOpen, setPlayerMenuOpen] = useState(false)
   const [pointerOverBar, setPointerOverBar] = useState(false)
   const [keyboardFocusInBar, setKeyboardFocusInBar] = useState(false)
   const held = paused || playerMenuOpen || pointerOverBar || keyboardFocusInBar
-  // A hold resets idleness, so the chrome stays for the full delay after it.
   if (held && pointerIdle) setPointerIdle(false)
   const chromeVisible = held || !pointerIdle
 
-  // `origin` is where the pointer last counted as moving, or where it rested
-  // when the chrome hid; null until the first move, which only sets it.
   const pointer = useRef<{ origin: PointerPosition | null; last: PointerPosition | null }>({ origin: null, last: null })
 
   useEffect(() => {
@@ -131,7 +121,6 @@ function IntegratedPlayerOverlay({ paused }: { paused: boolean }) {
         onPointerEnter={() => setPointerOverBar(true)}
         onPointerLeave={() => setPointerOverBar(false)}
         onFocus={(event) => {
-          // Focus inside a menu's portal bubbles here too; the open menu holds the bar then.
           setKeyboardFocusInBar(event.currentTarget.contains(event.target) && event.target.matches(":focus-visible"))
         }}
         onBlur={(event) => {

@@ -10,13 +10,11 @@ routes! {
     POST ["shell", "mpv", "help"] -> MpvHelpOpened = Ok(shell_mpv_help()),
 }
 
-/// `/api/shell/window/ready`: the shell queued the request.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct ShellQueued {
     queued: bool,
 }
 
-/// A shell request the UI later matches to its event by `requestId`.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ShellRequestQueued {
@@ -24,7 +22,6 @@ pub(super) struct ShellRequestQueued {
     queued: bool,
 }
 
-/// `/api/shell/mpv/help`: the mpv help page was handed to the browser.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct MpvHelpOpened {
     opened: bool,

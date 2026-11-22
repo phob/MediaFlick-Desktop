@@ -1,9 +1,3 @@
-//! What a CEF app must do itself on macOS before CEF runs. The framework is
-//! not linked into the executable, so every process loads it at run time
-//! before its first CEF call; and Chromium's event loop needs `NSApp` to be an
-//! `NSApplication` that speaks its `CrAppProtocol`. That `NSApp` also turns
-//! the system's quit requests into MediaFlick's orderly exit.
-
 use std::cell::{Cell, RefCell};
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
@@ -25,20 +19,13 @@ const FRAMEWORK: &str = "Chromium Embedded Framework.framework";
 const HELPER: &str = "MediaFlick Desktop Helper";
 
 thread_local! {
-    /// The main window's state, set on CEF's UI thread, which on macOS is the
-    /// main thread that receives `terminate:`. Set whether or not the services
-    /// opened, so the startup error screen's window closes the same way.
     static EXIT_STATE: RefCell<Option<BrowserState>> = const { RefCell::new(None) };
 }
 
-/// Makes the system's quit requests close the app through `state`.
 pub(super) fn quit_through(state: &BrowserState) {
     EXIT_STATE.with(|slot| *slot.borrow_mut() = Some(state.clone()));
 }
 
-/// Where the framework sits for the given executable. The app's own binary
-/// (`Contents/MacOS/`) finds it in `Contents/Frameworks/`; a helper's binary
-/// (`Contents/Frameworks/<helper>.app/Contents/MacOS/`) three levels up.
 pub(super) fn framework_dir(exe: &Path) -> Option<PathBuf> {
     let macos_dir = exe.parent()?;
     [
@@ -49,9 +36,6 @@ pub(super) fn framework_dir(exe: &Path) -> Option<PathBuf> {
     .find_map(|path| path.canonicalize().ok())
 }
 
-/// The helper Chromium starts its subprocesses from. Chromium derives the
-/// GPU, Renderer, Plugin and Alerts variants from this path, so the bundle
-/// ships all of them beside it (`distribution/macos/build-dmg.sh`).
 pub(super) fn helper_executable(contents_dir: &Path) -> PathBuf {
     contents_dir
         .join("Frameworks")
@@ -60,7 +44,6 @@ pub(super) fn helper_executable(contents_dir: &Path) -> PathBuf {
         .join(HELPER)
 }
 
-/// Keeps the framework loaded; unloads it when dropped, after CEF shut down.
 pub(super) struct LoadedFramework;
 
 impl Drop for LoadedFramework {
@@ -91,9 +74,6 @@ struct ApplicationIvars {
 }
 
 define_class!(
-    /// `NSApp` for the browser process. Chromium asks it whether an event is
-    /// being dispatched (`CrAppProtocol`) to decide when its nested message
-    /// loops may run.
     #[unsafe(super(NSApplication))]
     #[ivars = ApplicationIvars]
     struct MediaFlickApplication;
@@ -108,16 +88,11 @@ define_class!(
             self.ivars().handling_send_event.set(was_handling);
         }
 
-        /// Every quit path ends here: the menu's Quit (Cmd+Q), the Dock's
-        /// Quit and the quit Apple event. NSApplication's own version calls
-        /// exit() at once, which would skip the playstate flush and settings
-        /// save that closing the browsers runs.
         #[unsafe(method(terminate:))]
         fn terminate(&self, _sender: Option<&AnyObject>) {
             match EXIT_STATE.with(|slot| slot.borrow().clone()) {
                 Some(state) => initiate_app_exit(&state),
                 None => {
-                    // No window exists yet, so there is nothing to flush or save.
                     tracing::info!(target: "app", "quit before the main window was created");
                     cef::quit_message_loop();
                 }
@@ -144,9 +119,6 @@ define_class!(
     unsafe impl CefAppProtocol for MediaFlickApplication {}
 );
 
-/// Makes `NSApp` a `MediaFlickApplication` with an app menu whose Quit item
-/// is Cmd+Q. Must run on the main thread before CEF or anything else touches
-/// `NSApp`, which would create a plain `NSApplication` instead.
 pub(super) fn install_application() -> Result<(), String> {
     let mtm = MainThreadMarker::new().ok_or("CEF must start on the main thread")?;
     // SAFETY: +sharedApplication takes no arguments and returns the

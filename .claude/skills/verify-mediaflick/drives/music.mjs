@@ -1,7 +1,3 @@
-// Music and audiobooks through the user path, against your own server with the
-// fixtures named below. Writes the test user's playstate and puts it back.
-//   just verify music --account SERVER --timeout 600 --log-level "debug,jellyfin.playstate=trace,playback=trace"
-//   (External mpv: add --seed .claude/skills/verify-mediaflick/seeds/external-mpv)
 import { execFileSync } from "node:child_process"
 
 const ALBUM = "Test Tones"
@@ -96,10 +92,6 @@ export default async function music(ctx) {
       check(paused && resumed, "Space pauses and resumes audio while the page has focus")
     }
     if (index > 0) {
-      // A seek to the end before mpv has played any audio ends the file with
-      // reason=error (file_error "no audio or video data played"), and the
-      // queue stops there instead of advancing. Seen with External mpv on
-      // Windows, where → came 0.15 s after file-loaded.
       await ctx.until(async () => { const now = await audio(); return now?.index === index && now.positionMs > 0 }, `track ${index + 1} to play past 0 s`, 15000)
       await ctx.app.evaluate("document.activeElement?.blur()")
       await ctx.key("ArrowRight", { code: "ArrowRight", keyCode: 39 })
@@ -214,9 +206,6 @@ export default async function music(ctx) {
   check(await ctx.exists({ role: "button", name: "From start" }), "the audiobook offers Continue and From start")
   await capture("06-audiobook")
   await ctx.press({ role: "button", name: resumeLabel })
-  // FFmpeg reads this .m4b's 285 chapter titles from all over the 93 MB file
-  // before mpv reports it loaded. With one HTTP request per chapter that took
-  // 45–125 s from a remote server, past the app's 60 s load limit.
   const pressedAt = Date.now()
   await ctx.until(async () => { const now = await audio(); return now?.mediaKind === "audiobook" && now.phase === "playing" }, "the audiobook to play", 60000)
   const audiobookLoadMs = Date.now() - pressedAt

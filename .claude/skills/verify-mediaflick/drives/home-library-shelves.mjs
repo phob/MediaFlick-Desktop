@@ -1,17 +1,3 @@
-// Home's "Latest in <library>" shelves against Jellyfin's own answers. Home
-// settings list one shelf per /UserViews entry, in its order, enabled, under
-// Library. Each library with titles gets a shelf on Home whose ids equal the
-// query its profile names: /Items/Latest for grouped live libraries, the
-// library's grid newest first for box sets, playlists and Live TV, and for
-// movies and TV shows libraries the Jellyfin data the cache sorts by (date
-// added; a show's newest episode). /latest names the library sort that
-// matches the shelf (episode-added for TV shows, added otherwise), and the
-// shelf's All link opens the library with it. Then, in the disposable
-// profile's accounts.json: one shelf turned off and saved, another toggled
-// and discarded (the file keeps its hash), and Restore defaults saved (every
-// library shelf on, in server order). Read-only on the server.
-//   just verify home-library-shelves
-//   just verify home-library-shelves --account https://jellyfin.example.com
 import { createHash } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 
@@ -133,11 +119,6 @@ async function pages(ctx, path) {
   }
 }
 
-/**
- * Rows `{ id, key }` in the order the shelf must follow, deeper than the shelf
- * so a tie group cut by the limit is whole, with the total that bounds the
- * shelf's length. `key` is null where the order is Jellyfin's own and exact.
- */
 async function oracle(ctx, userId, library) {
   const base = `/Items?userId=${userId}&ParentId=${library.id}`
   if (library.kind === "movies") {
@@ -183,12 +164,6 @@ async function oracle(ctx, userId, library) {
   return { query, total: page.TotalRecordCount, rows: page.Items.map((item) => ({ id: item.Id, key: null, type: item.Type })) }
 }
 
-/**
- * The shelf matches when it is as long as the library allows and each of its
- * ids sits where the oracle puts an item with the same sort key. Items whose
- * keys tie may come in either order; where the order is Jellyfin's own
- * (`key` null) the ids must match exactly.
- */
 function tieAware(shelfIds, rows, total) {
   const length = Math.min(SHELF_LIMIT, total)
   const expectedIds = rows.slice(0, length).map((row) => row.id)
@@ -306,7 +281,6 @@ export default async function homeLibraryShelves(ctx) {
   for (const entry of withShelf) {
     const library = libraries.find((candidate) => candidate.id === entry.id)
     const { href } = entry.viewAll.expected
-    // Every shelf's link is named "All", so its href is the only unique handle.
     await ctx.press({ css: `main section a[href="${href}"]` })
     await ctx.until(async () => (await ctx.pathname()) === href, `${label(library.name)}'s All to open ${href}`)
     await ctx.find({ role: "heading", name: library.name })

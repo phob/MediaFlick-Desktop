@@ -11,8 +11,6 @@ use crate::playback::NativeOverlayFrame;
 const FORMAT_STRING: c_int = 1;
 const FORMAT_NODE_MAP: c_int = 8;
 
-// The public mpv_node ABI (client.h). All union alternatives have pointer or
-// 64-bit scalar size/alignment on supported Linux targets.
 #[repr(C)]
 union NodeData {
     string: *mut c_char,
@@ -91,9 +89,6 @@ impl Compositor {
         if display.0 == 0 || display.1 == 0 {
             return Err("native overlay display dimensions are empty".into());
         }
-        // Use named arguments: overlay-add's positional argument order is not
-        // part of its compatibility contract. The address stays private to
-        // libmpv, and the synchronous command copies all pixels before return.
         let args = [
             ("name", "overlay-add".to_string()),
             ("id", "0".to_string()),

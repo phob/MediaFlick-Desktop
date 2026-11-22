@@ -8,11 +8,6 @@ function normalizedSearchTerm(value: string) {
   return term.length >= MIN_SEARCH_LENGTH ? term : ""
 }
 
-/**
- * Keeps an editable search draft tied to its URL source while committing valid
- * terms after a short pause. An incomplete draft remains visible even though
- * its previously active URL search is cleared immediately.
- */
 export function useLiveSearch(source: string, onCommit: (term: string) => void) {
   const [state, setState] = useState(() => ({ source, value: source }))
 

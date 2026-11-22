@@ -1,9 +1,5 @@
 import { execFileSync } from "node:child_process"
 
-// The book reader on a real server (`--account`), per format: the Books
-// library, the book's page, Read by keyboard, page turns, chapter keys, the
-// position Jellyfin keeps, Back, and Continue at the exact place. Writes
-// books.json and screenshots per format. See features/books.md.
 const BOOKS = [
   { key: "epub", name: "Alice's Adventures in Wonderland", format: "epub", finish: true },
   { key: "epub3", name: "Pride and Prejudice", format: "epub", measureBytes: true },
@@ -18,7 +14,6 @@ const BOOKS = [
   { key: "cbr", name: "Travels of Timmy Toodles - Johnny Gruelle", format: "cbr", pages: 28, worker: "/reader/libarchive/worker-bundle.js" },
 ]
 const EXTRA = [
-  // Chapter 5 is the fifth spine item, so its CFI starts /6/10!.
   { key: "nested", name: "MediaFlick Nested Contents", format: "epub", tocEntry: "Section 5.1", tocCfi: "epubcfi(/6/10!" },
   { key: "fxl", name: "MediaFlick Fixed Layout", format: "epub", contentsDowns: 1 },
 ]
@@ -42,7 +37,6 @@ const remote = {
 const press = (ctx, name) => ctx.key(...remote[name])
 const footer = (ctx) => ctx.app.evaluate(`[...document.querySelectorAll("[data-reader-footer] > span")].map((span) => span.innerText).join(" · ")`)
 
-/** Enter as a keyboard sends it: a key-down that also types `\r`, which is what activates a focused link or button. */
 async function enter(ctx) {
   const event = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }
   await ctx.app.send("Input.dispatchKeyEvent", { type: "keyDown", text: "\r", unmodifiedText: "\r", ...event })
@@ -64,7 +58,6 @@ async function moved(ctx, book, previous, description) {
   return saved.location
 }
 
-/** The saved place once it held still for two seconds: a new text size lays the book out again. */
 async function settled(ctx, book) {
   let last = JSON.stringify(place(ctx, book.id))
   let since = Date.now()
@@ -226,7 +219,6 @@ async function panels(ctx, book, row) {
   await inLayer(ctx, book, "reading", "choosing an entry returns to the book")
   const jumped = await moved(ctx, book, before, `the jump to "${chosen.label}"`)
   steps.contents = { start, chosen, location: jumped, footer: await footer(ctx) }
-  // A two-column spread can show the next entry too, and foliate names the page after it.
   if (book.tocEntry) ctx.check(jumped.cfi.startsWith(book.tocCfi) && (await footer(ctx)).startsWith("Section 5."), `${book.key}: the nested entry ${book.tocEntry} opens (${jumped.cfi}, ${await footer(ctx)})`)
   if (jumped.kind === "page") ctx.check(jumped.page === Number(chosen.entry), `${book.key}: Contents opens page ${Number(chosen.entry) + 1} (${jumped.page + 1})`)
 
@@ -240,7 +232,6 @@ async function panels(ctx, book, row) {
   const step = fixed ? 1 : 0.5
   const target = fixed ? Math.round(slider.max / 2) : 50
   const now = () => ctx.app.evaluate(`Number(document.activeElement.getAttribute("aria-valuenow"))`)
-  // A slider follows ARIA: Page Up raises the value by ten steps, Page Down lowers it.
   for (let presses = 0; presses < 60; presses += 1) {
     const distance = target - (await now())
     if (Math.abs(distance) < step / 2) break
@@ -255,7 +246,6 @@ async function panels(ctx, book, row) {
   const went = await moved(ctx, book, beforeGo, `the jump to ${value}${fixed ? "" : "%"}`)
   steps.goto = { slider, value, location: went, footer: await footer(ctx) }
   ctx.check(Math.abs(value - target) < step, `${book.key}: the slider reaches ${target} with Page Up/Down and arrows (${value})`)
-  // A text book opens at the spread holding that fraction; in a short book one spread is several percent.
   const opened = fixed ? (await footer(ctx)).includes(`Page ${value} of `) : Math.abs(went.fraction - 0.5) < 0.1
   ctx.check(opened, `${book.key}: Go to opens about halfway (${JSON.stringify(went)}, ${await footer(ctx)})`)
 
@@ -328,11 +318,6 @@ function appWindow() {
     .sort((a, b) => b.area - a.area)[0].id
 }
 
-/**
- * Real X11 key presses (XTEST), as a TV remote's keys arrive, after a real
- * click into the book, which also turns the page: Return, Right, Next/Previous
- * track, Menu, Down, Page Up and Back. Linux only.
- */
 async function remoteX11Pass(ctx, book, report) {
   const row = (report.x11 = { book: book.key, steps: [] })
   const window = appWindow()

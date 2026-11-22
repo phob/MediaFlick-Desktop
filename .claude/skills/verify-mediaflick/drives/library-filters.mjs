@@ -1,8 +1,3 @@
-// The library beyond Movies: the Shows library, Sort: Rating, the Genre and
-// Watch status filters (the menu closes on a pick and is named after its
-// trigger), chips and Clear all, a one-character search that never commits,
-// clearing a search, and signing out from a library page. Read-only.
-//   just verify library-filters
 const DEMO = "https://demo.jellyfin.org/stable"
 const USER_MENU = { role: "button", name: "D demo demo.jellyfin.org" }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -39,7 +34,6 @@ export default async function libraryFilters(ctx) {
   await ctx.until(async () => (await ctx.count({ role: "menu" })) === 0, "the menu to close after a pick", 3000)
   await ctx.find({ role: "button", name: `Remove Genre: ${pick} filter` })
   await ctx.press({ role: "button", name: "Filters, 1 active" })
-  // Radix names the menu after its trigger, so the name follows the count.
   await ctx.find({ role: "menu", name: "Filters, 1 active" })
   const reopened = await ctx.snapshot("04-filters-reopened")
   const watch = [...reopened.matchAll(/menuitem '(Watch status[^']*)'/g)].map((m) => m[1])[0]

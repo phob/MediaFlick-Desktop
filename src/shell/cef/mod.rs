@@ -25,8 +25,6 @@ use crate::windows::set_window_icon;
 pub mod api;
 pub mod app_scheme;
 
-/// Enough time to send the final Jellyfin playstate request before reading the
-/// server's resolved user data back into the local cache.
 const PLAYSTATE_CACHE_REFRESH_TIMEOUT: Duration = Duration::from_secs(11);
 
 #[derive(Debug, Clone)]
@@ -50,7 +48,6 @@ pub fn run(config: &AppConfig) -> i32 {
         }
     };
 
-    // CEF requires this API hash initialization before most other API calls.
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
 
     let args = args::Args::new();
@@ -117,11 +114,6 @@ pub fn run(config: &AppConfig) -> i32 {
         ..Default::default()
     };
 
-    // The library, session, and preference files need nothing from CEF, so
-    // they load while Chromium initializes. `on_context_initialized` makes the
-    // same call on the UI thread, which waits for this one through the
-    // services init lock (or builds them itself if this thread never ran)
-    // before anything that depends on them is created.
     let service_settings = config.settings.clone();
     if let Err(error) = thread::Builder::new()
         .name("services-init".to_string())
@@ -169,8 +161,6 @@ impl RuntimePaths {
         #[cfg(target_os = "macos")]
         let bundle_contents_dir = exe.as_deref().and_then(macos_bundle_contents_dir);
 
-        // Outside an app bundle (a development build) the executable is its
-        // own subprocess, as on Windows and Linux.
         #[cfg(target_os = "macos")]
         let browser_subprocess_path = bundle_contents_dir
             .as_deref()
@@ -236,9 +226,6 @@ fn cef_string_from_path(path: Option<&PathBuf>) -> CefString {
 }
 
 fn linux_desktop_id() -> CefString {
-    // The generated CEF wrapper writes only borrowed string structs back to the
-    // native callback output. Keep the allocated string alive and let CEF own
-    // the raw value it receives for this one-shot window creation callback.
     let owned = CefString::from(build_info::APP_DESKTOP_ID);
     let borrowed = owned.clone();
     std::mem::forget(owned);
@@ -316,10 +303,6 @@ fn save_webui_window_settings(state: Option<&BrowserState>) {
     }
 }
 
-/// Handles the user's request to close the main window (its close button,
-/// Alt+F4, or mpv's CLOSE_WIN). Minimizes when Close behavior says so;
-/// otherwise asks the page, whose unsaved-settings guard may keep it open.
-/// Returns whether the window may close now.
 fn request_main_window_close(
     state: Option<&BrowserState>,
     browser: Option<Browser>,
@@ -404,11 +387,6 @@ fn reveal_main_window(state: &BrowserState) {
     if show_state == ShowState::MAXIMIZED {
         window.maximize();
     }
-    // Show alone displays the window at its current Z-order position without
-    // making it active. Because the reveal happens after UI readiness, the
-    // process no longer holds launch-time foreground rights, so the window
-    // would stay behind whatever currently has focus. Activate brings it to
-    // the front and gives it keyboard focus.
     window.show();
     window.activate();
 }
@@ -438,8 +416,6 @@ fn new_browser_state(
         player_warmed: false,
     }));
     start_playback_event_bridge(&state, playback_event_rx);
-    // The services are down when `library.db` was refused, and open in this
-    // window after a Recreate library.
     let weak = Arc::downgrade(&state);
     locator::on_services(move |services| {
         if let Some(state) = weak.upgrade() {
@@ -450,10 +426,6 @@ fn new_browser_state(
     state
 }
 
-/// What the window needs from the services: its player, the preference
-/// changes it applies and the shell requests it serves. Nothing here needs
-/// the UI thread. The sync's startup hold needs no release after a Recreate
-/// library: a new `library.db` holds no session, so no first cycle is held.
 fn connect_services(
     state: &BrowserState,
     services: &Arc<Services>,

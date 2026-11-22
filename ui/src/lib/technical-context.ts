@@ -8,11 +8,6 @@ export type TechnicalContextValue = {
 
 export const TechnicalContext = createContext<TechnicalContextValue | null>(null)
 
-/**
- * A visible card's live technical streams, or undefined until the batch that
- * carries them lands. Outside a `TechnicalProvider` this stays undefined and
- * the readout simply never appears.
- */
 export function useCardTechnical(itemId: string, visible = true) {
   const context = useContext(TechnicalContext)
   const register = context?.register

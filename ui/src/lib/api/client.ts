@@ -38,16 +38,7 @@ export const PAGE_SIZE = 60
 export class ApiError extends Error {
   readonly status: number
   readonly expired: boolean
-  /**
-   * The account was switched while the request ran. The 409 it comes with
-   * does not carry the route's own meaning of a 409.
-   */
   readonly accountChanged: boolean
-  /**
-   * The services failed to open at startup, so every request answers this
-   * and the message says why. It is final until the app restarts, or until
-   * a Recreate library opens them on a new `library.db`.
-   */
   readonly startupFailed: boolean
   constructor(message: string, status: number, flags: ApiErrorFlags = {}) {
     super(message)
@@ -61,12 +52,6 @@ export class ApiError extends Error {
 
 type Routes = Wire.Routes
 
-/**
- * Companion JSON that the native app relays without a Rust type, so the
- * generated map marks these routes `relay` and the UI describes them here.
- * Indexing by every relay route makes a new one fail to compile until it is
- * described.
- */
 interface RelayAnswerTypes {
   "GET /api/calendar": ReleaseCalendar
   "POST /api/collections/mdblist/search": { lists: PublicCollectionList[] }
@@ -83,7 +68,6 @@ interface RelayAnswerTypes {
 }
 type RelayAnswers = { [K in RouteOf<"relay">]: RelayAnswerTypes[K] }
 
-/** The routes the UI reads as JSON, and what each answers with. */
 type Answers = { [K in RouteOf<"json">]: Extract<Routes[K], { kind: "json" }>["response"] } & RelayAnswers
 type JsonRoute = keyof Answers
 
@@ -117,7 +101,6 @@ export async function responseError(response: Response): Promise<ApiError> {
   return new ApiError(error ?? `request failed (${response.status})`, response.status, flags)
 }
 
-/** Sends a call to a JSON or relay route and reads its answer. */
 async function request<K extends JsonRoute>(route: K, ...[call]: CallArgs<K>): Promise<Answers[K]> {
   const { method, url } = target(route, call ?? {})
   const init: RequestInit = { method, signal: call?.signal }
@@ -131,10 +114,6 @@ async function request<K extends JsonRoute>(route: K, ...[call]: CallArgs<K>): P
   const response = await fetch(url, init)
   if (!response.ok) throw await responseError(response)
   const payload = await readJson(response)
-  // SAFETY: The UI bundle ships inside the binary built from the same commit
-  // as `wire.gen.ts`, whose route map is generated from the Rust route
-  // declarations the compiler holds each handler to. A relay route's answer
-  // is the Companion JSON that `RelayAnswerTypes` describes.
   return payload as Answers[K]
 }
 
@@ -228,7 +207,6 @@ export const api = {
   itemAbout: (id: string) => request("GET /api/item/{id}/about", { params: { id } }),
   itemLetterboxd: (id: string) => request("GET /api/item/{id}/letterboxd", { params: { id } }),
   movieLetterboxd: (tmdbId: number) => request("GET /api/letterboxd/movie/{tmdbId}", { params: { tmdbId } }),
-  /** Without a page, a cached series or season answers with every child. */
   children: (id: string, page?: { offset: number; limit: number }, signal?: AbortSignal) =>
     request("GET /api/item/{id}/children", { params: { id }, query: { ...page }, signal }),
   media: (id: string) => request("GET /api/item/{id}/media", { params: { id } }),
@@ -244,7 +222,6 @@ export const api = {
   setFavorite: (id: string, favorite: boolean) =>
     request("POST /api/item/{id}/favorite", { params: { id }, body: { favorite } }),
 
-  /** `quality` overrides the saved Settings default for this play only. */
   play: (itemId: string, resume: boolean, quality?: StreamingQualityId) => {
     window.dispatchEvent(new Event("mediaflick-manual-play"))
     return request("POST /api/play", { body: { itemId, resume, quality } })
@@ -293,7 +270,6 @@ export const api = {
 
     requests: (filter = "all", take = 40, signal?: AbortSignal) =>
       request("GET /api/seerr/requests", { query: { filter, take }, signal }),
-    /** Omitting `seasons` on a series asks for everything Seerr lacks. */
     request: (body: Wire.SeerrRequestBody) => request("POST /api/seerr/request", { body }),
     cancelRequest: (id: number) => request("DELETE /api/seerr/request/{id}", { params: { id } }),
   },

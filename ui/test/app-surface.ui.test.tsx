@@ -19,7 +19,6 @@ describe("app surface guard", () => {
   }
 
   function drag(type: string) {
-    // jsdom has no DragEvent; cancelability is all the guard contract needs.
     const event = new Event(type, { cancelable: true })
     document.body.dispatchEvent(event)
     return event

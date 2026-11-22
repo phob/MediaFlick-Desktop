@@ -14,8 +14,6 @@ source_cache="$work_dir/sources"
 rustup_cache="$work_dir/rustup"
 build_dir="$work_dir/build"
 
-# Upstream dependencies use git am, including on clean CI runners. Supply a
-# process-local committer identity without changing the developer's Git config.
 export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-MediaFlick build}"
 export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-build@mediaflick.invalid}"
 
@@ -62,8 +60,6 @@ cmake \
     -DSINGLE_SOURCE_LOCATION="$source_cache" \
     -DRUSTUP_LOCATION="$rustup_cache"
 
-# The dependency graph assumes the cross compiler exists before any package is
-# configured, so these targets must remain separate.
 ninja -C "$build_dir" gcc
 ninja -C "$build_dir" mpv
 

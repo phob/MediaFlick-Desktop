@@ -9,9 +9,6 @@ use crate::library::{CatalogKind, ItemSummary, Library};
 
 use super::fetch_page;
 
-/// How long one parent's reconciled child list is trusted before a later
-/// navigation asks the server again. It also absorbs the refetch that the
-/// reconcile's own change notification triggers.
 const CHILD_RECONCILE_INTERVAL: Duration = Duration::from_secs(60);
 static CHILD_RECONCILES: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
 
@@ -29,8 +26,6 @@ fn claim_child_reconcile(parent_id: &str) -> bool {
     true
 }
 
-/// A cached title's children. A series or season is also reconciled with the
-/// server.
 pub fn title_children(
     library: &Arc<Library>,
     session: &Arc<Session>,
@@ -42,10 +37,6 @@ pub fn title_children(
     if !matches!(kind, CatalogKind::Series | CatalogKind::Season) {
         return Ok(cached);
     }
-    // The synced catalog already holds every season and episode, so a cached
-    // list answers at once and the reconcile runs behind it; its change
-    // notification refreshes the page if the server disagreed. Only a
-    // container with nothing cached yet waits for the server.
     if !cached.is_empty() {
         if claim_child_reconcile(parent_id) {
             let (library, session, shell) =
@@ -73,21 +64,6 @@ pub fn title_children(
     Ok(children)
 }
 
-/// Re-reads one parent's child list from the server.
-///
-/// The cache alone cannot be trusted on a detail page: deleting episodes in
-/// Jellyfin leaves their rows behind until the next identity sweep, and the
-/// season view is exactly where those ghosts surface — a wall of art-less cards
-/// with a dead Play button. The image-404 eviction only cleans up rows whose
-/// poster happens to be requested, so it misses lazily-loaded cards below the
-/// fold and episodes that never had artwork.
-///
-/// One small non-recursive request per navigation buys a correct list, and it
-/// also makes newly added episodes appear without waiting for a sweep. Changed
-/// rows reach an open page through the library change notification.
-///
-/// Returns each live child's synopsis so the response can carry it without the
-/// cache ever storing prose; `None` means the server could not be asked.
 fn reconcile_children(
     library: &Library,
     session: &Session,
@@ -127,10 +103,6 @@ fn reconcile_children(
         }
     }
 
-    // An empty `live_items` here came from a successful request, so it is the server
-    // saying this parent has no children left — unlike the library-wide sweep,
-    // where the blast radius makes that answer too dangerous to trust.
-    // The list is the server's answer for the account that asked.
     let reconciled = session.commit_if_current(
         &scope,
         || (),

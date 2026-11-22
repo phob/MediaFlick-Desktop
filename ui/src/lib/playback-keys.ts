@@ -7,13 +7,6 @@ import { queryKeys } from "./query-client"
 const AUDIO_SEEK_BACK_MS = 10_000
 const AUDIO_SEEK_FORWARD_MS = 30_000
 
-/**
- * The app's one owner of playback keys, mounted by the shell for every page.
- * Media keys act on whatever plays, wherever focus is, unless a page claimed
- * the key first (`preventDefault`): a reader may take Next and Previous for
- * chapters. While audio plays, Space and the arrows act only when nothing
- * that wants them has focus. The video bar keeps its own keys.
- */
 export function usePlaybackKeys() {
   const queryClient = useQueryClient()
   const command = usePlayerCommand()

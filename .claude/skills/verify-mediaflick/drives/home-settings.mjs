@@ -1,8 +1,3 @@
-// Home's empty states through the account's Home settings, which live in the
-// disposable profile's accounts.json: only Releases left on (the demo server
-// has no Companion, so it renders nothing), then nothing on, then Configure
-// Home and Restore defaults + Save. Read-only against the demo server.
-//   just verify home-settings
 const DEMO = "https://demo.jellyfin.org/stable"
 const SETTINGS_HOME = { role: "link", name: "Home" }
 

@@ -46,11 +46,6 @@ export function formatBitrate(bitsPerSecond: number | null | undefined) {
   return mbps >= 10 ? `${Math.round(mbps)} Mbps` : `${mbps.toFixed(1)} Mbps`
 }
 
-/**
- * The marketing name for a frame size. Sources are rarely exactly 1920x1080 —
- * a 2.39:1 scope transfer is 1920x804 — so the label keys on width, with height
- * as the fallback for anamorphic or pillarboxed oddities.
- */
 export function formatResolution(stream: Pick<MediaStream, "width" | "height">) {
   const { width, height } = stream
   if (!width && !height) return null
@@ -92,11 +87,6 @@ const languageNames = (() => {
   }
 })()
 
-/**
- * "eng" reads as "English" where the platform knows the code. Jellyfin also
- * emits things like "und" and free-text values, so anything unresolved falls
- * back to the raw code rather than disappearing.
- */
 export function formatLanguage(code: string | null | undefined) {
   if (!code) return null
   const trimmed = code.trim()
@@ -143,7 +133,6 @@ export function formatCodec(codec: string | null | undefined) {
   return known.get(lower) ?? codec.toUpperCase()
 }
 
-/** Jellyfin often reports DTS-HD as codec `dts` plus a richer profile. */
 function formatAudioCodec(stream: Pick<MediaStream, "codec" | "profile">) {
   const codec = stream.codec?.trim()
   const profile = stream.profile?.trim() ?? ""
@@ -155,11 +144,6 @@ function formatAudioCodec(stream: Pick<MediaStream, "codec" | "profile">) {
   return formatCodec(codec)
 }
 
-/**
- * Compact and expanded labels for Jellyfin's `VideoRangeType` values. The
- * expanded form keeps terse card labels understandable to assistive
- * technology and in native tooltips.
- */
 const knownVideoRanges = new Map<string, { label: string; description?: string }>([
   ["hdr", { label: "HDR" }],
   ["hdr10", { label: "HDR10" }],
@@ -184,11 +168,6 @@ function videoRangeLabels(stream: Pick<MediaStream, "videoRange" | "videoRangeTy
   return known ?? { label: value }
 }
 
-/**
- * The dynamic range of a video track: "SDR" is the absence of news, so only
- * the HDR flavours are worth a label. `VideoRangeType` is the specific one
- * (HDR10, HLG, DOVI…), which is what decides whether a display tone-maps.
- */
 export function formatVideoRange(stream: Pick<MediaStream, "videoRange" | "videoRangeType">) {
   return videoRangeLabels(stream)?.label ?? null
 }
@@ -238,9 +217,6 @@ function streamKind(stream: MediaStream, kind: "video" | "audio") {
 }
 
 function videoQuality(stream: MediaStream) {
-  // Width is the resolution formatter's primary signal too. Weight it first
-  // so a scope transfer or a stream whose height is absent still beats a
-  // complete but lower-resolution frame size.
   return (stream.width ?? 0) * 10_000 + (stream.height ?? 0) * 10 + (formatVideoRange(stream) ? 1 : 0)
 }
 
@@ -281,12 +257,6 @@ function bestAudio(streams: MediaStream[]) {
   }, null)
 }
 
-/**
- * Two restrained card readout lines: resolution/range for the best video
- * stream, codec/spatial format for the most capable audio stream. The tooltip
- * keeps codec, bit depth, and channels available without turning the card into
- * a wall of labels.
- */
 export function summarizeCardMedia(streams: MediaStream[] | null | undefined): CardMediaSummary | null {
   if (!streams?.length) return null
   const video = bestVideo(streams)

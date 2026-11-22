@@ -8,7 +8,6 @@ mod tests;
 pub use appearance::ReaderAppearance;
 pub use open::OpenBooks;
 
-/// The formats Jellyfin's `BookResolver` accepts, as the reader opens them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(rename_all = "lowercase")]
 pub enum BookFormat {
@@ -23,9 +22,6 @@ pub enum BookFormat {
     Cbt,
 }
 
-/// How jellyfin-web keeps a book's place in `PlaybackPositionTicks`: text
-/// books as the read fraction × 10^7, PDFs and comics as the zero-based page
-/// × 10^4. It follows the file's format, also for a fixed-layout EPUB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProgressUnits {
     Fraction,
@@ -34,7 +30,6 @@ pub enum ProgressUnits {
 
 const FRACTION_TICKS: f64 = 10_000_000.0;
 const PAGE_TICKS: i64 = 10_000;
-/// How far into the file `%PDF-` may start; readers accept a little junk first.
 const PDF_SEARCH: usize = 1024;
 const EPUB_CONTAINER: &[u8] = b"META-INF/container.xml";
 
@@ -62,9 +57,6 @@ impl BookFormat {
         }
     }
 
-    /// The format of a file from its first and last 64 KiB. The bytes decide
-    /// the family; the name only tells MOBI flavours apart and vouches for
-    /// an old tar without magic. `None` is a file the reader cannot open.
     pub fn sniff(head: &[u8], tail: &[u8], name: &str) -> Option<Self> {
         let extension = name
             .rsplit_once('.')
@@ -113,9 +105,6 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
         .any(|window| window == needle)
 }
 
-/// An EPUB starts with a stored `mimetype` entry naming itself; one that
-/// does not still names its OCF container in a local header or the central
-/// directory.
 fn is_epub(head: &[u8], tail: &[u8]) -> bool {
     let u16_at = |offset: usize| {
         head.get(offset..offset + 2)
@@ -130,7 +119,6 @@ fn is_epub(head: &[u8], tail: &[u8]) -> bool {
     mimetype_first || contains(head, EPUB_CONTAINER) || contains(tail, EPUB_CONTAINER)
 }
 
-/// The MOBI header's file version: 8 for a KF8 (AZW3) book.
 fn mobi_version(head: &[u8]) -> Option<u32> {
     let u32_at = |offset: usize| {
         head.get(offset..offset + 4)
@@ -141,8 +129,6 @@ fn mobi_version(head: &[u8]) -> Option<u32> {
     u32_at(record + 36)
 }
 
-/// A tar header's checksum: the octal sum of its 512 bytes with the
-/// checksum field itself counted as spaces.
 fn tar_checksum_holds(head: &[u8]) -> bool {
     let Some(header) = head.get(..512) else {
         return false;
@@ -234,8 +220,6 @@ impl ReadingLocation {
     }
 }
 
-/// A location this app saved, and the ticks it last knows Jellyfin holds
-/// for the book: what it wrote, or what it read when nothing was written.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SavedPosition {
@@ -247,24 +231,11 @@ pub struct SavedPosition {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum BookResume {
     Start,
-    /// This app's own exact location.
-    Exact {
-        location: ReadingLocation,
-    },
-    /// Only a fraction is known: another client moved the text book.
-    Fraction {
-        fraction: Fraction,
-    },
-    /// Only a zero-based page is known: another client moved the PDF or comic.
-    Page {
-        page: u32,
-    },
+    Exact { location: ReadingLocation },
+    Fraction { fraction: Fraction },
+    Page { page: u32 },
 }
 
-/// Merges the two writers of a book's position. The exact local location
-/// wins while Jellyfin still holds what this app last synced; once Jellyfin
-/// holds anything else, another client moved the book, backwards included,
-/// so its position wins. There is no `max()`: reading again is legitimate.
 pub fn resume(
     saved: Option<&SavedPosition>,
     server_ticks: i64,
@@ -292,16 +263,10 @@ pub fn resume(
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum ReadingState {
     NotStarted,
-    /// `percent` is `None` while a PDF or comic's page count is unknown.
-    InProgress {
-        percent: Option<u8>,
-    },
+    InProgress { percent: Option<u8> },
     Finished,
 }
 
-/// The detail page's reading state, from the same merge the reader opens
-/// with. `units` comes from the file's name: the detail page does not read
-/// the file.
 pub fn reading_state(
     saved: Option<&SavedPosition>,
     server_ticks: i64,

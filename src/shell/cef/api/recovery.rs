@@ -1,6 +1,3 @@
-//! The startup error screen's routes. They need no services, so they also
-//! answer while `library.db` is refused and the services are down.
-
 use super::*;
 use crate::app::paths;
 use crate::app::services::LibraryRefusal;
@@ -13,10 +10,8 @@ routes! {
     POST ["recovery", "data-folder", "open"] -> DataFolderOpened = open_data_folder(),
 }
 
-/// `/api/recovery`: what the startup error screen can offer.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct StartupRecovery {
-    /// Set while the services are down because `library.db` was refused.
     library: Option<RefusedLibrary>,
 }
 
@@ -24,31 +19,22 @@ pub(super) struct StartupRecovery {
 #[serde(rename_all = "camelCase")]
 pub(super) struct RefusedLibrary {
     refusal: Refusal,
-    /// The folder holding `library.db`, where Recreate library leaves the old one.
     folder: String,
-    /// The name Recreate library would give the old file now. The name
-    /// carries the second it moves, in UTC.
     backup_name: String,
 }
 
-/// How `library.db` was refused. Either way the file was left as it was.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(super) enum Refusal {
-    /// A newer MediaFlick wrote it.
     NewerSchema,
-    /// SQLite could not open it, or its schema change failed and rolled back.
     Unusable,
 }
 
-/// `/api/recovery/library/recreate`: the services opened on a new `library.db`.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct LibraryRecreated {
-    /// Where the old `library.db` went.
     backup: String,
 }
 
-/// `/api/recovery/data-folder/open`: the folder was handed to the file manager.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct DataFolderOpened {
     folder: String,

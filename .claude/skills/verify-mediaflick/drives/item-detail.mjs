@@ -1,8 +1,3 @@
-// Detail pages against Jellyfin's public demo server, read-only: a movie's
-// extras and its More info menu (opened, never used), a series' seasons and
-// episode list, an episode page and its Season breadcrumb. Never presses Play,
-// Resume, From start, an episode's Play, favorites, watched or track selects.
-//   just verify item-detail
 const DEMO = "https://demo.jellyfin.org/stable"
 const MOVIE = "Night of the Living Dead"
 const SERIES = "Pioneer One"
@@ -68,8 +63,6 @@ export default async function itemDetail(ctx) {
   ctx.step(`episode links: ${JSON.stringify(episodes.slice(0, 3))}`)
   const seriesPath = await ctx.pathname()
   await ctx.park()
-  // The first title link's name gains " (Next up)" whenever that query lands,
-  // possibly after the snapshot above, so press it by its number prefix.
   await ctx.press({ css: 'a[href^="/item/"]:has(> span.tabular-nums)' }, { nth: 0 })
   await ctx.until(async () => (await ctx.pathname()) !== seriesPath && (await ctx.pathname()).startsWith("/item/"), "the episode page")
   await ctx.find({ role: "combobox", name: "Streaming quality" })

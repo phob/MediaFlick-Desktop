@@ -32,7 +32,6 @@ def git(*args: str) -> bytes:
 
 
 def violations(rev: str) -> Counter[str]:
-    """Each ratcheted rule's violation count in ui/src at `rev`."""
     with tempfile.TemporaryDirectory() as root:
         with tarfile.open(fileobj=io.BytesIO(git("archive", "--format=tar", rev, "ui/src"))) as archive:
             archive.extractall(root, filter="data")

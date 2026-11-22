@@ -1,7 +1,3 @@
-// The UI's own oxlint rules. `.oxlintrc.json` runs the ones the code already
-// meets; `ratchet.json` holds the rest, whose counts scripts/ci/check_ui_ratchet.py
-// lets only fall.
-
 const KIND_WORDS = new Set(["Movie", "Series", "Season", "Episode", "movie", "tv", "series", "episode"])
 
 const PALETTE_COLOR = new RegExp(
@@ -13,7 +9,6 @@ const PALETTE_COLOR = new RegExp(
 
 const isKindWord = (node) => node.type === "Literal" && KIND_WORDS.has(node.value)
 
-/** Whether an expression reads a query result's `data`, as in `items.data?.list`. */
 function readsData(node) {
   for (let current = node; ; ) {
     if (current.type === "ChainExpression") current = current.expression

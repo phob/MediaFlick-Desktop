@@ -5,9 +5,6 @@ export type DataFolderOpened = {
 };
 
 export type LibraryRecreated = {
-  /**
-   * Where the old `library.db` went.
-   */
   backup: string,
 };
 
@@ -17,21 +14,11 @@ export type Refusal =
 
 export type RefusedLibrary = {
   refusal: Refusal,
-  /**
-   * The folder holding `library.db`, where Recreate library leaves the old one.
-   */
   folder: string,
-  /**
-   * The name Recreate library would give the old file now. The name
-   * carries the second it moves, in UTC.
-   */
   backupName: string,
 };
 
 export type StartupRecovery = {
-  /**
-   * Set while the services are down because `library.db` was refused.
-   */
   library: RefusedLibrary | null,
 };
 

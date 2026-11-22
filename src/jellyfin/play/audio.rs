@@ -13,9 +13,7 @@ use super::super::session::SessionScope;
 use super::{AccountOwner, PlayOptions, StartError, build, resume_start_ticks};
 
 pub struct QueueAsk {
-    /// An album, an audiobook or one track.
     pub parent_id: String,
-    /// Where in the parent's tracks to start; the first track without one.
     pub start_item_id: Option<String>,
     pub shuffle: bool,
     pub start: AudioStart,
@@ -64,11 +62,6 @@ fn audio_track(item: &BaseItemDto) -> Option<AudioTrack> {
     })
 }
 
-/// The tracks `item` plays, in the order its page lists them: an audio item
-/// alone, or a folder's audio by disc, track, sort name and id. A missing
-/// disc counts as disc 1; a missing track number sorts after the numbered
-/// tracks of its disc. At most one more than [`MAX_QUEUE_LENGTH`], so a
-/// caller can tell a list that is too long.
 pub fn audio_tracks(
     client: &JellyfinClient,
     user_id: &str,
@@ -98,9 +91,6 @@ pub fn audio_tracks(
     Ok(children.iter().filter_map(audio_track).collect())
 }
 
-/// Resolves `ask` and hands the queue to the coordinator, replacing whatever
-/// plays. Returns the first entry's item id; the entry is negotiated after
-/// this returns, and a failure then reaches the user as a playback error.
 pub fn start_queue(
     services: &Arc<Services>,
     scope: &SessionScope,
@@ -170,11 +160,6 @@ pub fn start_queue(
     Ok(first)
 }
 
-/// Remote PlayNow: `item_ids` in the sender's order, repeats kept, an album
-/// or other folder expanded in place into its tracks, starting at the
-/// entry `item_ids[start_index]` begins. `None` when that item is no audio,
-/// so the caller plays it as video. A list mixing audio with other media
-/// is rejected rather than played in part.
 pub fn start_item_queue(
     services: &Arc<Services>,
     scope: &SessionScope,
@@ -272,8 +257,6 @@ fn opened(error: ApiError) -> StartError {
     }
 }
 
-/// Fisher-Yates over a SplitMix64 stream seeded from the OS. A shuffle needs
-/// no secrecy, so a failed seed read falls back to the clock.
 fn shuffle<T>(items: &mut [T]) {
     let mut seed = [0u8; 8];
     let mut state = match getrandom::fill(&mut seed) {

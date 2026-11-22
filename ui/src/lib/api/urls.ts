@@ -7,27 +7,14 @@ const POSTER_WIDTH = 400
 export const LANDSCAPE_WIDTH = 560
 export const BACKDROP_WIDTH = 1920
 export const DETAIL_POSTER_WIDTH = 600
-/** Episode still cards: wide grid slots, doubled to cover HiDPI. */
 export const THUMBNAIL_WIDTH = 800
 const HEADSHOT_WIDTH = 200
-/** Title treatments are drawn at most ~28rem wide; twice that covers HiDPI. */
 const LOGO_WIDTH = 800
 
-/**
- * Poster/backdrop URL through the Rust image proxy, which keeps the token out
- * of the DOM. The parameter has to be spelled `maxWidth`: that is what the
- * proxy in `src/shell/cef/api.rs` reads and what it forwards to Jellyfin. Under
- * any other name the proxy sees no width at all and serves the untouched
- * original — 2000x3000 posters decoded into a 168px slot, which is what made
- * the grid stutter.
- */
 export function imageUrl(
   item: Pick<ItemSummary, "id" | "primaryImageTag">,
   type: "Primary" | "Backdrop" | "Thumb" | "Logo" = "Primary",
   maxWidth = POSTER_WIDTH,
-  // Every image type has its own tag. Passing the poster's tag along with
-  // `Backdrop` asks Jellyfin for an image that does not exist under it, so the
-  // caller has to say which tag goes with the type it asked for.
   tag: string | null = item.primaryImageTag,
 ) {
   return link("GET /api/image/{id}/{imageType}", {
@@ -41,9 +28,6 @@ export function backdropUrl(
   maxWidth = BACKDROP_WIDTH,
 ) {
   if (!item.backdropImageTag) return null
-  // Jellyfin supplies a series' backdrop tag as ParentBackdropImageTags on
-  // seasons and episodes. That image still belongs to the series item: asking
-  // the child id for the inherited tag produces a 404 from the image endpoint.
   const ownerId =
     (item.kind === "Season" || item.kind === "Episode") && item.seriesId
       ? item.seriesId
@@ -51,11 +35,6 @@ export function backdropUrl(
   return imageUrl({ id: ownerId, primaryImageTag: null }, "Backdrop", maxWidth, item.backdropImageTag)
 }
 
-/**
- * Landscape cards prefer an episode still, then Jellyfin's purpose-built
- * Thumb art, then a backdrop. A poster is the last-resort fallback so a title
- * with incomplete metadata still has something to show.
- */
 export function landscapeImageCandidates(
   item: Pick<
     ItemSummary,
@@ -75,14 +54,6 @@ export function landscapeImageCandidates(
   return [...new Set(candidates)]
 }
 
-/**
- * The item's own title treatment, or null where the server has none — which is
- * most of a typical library, so every caller has to keep its typeset heading as
- * the fallback rather than treating this as the primary path.
- *
- * An episode borrows nothing here on purpose: the logo that matters over an
- * episode still is the *show's*, and the caller knows its id.
- */
 export function logoUrl(
   item: Pick<ItemSummary, "id" | "logoImageTag">,
   maxWidth = LOGO_WIDTH,
@@ -96,16 +67,11 @@ export function logoUrl(
   )
 }
 
-/** Cast headshots go through the same proxy: people are items in Jellyfin. */
 export function personImageUrl(person: Person, maxWidth = HEADSHOT_WIDTH) {
   if (!person.id || !person.imageTag) return null
   return imageUrl({ id: person.id, primaryImageTag: person.imageTag }, "Primary", maxWidth)
 }
 
-/**
- * Provider art through the Desktop and Companion proxies. The UI supplies
- * only an allowlisted rendition name and provider-issued image path.
- */
 export function seerrImageUrl(path: string | null | undefined, size = "w300") {
   if (!path) return null
   return link("GET /api/seerr/image/{size}/{file}", {
@@ -113,11 +79,6 @@ export function seerrImageUrl(path: string | null | undefined, size = "w300") {
   })
 }
 
-/**
- * External title pages the shell can open in the default browser. `source`
- * names the stable provider id each destination accepts. The kinds mirror the
- * native routes, so the UI never offers a link the shell would refuse to build.
- */
 const EXTERNAL_PROVIDERS = [
   { id: "imdb", label: "IMDb", source: "imdb", kinds: ["Movie", "Series", "Episode"] },
   { id: "tmdb", label: "TMDB", source: "tmdb", kinds: ["Movie", "Series"] },

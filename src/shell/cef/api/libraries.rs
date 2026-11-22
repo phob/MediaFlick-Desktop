@@ -12,9 +12,7 @@ const LATEST_LIMIT: i64 = 40;
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct LibrariesResponse {
-    /// False until a sync cycle has read the server's library list.
     known: bool,
-    /// In the user's Jellyfin order.
     libraries: Vec<LibraryView>,
     cross_library: &'static BrowseCapabilities,
 }
@@ -26,17 +24,10 @@ struct LibraryView {
     name: String,
     kind: LibraryKind,
     image_tag: Option<String>,
-    /// True while a movies or TV shows library's titles are not known yet:
-    /// during the first catalog download, and until the library's first
-    /// membership walk lands. A later walk keeps the stored titles, so it
-    /// never sets this.
     membership_pending: bool,
     browse: &'static BrowseCapabilities,
 }
 
-/// A library's newest titles and the library sort "All" opens with: the
-/// shelf's own order for catalog and newest-first libraries, date added for
-/// grouped ones.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct LibraryLatest {
     items: Vec<ItemSummary>,

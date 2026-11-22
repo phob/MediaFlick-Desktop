@@ -63,9 +63,6 @@ export function formatRating(
 
 export function useCardRatings(itemId: string): CardRatingsResult {
   const context = useContext(RatingsContext)
-  // Depend on the stable register function, not the context value: the value
-  // changes with every batch response, and re-registering the whole page on
-  // each response momentarily deactivates every card, aborting live batches.
   const register = context?.register
   useEffect(() => register?.(itemId), [register, itemId])
   if (!context) return { ratings: [], item: undefined }

@@ -1,11 +1,3 @@
-// Writes three seeds for `just verify startup-library --seed <dir>/<case>`, each
-// an accounts.json whose account starts on one stored destination: `movies`
-// (legacy), `library` (the server's first TV shows library) and `missing` (a
-// well-formed library id the server does not list). SERVER is a server with a
-// session cached by `just verify-login`, or the demo server. Holds ids only,
-// never a token.
-//   node .claude/skills/verify-mediaflick/scripts/startup-destination-seed.mjs https://demo.jellyfin.org/stable build/verify-seeds/startup-demo
-//   node .claude/skills/verify-mediaflick/scripts/startup-destination-seed.mjs https://jellyfin.example.com build/verify-seeds/startup-account
 import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { readAccount } from "./account.mjs"

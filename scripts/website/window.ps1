@@ -1,9 +1,3 @@
-# Moves and sizes the capture app's top-level window, or reports its rectangle.
-# CEF tiles screenshots taken under a device-metrics override, so captures size
-# the real window instead.
-#
-#   pwsh -File scripts/website/window.ps1 -Port 9341 -X 0 -Y 0 -Width 2018 -Height 1297
-#   pwsh -File scripts/website/window.ps1 -Port 9341            # print the rectangle only
 param(
   [Parameter(Mandatory)] [int] $Port,
   [int] $X = -1,
@@ -24,8 +18,6 @@ public static class CaptureWindow {
 }
 "@
 
-# Physical pixels: unaware coordinates are scaled and rounded, which makes an
-# exact CSS viewport unreachable at fractional display scaling.
 [void][CaptureWindow]::SetProcessDPIAware()
 
 $process = Get-CimInstance Win32_Process -Filter "Name = 'mediaflick-desktop.exe'" |
@@ -36,9 +28,7 @@ $handle = (Get-Process -Id $process.ProcessId).MainWindowHandle
 if ($handle -eq 0) { throw "capture app on port $Port has no main window" }
 
 if ($Width -gt 0 -and $Height -gt 0) {
-  # SW_RESTORE first: a maximized window ignores SetWindowPos sizing.
   [void][CaptureWindow]::ShowWindow($handle, 9)
-  # SWP_NOZORDER | SWP_NOACTIVATE
   [void][CaptureWindow]::SetWindowPos($handle, [IntPtr]::Zero, $X, $Y, $Width, $Height, 0x0014)
 }
 $rect = New-Object CaptureWindow+RECT

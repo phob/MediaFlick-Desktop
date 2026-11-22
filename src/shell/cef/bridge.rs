@@ -6,11 +6,6 @@ use super::ui_events::{
 use super::*;
 use crate::app::threads::spawn_named;
 
-/// The native update toast talks to the shell over
-/// `mediaflick-desktop://<action>` URLs. Settings-specific native operations
-/// use the typed API and shell queue instead. Dialog actions require this
-/// session's token; the harmless readiness fallback instead requires the exact
-/// action URL and an initiating frame owned by the app scheme.
 pub(super) fn bridge_request_is_trusted(
     request_url: &str,
     browser: Option<&mut Browser>,
@@ -48,7 +43,6 @@ pub(super) fn bridge_request_is_trusted(
 }
 
 fn window_ready_request_is_trusted(request_url: &str, source_url: &str) -> bool {
-    // Chromium normalizes the beacon's URL to an empty path, `…/window-ready/`.
     matches!(
         request_url,
         "mediaflick-desktop://window-ready" | "mediaflick-desktop://window-ready/"
@@ -107,7 +101,6 @@ pub(super) fn open_external_link(url: &str) {
     }
 }
 
-/// Shows `folder` in the system's file manager.
 pub(super) fn open_folder(folder: &std::path::Path) -> std::io::Result<()> {
     tracing::info!(target: "app", folder = %folder.display(), "opening folder in the file manager");
     open_with_default_handler(folder.as_os_str())
@@ -137,8 +130,6 @@ fn url_scheme(url: &str) -> Option<String> {
     Some(scheme.to_ascii_lowercase())
 }
 
-/// Hands a URL or a path to what the system opens it with: the default
-/// browser for a link, the file manager for a folder.
 #[cfg(target_os = "windows")]
 fn open_with_default_handler(target: &std::ffi::OsStr) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
@@ -443,8 +434,6 @@ pub(super) fn open_settings_file_dialog(state: &BrowserState, request_id: String
         FileDialogMode::OPEN,
         Some(&CefString::from("Select mpv executable")),
         default_path.as_ref(),
-        // CEF's C API reads the list even when no filters are requested.
-        // Passing None here dereferences a null list on Linux/macOS.
         Some(&mut filters),
         Some(&mut callback),
     );

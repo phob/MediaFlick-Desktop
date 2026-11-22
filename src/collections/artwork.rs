@@ -11,25 +11,15 @@ use crate::preferences::config_dir;
 const MAX_POSTER_BYTES: usize = 10 * 1024 * 1024;
 const ORPHAN_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
-/// Where the orphaned-poster sweep learns which posters are still in use.
 #[derive(Clone, Copy)]
 pub enum PosterReferences<'a> {
-    /// collections.json and its backup name every poster in use.
     Readable(&'a Path),
-    /// Nothing trustworthy names the posters in use, so none of them may be
-    /// treated as orphaned. The reason is logged.
     Lost(LostReferences),
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum LostReferences {
-    /// A damaged collections.json was moved aside, on this start or an
-    /// earlier one, and is still there. It may name posters that nothing
-    /// else names.
     DamagedCopyKept,
-    /// There is no collections.json: the user moved or deleted it, or it is
-    /// not where this build looks. Its backup alone may be older than the
-    /// posters in use.
     Missing,
 }
 
@@ -43,8 +33,6 @@ impl ArtworkStore {
         Ok(Self { directory })
     }
 
-    /// Writes a poster under a fresh id. The caller must save collections.json
-    /// before calling `commit`; `rollback` removes this file if that save fails.
     pub fn stage(&self, bytes: &[u8]) -> io::Result<String> {
         if bytes.is_empty() || bytes.len() > MAX_POSTER_BYTES {
             return Err(invalid_input(
@@ -122,7 +110,6 @@ impl ArtworkStore {
                 continue;
             }
             let modified = entry.metadata()?.modified()?;
-            // A poster stamped later than now is not old yet.
             let age = now.duration_since(modified).unwrap_or(Duration::ZERO);
             if age < ORPHAN_AGE {
                 continue;

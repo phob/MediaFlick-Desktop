@@ -49,8 +49,6 @@ def smoke_test(path, placebo_config, gpu_api=None):
             options.update({"vo": "gpu-next", "gpu-api": gpu_api, "gpu-sw": "yes"})
         for name, value in options.items():
             status = lib.mpv_set_option_string(handle, name.encode(), value.encode())
-            # Mirror the app: missing script-disable options are expected when
-            # their engines are not compiled. All other errors remain fatal.
             if status == -5 and name in ("load-scripts", "osc") and value == "no":
                 continue
             if status < 0:

@@ -48,10 +48,6 @@ function SeasonPoster({ season, selected }: { season: ItemSummary; selected: boo
   )
 }
 
-/**
- * The season posters are the season switcher: the wall of covers a series page
- * used to link through collapses into one selectable rail above the episodes.
- */
 function SeasonRail({
   seasons,
   selectedId,
@@ -62,10 +58,6 @@ function SeasonRail({
   onSelect: (season: ItemSummary) => void
 }) {
   return (
-    // The selection ring is a box-shadow outside the poster, and this list
-    // clips its own overflow to scroll; the padding gives the ring room on the
-    // top and left edges, and the negative margin keeps the posters aligned
-    // with the grid below.
     <ul
       aria-label="Seasons"
       className="media-strip -mx-1 -mt-1 flex gap-4 overflow-x-auto px-1 pt-1 pb-2"
@@ -111,8 +103,6 @@ function EpisodeCard({
   const protectedEpisode = useSpoilerProtection(originalEpisode)
   const episode = protectedEpisode ? concealEpisode(originalEpisode) : originalEpisode
   const { handlers, expanded, previewsEnabled } = usePreview(episode)
-  // Same fallback ladder as every other landscape card: still, Thumb art,
-  // backdrop — and a broken image steps down once instead of re-requesting.
   const [imageIndex, setImageIndex] = useState(0)
   const image = protectedEpisode ? undefined : landscapeImageCandidates(episode, THUMBNAIL_WIDTH)[imageIndex]
   const progress = progressFraction(episode)
@@ -158,9 +148,6 @@ function EpisodeCard({
         ) : (
           <CardInlineActions item={episode} playedContext={parentId} />
         )}
-        {/* Watched is drawn as a finished progress rule rather than a corner
-            badge, matching every other media card: the two states share the
-            accent fill and watched simply fills the track completely. */}
         {(progress > 0 || episode.played) && (
           <div
             className="pointer-events-none absolute inset-x-0 bottom-0 z-[7] h-[3px] bg-scrim/65"
@@ -237,11 +224,6 @@ function EpisodeActions({ episode, parentId }: { episode: ItemSummary; parentId:
 
 const GRID_CLASS = "grid grid-cols-[repeat(auto-fill,minmax(20rem,1fr))] gap-[var(--card-gap)]"
 
-/**
- * A season's episodes as still-frame cards: an episode is recognized by its
- * frame, so the synopsis moves to the episode's own page and the card keeps
- * only what picking one needs — number, title, rating, runtime, progress.
- */
 export function EpisodeGrid({
   episodes,
   parentId,

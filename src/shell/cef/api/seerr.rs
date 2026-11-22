@@ -63,10 +63,6 @@ fn seerr_person_credits(
         Ok(value) => value,
         Err(error) => return Err(scoped_failure(services, &scope, &error)),
     };
-    // During progressive catalog fill, SQLite cannot yet prove that every
-    // Seerr credit is non-local. An exact Jellyfin identity lets this secondary
-    // section verify ownership against the live complete person relation. A
-    // failure hides Discover only; the independently loaded server grid stays.
     if let Some(person_id) = request.param("personId")
         && let Err(error) =
             join_server_person_availability(services, &scope, &person_id, &mut value)
@@ -82,10 +78,6 @@ fn join_server_person_availability(
     person_id: &str,
     value: &mut Value,
 ) -> Result<(), ApiError> {
-    // The provider first joined against SQLite, which can contain both unseen
-    // progressive rows and stale rows awaiting deletion reconciliation. The
-    // live exact-person pass is authoritative, so rebuild availability rather
-    // than only adding to that provisional answer.
     clear_person_availability(value);
     let filmography = fetch_person_filmography(services, scope, person_id, value)?;
     let extras = verify_off_filmography_titles(services, scope, value, &filmography)?;
@@ -96,14 +88,6 @@ fn join_server_person_availability(
 
 const EXTRA_OWNERSHIP_FETCH_CHUNK: usize = 100;
 
-/// Proves which Seerr credits exist on the server even though Jellyfin's own
-/// cast relation never named this person on them.
-///
-/// Jellyfin stores only the head of each title's cast list, so a person can be
-/// missing from a library item they are genuinely in. The catalog maps each
-/// TMDB credit to cached Jellyfin ids, then `/Items?ids=` verifies those ids in
-/// batches. Returned provider ids must still match the expected credit. Stale
-/// cache rows therefore cannot become false proofs.
 fn verify_off_filmography_titles(
     services: &Arc<Services>,
     scope: &SessionScope,
@@ -209,7 +193,6 @@ fn fetch_person_filmography(
         offset = offset.saturating_add(received);
         let finished = match page.total_record_count {
             Some(total) if total > 0 => offset >= total,
-            // Without a count, only a short page ends the filmography.
             Some(_) | None => received < items::PERSON_PAGE_SIZE,
         };
         if finished {
@@ -229,15 +212,12 @@ fn seerr_media_type(item_type: &str) -> Option<&'static str> {
     }
 }
 
-/// A browsable server title's `(Seerr media type, TMDB id)` and its Jellyfin
-/// item id.
 fn server_title_identity(item: &BaseItemDto) -> Option<((String, i64), &str)> {
     let media_type = seerr_media_type(item.item_type.as_deref()?)?;
     let tmdb_id = item.provider_id("Tmdb")?.parse::<i64>().ok()?;
     (tmdb_id > 0).then(|| ((media_type.to_string(), tmdb_id), item.id.as_str()))
 }
 
-/// The `(Seerr media type, TMDB id)` identities of every credit in a response.
 fn credit_keys(value: &Value) -> impl Iterator<Item = (String, i64)> + '_ {
     value["results"]
         .as_array()
@@ -397,8 +377,6 @@ fn seerr_request_options(
 pub(super) struct SeerrRequestBody {
     media_type: String,
     tmdb_id: i64,
-    /// An explicit list means "these seasons"; its absence means "the whole
-    /// show", which Seerr expands to whatever it does not already have.
     seasons: Option<Vec<i64>>,
     #[serde(default)]
     #[ts(optional = nullable)]
@@ -456,7 +434,6 @@ fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> Result<Valu
     })
 }
 
-/// `DELETE /api/seerr/request/{id}`: Seerr cancelled the request.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct SeerrRequestCancelled {
     cancelled: bool,
@@ -480,13 +457,6 @@ fn seerr_cancel_request(
     }
 }
 
-/// The poster proxy accepts only a named rendition and a plain image file.
-/// The Companion owns the fixed provider origin and Desktop caches the bytes.
-///
-/// Art for titles the library does not have is exactly the browsing that pulls
-/// the most bytes, so it shares the pruned on-disk cache the Jellyfin image
-/// proxy already has, and is served as immutable — a TMDB file name addresses
-/// one unchanging image.
 fn seerr_image(
     services: &Arc<Services>,
     size: &str,

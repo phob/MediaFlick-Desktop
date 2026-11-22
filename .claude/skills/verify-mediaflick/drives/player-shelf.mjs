@@ -1,8 +1,3 @@
-// The Player shelf's own save path: the shortcut conflict alert, the Player
-// toast, and Restore defaults + Save, which keeps player_backend, comfort and
-// mark_watched_next in settings.json. Device-local; the demo server only
-// provides the sign-in.
-//   just verify player-shelf
 const DEMO = "https://demo.jellyfin.org/stable"
 const alerts = (ctx) => ctx.app.evaluate(`[...document.querySelectorAll("[role=alert]")].map((e) => e.textContent.trim()).filter(Boolean).join(" | ") || null`)
 const toasts = (ctx) => ctx.app.evaluate(`[...document.querySelectorAll("[data-sonner-toast]")].map((e) => e.textContent.trim()).join(" | ") || null`)

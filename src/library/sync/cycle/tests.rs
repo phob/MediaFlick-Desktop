@@ -383,8 +383,6 @@ fn an_unreadable_sync_state_stops_the_cycle_instead_of_restarting_the_catalog() 
     assert!(!bootstrap_progress(&library).complete);
 }
 
-// Rule (77a0a67, extended to the catalog by agent-proofing step 6): a count
-// the server leaves out is unknown, not 0.
 #[test]
 fn a_first_catalog_page_without_a_count_leaves_the_total_unknown() {
     for (answer, total) in [(UNCOUNTED, None), (EMPTY_PAGE, Some(0))] {

@@ -1,10 +1,3 @@
-"""Tests for check_feature_map.py against the real verify feature map, then and now.
-
-Expected results come from outside the checker: the 2026-10-17 audit of the map found three
-"Proven by" claims that cite run ids instead of evidence (features/playback.md, the three
-segments claims), and the rule itself for the planted changes below.
-"""
-
 import re
 import subprocess
 import unittest
@@ -13,9 +6,8 @@ from pathlib import Path
 from check_feature_map import SKILL, Problem, problems
 
 ROOT = Path(__file__).resolve().parents[2]
-AUDITED = "a70d2f1"  # main on 2026-10-17, the map the audit read
+AUDITED = "a70d2f1"
 SKILL_PATH = SKILL.relative_to(ROOT).as_posix()
-# A claim's first drive, found without the checker's parser.
 FIRST_DRIVE = re.compile(r"[Pp]roven by `([a-z0-9-]+)`")
 
 
@@ -39,7 +31,6 @@ def lines(found: list[Problem]) -> set[tuple[str, int]]:
 
 
 def claim_lines(features: dict[str, str]) -> list[tuple[str, int, str, int]]:
-    """Each line holding a claim that starts with a drive name: the drive and where its backticked name starts."""
     return [
         (feature, number, match.group(1), match.start(1) - 1)
         for feature, text in features.items()
@@ -56,7 +47,6 @@ class AuditedMap(unittest.TestCase):
 
 
 class PlantedChanges(unittest.TestCase):
-    """Every claim in today's map, changed one way at a time."""
 
     def setUp(self) -> None:
         self.features = on_disk("features", ".md")
@@ -65,7 +55,6 @@ class PlantedChanges(unittest.TestCase):
         self.assertGreater(len(self.claims), 100)
 
     def planted(self, feature: str, number: int, drive: str, at: int, replacement: str, before: tuple[int, str] = (0, "")) -> list[Problem]:
-        """The claim's backticked first drive replaced, and `before` inserted at its offset; the rest of the map as it is."""
         text = self.features[feature].splitlines(keepends=True)
         line = text[number - 1]
         line = line[:at] + replacement + line[at + len(drive) + 2 :]
@@ -108,7 +97,6 @@ class PlantedChanges(unittest.TestCase):
                 self.assertIn((feature, number), lines(planted))
 
     def test_unwritten_evidence_with_any_extension_fails(self) -> None:
-        # Review of PR #337: a `.txt` name fell outside the evidence pattern and was ignored.
         for feature, number, drive, at in self.claims:
             with self.subTest(feature=feature, line=number):
                 self.assertIn((feature, number), lines(self.planted(feature, number, drive, at, f"`{drive}` (`zz-never-written.txt`)")))
@@ -121,7 +109,6 @@ class PlantedChanges(unittest.TestCase):
 
 
 class Commands(unittest.TestCase):
-    """#341's whats-new claim cites a helper script with its arguments, a command and not evidence."""
 
     def test_a_script_run_with_arguments_is_not_evidence(self) -> None:
         claim = "*Proven by `whats-new` with the Companion (`jellyfin-version-servers.py 12.4+companion`).*\n"
@@ -134,7 +121,6 @@ class Commands(unittest.TestCase):
 
 
 class ScreenshotNames(unittest.TestCase):
-    """Review of PR #337: `segments.png` was accepted from a drive that writes only `segments.json`."""
 
     def test_a_screenshot_name_does_not_match_a_longer_file_name(self) -> None:
         found = problems({"playback": "*Proven by `segments` (`segments.png`).*\n"}, {"segments": 'ctx.writeEvidence("segments.json", {})\n'})

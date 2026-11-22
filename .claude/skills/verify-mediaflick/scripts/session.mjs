@@ -1,16 +1,3 @@
-// One verification run: a disposable profile, the staged app on the isolated
-// display, an in-session doctor, the drive, a coordinated exit, evidence, and
-// cleanup. Start it through `just verify <drive>`, never directly: the
-// isolation wrapper is what keeps the app off the user's screen.
-//
-//   just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--seed-data DIR] [--keep-profile] [--services-down] [--negative-control NAME]
-//
-// <drive> is a file path or the name of a file in ../drives (without .mjs).
-// --negative-control NAME runs the drive on a build with the change under test
-// reverted in the working tree, and succeeds only when a check of the drive
-// fails; NAME says what is reverted, the recorded patch shows it.
-// Evidence goes to build/verify/<run-id>/ and survives cleanup.
-
 import { execFileSync, spawn } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
@@ -68,8 +55,6 @@ if (!(timeoutMs > 0 && timeoutMs <= 3600_000)) throw new Error("--timeout must b
 
 const isolation = assertIsolated()
 
-// The revert is the working tree's change to the product, outside this skill,
-// so the drive and its harness stay as committed or as being written.
 const reverted = options["negative-control"]
 if (reverted !== undefined && !/^[A-Za-z0-9._-]{1,80}$/.test(reverted)) throw new Error("--negative-control NAME may only use letters, digits, '.', '_' and '-'")
 const revertPatch = reverted === undefined ? null : execFileSync("git", ["-C", root, "diff", "HEAD", "--", ".", ":(exclude).claude/skills/verify-mediaflick"], { encoding: "utf8" })
@@ -97,8 +82,6 @@ let driveStarted = false
 let driveFailed = false
 let driveFailure = null
 let driveTimedOut = false
-// A promise a drive forgot to await must fail the drive and still reach
-// teardown and the after-run tasks, not crash the process past them.
 let unhandledError = null
 let failUnhandled
 const unhandled = new Promise((_, reject) => {
@@ -140,9 +123,6 @@ const guardBefore = fingerprint()
 
 const profile = path.join(profileParent, profileName(runId, process.pid, randomBytes(3).toString("hex")))
 const { env, dirs, configDir, dataDir } = appEnvironment(profile)
-// Sockets in TMPDIR must fit the 107-byte Unix path limit: CEF dies with
-// SIGTRAP on a long SingletonSocket path, and the libmpv shell cannot reach
-// mpv's IPC socket (mediaflick-desktop-<pid>-<nanos>-<n>.sock, about 55 bytes).
 if (isLinux && Buffer.byteLength(env.TMPDIR ?? "") + 56 > 107) {
   throw new Error(`TMPDIR ${env.TMPDIR} is too long for the app's Unix sockets; run from a shorter TMPDIR`)
 }
@@ -226,10 +206,6 @@ async function launch() {
   return port
 }
 
-// Sign out posts /api/auth/logout, and the app then revokes the token on the
-// server, which would kill the cached session. CDP's Fetch domain does not see
-// the app's custom-scheme requests, so the page's fetch refuses that one call
-// and reports it through a binding; the harness fails the drive at once.
 const SIGN_OUT_BINDING = "mediaflickVerifySignOutBlocked"
 const SIGN_OUT_GUARD = `(() => {
   if (window.${SIGN_OUT_BINDING}Installed) return
@@ -273,7 +249,6 @@ async function doctor(port, file = "doctor.json") {
   writeJson(file, report)
   const problems = []
   if (!href.startsWith("mediaflick-desktop://app")) problems.push(`CDP page is ${href}, not the app`)
-  // --services-down: the drive seeds a profile the app's services refuse to open, so /api/status must answer 503.
   const expectedStatus = options["services-down"] ? 503 : 200
   if (status.status !== expectedStatus) problems.push(`/api/status answered ${status.status}, expected ${expectedStatus}`)
   if (!existsSync(path.join(configDir, "instance.json"))) problems.push("the app did not create instance.json in the disposable config dir")
@@ -305,7 +280,6 @@ async function closeApp() {
     log(`app did not exit; stopping pid ${child.pid} and its children`)
     killPids([child.pid], { tree: true })
   }
-  // CEF helpers carry --user-data-dir inside this run's unique profile.
   for (let attempt = 0; attempt < 20; attempt++) {
     const left = ours()
     if (!left.length) break
@@ -453,12 +427,7 @@ try {
     log(leaked.length ? `token scan: redacted the token from ${leaked.join(", ")}` : "token scan ok: no evidence file holds the token")
   }
   result.durationMs = Date.now() - started
-  // A control holds only when the drive failed on an otherwise clean run: a
-  // timeout (a stall), an unawaited rejection, or a teardown, after-run, guard or
-  // token failure proves nothing about the check. Whether `failure` is the check
-  // under test, and not a server or network error, is for whoever records it.
   const clean = !driveTimedOut && !unhandledError && !cleanupErrors.length && !(changed.length && !running.length) && !result.leftovers && !result.tokenScan?.leaked.length
-  // result.json is written after the token scan, so what it carries from the drive is redacted here.
   const redact = (text) => [...secrets].reduce((redacted, secret) => redacted.replaceAll(secret, "<redacted>"), text)
   if (result.error) result.error = redact(result.error)
   const failure = driveFailure && redact(driveFailure)
@@ -469,7 +438,5 @@ try {
     const why = !driveStarted ? "the run failed before the drive started" : !driveFailed ? "the drive passed with the change reverted" : "the drive failed, but the run timed out or was not clean (see result.json)"
     log(result.negativeControl.held ? `NEGATIVE CONTROL HELD: the drive failed with the change reverted: ${failure}` : `NEGATIVE CONTROL NOT HELD: ${why}`)
   }
-  // A timed-out drive is abandoned, not cancelled; its pending CDP calls or
-  // timers must not keep the run alive once the result is on disk.
   process.exit((reverted ? result.negativeControl.held : result.passed) ? 0 : 1)
 }

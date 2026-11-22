@@ -138,8 +138,6 @@ fn restart_bootstrap(
     })
 }
 
-/// Marks the stored catalog as possibly behind the server. The cycle reports
-/// its own failure either way, so a failure to store the mark is only logged.
 fn record_failure(library: &Library, session: &Session, scope: &SessionScope) {
     let recorded = commit(session, scope, |live| {
         Ok(library.set_meta(live, META_LATEST_FAILURE, "1")?)
@@ -250,8 +248,6 @@ fn announce(
     }
 }
 
-/// Announces before noting a failure: a rejected token expires the session,
-/// which would silence any later announcement.
 fn announce_outcome<T>(
     session: &Session,
     scope: &SessionScope,
@@ -464,9 +460,6 @@ fn commit_empty_bootstrap_page(
     Ok(())
 }
 
-/// Stores the server's catalog count for the progress display. A count the
-/// server left out stays unknown, and a 0 after the first page keeps the
-/// count an earlier page reported.
 fn store_bootstrap_total(
     library: &Library,
     live: &Live,
@@ -481,10 +474,6 @@ fn store_bootstrap_total(
     }
 }
 
-/// Walks `DateCreated` descending until it reaches items already cached.
-///
-/// This is what makes a replaced file appear: Jellyfin deletes the old item and
-/// adds a new one with a new id and a fresh `DateCreated`.
 fn incremental(
     library: &Library,
     session: &Session,
@@ -567,8 +556,6 @@ enum SweepVerdict {
     Wait,
 }
 
-/// An emptied catalog library can stay listed, and only the daily rebootstrap restores deleted
-/// titles, so an empty zero-count answer deletes once an earlier one in the window agrees.
 fn sweep_verdict(
     answer: IdentityAnswer,
     no_catalog_library: bool,
@@ -614,12 +601,6 @@ fn apply_sweep_verdict(
     written.map_err(ApiError::from)
 }
 
-/// One identity-only pass over the library that both mirrors watch state and
-/// collects the ids the server still reports.
-///
-/// These used to be two sweeps requesting the identical pages on different
-/// schedules, which meant deletions were only noticed once a day. Folding them
-/// together makes deletions as fresh as watch state for no extra requests.
 fn walk_identity(
     library: &Library,
     session: &Session,
@@ -668,8 +649,6 @@ fn walk_identity(
         }
     };
     let answer = if truncated {
-        // `seen` is what decides which items still exist, so a partial one must
-        // never reach `retain_ids_setting_meta` — everything past the cap would be deleted.
         tracing::warn!(
             target: "library.sync",
             pages,
@@ -734,14 +713,11 @@ fn write_watermark_ids(
     Ok(library.set_meta(live, META_WATERMARK_IDS, &encoded(&ids)?)?)
 }
 
-/// JSON for a sync marker. A value that cannot be encoded is a storage
-/// failure: storing an empty marker instead would read back as "nothing seen".
 fn encoded(value: &impl serde::Serialize) -> Result<String, ApiError> {
     serde_json::to_string(value)
         .map_err(|error| ApiError::Storage(format!("could not encode a sync marker: {error}")))
 }
 
-/// Jellyfin timestamps are ISO-8601 UTC, so lexicographic order is chronological.
 fn is_newer(candidate: Option<&str>, watermark: Option<&str>) -> bool {
     match (candidate, watermark) {
         (Some(candidate), Some(watermark)) => candidate > watermark,
@@ -767,10 +743,6 @@ fn due(library: &Library, key: &str, interval: Duration) -> Result<bool, ApiErro
 }
 
 fn full_bootstrap_due(library: &Library) -> Result<bool, ApiError> {
-    // A missing/false done marker means the resumable initial pass is already
-    // underway. Reset only a previously completed cache whose daily
-    // re-bootstrap is due; otherwise a retry after a network failure would jump back to
-    // zero and make both the stored offset and the progress UI dishonest.
     Ok(meta(library, META_BOOTSTRAP_DONE)?.as_deref() == Some("1")
         && due(library, META_LAST_BOOTSTRAP, REBOOTSTRAP_INTERVAL)?)
 }

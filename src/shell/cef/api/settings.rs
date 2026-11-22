@@ -30,8 +30,6 @@ routes! {
     POST ["settings", "whats-new", "seen"] -> WhatsNew = close_whats_new(services),
 }
 
-/// `/api/settings/whats-new`: whether this device, updated from 0.1.6, still
-/// has the one-time What's new to show.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct WhatsNew {
     pending: bool,
@@ -150,7 +148,6 @@ struct AppearanceView {
     reduced_motion: bool,
     card_previews: bool,
     show_media_info: bool,
-    /// Canonical IDs from the fixed public MDBList source catalog.
     rating_sources: Vec<String>,
 }
 
@@ -265,15 +262,12 @@ fn patch_appearance_settings(
         })
 }
 
-/// `/api/settings/viewing`: the account's viewing settings, with the startup
-/// destination resolved against the current libraries.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ViewingView {
     spoiler_protection: bool,
     next_episode: NextEpisode,
     countdown_seconds: u8,
-    /// Zero leaves continuous playback unlimited.
     episode_limit: u8,
     audio_languages: Vec<String>,
     subtitle_languages: Vec<String>,
@@ -340,10 +334,6 @@ pub(super) fn viewing(services: &Services) -> Result<ViewingView, ApiResponse> {
     Ok(viewing)
 }
 
-/// The body of a viewing settings write: every [`ViewingView`] key. A
-/// missing startup destination keeps the stored one, but any other missing
-/// key resets that setting to its default, so the TypeScript requires them.
-/// Movies and Series are rejected as destinations.
 #[derive(Deserialize, ts_rs::TS)]
 #[serde(transparent)]
 #[ts(type = "Omit<ViewingView, \"startupDestination\"> & { startupDestination?: StartupView }")]
@@ -369,7 +359,6 @@ fn save_viewing(
         })
 }
 
-/// `/api/settings/browsing`: the route each page last showed, by page.
 #[derive(Serialize, ts_rs::TS)]
 pub(super) struct BrowsingRoutes(BTreeMap<String, String>);
 

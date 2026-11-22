@@ -1,14 +1,3 @@
-// Turns the raw captures from capture.mjs into the website's media.
-//
-//   node scripts/website/encode.mjs
-//
-// Stills become WebP at two widths. Screencasts, which arrive as JPEG frames
-// with their own timestamps, become H.264 MP4 and VP9 WebM loops with a WebP
-// poster. The player clip is composited from the app's transparent overlay
-// frames over the same seconds of the source film. Everything is written to
-// website/public/media, and build/website-capture/encode-report.json lists
-// each output with its size and dimensions. Needs ffmpeg and ffprobe on PATH.
-
 import { mkdir, readFile, writeFile, stat, rm } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { spawnSync } from "node:child_process"
@@ -50,8 +39,6 @@ async function note(file, kind) {
   outputs.push(info)
 }
 
-// A concat-demuxer list that holds every frame for its own duration. The
-// demuxer ignores the last entry's duration, so that frame is listed twice.
 async function frameList(dir, frames, name) {
   const lines = ["ffconcat version 1.0"]
   frames.forEach((frame, index) => {
@@ -137,9 +124,6 @@ for (const width of STILL_WIDTHS) {
 for (const [kind, file] of Object.entries(encodeLoop(["-i", player.clip], "", "player", VIDEO_WIDTH))) {
   await note(file, kind === "poster" ? "still" : "video")
 }
-
-// Lossless intermediates stay 4:4:4: the window's 1125-pixel height is odd,
-// which 4:2:0 cannot hold. Only the final encodes scale to even sizes.
 
 const tourList = await screencastList("tour")
 const tourClip = path.join(workDir, "tour.mkv")

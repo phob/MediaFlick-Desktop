@@ -1,7 +1,3 @@
-// Run with: just verify startup-failure --services-down --seed .claude/skills/verify-mediaflick/seeds/newer-accounts
-// accounts.json from a newer build makes the app's services refuse to open, so every API call answers 503,
-// including the page's window-ready request. The page then falls back to its window-ready beacon,
-// and the hidden main window must still be shown.
 export default async function startupFailure(ctx) {
   await ctx.until(() => /unsupported account configuration version/.test(ctx.appLog()), "app.log to report the newer accounts.json", 30000)
   const status = await ctx.api("/api/status")

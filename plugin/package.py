@@ -37,8 +37,6 @@ DESCRIPTION = (
 
 
 def target_abi() -> str:
-    # Jellyfin reads targetAbi as the minimum server version. The build only
-    # knows the APIs of the Jellyfin.Controller package it compiles against.
     for reference in ElementTree.parse(PROJECT).getroot().iter("PackageReference"):
         if reference.get("Include") == "Jellyfin.Controller":
             version = reference.get("Version", "")
@@ -49,13 +47,11 @@ def target_abi() -> str:
 
 
 def version_key(version: str) -> tuple[int, int, int, int]:
-    # Jellyfin compares System.Version values; 0.2.2 and 0.2.2.0 name the same build.
     parts = [int(part) for part in version.split(".")]
     return parts[0], parts[1], parts[2], parts[3] if len(parts) == 4 else 0
 
 
 def add_version(catalog: list[dict], entry: dict) -> list[dict]:
-    """The catalog with `entry` added, newest version first."""
     if not catalog:
         record = {
             "guid": GUID,

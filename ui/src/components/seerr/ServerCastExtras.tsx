@@ -6,12 +6,6 @@ export interface ServerCastExtrasProps extends CastCreditsInput {
   personName: string
 }
 
-/**
- * The server titles a cast member is provably in even though Jellyfin's stored
- * cast list never names them there. The backend only returns titles it verified
- * against the live server by TMDB id, so everything listed here sits in the
- * library; rendering stays silent until at least one exists.
- */
 export function ServerCastExtras({
   personName,
   jellyfinId,

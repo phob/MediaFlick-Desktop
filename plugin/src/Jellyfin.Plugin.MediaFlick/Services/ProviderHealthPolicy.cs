@@ -17,13 +17,6 @@ internal sealed record ProviderOutcome(
         => new(response.StatusCode, response.RetryAt, response.Quota);
 }
 
-/// <summary>
-/// The single rule set for MDBList and TMDB credential health, shared by the
-/// ratings and collection services. Only an authentication failure (401/403)
-/// on a credential-checking request marks a key rejected. Timeouts, transport
-/// failures, 5xx, and other unexpected answers are "unavailable" or "offline"
-/// with exponential backoff, and keep an established key valid.
-/// </summary>
 internal static class ProviderHealthPolicy
 {
     public const int MaxFailureCount = 10;
@@ -49,12 +42,6 @@ internal static class ProviderHealthPolicy
     public static bool IsBackedOff(ProviderHealthState state, long now)
         => state.RetryAt is { } retryAt && retryAt > now;
 
-    /// <summary>
-    /// The state after a request whose answer proves or disproves the key,
-    /// such as MDBList's `/user` probe, TMDB's `/configuration`, or a ratings
-    /// batch. <paramref name="rateLimitProvesCredential"/> is true when the
-    /// provider authenticates before rate limiting, so a 429 still validates.
-    /// </summary>
     public static ProviderHealthState AfterValidation(
         ProviderHealthState previous,
         ProviderOutcome outcome,
@@ -123,12 +110,6 @@ internal static class ProviderHealthPolicy
         };
     }
 
-    /// <summary>
-    /// The state after an ordinary data request, or null when it changes
-    /// nothing. <paramref name="rejectionInvalidatesKey"/> is false for
-    /// endpoints where 401/403 describe the resource (a private MDBList list)
-    /// rather than the credential. Other 4xx answers are per-request outcomes.
-    /// </summary>
     public static ProviderHealthState? AfterRequest(
         ProviderHealthState previous,
         HttpStatusCode status,

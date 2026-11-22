@@ -1,26 +1,3 @@
-// End-to-end proof of the update from MediaFlick 0.1.6 to this build, and of
-// going back to 0.1.6 (operator decisions of 2026-11-15). Linux only.
-//
-//   just upgrade-e2e --account https://jellyfin.example.com
-//   node scripts/e2e/upgrade-0-1-6.mjs --account SERVER [--only id,id] [--appimage FILE] [--servers servers.json]
-//
-// Needs the staged build (`just build`), the AppImage of this build
-// (`just linux-appimage`, or --appimage) for the packaging scenario, ffmpeg,
-// Xvfb, dotnet (the Companion for a local server), and a session cached by
-// `just verify-login SERVER` for --account. It downloads the real 0.1.6
-// AppImage from the v0.1.6 GitHub release and checks its SHA-256.
-//
-// Every scenario runs in its own throwaway profile through verify-mediaflick
-// (`isolate-linux.sh` + `session.mjs`, one at a time) or, for 0.1.6 itself,
-// through scripts/e2e/run-0-1-6.mjs on the same private Xvfb display. The
-// 0.1.6 profiles are made by the real 0.1.6 where it can make them; 0.1.6 on
-// Linux never offered MPC-HC, so that profile is written by hand the way
-// 0.1.6 serialized it.
-//
-// The failure list each scenario checks is in SCENARIOS below and in the
-// drives it names. The artifact is build/e2e/upgrade-0-1-6/report.json, with a
-// screenshot and the app log per scenario in its directory. Exits non-zero
-// when a scenario fails.
 import { execFileSync, spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { copyFileSync, cpSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
@@ -37,7 +14,6 @@ const MPV = "/usr/bin/mpv"
 const LEGACY = {
   release: "v0.1.6",
   name: "MediaFlickDesktop-v0.1.6-linux-x86_64.AppImage",
-  // The asset as published on 2026-07-16 (gh release view v0.1.6).
   sha256: "b0892fe0f60a817b8bd8497af64e72537ede7bc2d5bd8e40e6eecac64c1924f3",
 }
 const VERSIONS = ["10.10.7", "10.11.11", "12.4", "12.4+companion"]
@@ -65,7 +41,6 @@ const sha256 = (file) => new Promise((resolve, reject) => {
 })
 const git = (...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim()
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`
-// 0.1.6 wrote its files with serde_json::to_vec_pretty: two-space indent, no trailing newline.
 const pretty = (value) => JSON.stringify(value, null, 2)
 const log = (line) => console.log(`[upgrade-0-1-6] ${line}`)
 
@@ -89,9 +64,6 @@ async function legacyAppImage() {
   return file
 }
 
-// The local Jellyfin servers: below the 10.11.0 floor, a supported 10.11, and
-// Jellyfin 12 without and with the Companion, each with the administrator
-// e2e-admin. Started here unless --servers names ones already running.
 async function localServers() {
   if (options.servers) return { servers: JSON.parse(readFileSync(options.servers, "utf8")), stop: () => {} }
   const script = path.join(verify, "scripts/jellyfin-version-servers.py")
@@ -121,7 +93,6 @@ function wrapped(command, env = {}, timeoutS = 900) {
     const chunks = []
     child.stdout.on("data", (chunk) => chunks.push(chunk))
     child.stderr.on("data", (chunk) => chunks.push(chunk))
-    // Daemons the wrapper's session bus started can hold the pipes open after it exits.
     child.once("exit", (code) => {
       child.stdout.destroy()
       child.stderr.destroy()
@@ -130,7 +101,6 @@ function wrapped(command, env = {}, timeoutS = 900) {
   })
 }
 
-// One verify-mediaflick session; its evidence is build/verify/<run id>.
 async function session(id, drive, args, env, timeoutS) {
   const runId = `upgrade-${id}-${stamp}`
   log(`${id}: just verify ${drive} ${args.join(" ")}`)
@@ -140,7 +110,6 @@ async function session(id, drive, args, env, timeoutS) {
   return { runId, code, evidence }
 }
 
-// The real 0.1.6 once on a profile; its record is <dir>/run.json.
 async function legacyRun(legacy, profile, dir, args) {
   log(`0.1.6 on ${path.relative(root, profile)} ${args.join(" ")}`)
   const { code, output } = await wrapped(["node", path.join(root, "scripts/e2e/run-0-1-6.mjs"), "--appimage", legacy, "--profile", profile, "--out", dir, ...args], {}, 300)
@@ -151,8 +120,6 @@ async function legacyRun(legacy, profile, dir, args) {
   return JSON.parse(readFileSync(runFile, "utf8"))
 }
 
-// A session's result for the report: its checks, and its screenshots and log
-// copied into the scenario's directory.
 function collect(id, run, { checksFile, screenshot }) {
   const dir = path.join(out, id)
   mkdirSync(dir, { recursive: true })
@@ -175,7 +142,6 @@ function collect(id, run, { checksFile, screenshot }) {
   }
 }
 
-// The verify layout run-0-1-6.mjs and session.mjs share: config/ and data/ roots.
 const appDirs = (profile) => ({ config: path.join(profile, "config/mediaflick-desktop"), data: path.join(profile, "data/mediaflick-desktop") })
 
 const report = {
@@ -197,9 +163,6 @@ const server = (requested) => {
   return found
 }
 
-// Profiles the real 0.1.6 made: on the demo server signed in to Jellyfin Web
-// (a 0.1.6 user's session lives in the cef-cache), and on your own server.
-// Both saved an mpv path, as 0.1.6's --mpv-path and its mpv setup did.
 const profiles = path.join(out, "0.1.6-profiles")
 const made = {}
 async function legacyProfile(name, args) {
@@ -217,8 +180,6 @@ const SCENARIOS = [
     title: "A 0.1.6 profile with an external mpv path still plays through external mpv",
     async run() {
       const made = await legacyProfile("own-server", ["--url", options.account, "--mpv-path", MPV])
-      // Windowed, as a user sets it in 0.1.6's settings dialog: fullscreen
-      // external mpv covers the app and freezes CDP mouse input under Xvfb.
       const config = path.join(out, this.id, "seed")
       cpSync(made.config, config, { recursive: true })
       const legacyConfig = JSON.parse(readFileSync(path.join(config, "config.json"), "utf8"))
@@ -239,8 +200,6 @@ const SCENARIOS = [
     id: "4-config-only",
     title: "A profile with only config.json and input.json: the import carries every setting over",
     async run() {
-      // Every field 0.1.6 could save, off its default, in AppSettings' field
-      // order (v0.1.6:src/preferences/model.rs), and a disabled mark-watched key.
       const seed = path.join(out, this.id, "seed")
       mkdirSync(seed, { recursive: true })
       writeFileSync(path.join(seed, "config.json"), pretty({
@@ -279,7 +238,6 @@ const SCENARIOS = [
       const seed = path.join(dir, "seed")
       mkdirSync(seed, { recursive: true })
       writeFileSync(path.join(seed, "config.json"), pretty({ jellyfin_url: old.url, mpv_path: MPV }))
-      // Only the old server, then the drive's read-only demo pass.
       const serversFile = path.join(dir, "servers.json")
       writeFileSync(serversFile, json([old]))
       const run = await session(this.id, "server-versions", ["--seed", seed, "--timeout", "600"], { MEDIAFLICK_VERIFY_VERSION_SERVERS: serversFile }, 900)
@@ -326,7 +284,6 @@ const SCENARIOS = [
     async run() {
       const dir = path.join(out, this.id)
       const made = await legacyProfile("demo", ["--url", DEMO, "--mpv-path", MPV, "--web-user", "demo"])
-      // 1. This build on the 0.1.6 profile: sign in, close What's new, relaunch; keep the profile.
       const used = await session(`${this.id}-0.2.0`, "whats-new", ["--seed", made.config, "--seed-data", made.data, "--keep-profile"], {}, 600)
       const first = collect(`${this.id}/1-this-build`, used, { checksFile: "whats-new.json", screenshot: "03-after-relaunch.png" })
       const kept = JSON.parse(readFileSync(path.join(used.evidence, "pids.json"), "utf8")).profile
@@ -334,9 +291,7 @@ const SCENARIOS = [
       for (const kind of ["config", "data"]) cpSync(path.join(kept, kind), path.join(profile, kind), { recursive: true })
       rmSync(kept, { recursive: true, force: true })
       const beforeLegacy = Object.fromEntries(readdirSync(appDirs(profile).config).filter((name) => name.endsWith(".json")).map((name) => [name, readFileSync(path.join(appDirs(profile).config, name), "utf8")]))
-      // 2. The real 0.1.6 on it, as a user who installs 0.1.6 again.
       const back = await legacyRun(legacy, profile, path.join(dir, "2-0.1.6"), [])
-      // 3. This build again on what 0.1.6 left.
       const again = await session(`${this.id}-return`, "upgrade-return", ["--seed", appDirs(profile).config, "--seed-data", appDirs(profile).data], {}, 600)
       const third = collect(`${this.id}/3-this-build-again`, again, { checksFile: "upgrade-return.json", screenshot: "01-home.png" })
       const legacyChecks = [
@@ -397,7 +352,6 @@ log(`report: ${path.relative(root, path.join(out, "report.json"))}`)
 for (const scenario of report.scenarios) log(`  ${scenario.passed ? "ok  " : "FAIL"} ${scenario.id}`)
 if (report.failures.length) process.exitCode = 1
 
-// What Linux cannot run, for someone on Windows or a Mac, step by step.
 function OUTSTANDING() {
   return [
     {

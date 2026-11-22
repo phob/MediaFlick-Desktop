@@ -502,9 +502,6 @@ fn set_option(
     // SAFETY: `handle` is a live, uninitialized handle, and both strings are
     // NUL-terminated and outlive the call; libmpv copies what it keeps.
     let status = unsafe { set_option_string(handle, c_name.as_ptr(), c_value.as_ptr()) };
-    // Lean builds omit these options together with their scripting engines.
-    // Disabling an absent engine is already satisfied; enabling it (SVP), or
-    // any other failure, must still reach the normal startup error boundary.
     if status == MPV_ERROR_OPTION_NOT_FOUND
         && matches!((name, value), ("load-scripts" | "osc", "no"))
     {

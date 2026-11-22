@@ -12,8 +12,6 @@ use crate::preferences::AccountKey;
 use super::franchises::{FranchiseMembership, FranchiseSnapshot};
 use super::{CanonicalIdentity, CollectionSnapshot, MediaType, NormalizedTitle};
 
-// Profile IDs are hexadecimal, so this non-hex key cannot collide with a
-// configured profile while sharing the same account-scoped refresh table.
 const FRANCHISE_REFRESH_KEY: &str = "movie-franchises";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
@@ -41,8 +39,6 @@ impl<'a> SnapshotRepository<'a> {
         Self { library }
     }
 
-    /// Replaces one complete profile revision in one transaction. Provider
-    /// rows marked adult never enter the cache, even if the gateway regresses.
     pub fn commit_profile(
         &self,
         account: &AccountKey,

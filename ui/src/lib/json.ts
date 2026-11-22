@@ -40,12 +40,6 @@ export function jsonStringArray(value: JsonValue | undefined): string[] | null {
   return result
 }
 
-/**
- * Compares values as JSON would serialize them, ignoring object key order.
- * The shell may send the same settings with keys in different orders, for
- * example when one response passes through `serde_json::Value` and another
- * serializes a struct directly.
- */
 export function sameJson(left: unknown, right: unknown): boolean {
   if (Object.is(left, right)) return true
   if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) return false

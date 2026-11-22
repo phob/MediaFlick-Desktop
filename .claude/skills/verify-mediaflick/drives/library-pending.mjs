@@ -1,14 +1,3 @@
-// A movies library whose titles are still arriving shows the loading
-// placeholder, not "Nothing to show", even when Hide watched filters its
-// grid. A loopback proxy in front of the demo server drops only the Movie
-// membership walk, so the library stays pending and its grid empty. Hide
-// watched is turned on in Settings, the library opens with the Unwatched
-// filter and must keep the placeholder. Once the proxy heals and a sync runs,
-// the grid must settle to the API's answer. Then the proxy drops the walk
-// again and a requested sync owes it anew: a library walked once is no longer
-// pending, so after a reload its grid filtered to a genre nobody has says
-// "Nothing to show". Read-only against the demo server.
-//   just verify library-pending
 const DEMO = "https://demo.jellyfin.org/stable"
 const HIDE_WATCHED = { role: "switch", name: "Hide watched by default" }
 const UNWATCHED_CHIP = { role: "button", name: "Remove Unwatched filter" }

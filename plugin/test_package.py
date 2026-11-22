@@ -1,23 +1,3 @@
-"""Tests for plugin/package.py, the Companion's package and repository tooling.
-
-Expected values come from Jellyfin's plugin repository format (a JSON list of
-plugins, each with `versions` carrying version, targetAbi, sourceUrl, MD5
-checksum and timestamp), Jellyfin's rule that `targetAbi` is the minimum
-server version, and the operator's rules for the stable repository on
-flick.media (2026-11-15): an entry is added only once its download is public,
-earlier entries stay, and a published version is never replaced.
-
-Ways adding a release to the repository could go wrong, each covered below:
-- a version that is already listed (also as 0.2.2 vs 0.2.2.0) is replaced;
-- earlier versions are dropped, so older servers lose a build they can load;
-- versions are ordered as text, so 0.10.0 sorts below 0.9.0;
-- an entry is merged into a catalog of another plugin or a malformed one;
-- the checksum is not taken from the bytes at sourceUrl, so Jellyfin rejects
-  the download, or an unreachable URL (a draft asset is 404 without
-  authentication) still gets an entry;
-- a failed add rewrites the manifest anyway.
-"""
-
 import hashlib
 import http.server
 import json
@@ -106,8 +86,6 @@ class BuildTests(unittest.TestCase):
 
 class AbiTests(unittest.TestCase):
     def test_build_yaml_matches_the_compiled_floor(self):
-        # Jellyfin loads a plugin only on servers at or above targetAbi, and the
-        # plugin only knows the APIs of the Jellyfin.Controller it compiles against.
         plugin = Path(__file__).parent
         manifest = (plugin / "build.yaml").read_text(encoding="utf-8")
         abi = re.search(r'^targetAbi:\s*"([^"]+)"', manifest, re.MULTILINE)

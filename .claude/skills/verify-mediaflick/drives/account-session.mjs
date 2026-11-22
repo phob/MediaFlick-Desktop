@@ -1,9 +1,3 @@
-// Sign-in, sign-out and an expired session against your own server, with no
-// password: the harness approves each Quick Connect code as the cached
-// account, so the app holds its own token and may sign it out.
-//   just verify account-session --account https://jellyfin.example.com --signed-out
-// Proves that Sign out revokes the token on the server, and that a token
-// revoked from outside sends the app back to the sign-in screen as expired.
 const SERVER = { role: "textbox", name: "Server" }
 
 const status = async (ctx) => (await ctx.api("/api/status")).body

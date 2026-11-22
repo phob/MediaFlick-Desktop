@@ -56,12 +56,6 @@ public sealed class RatingsController : ControllerBase
     }
 }
 
-/// <summary>
-/// Administrator-only secret lifecycle. Jellyfin dashboard requests carry the
-/// normal token header rather than ambient cookie authentication, so mutating
-/// POST/PUT/DELETE methods plus RequiresElevation provide the host's normal
-/// CSRF-safe plugin configuration model.
-/// </summary>
 [ApiController]
 [Authorize(Policy = Policies.RequiresElevation)]
 [Route("MediaFlick/admin/ratings")]
@@ -116,7 +110,6 @@ public sealed class ProviderCredentialsController : ControllerBase
         }
         catch (InvalidOperationException exception)
         {
-            // Storage failures carry fixed plugin text, never the key.
             _logger.LogWarning(exception, StorageUnavailableMessage, provider);
             return StatusCode(
                 StatusCodes.Status503ServiceUnavailable,

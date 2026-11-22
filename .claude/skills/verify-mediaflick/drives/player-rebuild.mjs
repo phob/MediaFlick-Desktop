@@ -1,9 +1,3 @@
-// The player rebuilt live under a playing audio queue: with External mpv, a
-// changed executable path replaces the adapter on Save. The retired adapter's
-// own events (its shutdown's Stopped) must never reach the UI, so the rebuild
-// ends the queue with exactly one Stopped, and the next queue on the new
-// player plays undisturbed. Writes the test user's playstate and puts it back.
-//   just verify player-rebuild --account SERVER --seed .claude/skills/verify-mediaflick/seeds/external-mpv
 import { realpathSync } from "node:fs"
 
 const ALBUM = "Test Tones"

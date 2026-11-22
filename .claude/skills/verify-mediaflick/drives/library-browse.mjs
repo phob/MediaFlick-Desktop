@@ -1,26 +1,3 @@
-// Every library in the sidebar, the way a user browses it. The sidebar lists
-// Jellyfin's /UserViews names in order. Each entry opens /library/<id> with its
-// grid, a total equal to /api/libraries/<id>/items, exactly the sorts and
-// filters its `browse` capabilities list and the A–Z rail only where
-// `letterIndex` is true. A movies or TV shows library takes a sort and a filter
-// whose total matches the API; a live library offers its sorts and nothing
-// else. The first card opens its page, whose back link names the library and
-// returns to the same URL and filters; saving that same last route again
-// leaves accounts.json untouched. In a movies or TV shows library a title
-// opened from a card's hover preview also names the library. After a reload
-// without navigation state, with /api/libraries held, its page already reads
-// "Back to library" and leads to the library, with at least one genre chip
-// on it; once the list loads it names the library. The hold is released in a
-// finally block. Read-only.
-//
-// Started with --seed holding an accounts.json whose account remembers legacy
-// `Movie` and `Series` pages, it instead proves the app starts, keeps those
-// pages through navigation, and drops them with the first filter change on a
-// movies library, saving accounts.json before and after.
-//   just verify library-browse
-//   just verify library-browse --account https://jellyfin.example.com
-//   node .claude/skills/verify-mediaflick/scripts/legacy-browsing-seed.mjs https://jellyfin.example.com build/verify-seeds/legacy-browsing
-//   just verify library-browse --account https://jellyfin.example.com --seed build/verify-seeds/legacy-browsing
 import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 
@@ -39,7 +16,6 @@ const SORT_IDS = {
 }
 const FILTER_IDS = [
   ["Genre", "genre"],
-  // TV libraries label the studio filter Network.
   ["Studio", "studio"],
   ["Network", "studio"],
   ["Tag", "tag"],

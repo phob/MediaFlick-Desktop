@@ -1,14 +1,4 @@
-// Playback end to end on your own server, on whichever backend the profile
-// has: play from the start, seek past Jellyfin's resume minimum, pause, stop
-// from the player bar, the resume point Jellyfin stored, Resume with the
-// startup seek rules from AGENTS.md, stop again, then watched and unwatched
-// to leave the title as it was. Plays real audio.
-//   just verify playback --account https://jellyfin.example.com --log-level "debug,jellyfin.playstate=trace,playback=trace"
-// External mpv: add `--seed .claude/skills/verify-mediaflick/seeds/external-mpv`
-// ({"player_backend":"mpv","mpv_path":"/usr/bin/mpv","default_fullscreen":"windowed"}).
-// Writes the test user's playstate: it picks an unplayed movie without a
-// resume point and leaves it unplayed without one.
-const MIN_RESUME = 0.08 // Jellyfin stores no resume point below 5 % of the runtime
+const MIN_RESUME = 0.08
 const status = async (ctx) => (await ctx.api("/api/status")).body
 const ticksToS = (ticks) => ticks / 1e7
 
@@ -17,8 +7,6 @@ function displayCapture(ctx, name) {
   else ctx.step(`no display capture for ${name}: Linux only`)
 }
 
-// The player bar shows its own Stop from 1536 px (a fullscreen Built-in
-// player on Windows); narrower, Stop moves into the overflow menu.
 async function stopFromBar(ctx) {
   const stop = { role: "button", name: "Stop" }
   const more = { role: "button", name: "More playback controls" }
@@ -29,10 +17,6 @@ async function stopFromBar(ctx) {
   await ctx.press({ role: "menuitem", name: "Stop playback" })
 }
 
-// The Built-in player's chrome reveal rule: a pointer move of more than 10 px
-// from where the pointer rested, anywhere over the window, shows the bar and
-// the cursor; 3 s without such a move hides them; an open bar menu, the
-// pointer over the bar and keyboard focus in the bar hold them.
 const REVEAL_DEADZONE_PX = 10
 const HIDE_DELAY_MS = 3000
 const HOLD_MS = HIDE_DELAY_MS + 2000
@@ -42,7 +26,6 @@ const chrome = (ctx) => ctx.app.evaluate(`(() => {
   return { brand: brand?.dataset.visible === "true", bar: bar?.dataset.visible === "true", cursorHidden: document.documentElement.hasAttribute("data-libmpv-cursor-hidden") }
 })()`)
 
-// Returns when the page had the move, before the pause between moves.
 async function moveTo(ctx, [x, y]) {
   await ctx.app.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" })
   const movedAt = Date.now()
@@ -50,8 +33,6 @@ async function moveTo(ctx, [x, y]) {
   return movedAt
 }
 
-// Moves in steps of `stepPx`, as a hand on a mouse does, not in one jump.
-// Returns when the page had the last step.
 async function glide(ctx, from, to, stepPx) {
   const distance = Math.hypot(to[0] - from[0], to[1] - from[1])
   const steps = Math.max(1, Math.ceil(distance / stepPx))
@@ -62,8 +43,6 @@ async function glide(ctx, from, to, stepPx) {
   return movedAt
 }
 
-// An open menu is modal: Radix hides the rest of the page, the bar included,
-// from the accessibility tree, so `menuOpen` skips the Pause lookup.
 async function barShown(ctx, shown, description, { menuOpen = false } = {}) {
   const state = await chrome(ctx)
   const ok = state.bar === shown && state.brand === shown && state.cursorHidden === !shown
@@ -73,7 +52,6 @@ async function barShown(ctx, shown, description, { menuOpen = false } = {}) {
   return state
 }
 
-// Measures from the last move that counted until the chrome hides.
 async function waitForHide(ctx, since) {
   const elapsed = await ctx.until(async () => ((await chrome(ctx)).bar ? null : Date.now() - since), "the player bar to hide", HIDE_DELAY_MS + 5000, { quiet: true })
   return elapsed
@@ -88,8 +66,6 @@ async function checkBarReveal(ctx) {
   ctx.step("bar reveal: glide to the middle of the video in 12 px steps, then rest")
   const rested = await glide(ctx, offset(centre, [-60, 0]), centre, 12)
   await barShown(ctx, true, "a move over the middle of the video shows the bar")
-  // One page read at a fixed time after the last move: the accessibility
-  // lookups above can take a second on a busy machine.
   await ctx.sleep(Math.max(0, rested + HIDE_DELAY_MS - 1000 - Date.now()))
   const before = await chrome(ctx)
   const sampledAfterMs = Date.now() - rested
@@ -216,10 +192,6 @@ export default async function playback(ctx) {
   report.rapidSeek = { presses: 6, expectedS: 180, movedS: ((await ctx.player()).positionMs - beforeRapid) / 1000 }
   ctx.step(`six quick presses of ArrowRight moved ${report.rapidSeek.movedS.toFixed(1)} s (expected 180 s)`)
 
-  // Seek one press at a time past the resume minimum, each time waiting, as a
-  // user would, until the player bar shows the new time. The key handler
-  // seeks from the bar's position, so a press before it catches up repeats the
-  // previous target and is lost; those are counted, not hidden.
   const target = report.play.durationMs * MIN_RESUME
   const barPosition = () => ctx.app.evaluate(`Number(document.querySelector('[role="slider"][aria-label="Playback position"]')?.getAttribute("aria-valuenow") ?? NaN)`)
   let presses = 0

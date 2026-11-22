@@ -1,8 +1,3 @@
-//! Backend-neutral playback domain.
-//!
-//! This module owns the contracts and policies used by every player backend.
-//! Concrete mpv protocol implementations live under `players`.
-
 pub mod coordinator;
 pub mod model;
 mod queue;
@@ -28,7 +23,6 @@ pub struct NativeWindowHandle {
     content: usize,
 }
 
-/// An owned, premultiplied BGRA browser frame for native video composition.
 #[cfg(target_os = "linux")]
 pub struct NativeOverlayFrame {
     pub pixels: Vec<u8>,
@@ -87,11 +81,8 @@ impl NativeWindowHandle {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioStart {
-    /// Music from 0; an audiobook from its saved position, less the resume
-    /// rewind.
     Default,
     Beginning,
-    /// A remote client's position, honoured for audiobooks only.
     At(i64),
 }
 
@@ -100,27 +91,15 @@ pub struct PreparedAudio {
     pub request: PlaybackRequest,
 }
 
-/// The account a playback was started from. The coordinator stops the
-/// playback once that account is no longer the signed-in one.
 pub trait PlaybackOwner: Send + Sync {
     fn is_current(&self) -> bool;
 }
 
-/// The media server's side of an audio queue, bound to the account that
-/// built it.
 pub trait AudioSource: PlaybackOwner {
-    /// Negotiates one entry. Blocking; the coordinator calls it on its
-    /// preparation worker, holding no lock. The error is shown to the user.
     fn prepare(&self, track: &AudioTrack, start: AudioStart) -> Result<PreparedAudio, String>;
-    /// Runs `dispatch` while the account that built the queue is still the
-    /// signed-in one, and says whether it ran.
     fn dispatch_if_current(&self, dispatch: &mut dyn FnMut()) -> bool;
 }
 
-/// Port implemented by each player adapter.
-/// A player adapter. The coordinator calls it without holding any lock, so
-/// calls from different threads can overlap; implementations serialize their
-/// own work (the mpv adapter posts every call to its controller thread).
 pub trait PlayerBackend: Send + Sync {
     fn warm(&self, path: String, fullscreen: FullscreenBehavior);
     fn native_window(&self, timeout: Duration) -> Option<NativeWindowHandle>;

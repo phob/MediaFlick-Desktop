@@ -53,10 +53,6 @@ impl Default for ReaderFile {
     }
 }
 
-/// `reader.json`: per account, the exact place in each book read in this
-/// app and the reader's appearance. Both are user intent the server cannot
-/// rebuild (Jellyfin keeps only a coarse position), so they live beside the
-/// other account-owned preference files, not in the rebuildable cache.
 pub struct ReaderStore {
     path: PathBuf,
     state: Mutex<StoreState>,

@@ -4,15 +4,10 @@ using Jellyfin.Plugin.MediaFlick.Models;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-/// <summary>
-/// Discover catalogs and their filters: the allowlisted discovery parameters
-/// and the company search behind the movie catalog's studio filter.
-/// </summary>
 public sealed partial class SeerrGateway
 {
     private const int MaxCompanyQueryLength = 100;
 
-    /// <summary>TMDB serves at most 500 pages of any search.</summary>
     private const int MaxCompanyPage = 500;
 
     public async Task<SeerrPageResponse<SeerrResultResponse>> DiscoverAsync(
@@ -81,8 +76,6 @@ public sealed partial class SeerrGateway
         {
             throw new GatewayException(StatusCodes.Status400BadRequest, "genre must be positive");
         }
-        // Seerr filters the movie catalog by TMDB company and the TV catalog
-        // by TMDB network; neither applies to any other endpoint.
         if (studio is { } studioId && (studioId <= 0 || endpoint != "movies"))
         {
             throw new GatewayException(
@@ -201,10 +194,6 @@ public sealed partial class SeerrGateway
         return $"api/v1/discover/{endpoint}?{string.Join('&', query)}";
     }
 
-    /// <summary>
-    /// TMDB companies by name, for the movie catalog's studio filter. The
-    /// query and page are bounded before Seerr sees them.
-    /// </summary>
     public async Task<SeerrPageResponse<SeerrCompanyResponse>> CompaniesAsync(
         Guid jellyfinUserId,
         string? query,

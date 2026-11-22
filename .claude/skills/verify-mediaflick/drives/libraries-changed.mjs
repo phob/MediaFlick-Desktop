@@ -1,18 +1,3 @@
-// The sidebar follows the server's library list without a reload. The test
-// account must start with no playlist. Jellyfin adds a Playlists view to its
-// /UserViews with the account's first playlist and drops it with the last, so
-// the drive creates a private playlist from outside the app, asks for a sync
-// and expects the sidebar to gain Playlists; then it deletes the playlist,
-// syncs through the user menu's Sync library and expects the entry gone.
-// app.log must show exactly one `libraries-changed` announcement per change
-// and none for a sync that changed nothing, and the first one before the first
-// catalog download finishes. While that download runs, /api/libraries must
-// report every movies or TV shows library as pending, and an open library page
-// must not say "Nothing to show" before its titles arrive. The page's own
-// /api/libraries requests are counted per sync, and no query in the page's
-// cache may fail. The playlist is deleted in a finally block, and after the
-// run if the drive failed first.
-//   just verify libraries-changed --account https://jellyfin.example.com --timeout 600
 const CHANGED = "announced a changed library list"
 const SETTLED = "announced settled library memberships"
 const BOOTSTRAPPED = "library bootstrap complete"

@@ -35,7 +35,6 @@ for file in lib/libmpv.so.2 SHA256SUMS SOURCE-REVISIONS.txt SYSTEM-PACKAGES.txt 
 done
 (cd "$libmpv_dir" && sha256sum --check --strict SHA256SUMS)
 
-# `just release` (scripts/stage-app.mjs) stages the binary and CEF runtime here.
 staged_dir="build"
 binary="$staged_dir/mediaflick-desktop"
 if [[ ! -x "$binary" ]]; then

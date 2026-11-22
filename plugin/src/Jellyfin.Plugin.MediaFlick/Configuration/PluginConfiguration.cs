@@ -21,10 +21,6 @@ public sealed class PluginConfiguration : BasePluginConfiguration
 
     public bool AutoImportSeerrUsers { get; set; }
 
-    /// <summary>
-    /// ASP.NET Data Protection ciphertext. The plaintext MDBList key is never
-    /// written to Jellyfin's plugin configuration XML.
-    /// </summary>
     public string ProtectedMdbListApiKey { get; set; } = string.Empty;
 
     public string ProtectedTmdbApiKey { get; set; } = string.Empty;

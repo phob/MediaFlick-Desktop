@@ -147,7 +147,6 @@ def build_package(work: Path) -> tuple[Path, dict[str, str]]:
 
 @dataclass
 class Repositories:
-    """Loopback copies of the flick.media manifest and of a repository holding the local package."""
 
     site: str
     local: str
@@ -215,8 +214,6 @@ def wait_for_server(base: str, process: subprocess.Popen[bytes]) -> dict[str, ob
         if process.poll() is not None:
             raise RuntimeError(f"Jellyfin exited with code {process.returncode} during startup")
         try:
-            # While migrations run, a temporary setup server answers this route
-            # without a version and returns 503 for everything else.
             response = request(base, "GET", "/System/Info/Public")
             if response.status == 200:
                 info = response.json()
@@ -266,7 +263,6 @@ def manifest_errors(log: Path) -> list[str]:
 
 
 class Server:
-    """One Jellyfin process on a disposable profile; starting it again is the administrator's restart."""
 
     def __init__(self, binary: Path, root: Path):
         self.binary = binary
@@ -324,8 +320,6 @@ def run_server(version: str, binary: Path, repositories: Repositories, meta: dic
     output.mkdir(parents=True, exist_ok=True)
     committed = json.loads(SITE_MANIFEST.read_text(encoding="utf-8"))
     expected_site_versions = sorted(str(entry["version"]) for plugin in committed for entry in plugin["versions"])
-    # Jellyfin refuses to start with less than 2 GiB free, which a tmpfs /tmp
-    # often lacks, so the disposable profile lives next to the server cache.
     with tempfile.TemporaryDirectory(prefix=f"jellyfin-{version}-", dir=scratch_base) as scratch:
         server = Server(binary, Path(scratch))
         first_console, restarted_console = output / "console.log", output / "console-restarted.log"
@@ -337,7 +331,6 @@ def run_server(version: str, binary: Path, repositories: Repositories, meta: dic
             complete_wizard(server.base)
             token = sign_in(server.base)
 
-            # The committed flick.media manifest, as Jellyfin reads it.
             site_versions = use_repository(server.base, token, "MediaFlick Companion", repositories.site)
             site_errors = manifest_errors(first_console)
             result["siteManifest"] = {"url": repositories.site, "listed": site_versions,
@@ -345,7 +338,6 @@ def run_server(version: str, binary: Path, repositories: Repositories, meta: dic
             checks["siteManifestRead"] = any(path.startswith("/site/companion/manifest.json") for path in repositories.requested)
             checks["siteManifestAccepted"] = not site_errors and sorted(site_versions) == expected_site_versions
 
-            # A repository holding the local package, installed from the catalog.
             local_versions = use_repository(server.base, token, "MediaFlick Companion (local)", repositories.local)
             result["localCatalog"] = local_versions
             checks["catalogOffersPackage"] = meta["version"] in local_versions
@@ -375,8 +367,6 @@ def run_server(version: str, binary: Path, repositories: Repositories, meta: dic
             info = signed_in.json() if signed_in.status == 200 else signed_in.body[:500]
             result["info"] = info
 
-            # Jellyfin 12.0 lists a plugin it skipped for a too-new targetAbi as
-            # Active, so only its own load message and live routes prove loading.
             loaded = f"Loaded plugin: {meta['name']} {meta['version']}"
             checks["pluginLoadedAfterRestart"] = loaded in restarted_console.read_text(encoding="utf-8", errors="replace")
             checks["pluginVersionMatchesPackage"] = isinstance(entry, dict) and str(entry.get("Version", "")).startswith(meta["version"])

@@ -53,8 +53,6 @@ export default function App() {
   const showingHome = location.pathname === "/"
   const showShell = Boolean(status?.authenticated || showingSettings)
   const initialHomeEnabled = bootstrap?.state === "ready" && showingHome
-  // Prime the two SQLite-backed home queries before the startup cover leaves.
-  // Home observes the same keys, so React Query deduplicates these reads.
   const initialHome = useHome(initialHomeEnabled)
   const initialBillboard = useBillboard(initialHomeEnabled)
   const ready = startupScreenReady({
@@ -78,10 +76,6 @@ export default function App() {
       ) : !showShell ? (
         <SignIn />
       ) : (
-        // The expanded-card provider lives inside AppShell and renders its
-        // portal as a sibling of the routed children. Ratings must therefore
-        // wrap the shell itself, not only the routes, or that sibling cannot
-        // read the selected-source context even though the shelf card can.
         <RatingsProvider>
           <TechnicalProvider>
             <AppShell>
@@ -132,10 +126,6 @@ export default function App() {
         </RatingsProvider>
       )}
       <LoadingScreen
-        // A new account waits only for the first committed catalog page. The
-        // rest of the fill and all live enrichment happen in the live shell.
-        // On later starts the local home snapshot also paints behind this cover
-        // before it leaves, avoiding a flash of route skeletons.
         key={status?.authenticated ? "authenticated" : "anonymous"}
         ready={ready}
       />

@@ -85,8 +85,6 @@ impl ControllerState {
                         tracing::debug!(target: "playback", tracked, ended, "ignored end-file of a replaced mpv entry");
                     }
                     (Some(_), Some(_)) => {
-                        // This load's own end, so no guess about a replaced
-                        // file's late end-file may suppress it.
                         self.replacement_end_file_pending = false;
                         self.next_playback_handoff_until = None;
                         self.finish_active(reason);

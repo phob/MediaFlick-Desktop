@@ -1,10 +1,5 @@
 namespace Jellyfin.Plugin.MediaFlick.Models;
 
-// The Desktop-facing Seerr contract. Every value is rebuilt from upstream
-// data into these fixed shapes; no upstream JSON passes through unchanged.
-// Desktop mirrors them in ui/src/lib/api/types/seerr.ts (SeerrStatusInfo,
-// SeerrResult, SeerrMediaDetail, SeerrPage, SeerrRequest, SeerrRequestOptions).
-
 public sealed record SeerrStatusResponse(
     bool Linked,
     bool Mapped,
@@ -48,13 +43,6 @@ public sealed record SeerrPageResponse<T>(
     int TotalResults,
     IReadOnlyList<T> Results);
 
-/// <summary>
-/// One movie or series. Desktop fills <see cref="LibraryItemId"/> from its
-/// local catalog; the Companion always answers null.
-/// <see cref="Activity"/> explains a <c>processing</c> status: downloading,
-/// searching, in-cinemas, unreleased, or awaiting-episodes. It is null for
-/// every other status and whenever Radarr or Sonarr cannot say.
-/// </summary>
 public sealed record SeerrResultResponse(
     string MediaType,
     int? TmdbId,
@@ -70,7 +58,6 @@ public sealed record SeerrResultResponse(
     string? Activity = null,
     string? Activity4k = null);
 
-/// <summary>A TMDB production company or TV network, by id and name.</summary>
 public sealed record SeerrCompanyResponse(int Id, string Name);
 
 public sealed record SeerrNetworksResponse(IReadOnlyList<SeerrCompanyResponse> Networks);

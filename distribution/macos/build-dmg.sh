@@ -68,10 +68,6 @@ mkdir -p "$macos_dir" "$frameworks_dir" "$licenses_dir" "$dmg_root"
 install -m 0755 "$binary" "$macos_dir/mediaflick-desktop"
 cp -R "$cef_framework" "$frameworks_dir/"
 
-# CEF starts every subprocess from a helper app beside the framework, and
-# Chromium finds the GPU, Renderer, Plugin and Alerts variants by name from
-# the plain one (src/shell/cef/mac.rs names it). Each runs MediaFlick's own
-# binary, which takes CEF's subprocess path when it sees --type.
 helper="MediaFlick Desktop Helper"
 for variant in "" " (GPU)" " (Renderer)" " (Plugin)" " (Alerts)"; do
     name="$helper$variant"
@@ -102,8 +98,6 @@ HELPER_PLIST
 done
 cp distribution/macos/AppIcon.icns "$resources_dir/AppIcon.icns"
 cef_credits=""
-# Unlike Windows/Linux, cef-dll-sys leaves macOS assets in its framework cache.
-# Keep attribution tied to the selected framework, including unflattened CEF archives.
 for candidate in "$target_dir/CREDITS.html" \
     "$(dirname "$cef_framework")/CREDITS.html" \
     "$(dirname "$(dirname "$cef_framework")")/CREDITS.html"; do
@@ -127,9 +121,6 @@ dst = Path('dist/macos/MediaFlick Desktop.app/Contents/Info.plist')
 dst.write_text(src.read_text(encoding='utf-8').replace('@APP_VERSION_FULL@', version), encoding='utf-8')
 PY
 
-# CEF on macOS normally resolves resources from the app bundle Resources directory.
-# Depending on the CEF archive layout, these may live next to the framework, in a
-# sibling Resources directory, or inside the framework itself. Copy whatever is present.
 resource_sources=(
     "$(dirname "$cef_framework")/Resources"
     "$(dirname "$(dirname "$cef_framework")")/Resources"
@@ -149,14 +140,12 @@ for src in "${resource_sources[@]}"; do
     fi
 done
 
-# Some cef-dll-sys layouts keep the pack files in the framework parent rather than Resources/.
 shopt -s nullglob
 for file in "$(dirname "$cef_framework")"/*.pak "$(dirname "$cef_framework")"/*.dat "$(dirname "$cef_framework")"/*.bin; do
     cp -P "$file" "$resources_dir/"
 done
 shopt -u nullglob
 
-# Ad-hoc sign the unsigned bundle so macOS has code signatures for nested CEF content.
 codesign --force --deep --sign - "$app"
 
 cp -R "$app" "$dmg_root/$app_name"

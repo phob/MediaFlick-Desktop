@@ -1,9 +1,3 @@
-//! Playback state transitions for mpv-backed Jellyfin episodes.
-//!
-//! This module owns the fragile episode handoff decisions: pending-to-active,
-//! EOF/mark-watched-next completion, stale stop suppression during next-episode
-//! loads, and stopped-event snapshots sent back to Jellyfin Web.
-
 use std::time::Instant;
 
 use crate::app::logger;
@@ -153,8 +147,6 @@ impl ControllerState {
             .and_then(seconds_to_ticks)
             .unwrap_or_default();
         self.last_state.duration_ticks = pending.launch.runtime_ticks.filter(|ticks| *ticks > 0);
-        // mpv keeps `pause` across files, and its property events keep this
-        // state current; a guess here would hide a pause sent during the load.
         self.last_state.eof_reached = false;
         self.playback_tracks.clear();
         self.playback_diagnostics = Default::default();
@@ -263,7 +255,6 @@ impl ControllerState {
             return;
         }
         if self.phase.pending().is_some() {
-            // The next item is still loading; it has not been watched.
             tracing::debug!(target: "playback", "ignored mark-watched-next while a load is pending");
             return;
         }
@@ -296,9 +287,6 @@ impl ControllerState {
         );
         self.finish_active(Some(StopReason::WatchedNext));
         self.arm_next_playback_handoff(StopReason::WatchedNext);
-        // mpv would otherwise keep playing the file nobody reports any more.
-        // The next item, if the UI finds one, loads into an idle mpv as after
-        // an EOF.
         self.stop_mpv("marked watched");
     }
 

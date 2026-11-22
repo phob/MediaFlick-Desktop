@@ -33,11 +33,6 @@ function requestedOn(request: SeerrRequest) {
   return Number.isNaN(date.valueOf()) ? null : date.toLocaleDateString()
 }
 
-/**
- * One request. The title is not on the request itself — Seerr's rows reference
- * a TMDB id and nothing more — so it is resolved through the media detail query,
- * which is cached per title and shared with every other surface that shows it.
- */
 function RequestCard({ request }: { request: SeerrRequest }) {
   const location = useLocation()
   const [failedPoster, setFailedPoster] = useState<string | null>(null)

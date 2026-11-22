@@ -66,8 +66,6 @@ test("disabled Quick Connect stays visible and password sign-in remains availabl
   expect(api.quickConnectStart).not.toHaveBeenCalled()
 })
 
-// Martin set the floor on 2026-11-15: Desktop signs in to Jellyfin 10.11.0
-// and newer. The native app reports 10.10.7 this way (fixtures/jellyfin/public-info).
 test("a server older than Jellyfin 10.11.0 is refused before any credentials are sent", async () => {
   vi.mocked(api.connect).mockResolvedValue({
     ...serverInfo,

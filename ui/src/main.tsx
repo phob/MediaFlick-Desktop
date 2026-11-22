@@ -11,10 +11,6 @@ import { listenForLibrariesChangedBeforeBridge } from "./lib/library-events"
 import { primeStartupQueries } from "./lib/startup-queries"
 import { createQueryClient } from "./lib/query-client"
 
-// Browser history rather than hash routing: the scheme is registered
-// STANDARD | SECURE | CORS_ENABLED | FETCH_ENABLED (src/shell/cef/mod.rs), so
-// pushState has proper origin semantics, and `handle()` in
-// src/shell/cef/api.rs already serves the shell for unknown non-API paths.
 installAppSurfaceGuard()
 const router = createBrowserRouter([{ path: "*", element: <NavigationHistory><App /></NavigationHistory> }])
 const queryClient = createQueryClient()
