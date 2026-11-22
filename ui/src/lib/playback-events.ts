@@ -6,6 +6,7 @@ import { useViewing } from "./viewing"
 import { accountKey, useStatus } from "./session-queries"
 import { api, type PlayerState } from "./api"
 import type * as Wire from "./api/wire.gen.ts"
+import { clearPendingSeek, reconcilePendingSeekForClient } from "./playback-queries"
 import { invalidateMediaSurfaces, queryKeys } from "./query-client"
 
 declare global {
@@ -43,13 +44,15 @@ export function usePlaybackEventsBridge() {
     window.__mediaFlickDesktopPlaybackStateChanged = (payload) => {
       if (payload.active) { cancel(); stoppedItem = undefined }
 
-      queryClient.setQueryData<PlayerState>(queryKeys.playerState, (previous) => ({
+      const merged = queryClient.setQueryData<PlayerState>(queryKeys.playerState, (previous) => ({
         ...previous,
         ...payload,
       }))
+      reconcilePendingSeekForClient(queryClient, merged)
     }
 
     window.__mediaFlickDesktopPlaybackStopped = (payload) => {
+      clearPendingSeek(queryClient)
       queryClient.setQueryData<PlayerState>(queryKeys.playerState, { ...payload, active: false })
 
       if (!payload?.itemId) invalidateMediaSurfaces(queryClient)

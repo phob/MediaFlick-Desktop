@@ -6,17 +6,18 @@ import { Timeline } from "@/components/player/Timeline"
 import { formatClock } from "@/components/player/format"
 import { Button } from "@/components/ui/button"
 import { imageUrl, TICKS_PER_MS, type AudioNowPlaying, type PlayerState } from "@/lib/api"
-import { usePatchPlayerState, usePlayerCommand } from "@/lib/playback-queries"
+import { usePatchPlayerState, usePlayerCommand, usePlayerSeek } from "@/lib/playback-queries"
 
 export function AudioPlayerBar({ player, audio }: { player: PlayerState; audio: AudioNowPlaying }) {
   const command = usePlayerCommand()
+  const { pendingPositionMs, seekTo } = usePlayerSeek(player)
   const patchPlayerState = usePatchPlayerState()
   const [scrubMs, setScrubMs] = useState<number | null>(null)
   const [volumeDraft, setVolumeDraft] = useState<number | null>(null)
   const current = audio.current
   const loading = audio.phase !== "playing"
   const duration = player.durationMs ?? (current.runtimeTicks ?? 0) / TICKS_PER_MS
-  const position = scrubMs ?? player.positionMs
+  const position = scrubMs ?? pendingPositionMs ?? player.positionMs
   const paused = player.paused
   const volume = volumeDraft ?? player.volume ?? 100
   const muted = Boolean(player.mute)
@@ -30,8 +31,7 @@ export function AudioPlayerBar({ player, audio }: { player: PlayerState; audio: 
   }
   const seek = (value: number) => {
     setScrubMs(null)
-    patchPlayerState({ positionMs: value })
-    command.mutate({ command: "seek", positionMs: value })
+    seekTo(player, value)
   }
   const toggleMute = () => {
     patchPlayerState({ mute: !muted })
