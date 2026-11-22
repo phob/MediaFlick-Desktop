@@ -613,6 +613,7 @@ fn walk_identity(
     let mut seen = HashSet::new();
     let mut pages = 0;
     let mut counted_zero = false;
+    let mut expected_total: Option<i64> = None;
     let truncated = loop {
         cancelled(control, session, scope)?;
         if pages >= MAX_IDENTITY_PAGES {
@@ -621,11 +622,19 @@ fn walk_identity(
         let page = fetch_page(session, scope, |client, user_id| {
             items::fetch_identity_page(client, user_id, offset, IDENTITY_PAGE_SIZE)
         })?;
+        if let Some(total) = page.total_record_count {
+            expected_total = Some(expected_total.map_or(total, |current| current.max(total)));
+        }
         if page.items.is_empty() {
             counted_zero = page.total_record_count == Some(0);
             break false;
         }
-        seen.extend(page.items.iter().map(|item| item.id.clone()));
+        seen.extend(
+            page.items
+                .iter()
+                .map(|item| item.id.clone())
+                .filter(|id| !id.trim().is_empty()),
+        );
         let records = page
             .items
             .iter()
@@ -648,26 +657,56 @@ fn walk_identity(
             break false;
         }
     };
-    let answer = if truncated {
+    let answer = identity_answer(
+        truncated,
+        seen.len(),
+        expected_total,
+        counted_zero,
+        pages,
+        offset,
+    );
+    Ok(IdentityWalk {
+        refreshed,
+        seen,
+        answer,
+    })
+}
+
+fn identity_answer(
+    truncated: bool,
+    seen_count: usize,
+    expected_total: Option<i64>,
+    counted_zero: bool,
+    pages: usize,
+    offset: i64,
+) -> IdentityAnswer {
+    if truncated {
         tracing::warn!(
             target: "library.sync",
             pages,
             offset,
             "stopped the identity sweep at the page cap; skipping the deletion pass"
         );
-        IdentityAnswer::Incomplete
-    } else if !seen.is_empty() {
+        return IdentityAnswer::Incomplete;
+    }
+    if let Some(counted) = expected_total
+        && (seen_count as i64) < counted
+    {
+        tracing::warn!(
+            target: "library.sync",
+            listed = seen_count,
+            counted,
+            "the identity sweep listed fewer titles than the server counted; skipping the deletion pass"
+        );
+        return IdentityAnswer::Incomplete;
+    }
+    if seen_count > 0 {
         IdentityAnswer::Listed
     } else if counted_zero {
         IdentityAnswer::EmptyCountingZero
     } else {
         IdentityAnswer::EmptyNotCountedZero
-    };
-    Ok(IdentityWalk {
-        refreshed,
-        seen,
-        answer,
-    })
+    }
 }
 
 fn advance_watermark_with_ids(
