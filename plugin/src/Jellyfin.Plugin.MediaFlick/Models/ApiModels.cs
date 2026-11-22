@@ -66,4 +66,15 @@ public sealed record CompanionConfigurationUpdate(
     ServiceConfigurationUpdate Seerr,
     bool AutoImportSeerrUsers);
 
+public sealed record ServiceConfigurationResponse(
+    bool Enabled,
+    string BaseUrl,
+    bool HasApiKey);
+
+public sealed record CompanionConfigurationResponse(
+    ServiceConfigurationResponse Sonarr,
+    ServiceConfigurationResponse Radarr,
+    ServiceConfigurationResponse Seerr,
+    bool AutoImportSeerrUsers);
+
 public sealed record ConnectionTestResponse(string Service, bool Connected, string? Version);
