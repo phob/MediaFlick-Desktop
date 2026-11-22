@@ -62,7 +62,7 @@ pub fn bootstrap_progress(library: &Library) -> BootstrapProgress {
 }
 
 fn read_bootstrap_progress(library: &Library) -> rusqlite::Result<BootstrapProgress> {
-    let complete = flag(library, META_BOOTSTRAP_DONE)?;
+    let complete = !first_catalog_download(library)?;
     Ok(BootstrapProgress {
         complete,
         ready: complete || flag(library, META_CATALOG_READY)?,
@@ -76,8 +76,8 @@ pub fn first_catalog_download(library: &Library) -> rusqlite::Result<bool> {
 }
 
 pub fn ownership_available(library: &Library) -> bool {
-    let available = flag(library, META_BOOTSTRAP_DONE)
-        .and_then(|done| Ok(done && !flag(library, META_LATEST_FAILURE)?));
+    let available = first_catalog_download(library)
+        .and_then(|initial| Ok(!initial && !flag(library, META_LATEST_FAILURE)?));
     available.unwrap_or_else(|error| {
         tracing::warn!(target: "library.sync", "could not read catalog ownership state: {error}");
         false
