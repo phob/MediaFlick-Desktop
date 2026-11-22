@@ -189,7 +189,10 @@ pub(super) fn franchises(
         Ok(refresh) => refresh,
         Err(error) => return Err(storage_failure(&error)),
     };
-    if ownership_available && !refresh.initialized {
+    if ownership_available
+        && !refresh.initialized
+        && !crate::collections::scheduler::in_failure_backoff(&refresh, crate::library::now_unix())
+    {
         crate::collections::scheduler::request_run(services.clone());
     }
     let status = if refresh.initialized {

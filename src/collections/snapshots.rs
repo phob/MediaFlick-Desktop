@@ -288,11 +288,26 @@ impl<'a> SnapshotRepository<'a> {
         &self,
         account: &AccountKey,
         attempted_at: i64,
-    ) -> rusqlite::Result<()> {
+    ) -> rusqlite::Result<bool> {
+        const FAILURE: &str = "Results unavailable";
         let mut state = self.franchise_refresh_state(account)?;
+        let status_changed = !state.initialized && state.latest_failure.as_deref() != Some(FAILURE);
         state.last_attempt = Some(attempted_at);
-        state.latest_failure = Some("Results unavailable".to_string());
-        self.save_refresh_state(account, FRANCHISE_REFRESH_KEY, &state)
+        state.latest_failure = Some(FAILURE.to_string());
+        self.save_refresh_state(account, FRANCHISE_REFRESH_KEY, &state)?;
+        Ok(status_changed)
+    }
+
+    pub fn clear_failure_backoff(&self, account: &AccountKey) -> rusqlite::Result<()> {
+        self.library.with_connection(|connection| {
+            connection.execute(
+                "UPDATE collection_refresh_state
+                 SET last_attempt = NULL
+                 WHERE server_id = ?1 AND user_id = ?2 AND latest_failure IS NOT NULL",
+                params![account.server_id(), account.user_id()],
+            )?;
+            Ok(())
+        })
     }
 
     pub fn franchise_resolution_plan(

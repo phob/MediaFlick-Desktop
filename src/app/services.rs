@@ -505,18 +505,22 @@ pub(crate) mod test_support {
 
     impl TestServices {
         pub fn signed_out() -> Self {
-            Self::new(None)
+            Self::new(None, "user")
         }
 
         pub fn signed_in(server_url: &str) -> Self {
-            Self::new(Some(server_url))
+            Self::new(Some(server_url), "user")
+        }
+
+        pub fn signed_in_as(server_url: &str, user_id: &str) -> Self {
+            Self::new(Some(server_url), user_id)
         }
 
         pub fn accounts_path(&self) -> PathBuf {
             self.directory.join("accounts.json")
         }
 
-        fn new(server_url: Option<&str>) -> Self {
+        fn new(server_url: Option<&str>, user_id: &str) -> Self {
             let directory =
                 std::env::temp_dir().join(format!("mediaflick-api-test-{}", random_hex(8)));
             std::fs::create_dir_all(&directory).expect("test directory");
@@ -525,7 +529,7 @@ pub(crate) mod test_support {
                 let mut credentials = library.credentials();
                 credentials.server_url = Some(server_url.to_string());
                 credentials.server_id = Some("server".to_string());
-                credentials.user_id = Some("user".to_string());
+                credentials.user_id = Some(user_id.to_string());
                 credentials.token = Some("token".to_string());
                 library.save_credentials(&credentials).expect("credentials");
             }

@@ -74,7 +74,50 @@ struct ProbeState {
     checked_at: Option<Instant>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct CollectionCapabilities {
+    readiness: ProviderReadiness,
+    franchises: bool,
+    reachable: bool,
+}
+
+impl CollectionCapabilities {
+    const fn any_provider(&self) -> bool {
+        self.readiness.tmdb || self.readiness.mdblist || self.franchises
+    }
+
+    const fn improved_over(&self, previous: &Self) -> bool {
+        if !self.reachable || !self.any_provider() {
+            return false;
+        }
+        !previous.reachable
+            || (self.readiness.tmdb && !previous.readiness.tmdb)
+            || (self.readiness.mdblist && !previous.readiness.mdblist)
+            || (self.franchises && !previous.franchises)
+    }
+}
+
 impl ProbeState {
+    fn collection_capabilities(&self) -> CollectionCapabilities {
+        let Some(info) = self.info.as_ref() else {
+            return CollectionCapabilities::default();
+        };
+        let collection_experience = info.supports("collection-experience-v1");
+        let readiness = if collection_experience {
+            ProviderReadiness {
+                tmdb: info.services.get("tmdb").copied().unwrap_or(false),
+                mdblist: info.services.get("mdblist").copied().unwrap_or(false),
+            }
+        } else {
+            ProviderReadiness::default()
+        };
+        CollectionCapabilities {
+            readiness,
+            franchises: collection_experience && info.supports(FRANCHISE_MEMBERSHIPS_CAPABILITY),
+            reachable: self.error.is_none() && info.is_compatible(),
+        }
+    }
+
     fn reusable(&self) -> bool {
         if !self.checked {
             return false;
@@ -510,9 +553,21 @@ impl CompanionSession {
             || ApiError::AccountChanged,
             |live| {
                 let (state, answer) = build(live)?;
-                let previous = self.cached_collection_readiness();
+                let previous = self.read().collection_capabilities();
+                let next = state.collection_capabilities();
                 self.replace(state);
-                Ok((previous != self.cached_collection_readiness(), answer))
+                let improved = next.improved_over(&previous);
+                if improved
+                    && let Err(error) =
+                        crate::collections::snapshots::SnapshotRepository::new(&self.library)
+                            .clear_failure_backoff(live.account())
+                {
+                    tracing::warn!(
+                        target: "companion",
+                        "could not clear collection refresh backoff after probe update: {error}"
+                    );
+                }
+                Ok((previous.readiness != next.readiness || improved, answer))
             },
         )?;
         if changed {

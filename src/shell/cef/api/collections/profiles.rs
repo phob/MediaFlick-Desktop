@@ -127,9 +127,25 @@ pub(super) fn settings(
     services: &Arc<Services>,
     force_probe: bool,
 ) -> Result<CollectionSettings, ApiResponse> {
-    let account = active_account(services)?;
+    let scope = active_scope(services)?;
+    let account = scope.account().clone();
     let readiness = services.companion.collection_readiness(force_probe);
     let repository = SnapshotRepository::new(&services.library);
+    if force_probe && (readiness.tmdb || readiness.mdblist) {
+        let _ = services.session.commit_if_current(
+            &scope,
+            || (),
+            |live| {
+                if let Err(error) = repository.clear_failure_backoff(live.account()) {
+                    tracing::warn!(
+                        target: "collections",
+                        "could not clear collection refresh backoff: {error}"
+                    );
+                }
+                Ok(())
+            },
+        );
+    }
     let has_results = repository.has_account_results(&account).unwrap_or(false);
     let effective_mode = services
         .collections
@@ -190,12 +206,20 @@ pub(super) fn patch_settings(
     let include_unreleased = patch.include_unreleased;
     let mutation = services
         .session
-        .commit_if_current(&scope, stale_account_response, |_live| {
+        .commit_if_current(&scope, stale_account_response, |live| {
             if updates_mode {
                 if let Err(error) = services.collections.set_mode(&account, mode) {
                     return Ok(Some(configuration_failure(&error)));
                 }
                 if mode == CollectionMode::MediaFlick {
+                    if let Err(error) = SnapshotRepository::new(&services.library)
+                        .clear_failure_backoff(live.account())
+                    {
+                        tracing::warn!(
+                            target: "collections",
+                            "could not clear collection refresh backoff: {error}"
+                        );
+                    }
                     crate::collections::scheduler::request_run(services.clone());
                 }
             }
@@ -492,7 +516,7 @@ fn commit_result_profile(
                 &scope,
                 || (),
                 |_live| {
-                    crate::collections::scheduler::save_failed_refresh(
+                    let _ = crate::collections::scheduler::save_failed_refresh(
                         &repository,
                         account,
                         &profile.id,
