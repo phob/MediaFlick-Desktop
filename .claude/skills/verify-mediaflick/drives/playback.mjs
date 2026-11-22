@@ -144,6 +144,16 @@ async function userData(ctx, id) {
 
 const logSince = (ctx, marker) => ctx.appLog().slice(marker)
 
+function rapidKeys(ctx, presses) {
+  const dispatched = []
+  for (const [name, keyCode] of presses) {
+    const event = { key: name, code: name, windowsVirtualKeyCode: keyCode, modifiers: 0 }
+    dispatched.push(ctx.app.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...event }))
+    dispatched.push(ctx.app.send("Input.dispatchKeyEvent", { type: "keyUp", ...event }))
+  }
+  return Promise.all(dispatched)
+}
+
 export default async function playback(ctx) {
   await ctx.signIn({})
   await ctx.until(async () => {
@@ -186,29 +196,52 @@ export default async function playback(ctx) {
   displayCapture(ctx, "02-playing")
   if (integrated) report.reveal = await checkBarReveal(ctx)
 
+  const barPosition = () => ctx.app.evaluate(`Number(document.querySelector('[role="slider"][aria-label="Playback position"]')?.getAttribute("aria-valuenow") ?? NaN)`)
   const beforeRapid = (await ctx.player()).positionMs
-  for (let press = 0; press < 6; press++) await ctx.key("ArrowRight", { code: "ArrowRight", keyCode: 39 })
-  await ctx.sleep(3000)
-  report.rapidSeek = { presses: 6, expectedS: 180, movedS: ((await ctx.player()).positionMs - beforeRapid) / 1000 }
-  ctx.step(`six quick presses of ArrowRight moved ${report.rapidSeek.movedS.toFixed(1)} s (expected 180 s)`)
+  const rapidStartedAt = Date.now()
+  await rapidKeys(ctx, Array.from({ length: 6 }, () => ["ArrowRight", 39]))
+  await ctx.app.evaluate("new Promise((resolve) => requestAnimationFrame(() => resolve()))")
+  const barAfterRapid = await barPosition()
+  const rapidExpectedMs = beforeRapid + 180_000
+  ctx.check(Math.abs(barAfterRapid - rapidExpectedMs) < 5000, `six quick presses of ArrowRight moved the player bar to ${Math.round(barAfterRapid / 1000)} s (expected ${Math.round(rapidExpectedMs / 1000)} s)`)
+  const afterRapid = await ctx.until(async () => {
+    const state = await ctx.player()
+    return state.positionMs >= rapidExpectedMs - 5000 ? state : null
+  }, "six quick ArrowRight presses to land near +180 s", 15000)
+  const rapidElapsedS = (Date.now() - rapidStartedAt) / 1000
+  const rapidMovedS = (afterRapid.positionMs - beforeRapid) / 1000
+  ctx.check(rapidMovedS >= 175 && rapidMovedS <= 185 + rapidElapsedS, `six quick presses of ArrowRight moved ${rapidMovedS.toFixed(1)} s (expected 180 s)`)
+  report.rapidSeek = { presses: 6, expectedS: 180, movedS: rapidMovedS, barS: barAfterRapid / 1000 }
+
+  const beforeMixed = (await ctx.player()).positionMs
+  const mixedStartedAt = Date.now()
+  await rapidKeys(ctx, [
+    ["ArrowRight", 39],
+    ["ArrowRight", 39],
+    ["ArrowRight", 39],
+    ["ArrowLeft", 37],
+    ["ArrowLeft", 37],
+  ])
+  const mixedExpectedMs = beforeMixed + 70_000
+  const afterMixed = await ctx.until(async () => {
+    const state = await ctx.player()
+    return Math.abs(state.positionMs - mixedExpectedMs) < 6000 ? state : null
+  }, "mixed rapid ArrowRight and ArrowLeft presses to land near +70 s", 15000)
+  const mixedElapsedS = (Date.now() - mixedStartedAt) / 1000
+  const mixedMovedS = (afterMixed.positionMs - beforeMixed) / 1000
+  ctx.check(mixedMovedS >= 64 && mixedMovedS <= 76 + mixedElapsedS, `mixed rapid seeks (3× ArrowRight, 2× ArrowLeft) moved ${mixedMovedS.toFixed(1)} s (expected 70 s)`)
+  report.mixedSeek = { forward: 3, back: 2, expectedS: 70, movedS: mixedMovedS }
 
   const target = report.play.durationMs * MIN_RESUME
-  const barPosition = () => ctx.app.evaluate(`Number(document.querySelector('[role="slider"][aria-label="Playback position"]')?.getAttribute("aria-valuenow") ?? NaN)`)
-  let presses = 0
-  let lost = 0
-  while ((await ctx.player()).positionMs < target) {
-    const before = (await ctx.player()).positionMs
-    await ctx.key("ArrowRight", { code: "ArrowRight", keyCode: 39 })
-    presses++
-    try {
-      await ctx.until(async () => (await ctx.player()).positionMs >= before + 25000 && (await barPosition()) >= before + 25000, "a 30-second seek on the bar", 5000, { quiet: true })
-    } catch {
-      lost++
-    }
-    if (presses > 80) throw new Error("seeking did not reach the resume minimum")
-  }
-  report.spacedSeek = { presses, lost }
-  ctx.step(`${presses} spaced ArrowRight presses (${lost} without effect) reached ${Math.round((await ctx.player()).positionMs / 1000)} s`)
+  const beforeResumeBurst = (await ctx.player()).positionMs
+  const remainingPresses = Math.max(0, Math.ceil((target + 15_000 - beforeResumeBurst) / 30_000))
+  await rapidKeys(ctx, Array.from({ length: remainingPresses }, () => ["ArrowRight", 39]))
+  const afterResumeBurst = await ctx.until(async () => {
+    const state = await ctx.player()
+    return state.positionMs >= target && (await barPosition()) >= target ? state : null
+  }, "rapid ArrowRight presses to reach the resume minimum", 20000)
+  report.resumeBurst = { presses: remainingPresses, positionS: afterResumeBurst.positionMs / 1000, targetS: target / 1000 }
+  ctx.step(`${remainingPresses} rapid ArrowRight presses reached ${Math.round(afterResumeBurst.positionMs / 1000)} s (resume minimum ${Math.round(target / 1000)} s)`)
   ctx.check(Math.abs((await ctx.mpv("time-pos")) * 1000 - (await ctx.player()).positionMs) < 3000, "mpv's time-pos matches the app's position after seeking")
 
   await ctx.key("k", { code: "KeyK", keyCode: 75 })

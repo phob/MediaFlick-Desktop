@@ -55,8 +55,10 @@ import {
   usePlaybackNeighbors,
   usePlayNeighbor,
   usePatchPlayerState,
+  usePendingSeekPosition,
   usePlayerCommand,
   usePlayerState,
+  useSeekCommands,
 } from "@/lib/playback-queries"
 import { useSettings } from "@/lib/settings-queries"
 import { SUBTITLES_OFF, TrackMenu, TrackSubmenu, type TrackChoices } from "@/components/player/TrackMenu"
@@ -137,6 +139,8 @@ function ActivePlayerBar({
   onMenuOpenChange?: (open: boolean) => void
 }) {
   const command = usePlayerCommand()
+  const pendingPositionMs = usePendingSeekPosition(player)
+  const { seekTo, seekBy } = useSeekCommands()
   const patchPlayerState = usePatchPlayerState()
   const neighborPlayback = usePlayNeighbor()
   const qualityChange = useChangePlaybackQuality()
@@ -168,7 +172,7 @@ function ActivePlayerBar({
   )
 
   const duration = player.durationMs ?? 0
-  const position = scrubMs ?? player.positionMs ?? 0
+  const position = scrubMs ?? pendingPositionMs ?? player.positionMs ?? 0
   const paused = Boolean(player.paused)
   const volume = volumeDraft ?? player.volume ?? 100
   const muted = Boolean(player.mute)
@@ -208,15 +212,13 @@ function ActivePlayerBar({
   }
 
   const seek = (value: number) => {
-    const target = Math.max(0, Math.min(duration || value, value))
     setScrubMs(null)
-    patchPlayerState({ positionMs: target })
-    send({ command: "seek", positionMs: target })
+    seekTo(player, value)
   }
 
   const relativeSeek = (deltaMs: number) => {
-    const target = Math.max(0, Math.min(duration || position + deltaMs, position + deltaMs))
-    seek(target)
+    setScrubMs(null)
+    seekBy(player, deltaMs)
     showAction(`${deltaMs < 0 ? "Back" : "Forward"} ${Math.abs(deltaMs) / 1000} seconds`)
   }
 

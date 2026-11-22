@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { useEffect, useEffectEvent } from "react"
 import type { PlayerCommand, PlayerState } from "./api"
-import { usePatchPlayerState, usePlayerCommand, usePlayNeighbor } from "./playback-queries"
+import { usePlayerCommand, usePlayNeighbor, useSeekCommands } from "./playback-queries"
 import { queryKeys } from "./query-client"
 
 const AUDIO_SEEK_BACK_MS = 10_000
@@ -10,7 +10,7 @@ const AUDIO_SEEK_FORWARD_MS = 30_000
 export function usePlaybackKeys() {
   const queryClient = useQueryClient()
   const command = usePlayerCommand()
-  const patchPlayerState = usePatchPlayerState()
+  const { seekBy } = useSeekCommands()
   const neighbor = usePlayNeighbor()
 
   const handleKeyDown = useEffectEvent((event: KeyboardEvent) => {
@@ -42,20 +42,19 @@ export function usePlaybackKeys() {
       }
     }
     if (!audio || !keysAreFree(event.target)) return
-    const seekBy = (delta: number) => {
-      const positionMs = Math.max(0, Math.min(player.durationMs ?? Infinity, player.positionMs + delta))
-      patchPlayerState({ positionMs })
-      send({ command: "seek", positionMs })
+    const triggerSeek = (delta: number) => {
+      event.preventDefault()
+      seekBy(player, delta)
     }
     switch (event.key) {
       case " ":
         send({ command: "toggle-pause" })
         return
       case "ArrowLeft":
-        seekBy(-AUDIO_SEEK_BACK_MS)
+        triggerSeek(-AUDIO_SEEK_BACK_MS)
         return
       case "ArrowRight":
-        seekBy(AUDIO_SEEK_FORWARD_MS)
+        triggerSeek(AUDIO_SEEK_FORWARD_MS)
         return
     }
   })
