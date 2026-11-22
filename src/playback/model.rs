@@ -538,8 +538,8 @@ mod tests {
         }
     }
 
-    /// A finished title is marked watched and plays the next one
-    /// (docs/state-machines.md); a stop the user caused must do neither.
+    /// A finished title is marked watched and plays the next one; a stop the
+    /// user caused must do neither.
     #[test]
     fn only_reaching_the_end_counts_as_finishing_the_title() {
         for reason in [StopReason::Eof, StopReason::WatchedNext] {
