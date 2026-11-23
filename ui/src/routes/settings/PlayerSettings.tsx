@@ -68,8 +68,7 @@ export default function PlayerSettings() {
     onSuccess: (saved, submitted) => {
       acceptSaved(saved.client.player, submitted)
       const previousBackend = settings?.client.player.playerBackend
-      const needsRestart = submitted.playerBackend !== previousBackend &&
-        (submitted.playerBackend === "libmpv" || previousBackend === "libmpv")
+      const needsRestart = saved.restartRequired.playerBackend && submitted.playerBackend !== previousBackend
       saveSettings(
         cache,
         saved,
@@ -129,11 +128,12 @@ export default function PlayerSettings() {
   const dirty = !same(draft, saved)
   const comfort = draft.comfort ?? playerDefaults.comfort
   const keysError = draft.playerBackend === "libmpv" ? shortcutError(comfort, draft.markWatchedNext) : null
-  const validNumbers = COMFORT_NUMBERS.every(([key, , min, max]) => isSettingsNumberValid(comfort[key], min, max))
+  const validNumbers = draft.playerBackend !== "libmpv"
+    || COMFORT_NUMBERS.every(([key, , min, max]) => isSettingsNumberValid(comfort[key], min, max))
   const backendChanged = draft.playerBackend !== saved.playerBackend
   const backendChangeNeedsRestart = backendChanged &&
     (draft.playerBackend === "libmpv" || saved.playerBackend === "libmpv")
-  const restartMessage = backendChangeNeedsRestart
+  const restartMessage = settings.restartRequired.playerBackend || backendChangeNeedsRestart
     ? draft.playerBackend === "libmpv"
       ? "Restart MediaFlick to enable the built-in player."
       : "Restart MediaFlick to switch player backends."

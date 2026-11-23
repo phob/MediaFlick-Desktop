@@ -88,8 +88,8 @@ impl ReaderStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    pub fn take_recovery_notice(&self) -> Option<RecoveryNotice> {
-        self.lock().recovery.take()
+    pub fn recovery_notice(&self) -> Option<RecoveryNotice> {
+        self.lock().recovery.clone()
     }
 
     pub fn position(&self, key: &AccountKey, item_id: &str) -> Option<SavedPosition> {

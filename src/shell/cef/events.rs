@@ -685,13 +685,17 @@ fn rewarm_external_player_after_setup(state: &BrowserState) {
 }
 
 fn apply_preference_change(state: &BrowserState, change: &SettingsChange) {
-    let (playback, browsers) = match state.lock() {
+    let (playback, browsers, plan) = match state.lock() {
         Ok(mut state) => {
-            apply_settings_snapshot_preserving_live_window(
+            let state = &mut *state;
+            let Some(plan) = apply_ordered_settings_change(
+                &mut state.preferences_revision,
                 &mut state.settings,
-                change.settings.clone(),
-            );
-            (state.playback.clone(), state.browsers.clone())
+                change,
+            ) else {
+                return;
+            };
+            (state.playback.clone(), state.browsers.clone(), plan)
         }
         Err(error) => {
             tracing::warn!(target: "config", "failed to apply settings to browser state: {error}");
@@ -699,7 +703,7 @@ fn apply_preference_change(state: &BrowserState, change: &SettingsChange) {
         }
     };
 
-    if change.plan.rebuild_player {
+    if plan.rebuild_player {
         tracing::info!(
             target: "playback",
             backend = change.settings.effective_backend().as_str(),
@@ -707,16 +711,33 @@ fn apply_preference_change(state: &BrowserState, change: &SettingsChange) {
         );
         playback.replace(|events| build_backend(&change.settings, events));
         warm_configured_player(&playback, &change.settings);
-    } else if change.plan.update_player_preferences {
+    } else if plan.update_player_preferences {
         playback.configure(change.settings.player_preferences());
     }
-    if change.plan.update_shell_css {
+    if plan.update_shell_css {
         for browser in browsers {
             if let Some(frame) = browser.main_frame() {
                 apply_scrollbar_settings_to_frame(&frame, state);
             }
         }
     }
+}
+
+fn apply_ordered_settings_change(
+    current_revision: &mut u64,
+    current_settings: &mut AppSettings,
+    change: &SettingsChange,
+) -> Option<crate::preferences::SettingsApplyPlan> {
+    if change.revision <= *current_revision {
+        return None;
+    }
+    let previous = current_settings.clone();
+    *current_revision = change.revision;
+    apply_settings_snapshot_preserving_live_window(current_settings, change.settings.clone());
+    Some(crate::preferences::SettingsApplyPlan::between(
+        &previous,
+        &change.settings,
+    ))
 }
 
 fn apply_settings_snapshot_preserving_live_window(
@@ -878,6 +899,37 @@ mod tests {
         apply_settings_snapshot_preserving_live_window(&mut live, stale_preference_snapshot);
 
         assert_eq!(live.webui_window.size(), (1536, 864));
+        assert_eq!(live.appearance.accent, AppearanceAccent::Violet);
+    }
+
+    #[test]
+    fn out_of_order_preference_notifications_are_ignored_and_newer_changes_recompute_plan() {
+        let mut revision = 0;
+        let mut live = AppSettings::default();
+
+        let mut rev1_settings = live.clone();
+        rev1_settings.show_scrollbars = true;
+        let rev1 = SettingsChange {
+            revision: 1,
+            settings: rev1_settings.clone(),
+        };
+
+        let mut rev2_settings = rev1_settings;
+        rev2_settings.appearance.accent = AppearanceAccent::Violet;
+        let rev2 = SettingsChange {
+            revision: 2,
+            settings: rev2_settings,
+        };
+
+        let plan2 =
+            apply_ordered_settings_change(&mut revision, &mut live, &rev2).expect("rev 2 applies");
+        assert!(plan2.update_shell_css);
+        assert_eq!(revision, 2);
+        assert!(live.show_scrollbars);
+        assert_eq!(live.appearance.accent, AppearanceAccent::Violet);
+
+        assert!(apply_ordered_settings_change(&mut revision, &mut live, &rev1).is_none());
+        assert_eq!(revision, 2);
         assert_eq!(live.appearance.accent, AppearanceAccent::Violet);
     }
 }

@@ -35,3 +35,8 @@ export type PlayerSettingsPatch = {
   defaultFullscreen: FullscreenBehavior | null,
   markWatchedNext: string | null,
 };
+
+export type RestartRequired = {
+  logLevel: boolean,
+  playerBackend: boolean,
+};

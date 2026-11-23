@@ -543,7 +543,8 @@ pub(crate) mod test_support {
                 AccountConfigurationService::open(directory.join("accounts.json"))
                     .expect("accounts"),
             );
-            let preferences = Arc::new(PreferencesService::new(
+            let preferences = Arc::new(PreferencesService::new_in(
+                directory.join("settings.json"),
                 AppSettings::default(),
                 accounts.clone(),
                 session.account_key(),

@@ -7,10 +7,19 @@ export function NavigationHistory({ children }: { children: ReactNode }) {
   const location = useLocation()
   const action = useNavigationType()
   const navigate = useNavigate()
-  const history = useRef({ entries: [{ key: location.key, path: createPath(location) }], index: 0 })
+  const history = useRef<{
+    entries: Array<{ key: string; path: string }>
+    index: number
+    pendingTargetKey: string | null
+  }>({
+    entries: [{ key: location.key, path: createPath(location) }],
+    index: 0,
+    pendingTargetKey: null,
+  })
 
   useLayoutEffect(() => {
     const state = history.current
+    state.pendingTargetKey = null
     if (state.entries[state.index]?.key === location.key) return
     const entry = { key: location.key, path: createPath(location) }
     const index = state.entries.findIndex((candidate) => candidate.key === entry.key)
@@ -26,10 +35,13 @@ export function NavigationHistory({ children }: { children: ReactNode }) {
   }, [location, action])
 
   const returnTo = useCallback((path: string) => {
-    const { entries, index } = history.current
-    for (let target = index - 1; target >= 0; target -= 1) {
-      if (entries[target]?.path === path) {
-        void navigate(target - index)
+    const state = history.current
+    for (let target = state.index - 1; target >= 0; target -= 1) {
+      const candidate = state.entries[target]
+      if (candidate?.path === path) {
+        if (state.pendingTargetKey !== null) return true
+        state.pendingTargetKey = candidate.key
+        void navigate(target - state.index)
         return true
       }
     }

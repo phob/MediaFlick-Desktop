@@ -8,12 +8,13 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { useSourceDraft } from "@/hooks/use-source-draft"
-import { api, homeSettingsWrite, type HomeConfiguration } from "@/lib/api"
+import { ApiError, api, homeSettingsWrite, type HomeConfiguration } from "@/lib/api"
 import { toastFailure } from "@/lib/failure-toast"
 import { useHomeSettings } from "@/lib/home-queries"
 import { accountKey, useStatus } from "@/lib/session-queries"
 import { queryKeys } from "@/lib/query-client"
 import { same } from "./helpers"
+import { homeElementKey, reconcileHomeDraft } from "./home-draft"
 import { PageTitle, Section, SettingsError, SettingsLoading, SettingsRow, SignInRequired } from "./shared"
 
 type HomeElement = HomeConfiguration["elements"][number]
@@ -37,8 +38,6 @@ const WATCHING_OPTIONS: ReadonlyArray<[WatchingOption, string]> = [
   ["nextUp", "Next Up"],
   ["combine", "Combine shelves"],
 ]
-
-const homeElementKey = (element: HomeElement) => `${element.kind}:${element.id}`
 
 const isWatching = (element: HomeElement) => element.kind === "builtIn" && element.id === "watching"
 
@@ -92,7 +91,11 @@ export default function HomeSettings() {
   const cache = useQueryClient()
   const status = useStatus()
   const query = useHomeSettings(Boolean(status.data?.authenticated))
-  const [draft, setDraft, updateDraft, acceptSaved] = useSourceDraft(query.data?.settings, accountKey(status.data))
+  const [draft, setDraft, updateDraft, acceptSaved] = useSourceDraft(
+    query.data?.settings,
+    accountKey(status.data),
+    reconcileHomeDraft,
+  )
   const [dragging, setDragging] = useState<HomeDrag | null>(null)
   const dragRef = useRef<HomeDrag | null>(null)
   const visible = useMemo(() => draft?.elements.filter((element) => element.available) ?? [], [draft])
@@ -147,8 +150,21 @@ export default function HomeSettings() {
     }
   }, [dragging?.key, updateDraft, visible])
   const mutation = useMutation({
-    mutationFn: (value: HomeConfiguration) => api.saveHomeSettings(homeSettingsWrite(value)),
-    onSuccess: (saved, submitted) => {
+    mutationFn: async ({ value, baseline }: { value: HomeConfiguration; baseline: HomeConfiguration }) => {
+      try {
+        const saved = await api.saveHomeSettings(homeSettingsWrite(value))
+        return { saved, submitted: value }
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 409 || error.accountChanged) throw error
+        const latest = await api.homeSettings()
+        cache.setQueryData(queryKeys.homeSettings, latest)
+        const reconciled = reconcileHomeDraft(baseline, value, latest.settings)
+        if (!reconciled) throw error
+        const saved = await api.saveHomeSettings(homeSettingsWrite(reconciled))
+        return { saved, submitted: reconciled }
+      }
+    },
+    onSuccess: ({ saved, submitted }) => {
       acceptSaved(saved.settings, submitted)
       cache.setQueryData(queryKeys.homeSettings, saved)
       void cache.invalidateQueries({ queryKey: queryKeys.home })
@@ -156,7 +172,12 @@ export default function HomeSettings() {
       cache.removeQueries({ queryKey: queryKeys.billboard })
       toast.success("Home settings saved")
     },
-    onError: (error: Error) => toastFailure(error),
+    onError: (error: Error) => {
+      if (error instanceof ApiError && error.status === 409 && !error.accountChanged) {
+        void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
+      }
+      toastFailure(error)
+    },
   })
   if (status.isPending) return <SettingsLoading />
   if (!status.data?.authenticated) return <SignInRequired name="Home" />
@@ -325,7 +346,7 @@ export default function HomeSettings() {
       <SaveBar
         dirty={!same(draft, query.data.settings)}
         saving={mutation.isPending}
-        onSave={() => mutation.mutate(draft)}
+        onSave={() => mutation.mutate({ value: draft, baseline: query.data.settings })}
         onDiscard={() => setDraft(query.data.settings)}
         onReset={() => setDraft(query.data.defaults)}
       />

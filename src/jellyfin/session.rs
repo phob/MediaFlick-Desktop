@@ -101,6 +101,7 @@ pub struct Session {
 pub struct SessionScope {
     generation: u64,
     account: AccountKey,
+    server_url: String,
     client: JellyfinClient,
     user_id: String,
 }
@@ -125,6 +126,10 @@ impl SessionScope {
 
     pub fn user_id(&self) -> &str {
         &self.user_id
+    }
+
+    pub fn ui_account_key(&self) -> String {
+        format!("{}:{}", self.server_url, self.user_id)
     }
 
     pub fn fetch<T>(
@@ -767,6 +772,7 @@ impl SessionState {
         Ok(SessionScope {
             generation: self.generation,
             account: parts.account,
+            server_url: parts.server_url.to_string(),
             client: JellyfinClient::new(parts.server_url, &self.device_id, Some(parts.token)),
             user_id: parts.user_id.to_string(),
         })

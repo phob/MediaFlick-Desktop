@@ -1,3 +1,4 @@
+import { ApiError } from "../../lib/api/client.ts"
 import type {
   CollectionProfile,
   CollectionProfileDraft,
@@ -27,6 +28,7 @@ export type CollectionSaveActions = {
   patchSettings: (patch: CollectionSettingsPatch) => Promise<CollectionSettings>
   fetchSettings: () => Promise<CollectionSettings>
   fetchProfiles: () => Promise<CollectionProfilesIndex>
+  isCurrentAccount?: () => boolean
 }
 
 type CollectionSaveProgress = {
@@ -185,6 +187,12 @@ export function upsertProfileInIndex(
   }
 }
 
+function assertCurrentAccount(actions: CollectionSaveActions) {
+  if (actions.isCurrentAccount && !actions.isCurrentAccount()) {
+    throw new ApiError("The signed-in account changed. Save these settings again.", 409, { accountChanged: true })
+  }
+}
+
 export async function executeCollectionSave(
   value: CollectionSettingsDraft,
   baseline: CollectionSettingsDraft,
@@ -201,23 +209,29 @@ export async function executeCollectionSave(
 
   try {
     if (plan.reorderIds) {
+      assertCurrentAccount(actions)
       nextProfiles = await actions.reorderProfiles(plan.reorderIds)
       committedReorder = true
     }
     for (const id of plan.deletions) {
+      assertCurrentAccount(actions)
       await actions.deleteProfile(id)
       committedDeletions.push(id)
       if (nextProfiles) nextProfiles = removeProfilesFromIndex(nextProfiles, [id])
     }
     if (plan.settingsPatch) {
+      assertCurrentAccount(actions)
       nextSettings = await actions.patchSettings(plan.settingsPatch)
       committedSettings = true
     } else if (committedDeletions.length) {
+      assertCurrentAccount(actions)
       nextSettings = await actions.fetchSettings()
     }
     if (committedDeletions.length) {
+      assertCurrentAccount(actions)
       nextProfiles = await actions.fetchProfiles()
     }
+    assertCurrentAccount(actions)
     return {
       ok: true,
       settings: nextSettings,

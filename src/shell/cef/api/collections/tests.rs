@@ -628,7 +628,7 @@ fn already_initialized_franchise_failure_does_not_emit_collections_changed() {
         "incremental franchise failure must also back off"
     );
 
-    profiles::settings(&fixture.services, true).expect("explicit reprobe");
+    profiles::settings(&fixture.services, None, true).expect("explicit reprobe");
     server.update(|behavior| {
         behavior.franchises_status = "200 OK";
         behavior.franchises_body = json!({
@@ -707,7 +707,8 @@ fn editing_a_profile_deleted_during_refresh_returns_404_without_resurrection_or_
         .recv_timeout(Duration::from_secs(5))
         .expect("edit refresh must reach companion");
 
-    profiles::delete(&fixture.services, &existing.id).expect("delete while edit is in flight");
+    profiles::delete(&fixture.services, None, &existing.id)
+        .expect("delete while edit is in flight");
     let collections_path = fixture.collections_path();
     let backup = backup_path(&collections_path);
     let after_delete = std::fs::read(&collections_path).expect("collections after delete");
@@ -763,7 +764,8 @@ fn refreshing_a_profile_deleted_during_refresh_returns_404_without_orphan_cache(
         .recv_timeout(Duration::from_secs(5))
         .expect("manual refresh must reach companion");
 
-    profiles::delete(&fixture.services, &existing.id).expect("delete while refresh is in flight");
+    profiles::delete(&fixture.services, None, &existing.id)
+        .expect("delete while refresh is in flight");
     release_tx.send(()).expect("release companion response");
 
     let response = refresh_thread
@@ -794,7 +796,7 @@ fn creating_a_new_profile_still_inserts_into_collections() {
     });
     let fixture = TestServices::signed_in_as(&server.url, "user-create");
     let (account, existing) = seed_library_and_profile(&fixture);
-    profiles::delete(&fixture.services, &existing.id).expect("clear seed profile");
+    profiles::delete(&fixture.services, None, &existing.id).expect("clear seed profile");
     fixture.services.companion.probe(true).expect("probe");
 
     let request = draft_request(
@@ -845,7 +847,8 @@ fn failing_refresh_for_profile_deleted_in_flight_leaves_no_orphan_refresh_state(
         .recv_timeout(Duration::from_secs(5))
         .expect("edit refresh must reach companion");
 
-    profiles::delete(&fixture.services, &existing.id).expect("delete while refresh is failing");
+    profiles::delete(&fixture.services, None, &existing.id)
+        .expect("delete while refresh is failing");
     release_tx.send(()).expect("release companion response");
 
     let response = edit_thread.join().expect("edit thread");

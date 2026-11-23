@@ -48,6 +48,7 @@ import {
   type CollectionProfilesIndex,
   type CollectionTemplate,
   type CollectionTemplates,
+  type Status,
 } from "@/lib/api"
 import { toastFailure } from "@/lib/failure-toast"
 import { jsonString, sameJson } from "@/lib/json"
@@ -344,8 +345,10 @@ function CollectionWizard({
   })
   const settings = useCollectionSettings()
   const saveProfile = useMutation({
-    mutationFn: ({ value }: { value: CollectionProfileDraft; account: string }) =>
-      profileId ? api.collections.updateProfile(profileId, value) : api.collections.createProfile(value),
+    mutationFn: ({ value, account: submittedAccount }: { value: CollectionProfileDraft; account: string }) =>
+      profileId
+        ? api.collections.updateProfile(profileId, value, submittedAccount)
+        : api.collections.createProfile(value, submittedAccount),
     onSuccess: (result, { account: submittedAccount }) => {
       const committedProfile = "profile" in result ? result.profile : result
       cache.setQueryData<CollectionProfilesIndex>(
@@ -758,16 +761,17 @@ export default function CollectionSettingsPage() {
   )
   const [draft, setDraft, , acceptSaved] = useSourceDraft(savedDraft, account, reconcileCollectionDraft)
   const save = useMutation({
-    mutationFn: ({ value, baseline }: {
+    mutationFn: ({ value, baseline, account: submittedAccount }: {
       value: CollectionSettingsDraft
       baseline: CollectionSettingsDraft
       account: string
     }) => executeCollectionSave(value, baseline, settings.data, profiles.data, {
-      reorderProfiles: (profileIds) => api.collections.reorderProfiles(profileIds),
-      deleteProfile: (id) => api.collections.deleteProfile(id),
-      patchSettings: (patch) => api.collections.patchSettings(patch),
-      fetchSettings: () => api.collections.settings(),
-      fetchProfiles: () => api.collections.profiles(),
+      reorderProfiles: (profileIds) => api.collections.reorderProfiles(profileIds, submittedAccount),
+      deleteProfile: (id) => api.collections.deleteProfile(id, submittedAccount),
+      patchSettings: (patch) => api.collections.patchSettings(patch, submittedAccount),
+      fetchSettings: () => api.collections.settings(false, submittedAccount),
+      fetchProfiles: () => api.collections.profiles(undefined, submittedAccount),
+      isCurrentAccount: () => accountKey(cache.getQueryData<Status>(queryKeys.status)) === submittedAccount,
     }),
     onSuccess: (result, { value: submitted, account: submittedAccount }) => {
       if (!result.ok) {

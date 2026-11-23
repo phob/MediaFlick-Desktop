@@ -119,12 +119,12 @@ impl CollectionConfigurationService {
         }
     }
 
-    pub fn take_recovery_notice(&self) -> Option<RecoveryNotice> {
-        let mut state = self
+    pub fn recovery_notice(&self) -> Option<RecoveryNotice> {
+        let state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        state.recovery.take()
+        state.recovery.clone()
     }
 
     pub fn account(&self, key: &AccountKey) -> CollectionAccountSettings {

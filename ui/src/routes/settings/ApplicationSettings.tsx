@@ -211,7 +211,7 @@ export default function ApplicationSettings() {
         onSave={() => mutation.mutate(draft)}
         onDiscard={() => setDraft(settings.client.application)}
         onReset={() => setDraft(settings.defaults.client.application)}
-        restartMessage={draft.logLevel !== settings.client.application.logLevel
+        restartMessage={(settings.restartRequired.logLevel || draft.logLevel !== settings.client.application.logLevel)
           ? "Log-level changes apply after restarting MediaFlick."
           : undefined}
       />

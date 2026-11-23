@@ -119,3 +119,36 @@ test("new visits to the same URL start at the top", async () => {
   await act(() => router.navigate("/library?kind=Movie&sort=name"))
   expect(viewport.scrollTop).toBe(0)
 })
+
+test("double-clicking BackLink before POP commits pops only one entry", async () => {
+  const { router } = setup("/library?kind=Series")
+  fireEvent.click(screen.getByRole("link", { name: "Back to library" }))
+  await waitFor(() => expect(router.state.location.search).toBe("?kind=Movie&sort=name"))
+  const libraryKey = router.state.location.key
+
+  fireEvent.click(screen.getByRole("link", { name: "Star Trek" }))
+  await waitFor(() => expect(router.state.location.pathname).toBe("/item/star-trek"))
+
+  const backLink = screen.getByRole("link", { name: "Back to library" })
+  const realNavigate = router.navigate.bind(router)
+  const pending: Array<() => void> = []
+  vi.spyOn(router, "navigate").mockImplementation((to, opts) => {
+    if (typeof to === "number") {
+      return new Promise<void>((resolve) => {
+        pending.push(() => {
+          void Promise.resolve(realNavigate(to)).then(() => resolve())
+        })
+      })
+    }
+    return realNavigate(to, opts)
+  })
+
+  fireEvent.click(backLink)
+  fireEvent.click(backLink)
+
+  expect(pending).toHaveLength(1)
+  await act(async () => {
+    for (const flush of pending) flush()
+  })
+  await waitFor(() => expect(router.state.location.key).toBe(libraryKey))
+})

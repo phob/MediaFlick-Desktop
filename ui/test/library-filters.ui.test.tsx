@@ -7,7 +7,9 @@ import { LibraryFilters } from "../src/components/LibraryFilters"
 import type { ItemGridProps } from "../src/components/ItemGrid"
 import type { LibraryFilterState } from "../src/lib/library-filters"
 import { queryKeys } from "../src/lib/query-client"
-import { MOVIE_BROWSE, seedSignedInLibraries } from "./support/fixtures"
+import { api } from "../src/lib/api"
+import { DEFAULT_VIEWING } from "../src/lib/viewing"
+import { MOVIE_BROWSE, MOVIES_LIBRARY_ID, seedSignedInLibraries } from "./support/fixtures"
 import { testQueryClient } from "./test-query-client"
 
 import Library from "../src/routes/Library"
@@ -176,5 +178,43 @@ describe("library filter URL state", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "Switch to Series" }))
     await waitFor(() => expect(routeLocation()).toBe("/library?kind=Series"))
+  })
+
+  test("rapid remembered library filter changes serialize so an older save cannot overwrite a newer one", async () => {
+    const client = testQueryClient()
+    seedSignedInLibraries(client)
+    client.setQueryData(queryKeys.viewing("server:user"), { ...DEFAULT_VIEWING, rememberFilters: true })
+    client.setQueryData(queryKeys.libraryOptions(MOVIES_LIBRARY_ID), { genres: ["Action", "Drama"], studios: [], tags: [], officialRatings: [] })
+
+    const deferred: Array<{ route: string; resolve: () => void }> = []
+    vi.spyOn(api, "browsing").mockResolvedValue({})
+    const save = vi.spyOn(api, "saveBrowsing").mockImplementation((_page, route) => new Promise((resolve) => {
+      deferred.push({ route, resolve: () => resolve({ saved: true }) })
+    }))
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/library/${MOVIES_LIBRARY_ID}?genre=Action&decade=1990`]}>
+          <Routes>
+            <Route path="/library/:libraryId" element={<Library components={{ ItemGrid: QueryProbeGrid }} />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Genre: Action filter" }))
+    fireEvent.click(screen.getByRole("button", { name: "Remove Released: 1990s filter" }))
+
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(deferred[0]?.route).toContain("decade=1990")
+    expect(deferred[0]?.route).not.toContain("genre=Action")
+
+    act(() => deferred[0]?.resolve())
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    expect(deferred[1]?.route).not.toContain("genre=Action")
+    expect(deferred[1]?.route).not.toContain("decade=1990")
+
+    act(() => deferred[1]?.resolve())
+    vi.restoreAllMocks()
   })
 })
