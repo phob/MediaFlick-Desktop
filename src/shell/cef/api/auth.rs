@@ -16,7 +16,7 @@ routes! {
     POST ["auth", "quickconnect", "start"] (body: ServerBody) -> QuickConnectStart =
         quick_connect_start(services, body),
     POST ["auth", "quickconnect", "poll"] (body: QuickConnectPollBody) -> QuickConnectPoll =
-        quick_connect_poll(services, body),
+        quick_connect_poll(services, request, body),
     POST ["auth", "logout"] (body: LogoutBody) -> AppStatus = auth_logout(services, body),
 }
 
@@ -103,12 +103,18 @@ fn quick_connect_start(
 
 fn quick_connect_poll(
     services: &Arc<Services>,
+    request: &ApiRequest,
     body: Body<'_, QuickConnectPollBody>,
 ) -> Result<QuickConnectPoll, ApiResponse> {
     let body = body.decode()?;
-    let result = services
-        .session
-        .quick_connect_poll(&body.server, &body.secret);
+    if request.is_cancelled() {
+        return Err(ApiResponse::from_api_error(&ApiError::Cancelled));
+    }
+    let result = services.session.quick_connect_poll(
+        &body.server,
+        &body.secret,
+        Some(Arc::clone(&request.cancelled)),
+    );
     match result {
         Ok(poll) => {
             if poll.authenticated {
@@ -146,6 +152,7 @@ fn logout_with_timeouts(
     stop_timeout: Duration,
     flush_timeout: Duration,
 ) -> Result<AppStatus, ApiResponse> {
+    let target = services.session.capture_logout();
     if let Some(playback) = services.playback()
         && !playback.stop_and_wait(stop_timeout)
     {
@@ -154,15 +161,25 @@ fn logout_with_timeouts(
             "timed out stopping playback before sign-out"
         );
     }
+    if !services.session.logout_target_is_current(&target) {
+        return Err(stale_account_response());
+    }
     if !flush_playstate_reports(flush_timeout) {
         tracing::warn!(
             target: "jellyfin.playstate",
             "timed out flushing queued Jellyfin playback state before sign-out"
         );
     }
-    if let Err(error) = services.session.logout(forget_library) {
-        tracing::error!("could not clear the local session after logout: {error}");
-        return Err(ApiResponse::error(500, "could not clear the local session"));
+    if !services.session.logout_target_is_current(&target) {
+        return Err(stale_account_response());
+    }
+    match services.session.logout(&target, forget_library) {
+        Ok(()) => {}
+        Err(ApiError::AccountChanged) => return Err(stale_account_response()),
+        Err(error) => {
+            tracing::error!("could not clear the local session after logout: {error}");
+            return Err(ApiResponse::error(500, "could not clear the local session"));
+        }
     }
     if let Err(error) = services.preferences.activate_account(None) {
         tracing::error!("could not clear account preferences after logout: {error}");
@@ -214,5 +231,7 @@ fn activate_account_preferences(services: &Arc<Services>) -> Result<(), ApiRespo
         })
 }
 
+#[cfg(test)]
+mod audit_tests;
 #[cfg(test)]
 mod tests;

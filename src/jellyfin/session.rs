@@ -1,5 +1,6 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -12,6 +13,17 @@ use super::api::model::UserAccess;
 use super::api::{ApiError, JellyfinClient};
 use super::version::{ServerTooOld, ServerVersion};
 
+const POLICY_RETRY_COOLDOWN: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum PolicyState {
+    #[default]
+    Unverified,
+    PendingRetry,
+    Refreshing,
+    Verified,
+}
+
 #[derive(Debug, Clone, Default)]
 struct SessionState {
     server_url: Option<String>,
@@ -21,9 +33,18 @@ struct SessionState {
     device_id: String,
     token: Option<String>,
     access: UserAccess,
+    policy_state: PolicyState,
+    next_policy_retry_at: Option<Instant>,
     expired: bool,
     generation: u64,
     deleting: bool,
+}
+
+struct AuthenticatedParts<'a> {
+    server_url: &'a str,
+    token: &'a str,
+    user_id: &'a str,
+    account: AccountKey,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
@@ -65,11 +86,15 @@ pub struct QuickConnectPoll {
     pub session: Option<SessionStatus>,
 }
 
-pub struct Session {
+struct SessionCore {
     library: Arc<Library>,
     shell: Arc<ShellBridge>,
     state: RwLock<SessionState>,
     operation_gate: Mutex<()>,
+}
+
+pub struct Session {
+    core: Arc<SessionCore>,
 }
 
 #[derive(Clone)]
@@ -78,6 +103,11 @@ pub struct SessionScope {
     account: AccountKey,
     client: JellyfinClient,
     user_id: String,
+}
+
+pub struct LogoutTarget {
+    generation: u64,
+    scope: Option<SessionScope>,
 }
 
 impl SessionScope {
@@ -147,35 +177,124 @@ impl Live {
     }
 }
 
-impl Session {
-    pub fn restore(library: Arc<Library>, shell: Arc<ShellBridge>) -> Self {
-        let stored = library.credentials();
-        let authenticated = stored.is_authenticated();
-        let state = SessionState {
-            server_url: stored.server_url.clone(),
-            server_id: stored.server_id,
-            user_id: stored.user_id.clone(),
-            user_name: stored.user_name.clone(),
-            device_id: stored.device_id.clone(),
-            token: stored.token,
-            access: UserAccess::UNVERIFIED,
-            expired: false,
-            generation: u64::from(authenticated),
-            deleting: false,
-        };
-        Self {
-            library,
-            shell,
-            state: RwLock::new(state),
-            operation_gate: Mutex::new(()),
-        }
-    }
-
+impl SessionCore {
     fn read(&self) -> SessionState {
         self.state
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    fn commit_if_current<T, E>(
+        &self,
+        scope: &SessionScope,
+        stale: impl FnOnce() -> E,
+        commit: impl FnOnce(&Live) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let _gate = self
+            .operation_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !self.read().matches(scope) {
+            return Err(stale());
+        }
+        commit(&Live {
+            generation: scope.generation,
+            account: scope.account.clone(),
+        })
+    }
+
+    fn run_policy_refresh(&self, scope: &SessionScope, apply_cooldown_on_failure: bool) {
+        let path = format!(
+            "/Users/{}",
+            crate::app::urls::encode_path_segment(scope.user_id())
+        );
+        let Ok(user) =
+            scope.fetch(|client, _| client.get_json::<super::api::model::UserDto>(&path, &[]))
+        else {
+            let _gate = self
+                .operation_gate
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+            if state.matches(scope) && state.policy_state == PolicyState::Refreshing {
+                state.policy_state = PolicyState::PendingRetry;
+                state.next_policy_retry_at =
+                    apply_cooldown_on_failure.then(|| Instant::now() + POLICY_RETRY_COOLDOWN);
+            }
+            drop(state);
+            return;
+        };
+        let access_changed = self
+            .commit_if_current(
+                scope,
+                || (),
+                |live| {
+                    let user = live.open(user).map_err(drop)?;
+                    let access = UserAccess::of(user.policy.as_ref());
+                    let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+                    let changed = state.access != access;
+                    state.access = access;
+                    state.policy_state = PolicyState::Verified;
+                    state.next_policy_retry_at = None;
+                    drop(state);
+                    Ok(changed)
+                },
+            )
+            .unwrap_or(false);
+        if access_changed {
+            self.shell.collections_changed();
+        }
+    }
+
+    fn clear_local_locked(&self, forget_library: bool) -> rusqlite::Result<()> {
+        self.library.clear_session(forget_library)?;
+        let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+        state.user_id = None;
+        state.user_name = None;
+        state.server_id = None;
+        state.token = None;
+        state.access = UserAccess::UNVERIFIED;
+        state.policy_state = PolicyState::Unverified;
+        state.next_policy_retry_at = None;
+        state.expired = false;
+        state.deleting = false;
+        state.generation = next_generation(state.generation);
+        drop(state);
+        Ok(())
+    }
+}
+
+impl Session {
+    pub fn restore(library: Arc<Library>, shell: Arc<ShellBridge>) -> Self {
+        let stored = library.credentials();
+        let mut state = SessionState {
+            server_url: stored.server_url,
+            server_id: stored.server_id,
+            user_id: stored.user_id,
+            user_name: stored.user_name,
+            device_id: stored.device_id,
+            token: stored.token,
+            access: UserAccess::UNVERIFIED,
+            policy_state: PolicyState::Unverified,
+            next_policy_retry_at: None,
+            expired: false,
+            generation: 0,
+            deleting: false,
+        };
+        state.generation = u64::from(state.is_authenticated());
+        Self {
+            core: Arc::new(SessionCore {
+                library,
+                shell,
+                state: RwLock::new(state),
+                operation_gate: Mutex::new(()),
+            }),
+        }
+    }
+
+    fn read(&self) -> SessionState {
+        self.core.read()
     }
 
     pub fn server_url(&self) -> Option<String> {
@@ -192,13 +311,7 @@ impl Session {
     }
 
     pub fn is_authenticated(&self) -> bool {
-        let state = self.read();
-        !state.expired
-            && !state.deleting
-            && state.token.is_some()
-            && state.user_id.is_some()
-            && state.server_id.is_some()
-            && state.server_url.is_some()
+        self.read().is_authenticated()
     }
 
     pub fn user_restricted(&self) -> bool {
@@ -206,62 +319,48 @@ impl Session {
     }
 
     pub fn refresh_user_policy(&self) {
-        let Ok(scope) = self.scope() else {
-            return;
+        let scope = {
+            let _gate = self
+                .core
+                .operation_gate
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let mut state = self
+                .core
+                .state
+                .write()
+                .unwrap_or_else(PoisonError::into_inner);
+            if matches!(
+                state.policy_state,
+                PolicyState::Verified | PolicyState::Refreshing
+            ) {
+                return;
+            }
+            let Ok(scope) = state.to_scope() else {
+                return;
+            };
+            state.policy_state = PolicyState::Refreshing;
+            drop(state);
+            scope
         };
-        let path = format!(
-            "/Users/{}",
-            crate::app::urls::encode_path_segment(scope.user_id())
-        );
-        let Ok(user) =
-            scope.fetch(|client, _| client.get_json::<super::api::model::UserDto>(&path, &[]))
-        else {
-            return;
-        };
-        let _ = self.commit_if_current(
-            &scope,
-            || (),
-            |live| {
-                let user = live.open(user).map_err(drop)?;
-                let access = UserAccess::of(user.policy.as_ref());
-                if let Ok(mut state) = self.state.write() {
-                    state.access = access;
-                }
-                Ok(())
-            },
-        );
+        self.core.run_policy_refresh(&scope, false);
     }
 
     pub fn scope(&self) -> Result<SessionScope, ApiError> {
         let _gate = self
+            .core
             .operation_gate
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let state = self.read();
-        if state.expired || state.deleting {
-            return Err(ApiError::Unauthorized);
-        }
-        let server_url = state.server_url.as_deref().ok_or(ApiError::NotConfigured)?;
-        let token = state.token.as_deref().ok_or(ApiError::NotConfigured)?;
-        let user_id = state.user_id.clone().ok_or(ApiError::NotConfigured)?;
-        let account = AccountKey::new(
-            state.server_id.clone().ok_or(ApiError::NotConfigured)?,
-            user_id.clone(),
-        )
-        .ok_or(ApiError::NotConfigured)?;
-        Ok(SessionScope {
-            generation: state.generation,
-            account,
-            client: JellyfinClient::new(server_url, &state.device_id, Some(token)),
-            user_id,
-        })
+            .unwrap_or_else(PoisonError::into_inner);
+        self.read().to_scope()
     }
 
     pub fn scope_is_current(&self, scope: &SessionScope) -> bool {
         let _gate = self
+            .core
             .operation_gate
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(PoisonError::into_inner);
         self.read().matches(scope)
     }
 
@@ -271,32 +370,53 @@ impl Session {
         stale: impl FnOnce() -> E,
         commit: impl FnOnce(&Live) -> Result<T, E>,
     ) -> Result<T, E> {
-        let _gate = self
-            .operation_gate
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !self.read().matches(scope) {
-            return Err(stale());
-        }
-        commit(&Live {
-            generation: scope.generation,
-            account: scope.account.clone(),
-        })
+        self.core.commit_if_current(scope, stale, commit)
     }
 
     pub fn confirm<T>(&self, scoped: Scoped<T>) -> Result<T, ApiError> {
-        let _gate = self
-            .operation_gate
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let state = self.read();
-        if state.is_current(scoped.generation, &scoped.account) {
-            Ok(scoped.value)
-        } else if state.expired_itself(scoped.generation, &scoped.account) {
-            Err(ApiError::Unauthorized)
-        } else {
-            Err(ApiError::AccountChanged)
+        let (result, retry_scope) = {
+            let _gate = self
+                .core
+                .operation_gate
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let mut state = self
+                .core
+                .state
+                .write()
+                .unwrap_or_else(PoisonError::into_inner);
+            let outcome = if state.is_current(scoped.generation, &scoped.account) {
+                let retry_scope = if state.policy_state == PolicyState::PendingRetry
+                    && state
+                        .next_policy_retry_at
+                        .is_none_or(|at| Instant::now() >= at)
+                {
+                    match state.to_scope() {
+                        Ok(scope) => {
+                            state.policy_state = PolicyState::Refreshing;
+                            Some(scope)
+                        }
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
+                (Ok(scoped.value), retry_scope)
+            } else if state.expired_itself(scoped.generation, &scoped.account) {
+                (Err(ApiError::Unauthorized), None)
+            } else {
+                (Err(ApiError::AccountChanged), None)
+            };
+            drop(state);
+            outcome
+        };
+        if let Some(scope) = retry_scope {
+            let core = Arc::clone(&self.core);
+            crate::app::threads::spawn_named("session-policy-retry", move || {
+                core.run_policy_refresh(&scope, true);
+            });
         }
+        result
     }
 
     pub fn fetch_current<T>(
@@ -352,7 +472,7 @@ impl Session {
         let client = self.anonymous_client(&normalized);
         require_supported(&client)?;
         let credentials = auth::authenticate_by_name(&client, username, password)?;
-        self.accept(&normalized, credentials)
+        self.accept(&normalized, credentials, None)
     }
 
     pub fn quick_connect_start(&self, server_url: &str) -> Result<QuickConnectStart, ApiError> {
@@ -374,10 +494,20 @@ impl Session {
         &self,
         server_url: &str,
         secret: &str,
+        cancelled: Option<Arc<AtomicBool>>,
     ) -> Result<QuickConnectPoll, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
-        let client = self.anonymous_client(&normalized);
+        let mut client = self.anonymous_client(&normalized);
+        if let Some(cancelled) = cancelled {
+            client = client.with_cancellation(cancelled);
+        }
+        if client.is_cancelled() {
+            return Err(ApiError::Cancelled);
+        }
         let state = auth::quick_connect_state(&client, secret)?;
+        if client.is_cancelled() {
+            return Err(ApiError::Cancelled);
+        }
         if !state.authenticated {
             return Ok(QuickConnectPoll {
                 authenticated: false,
@@ -385,7 +515,10 @@ impl Session {
             });
         }
         let credentials = auth::authenticate_with_quick_connect(&client, secret)?;
-        let session = self.accept(&normalized, credentials)?;
+        if client.is_cancelled() {
+            return Err(ApiError::Cancelled);
+        }
+        let session = self.accept(&normalized, credentials, Some(&client))?;
         Ok(QuickConnectPoll {
             authenticated: true,
             session: Some(session),
@@ -396,9 +529,10 @@ impl Session {
         &self,
         server_url: &str,
         credentials: Credentials,
+        cancel_guard: Option<&JellyfinClient>,
     ) -> Result<SessionStatus, ApiError> {
         let user_name = credentials.user_name.clone();
-        let cleared_cache = self.commit_credentials(server_url, credentials)?;
+        let cleared_cache = self.commit_credentials(server_url, credentials, cancel_guard)?;
         if cleared_cache {
             tracing::info!(
                 target: "jellyfin.session",
@@ -417,13 +551,19 @@ impl Session {
         &self,
         server_url: &str,
         credentials: Credentials,
+        cancel_guard: Option<&JellyfinClient>,
     ) -> Result<bool, ApiError> {
         let _gate = self
+            .core
             .operation_gate
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous = self.library.credentials();
+            .unwrap_or_else(PoisonError::into_inner);
+        if cancel_guard.is_some_and(JellyfinClient::is_cancelled) {
+            return Err(ApiError::Cancelled);
+        }
+        let previous = self.core.library.credentials();
         let cache_owner = self
+            .core
             .library
             .cache_owner()
             .or_else(|| previous.server_id.clone().zip(previous.user_id.clone()));
@@ -431,9 +571,10 @@ impl Session {
         let switched_account = cache_owner
             .as_ref()
             .is_some_and(|owner| owner != &next_owner)
-            || cache_owner.is_none() && self.library.stats().total > 0;
+            || cache_owner.is_none() && self.core.library.stats().total > 0;
         if switched_account {
-            self.library
+            self.core
+                .library
                 .clear_session(true)
                 .map_err(|error| storage_error(&error))?;
         }
@@ -446,17 +587,20 @@ impl Session {
             device_id: previous.device_id,
             token: Some(credentials.token.clone()),
         };
-        self.library
+        self.core
+            .library
             .save_credentials(&stored)
             .map_err(|error| storage_error(&error))?;
 
-        if let Ok(mut state) = self.state.write() {
+        if let Ok(mut state) = self.core.state.write() {
             state.server_url = Some(server_url.to_string());
             state.server_id = Some(credentials.server_id);
             state.user_id = Some(credentials.user_id);
             state.user_name = Some(credentials.user_name);
             state.token = Some(credentials.token);
             state.access = credentials.access;
+            state.policy_state = PolicyState::Verified;
+            state.next_policy_retry_at = None;
             state.expired = false;
             state.deleting = false;
             state.generation = next_generation(state.generation);
@@ -464,42 +608,71 @@ impl Session {
         Ok(switched_account)
     }
 
-    pub fn logout(&self, forget_library: bool) -> rusqlite::Result<()> {
-        if let Ok(scope) = self.scope()
+    pub fn capture_logout(&self) -> LogoutTarget {
+        let _gate = self
+            .core
+            .operation_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let state = self.read();
+        let scope = state.to_scope().ok();
+        LogoutTarget {
+            generation: state.generation,
+            scope,
+        }
+    }
+
+    pub fn logout_target_is_current(&self, target: &LogoutTarget) -> bool {
+        let _gate = self
+            .core
+            .operation_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.read().matches_logout(target)
+    }
+
+    pub fn logout(&self, target: &LogoutTarget, forget_library: bool) -> Result<(), ApiError> {
+        if !self.logout_target_is_current(target) {
+            return Err(ApiError::AccountChanged);
+        }
+        if let Some(scope) = &target.scope
             && let Err(error) = auth::logout(scope.client())
         {
             tracing::debug!(target: "jellyfin.session", "server-side logout failed: {error}");
         }
-        self.clear_local(forget_library)?;
+        {
+            let _gate = self
+                .core
+                .operation_gate
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if !self.read().matches_logout(target) {
+                return Err(ApiError::AccountChanged);
+            }
+            self.core
+                .clear_local_locked(forget_library)
+                .map_err(|error| storage_error(&error))?;
+        }
         tracing::info!(target: "jellyfin.session", "signed out of Jellyfin");
         Ok(())
     }
 
     pub fn clear_local(&self, forget_library: bool) -> rusqlite::Result<()> {
         let _gate = self
+            .core
             .operation_gate
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.library.clear_session(forget_library)?;
-        if let Ok(mut state) = self.state.write() {
-            state.user_id = None;
-            state.user_name = None;
-            state.server_id = None;
-            state.token = None;
-            state.access = UserAccess::UNVERIFIED;
-            state.expired = false;
-            state.deleting = false;
-            state.generation = next_generation(state.generation);
-        }
-        Ok(())
+            .unwrap_or_else(PoisonError::into_inner);
+        self.core.clear_local_locked(forget_library)
     }
 
     pub fn begin_account_deletion(&self, account: &AccountKey) -> bool {
         let _gate = self
+            .core
             .operation_gate
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Ok(mut state) = self.state.write() else {
+            .unwrap_or_else(PoisonError::into_inner);
+        let Ok(mut state) = self.core.state.write() else {
             return false;
         };
         if state.account_key().as_ref() != Some(account) {
@@ -517,10 +690,11 @@ impl Session {
     pub fn scoped_error(&self, scope: &SessionScope, error: ApiError) -> ApiError {
         let expired = {
             let _gate = self
+                .core
                 .operation_gate
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let Ok(mut state) = self.state.write() else {
+                .unwrap_or_else(PoisonError::into_inner);
+            let Ok(mut state) = self.core.state.write() else {
                 return error;
             };
             if !state.owns_failure(scope) {
@@ -538,7 +712,7 @@ impl Session {
                 target: "jellyfin.session",
                 "the Jellyfin server rejected the stored token; re-authentication required"
             );
-            self.shell.session_expired();
+            self.core.shell.session_expired();
         }
         error
     }
@@ -546,10 +720,7 @@ impl Session {
     pub fn status(&self) -> SessionStatus {
         let state = self.read();
         SessionStatus {
-            authenticated: !state.expired
-                && !state.deleting
-                && state.token.is_some()
-                && state.user_id.is_some(),
+            authenticated: state.is_authenticated(),
             expired: state.expired,
             server_url: state.server_url,
             server_name: None,
@@ -562,6 +733,45 @@ impl Session {
 }
 
 impl SessionState {
+    fn authenticated_parts(&self) -> Result<AuthenticatedParts<'_>, ApiError> {
+        if self.expired || self.deleting {
+            return Err(ApiError::Unauthorized);
+        }
+        let server_url = self
+            .server_url
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or(ApiError::NotConfigured)?;
+        let token = self
+            .token
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or(ApiError::NotConfigured)?;
+        let user_id = self.user_id.as_deref().ok_or(ApiError::NotConfigured)?;
+        let server_id = self.server_id.as_deref().ok_or(ApiError::NotConfigured)?;
+        let account = AccountKey::new(server_id, user_id).ok_or(ApiError::NotConfigured)?;
+        Ok(AuthenticatedParts {
+            server_url,
+            token,
+            user_id,
+            account,
+        })
+    }
+
+    fn is_authenticated(&self) -> bool {
+        self.authenticated_parts().is_ok()
+    }
+
+    fn to_scope(&self) -> Result<SessionScope, ApiError> {
+        let parts = self.authenticated_parts()?;
+        Ok(SessionScope {
+            generation: self.generation,
+            account: parts.account,
+            client: JellyfinClient::new(parts.server_url, &self.device_id, Some(parts.token)),
+            user_id: parts.user_id.to_string(),
+        })
+    }
+
     fn account_key(&self) -> Option<AccountKey> {
         AccountKey::new(self.server_id.clone()?, self.user_id.clone()?)
     }
@@ -586,6 +796,14 @@ impl SessionState {
             && !self.deleting
             && self.generation == next_generation(generation)
             && self.account_key().as_ref() == Some(account)
+    }
+
+    fn matches_logout(&self, target: &LogoutTarget) -> bool {
+        self.generation == target.generation
+            || target
+                .scope
+                .as_ref()
+                .is_some_and(|scope| self.expired_itself(scope.generation, scope.account()))
     }
 }
 
@@ -617,166 +835,4 @@ fn storage_error(error: &rusqlite::Error) -> ApiError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{Live, Session, UserAccess};
-    use crate::jellyfin::api::ApiError;
-    use crate::jellyfin::api::auth::Credentials;
-    use crate::library::Library;
-    use crate::library::test_support::dto;
-    use std::sync::Arc;
-
-    fn session() -> Session {
-        Session::restore(
-            Arc::new(Library::open_in_memory().expect("library")),
-            Arc::default(),
-        )
-    }
-
-    fn credentials(user: &str) -> Credentials {
-        Credentials {
-            token: format!("token-{user}"),
-            user_id: user.to_string(),
-            user_name: user.to_string(),
-            server_id: "server".to_string(),
-            access: UserAccess {
-                restricted: false,
-                administrator: false,
-            },
-        }
-    }
-
-    #[test]
-    fn restoring_reads_persisted_credentials() {
-        let library = Arc::new(Library::open_in_memory().expect("library"));
-        let mut credentials = library.credentials();
-        credentials.server_url = Some("http://server:8096".to_string());
-        credentials.user_id = Some("uid".to_string());
-        credentials.server_id = Some("server".to_string());
-        credentials.token = Some("tok".to_string());
-        library.save_credentials(&credentials).expect("save");
-
-        let session = Session::restore(library, Arc::default());
-        assert!(session.is_authenticated());
-        let scope = session.scope().expect("scope");
-        assert_eq!(scope.client().base_url(), "http://server:8096");
-        assert_eq!(scope.client().token(), Some("tok"));
-        assert_eq!(scope.user_id(), "uid");
-    }
-
-    #[test]
-    fn an_expired_token_blocks_client_creation_until_re_login() {
-        let library = Arc::new(Library::open_in_memory().expect("library"));
-        let mut credentials = library.credentials();
-        credentials.server_url = Some("http://server:8096".to_string());
-        credentials.user_id = Some("uid".to_string());
-        credentials.server_id = Some("server".to_string());
-        credentials.token = Some("tok".to_string());
-        library.save_credentials(&credentials).expect("save");
-
-        let session = Session::restore(library, Arc::default());
-        let scope = session.scope().expect("scope");
-        session.note_scoped_error(&scope, &ApiError::Unauthorized);
-        assert!(!session.is_authenticated());
-        assert!(matches!(session.scope(), Err(ApiError::Unauthorized)));
-        assert!(session.status().expired);
-    }
-
-    #[test]
-    fn other_errors_do_not_expire_the_session() {
-        let library = Arc::new(Library::open_in_memory().expect("library"));
-        let mut credentials = library.credentials();
-        credentials.server_url = Some("http://server:8096".to_string());
-        credentials.user_id = Some("uid".to_string());
-        credentials.server_id = Some("server".to_string());
-        credentials.token = Some("tok".to_string());
-        library.save_credentials(&credentials).expect("save");
-
-        let session = Session::restore(library, Arc::default());
-        let scope = session.scope().expect("scope");
-        session.note_scoped_error(&scope, &ApiError::Status { status: 500 });
-        session.note_scoped_error(&scope, &ApiError::Transport("reset".to_string()));
-        assert!(session.is_authenticated());
-    }
-
-    #[test]
-    fn connecting_to_an_unusable_url_is_rejected_before_any_request() {
-        let session = session();
-        assert!(matches!(
-            session.connect("file:///etc/passwd", None),
-            Err(ApiError::NotConfigured)
-        ));
-        assert!(matches!(
-            session.login("javascript:alert(1)", "u", "p"),
-            Err(ApiError::NotConfigured)
-        ));
-    }
-
-    #[test]
-    fn old_successes_and_unauthorized_errors_are_discarded_after_account_switch() {
-        let session = session();
-        session
-            .accept("http://server:8096", credentials("alice"))
-            .expect("sign in Alice");
-        let alice = session.scope().expect("Alice scope");
-        session
-            .accept("http://server:8096", credentials("bob"))
-            .expect("sign in Bob");
-
-        let result = session.commit_if_current(
-            &alice,
-            || "stale",
-            |_live| -> Result<(), &str> { panic!("an obsolete success committed") },
-        );
-        assert_eq!(result, Err("stale"));
-        session.note_scoped_error(&alice, &ApiError::Unauthorized);
-        assert!(session.is_authenticated());
-        assert_eq!(session.status().user_id.as_deref(), Some("bob"));
-        assert!(!session.status().expired);
-    }
-
-    #[test]
-    fn a_restricted_user_gets_an_empty_cache_after_a_normal_logout_and_switch() {
-        let library = Arc::new(Library::open_in_memory().expect("library"));
-        let session = Session::restore(library.clone(), Arc::default());
-        session
-            .accept("http://server:8096", credentials("alice"))
-            .expect("sign in Alice");
-        library
-            .upsert_page(
-                &Live::for_test(),
-                &[dto(
-                    r#"{"Id":"alice-movie","Name":"Alice Only","Type":"Movie"}"#,
-                )],
-            )
-            .expect("cache Alice's library");
-
-        session.clear_local(false).expect("normal logout");
-        assert_eq!(library.stats().total, 1);
-
-        let mut bob = credentials("bob");
-        bob.access.restricted = true;
-        session
-            .accept("http://server:8096", bob)
-            .expect("sign in restricted Bob");
-
-        assert_eq!(library.stats().total, 0);
-        assert!(session.user_restricted());
-    }
-
-    #[test]
-    fn deletion_tombstone_blocks_new_and_in_flight_account_work() {
-        let session = session();
-        session
-            .accept("http://server:8096", credentials("alice"))
-            .expect("sign in Alice");
-        let scope = session.scope().expect("Alice scope");
-        assert!(session.begin_account_deletion(scope.account()));
-
-        assert!(!session.is_authenticated());
-        assert!(session.scope().is_err());
-        assert_eq!(
-            session.commit_if_current(&scope, || "stale", |_live| Ok::<_, &str>(())),
-            Err("stale")
-        );
-    }
-}
+mod tests;

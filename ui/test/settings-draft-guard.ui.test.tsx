@@ -437,4 +437,41 @@ describe("settings draft guard on sidebar sign-out and account change", () => {
     expect(screen.getByRole("switch", { name: "Show scrollbars" }).getAttribute("aria-checked")).toBe("true")
     expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
   })
+
+  test("Sign out stays disabled while logout is pending so duplicate logouts cannot fire", async () => {
+    stubDesktopViewport()
+    const settings = clientSettingsFixture()
+    const { client, signedOut } = seedShellSession(settings)
+    let resolveLogout: ((status: Status) => void) | null = null
+    const logout = vi.spyOn(api, "logout").mockImplementation(
+      () => new Promise<Status>((resolve) => {
+        resolveLogout = resolve
+      }),
+    )
+
+    render(
+      <TestProviders client={client} initialEntries={["/settings/client/application"]}>
+        <AppShell>
+          <Routes>
+            <Route path="/settings/*" element={<Settings />} />
+          </Routes>
+        </AppShell>
+      </TestProviders>,
+    )
+
+    await screen.findByRole("switch", { name: "Show scrollbars" })
+    await selectSidebarSignOut()
+    await waitFor(() => expect(logout).toHaveBeenCalledTimes(1))
+
+    const trigger = await screen.findByRole("button", { name: /Alice/ })
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: "mouse" })
+    const signOutItem = await screen.findByRole("menuitem", { name: "Sign out" })
+    expect(signOutItem.getAttribute("aria-disabled")).toBe("true")
+    fireEvent.click(signOutItem)
+    expect(logout).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(signOutItem, { key: "Escape" })
+
+    act(() => resolveLogout?.(signedOut))
+    await screen.findByRole("link", { name: "Back to sign in" })
+  })
 })

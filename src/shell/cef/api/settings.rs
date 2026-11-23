@@ -314,8 +314,8 @@ fn patch_appearance_settings(
     let scope = session_scope(services)?;
     services
         .session
-        .commit_if_current(&scope, stale_account_response, |_live| {
-            match services.preferences.patch_appearance(patch) {
+        .commit_if_current(&scope, stale_account_response, |live| {
+            match services.preferences.patch_appearance(live.account(), patch) {
                 Ok(change) => Ok(settings_view(&change.settings, Vec::new())),
                 Err(error) => Err(ApiResponse::error(400, error.to_string())),
             }
@@ -593,5 +593,87 @@ mod tests {
             crate::preferences::PlayerBackend::Mpv
         );
         Ok(())
+    }
+
+    #[test]
+    fn patch_appearance_writes_to_scoped_account_even_if_preferences_active_account_lags() {
+        use crate::app::services::test_support::TestServices;
+        use crate::preferences::{AccountKey, AppearanceAccent};
+        use crate::shell::cef::api::tests::{
+            error_of, post, read_request_with_headers, respond, send, server_url,
+        };
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let url = server_url(&listener);
+        let server = thread::spawn(move || {
+            let (mut info, _) = listener.accept().expect("info");
+            let _ = read_request_with_headers(&mut info);
+            respond(
+                &mut info,
+                "200 OK",
+                r#"{"ServerName":"Server","Version":"12.4.0"}"#,
+            );
+            let (mut login, _) = listener.accept().expect("login");
+            let _ = read_request_with_headers(&mut login);
+            respond(
+                &mut login,
+                "200 OK",
+                r#"{"AccessToken":"bob-token","ServerId":"server","User":{"Id":"bob","Name":"Bob","Policy":{"IsAdministrator":false}}}"#,
+            );
+        });
+
+        let fixture = TestServices::signed_in_as(&url, "alice");
+        let alice = AccountKey::new("server", "alice").expect("alice");
+        let bob = AccountKey::new("server", "bob").expect("bob");
+
+        let alice_patch = super::ApiRequest {
+            method: "PATCH".to_string(),
+            ..post("/api/settings/appearance", br#"{"accent":"amber"}"#)
+        };
+        let alice_response = send(&fixture, &alice_patch);
+        assert_eq!(alice_response.status, 200, "{}", error_of(&alice_response));
+
+        fixture
+            .services
+            .session
+            .login(&url, "bob", "secret")
+            .expect("sign in Bob without updating preferences active_account");
+        server.join().expect("server");
+
+        let bob_patch = super::ApiRequest {
+            method: "PATCH".to_string(),
+            ..post("/api/settings/appearance", br#"{"accent":"violet"}"#)
+        };
+        let bob_response = send(&fixture, &bob_patch);
+        assert_eq!(bob_response.status, 200, "{}", error_of(&bob_response));
+
+        assert_eq!(
+            fixture.services.accounts.appearance(&alice).accent,
+            AppearanceAccent::Amber
+        );
+        assert_eq!(
+            fixture.services.accounts.appearance(&bob).accent,
+            AppearanceAccent::Violet
+        );
+    }
+
+    #[test]
+    fn patch_appearance_rejects_signed_out_requests() {
+        use crate::app::services::test_support::TestServices;
+        use crate::preferences::AppearanceSettings;
+        use crate::shell::cef::api::tests::{post, send};
+
+        let fixture = TestServices::signed_out();
+        let patch = super::ApiRequest {
+            method: "PATCH".to_string(),
+            ..post("/api/settings/appearance", br#"{"accent":"violet"}"#)
+        };
+        assert_eq!(send(&fixture, &patch).status, 409);
+        assert_eq!(
+            fixture.services.preferences.snapshot().appearance,
+            AppearanceSettings::default()
+        );
     }
 }

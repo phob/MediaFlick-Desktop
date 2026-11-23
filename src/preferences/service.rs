@@ -295,59 +295,69 @@ impl PreferencesService {
 
     pub fn patch_appearance(
         &self,
+        account: &AccountKey,
         patch: AppearanceSettingsPatch,
     ) -> Result<SettingsChange, PreferencesError> {
-        let change = {
+        let (change, should_notify) = {
             let mut state = self
                 .state
                 .lock()
                 .map_err(|_| PreferencesError("settings service is unavailable".to_string()))?;
-            let account = state.active_account.clone().ok_or_else(|| {
-                PreferencesError("sign in to save appearance settings".to_string())
-            })?;
             let previous = state.settings.clone();
-            let mut next = previous.clone();
+            let mut appearance = self.accounts.appearance(account);
             if let Some(value) = patch.accent.as_deref() {
-                next.appearance.accent = AppearanceAccent::from_id(value)
+                appearance.accent = AppearanceAccent::from_id(value)
                     .ok_or_else(|| PreferencesError::invalid("accent"))?;
             }
             if let Some(value) = patch.density.as_deref() {
-                next.appearance.density = AppearanceDensity::from_id(value)
+                appearance.density = AppearanceDensity::from_id(value)
                     .ok_or_else(|| PreferencesError::invalid("density"))?;
             }
             if let Some(value) = patch.artwork_intensity {
-                next.appearance.artwork_intensity = value;
+                appearance.artwork_intensity = value;
             }
             if let Some(value) = patch.backdrop_intensity {
-                next.appearance.backdrop_intensity = value;
+                appearance.backdrop_intensity = value;
             }
             if let Some(value) = patch.reduced_motion {
-                next.appearance.reduced_motion = value;
+                appearance.reduced_motion = value;
             }
             if let Some(value) = patch.card_previews {
-                next.appearance.card_previews = value;
+                appearance.card_previews = value;
             }
             if let Some(value) = patch.show_media_info {
-                next.appearance.show_media_info = value;
+                appearance.show_media_info = value;
             }
             if let Some(value) = patch.rating_sources {
-                next.appearance.rating_sources = value;
+                appearance.rating_sources = value;
             }
-            next.appearance.sanitize();
+            appearance.sanitize();
             self.accounts
-                .save_appearance(&account, &next.appearance)
+                .save_appearance(account, &appearance)
                 .map_err(|error| {
                     PreferencesError(format!("could not save account config: {error}"))
                 })?;
-            state.settings = next.clone();
-            let change = SettingsChange {
-                plan: SettingsApplyPlan::between(&previous, &next),
-                settings: next,
+            let mut next = previous.clone();
+            next.appearance = appearance;
+            let matches_active = state.active_account.as_ref() == Some(account);
+            let plan = if matches_active {
+                state.settings = next.clone();
+                SettingsApplyPlan::between(&previous, &next)
+            } else {
+                SettingsApplyPlan::default()
             };
             drop(state);
-            change
+            (
+                SettingsChange {
+                    plan,
+                    settings: next,
+                },
+                matches_active,
+            )
         };
-        self.notify(&change);
+        if should_notify {
+            self.notify(&change);
+        }
         Ok(change)
     }
 
@@ -548,10 +558,13 @@ mod tests {
             PreferencesService::new(AppSettings::default(), accounts, Some(alice.clone()), false);
 
         service
-            .patch_appearance(AppearanceSettingsPatch {
-                accent: Some("violet".to_string()),
-                ..AppearanceSettingsPatch::default()
-            })
+            .patch_appearance(
+                &alice,
+                AppearanceSettingsPatch {
+                    accent: Some("violet".to_string()),
+                    ..AppearanceSettingsPatch::default()
+                },
+            )
             .expect("save Alice appearance");
         assert_eq!(
             service.snapshot().appearance.accent,
@@ -574,22 +587,45 @@ mod tests {
     }
 
     #[test]
-    fn appearance_writes_require_an_active_account() {
+    fn appearance_writes_target_the_supplied_account_without_clobbering_the_active_one() {
         let path = account_test_path();
         let accounts = Arc::new(
             AccountConfigurationService::open(path.clone()).expect("open account settings"),
         );
-        let service = PreferencesService::new(AppSettings::default(), accounts, None, false);
+        let alice = AccountKey::new("server", "alice").expect("alice account");
+        let bob = AccountKey::new("server", "bob").expect("bob account");
+        let service = PreferencesService::new(
+            AppSettings::default(),
+            accounts.clone(),
+            Some(alice.clone()),
+            false,
+        );
 
-        assert!(
-            service
-                .patch_appearance(AppearanceSettingsPatch {
+        service
+            .patch_appearance(
+                &alice,
+                AppearanceSettingsPatch {
+                    accent: Some("amber".to_string()),
+                    ..AppearanceSettingsPatch::default()
+                },
+            )
+            .expect("save Alice appearance");
+        service
+            .patch_appearance(
+                &bob,
+                AppearanceSettingsPatch {
                     accent: Some("violet".to_string()),
                     ..AppearanceSettingsPatch::default()
-                })
-                .is_err()
+                },
+            )
+            .expect("save Bob appearance");
+
+        assert_eq!(
+            service.snapshot().appearance.accent,
+            AppearanceAccent::Amber
         );
-        assert_eq!(service.snapshot().appearance, AppearanceSettings::default());
+        assert_eq!(accounts.appearance(&alice).accent, AppearanceAccent::Amber);
+        assert_eq!(accounts.appearance(&bob).accent, AppearanceAccent::Violet);
 
         cleanup_account_test(&path);
     }
