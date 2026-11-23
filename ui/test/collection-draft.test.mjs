@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
+  applyPreviewSourceIdentity,
   buildCollectionSettingsPatch,
   executeCollectionSave,
   planCollectionSave,
@@ -334,6 +335,112 @@ test("invariant: reconcileCollectionDraft always yields a permutation of server 
       assert.equal(new Set(plan.reorderIds).size, serverIds.length, `trial=${trial} reorder unique`)
       for (const id of plan.reorderIds) {
         assert.ok(serverSet.has(id), `trial=${trial} reorder valid id ${id}`)
+      }
+    }
+  }
+})
+
+function makeProfileDraft(overrides = {}) {
+  return {
+    template: { id: "mdblist.public.custom" },
+    title: "My List",
+    description: "Initial description",
+    customPosterId: null,
+    source: { kind: "mdbListPublicList", listId: "https://mdblist.com/lists/alice/top" },
+    mediaType: "mixed",
+    limit: { kind: "maximum", count: 50 },
+    cadence: "daily",
+    availableOnHome: false,
+    ...overrides,
+  }
+}
+
+test("applyPreviewSourceIdentity updates only source.listId and preserves concurrent edits", () => {
+  const requestedSource = { kind: "mdbListPublicList", listId: "https://mdblist.com/lists/alice/top" }
+  const edited = makeProfileDraft({
+    title: "Edited title",
+    description: "Edited description",
+    cadence: "weekly",
+    availableOnHome: true,
+    customPosterId: "a".repeat(32),
+  })
+
+  const updated = applyPreviewSourceIdentity(edited, requestedSource, "12345")
+  assert.deepEqual(updated, {
+    ...edited,
+    source: { kind: "mdbListPublicList", listId: "12345" },
+  })
+})
+
+test("applyPreviewSourceIdentity ignores mismatched listId, non-MDBList sources, and empty or identical identity", () => {
+  const requested = { kind: "mdbListPublicList", listId: "https://mdblist.com/lists/alice/top" }
+  const changedUrl = makeProfileDraft({
+    source: { kind: "mdbListPublicList", listId: "https://mdblist.com/lists/bob/other" },
+  })
+  const discover = makeProfileDraft({ source: { kind: "tmdbDiscover", parameters: {} } })
+  const exact = makeProfileDraft({
+    source: { kind: "tmdbCollection", collectionId: 10, includeUnreleased: false },
+  })
+  const alreadyCanonical = makeProfileDraft({
+    source: { kind: "mdbListPublicList", listId: "12345" },
+  })
+
+  assert.equal(applyPreviewSourceIdentity(null, requested, "12345"), null)
+  assert.equal(applyPreviewSourceIdentity(changedUrl, requested, "12345"), changedUrl)
+  assert.equal(applyPreviewSourceIdentity(discover, requested, "12345"), discover)
+  assert.equal(applyPreviewSourceIdentity(exact, requested, "12345"), exact)
+  assert.equal(applyPreviewSourceIdentity(changedUrl, { kind: "tmdbDiscover", parameters: {} }, "12345"), changedUrl)
+  assert.equal(applyPreviewSourceIdentity(alreadyCanonical, alreadyCanonical.source, "12345"), alreadyCanonical)
+  assert.equal(applyPreviewSourceIdentity(alreadyCanonical, alreadyCanonical.source, null), alreadyCanonical)
+  assert.equal(applyPreviewSourceIdentity(alreadyCanonical, alreadyCanonical.source, ""), alreadyCanonical)
+})
+
+test("invariant: applyPreviewSourceIdentity never mutates non-source fields across arbitrary edits", () => {
+  const cadences = ["manual", "daily", "weekly", "monthly"]
+  const mediaTypes = ["movie", "series", "mixed"]
+  const identities = [null, "", "12345", "99999", "https://mdblist.com/lists/alice/top"]
+  const sources = [
+    { kind: "mdbListPublicList", listId: "https://mdblist.com/lists/alice/top" },
+    { kind: "mdbListPublicList", listId: "https://mdblist.com/lists/bob/other" },
+    { kind: "tmdbDiscover", parameters: { language: "en-US" } },
+    { kind: "tmdbCollection", collectionId: 42, includeUnreleased: true },
+  ]
+
+  for (const [idx, currentSource] of sources.entries()) {
+    for (const requestedSource of sources) {
+      for (const identity of identities) {
+        const current = makeProfileDraft({
+          title: `Title ${idx}`,
+          description: `Description ${idx}`,
+          cadence: cadences[idx % cadences.length],
+          mediaType: mediaTypes[idx % mediaTypes.length],
+          availableOnHome: idx % 2 === 0,
+          customPosterId: idx % 2 === 1 ? "f".repeat(32) : null,
+          source: currentSource,
+        })
+        const before = structuredClone(current)
+        const result = applyPreviewSourceIdentity(current, requestedSource, identity)
+        assert.deepEqual(current, before)
+        assert.ok(result !== null)
+        assert.equal(result.title, before.title)
+        assert.equal(result.description, before.description)
+        assert.equal(result.cadence, before.cadence)
+        assert.equal(result.availableOnHome, before.availableOnHome)
+        assert.equal(result.customPosterId, before.customPosterId)
+        assert.deepEqual(result.limit, before.limit)
+        assert.equal(result.mediaType, before.mediaType)
+        assert.deepEqual(result.template, before.template)
+
+        const shouldPatch = Boolean(identity)
+          && requestedSource.kind === "mdbListPublicList"
+          && currentSource.kind === "mdbListPublicList"
+          && currentSource.listId === requestedSource.listId
+          && currentSource.listId !== identity
+        if (shouldPatch) {
+          assert.deepEqual(result.source, { kind: "mdbListPublicList", listId: identity })
+        } else {
+          assert.equal(result, current)
+        }
       }
     }
   }

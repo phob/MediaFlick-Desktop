@@ -1,5 +1,6 @@
 import type {
   CollectionProfile,
+  CollectionProfileDraft,
   CollectionProfilesIndex,
   CollectionSettings,
   CollectionSettingsPatch,
@@ -147,6 +148,27 @@ export function removeProfilesFromIndex(
   return {
     profiles: index.profiles.filter((profile) => !deleted.has(profile.id)),
     errors,
+  }
+}
+
+export function applyPreviewSourceIdentity(
+  current: CollectionProfileDraft | null,
+  requestedSource: CollectionProfileDraft["source"],
+  sourceIdentity: string | null,
+): CollectionProfileDraft | null {
+  if (
+    !current
+    || !sourceIdentity
+    || requestedSource.kind !== "mdbListPublicList"
+    || current.source.kind !== "mdbListPublicList"
+    || current.source.listId !== requestedSource.listId
+    || current.source.listId === sourceIdentity
+  ) {
+    return current
+  }
+  return {
+    ...current,
+    source: { ...current.source, listId: sourceIdentity },
   }
 }
 
