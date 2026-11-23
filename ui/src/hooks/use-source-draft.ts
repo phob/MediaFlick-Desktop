@@ -1,6 +1,8 @@
 import { useCallback, useState } from "react"
 import { sameJson } from "@/lib/json"
 
+export type DraftMerge<T> = (previous: T, draft: T, source: T) => T
+
 function mergeDraft<T>(previous: T, draft: T, source: T): T {
   if (sameJson(previous, draft)) return source
   if (previous == null || draft == null || source == null) return source
@@ -13,12 +15,12 @@ function mergeDraft<T>(previous: T, draft: T, source: T): T {
   return next
 }
 
-export function useSourceDraft<T>(source: T, account?: string) {
+export function useSourceDraft<T>(source: T, account?: string, merge: DraftMerge<T> = mergeDraft) {
   const [state, setState] = useState(() => ({ source, value: source, account }))
 
   const value = account !== state.account ? source : Object.is(state.source, source)
     ? state.value
-    : mergeDraft(state.source, state.value, source)
+    : merge(state.source, state.value, source)
   if (!Object.is(state.source, source) || account !== state.account) {
     setState({ source, value, account })
   }
@@ -32,16 +34,16 @@ export function useSourceDraft<T>(source: T, account?: string) {
       setState((current) => ({
         source,
         account,
-        value: update(current.account !== account ? source : mergeDraft(current.source, current.value, source)),
+        value: update(current.account !== account ? source : merge(current.source, current.value, source)),
       }))
     },
-    [source, account],
+    [source, account, merge],
   )
   const acceptSaved = useCallback((saved: T, submitted: T) => {
     setState((current) => current.account === account
-      ? { ...current, value: mergeDraft(submitted, current.value, saved) }
+      ? { ...current, value: merge(submitted, current.value, saved) }
       : current)
-  }, [account])
+  }, [account, merge])
 
   return [value, setValue, updateValue, acceptSaved] as const
 }

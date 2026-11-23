@@ -12,12 +12,32 @@ const sidebarNames = (ctx) => ctx.app.evaluate(`[...document.querySelectorAll('[
 const cardCount = (ctx) => ctx.app.evaluate(`document.querySelectorAll('main a[aria-label^="Open "]').length`)
 const profiles = (ctx) => ctx.readConfig("collections.json")?.accounts?.flatMap((account) => account.profiles ?? []) ?? []
 
-const mark = (ctx, selector, text) => ctx.app.evaluate(`(() => {
+const mark = (ctx, selector, text, exclude = []) => ctx.app.evaluate(`(() => {
   document.querySelectorAll("[data-verify-target]").forEach((node) => node.removeAttribute("data-verify-target"))
-  const node = [...document.querySelectorAll(${JSON.stringify(selector)})].find((candidate) => candidate.textContent.includes(${JSON.stringify(text)}))
+  const excluded = ${JSON.stringify(exclude)}
+  const node = [...document.querySelectorAll(${JSON.stringify(selector)})].find((candidate) => (
+    !candidate.disabled
+    && candidate.textContent.includes(${JSON.stringify(text)})
+    && !excluded.some((skip) => candidate.textContent.includes(skip))
+  ))
   node?.setAttribute("data-verify-target", "")
   return node ? node.textContent.replace(/\\s+/g, " ").trim() : null
 })()`)
+
+const configuredTitles = (ctx) => ctx.app.evaluate(
+  `[...document.querySelectorAll('main button[aria-label^="Edit "]')].map((button) => button.getAttribute("aria-label").slice("Edit ".length))`,
+)
+
+async function createTemplateCollection(ctx, excludeTitles) {
+  const picked = await ctx.until(() => mark(ctx, "main button", "TMDB", excludeTitles), "a TMDB template", 20000)
+  await ctx.press(TARGET)
+  const addDialog = { role: "dialog", name: "Add collection" }
+  await ctx.find(addDialog, { timeout: 15000 })
+  const title = await ctx.app.evaluate(`document.getElementById("collection-title")?.value ?? null`)
+  await ctx.press({ role: "button", name: "Save", within: addDialog })
+  await ctx.until(() => ctx.app.evaluate(`/\\d+ total ·/.test(document.querySelector('[role="dialog"]')?.textContent ?? "")`), "the preview before saving", 90000)
+  return { picked, title, addDialog }
+}
 
 export default async function collections(ctx) {
   await ctx.signIn({})
@@ -124,6 +144,61 @@ export default async function collections(ctx) {
   await ctx.screenshot("04c-wizard-discarded")
   evidence.wizardDiscardGuard = { keptTitle, keptDescription, savedTitles: profiles(ctx).map((profile) => profile.title) }
 
+  const second = await createTemplateCollection(ctx, [title, "Custom"])
+  await ctx.press({ role: "button", name: "Save", within: second.addDialog })
+  await ctx.until(() => profiles(ctx).some((profile) => profile.title === second.title), `collections.json to hold ${second.title}`, 240000)
+  await ctx.until(async () => !(await ctx.exists(second.addDialog)), "Add collection dialog to close after creating second collection")
+
+  await ctx.press({ role: "button", name: `Move ${title} down` })
+  await ctx.until(async () => {
+    const order = await configuredTitles(ctx)
+    return order[0] === second.title && order[1] === title
+  }, "reordered draft before adding a third collection")
+
+  const third = await createTemplateCollection(ctx, [title, second.title, "Custom"])
+  await ctx.press({ role: "button", name: "Save", within: third.addDialog })
+  await ctx.until(() => profiles(ctx).some((profile) => profile.title === third.title), `collections.json to hold ${third.title}`, 240000)
+  await ctx.until(async () => !(await ctx.exists(third.addDialog)), "Add collection dialog to close after creating third collection")
+
+  const expectedOrder = [second.title, title, third.title]
+  await ctx.until(async () => {
+    const order = await configuredTitles(ctx)
+    return order.length >= 2
+  }, "configured collections list after creating third collection")
+  await ctx.snapshot("04d-reorder-draft-after-create")
+  await ctx.screenshot("04d-reorder-draft-after-create")
+  const renderedOrder = await configuredTitles(ctx)
+  ctx.check(
+    renderedOrder.length === 3
+      && renderedOrder[0] === expectedOrder[0]
+      && renderedOrder[1] === expectedOrder[1]
+      && renderedOrder[2] === expectedOrder[2],
+    `creating a collection while reorder draft is dirty keeps the new collection visible in order (${renderedOrder.join(", ")}; expected ${expectedOrder.join(", ")})`,
+  )
+
+  await ctx.press({ role: "button", name: "Save" })
+  await ctx.until(() => {
+    const saved = profiles(ctx).map((profile) => profile.title)
+    return saved.length === 3
+      && saved[0] === expectedOrder[0]
+      && saved[1] === expectedOrder[1]
+      && saved[2] === expectedOrder[2]
+  }, "collections.json to save the rebased collection order", 30000)
+  await ctx.until(() => ctx.app.evaluate(
+    `![...document.querySelectorAll('[role="status"]')].some((node) => node.textContent.includes("You have unsaved changes."))`,
+  ), "unsaved changes notice to clear after saving rebased collection order", 10000)
+  const modeSelectionAfterReorderSave = ctx.readConfig("collections.json")?.accounts?.[0]?.modeSelection ?? null
+  ctx.check(modeSelectionAfterReorderSave === null, "saving a rebased collection reorder leaves automatic modeSelection unpinned")
+  await ctx.snapshot("04e-reorder-draft-saved")
+  await ctx.screenshot("04e-reorder-draft-saved")
+  evidence.reorderDraftAdd = {
+    beforeTitles: [title, second.title],
+    createdTitle: third.title,
+    renderedOrder,
+    savedOrder: profiles(ctx).map((profile) => profile.title),
+    modeSelection: modeSelectionAfterReorderSave,
+  }
+
   await ctx.choose({ name: "Collection mode" }, "Jellyfin")
   await ctx.press({ role: "button", name: "Save" })
   await ctx.until(() => ctx.readConfig("collections.json")?.accounts?.some((account) => account.modeSelection === "jellyfin"), "modeSelection jellyfin in collections.json")
@@ -145,9 +220,11 @@ export default async function collections(ctx) {
 
   await ctx.press({ role: "link", name: "Settings" })
   await ctx.press(COLLECTION_SETTINGS)
-  await ctx.press({ role: "button", name: `Delete ${title}` })
+  for (const name of expectedOrder) {
+    await ctx.press({ role: "button", name: `Delete ${name}` })
+  }
   await ctx.choose({ name: "Collection mode" }, "MediaFlick")
   await ctx.press({ role: "button", name: "Save" })
-  await ctx.until(() => profiles(ctx).length === 0 && ctx.readConfig("collections.json")?.accounts?.every((account) => account.modeSelection !== "jellyfin"), "collections.json without the collection, in MediaFlick mode")
+  await ctx.until(() => profiles(ctx).length === 0 && ctx.readConfig("collections.json")?.accounts?.every((account) => account.modeSelection !== "jellyfin"), "collections.json without the collections, in MediaFlick mode")
   ctx.writeEvidence("collections.json", evidence)
 }

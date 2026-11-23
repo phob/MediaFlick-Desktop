@@ -40,12 +40,12 @@ import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useSourceDraft } from "@/hooks/use-source-draft"
 import {
+  ApiError,
   api,
   type CollectionCategory,
   type CollectionProfile,
   type CollectionProfileDraft,
-  type CollectionSettings,
-  type CollectionSettingsPatch,
+  type CollectionProfilesIndex,
   type CollectionTemplate,
   type CollectionTemplates,
 } from "@/lib/api"
@@ -58,6 +58,13 @@ import {
   useCollectionTemplates,
 } from "@/lib/collection-queries"
 import { accountKey, useStatus } from "@/lib/session-queries"
+import {
+  executeCollectionSave,
+  reconcileCollectionDraft,
+  savedCollectionDraft,
+  upsertProfileInIndex,
+  type CollectionSettingsDraft,
+} from "./collection-draft"
 import {
   PageTitle,
   PendingRow,
@@ -116,23 +123,6 @@ function resultSignature(profile: CollectionProfileDraft) {
     mediaType: profile.mediaType,
     limit: profile.limit,
   })
-}
-
-type CollectionSettingsDraft = {
-  modeSelection: CollectionSettings["effectiveMode"]
-  includeUnreleased: boolean
-  profileIds: string[]
-  deletedProfileIds: string[]
-}
-
-function buildCollectionSettingsPatch(
-  value: CollectionSettingsDraft,
-  baseline: CollectionSettingsDraft,
-): CollectionSettingsPatch | null {
-  const patch: CollectionSettingsPatch = {}
-  if (value.modeSelection !== baseline.modeSelection) patch.modeSelection = value.modeSelection
-  if (value.includeUnreleased !== baseline.includeUnreleased) patch.includeUnreleased = value.includeUnreleased
-  return Object.keys(patch).length ? patch : null
 }
 
 const GENERAL_DESCRIPTION = "Choose which collection experience this account sees."
@@ -353,10 +343,15 @@ function CollectionWizard({
   })
   const settings = useCollectionSettings()
   const saveProfile = useMutation({
-    mutationFn: (value: CollectionProfileDraft) =>
+    mutationFn: ({ value }: { value: CollectionProfileDraft; account: string }) =>
       profileId ? api.collections.updateProfile(profileId, value) : api.collections.createProfile(value),
-    onSuccess: () => {
-      void cache.invalidateQueries({ queryKey: queryKeys.collectionsOf(account) })
+    onSuccess: (result, { account: submittedAccount }) => {
+      const committedProfile = "profile" in result ? result.profile : result
+      cache.setQueryData<CollectionProfilesIndex>(
+        queryKeys.collectionProfiles(submittedAccount),
+        (current) => current ? upsertProfileInIndex(current, committedProfile) : current,
+      )
+      void cache.invalidateQueries({ queryKey: queryKeys.collectionsOf(submittedAccount) })
       void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
       void cache.invalidateQueries({ queryKey: queryKeys.home })
       if (!mounted.current) return
@@ -532,7 +527,7 @@ function CollectionWizard({
       void runPreview()
       return
     }
-    saveProfile.mutate(draft)
+    saveProfile.mutate({ value: draft, account })
   }
   return (
     <Dialog
@@ -757,50 +752,59 @@ export default function CollectionSettingsPage() {
     draft: CollectionProfileDraft
     profileId: string | null
   } | null>(null)
-  const savedDraft = useMemo<CollectionSettingsDraft | null>(() => settings.data && profiles.data ? ({
-    modeSelection: settings.data.modeSelection ?? settings.data.effectiveMode,
-    includeUnreleased: settings.data.franchises.includeUnreleased,
-    profileIds: profiles.data.profiles.map((profile) => profile.id),
-    deletedProfileIds: [],
-  }) : null, [profiles.data, settings.data])
-  const [draft, setDraft, , acceptSaved] = useSourceDraft(savedDraft, account)
+  const savedDraft = useMemo<CollectionSettingsDraft | null>(
+    () => settings.data && profiles.data ? savedCollectionDraft(settings.data, profiles.data) : null,
+    [profiles.data, settings.data],
+  )
+  const [draft, setDraft, , acceptSaved] = useSourceDraft(savedDraft, account, reconcileCollectionDraft)
   const save = useMutation({
-    mutationFn: async ({ value, baseline }: { value: CollectionSettingsDraft; baseline: CollectionSettingsDraft }) => {
-      const savedIds = baseline.profileIds
-      const kept = (ids: string[]) => ids.filter((id) => !value.deletedProfileIds.includes(id))
-      const deletions = value.deletedProfileIds.filter((id) => savedIds.includes(id))
-      for (const id of deletions) await api.collections.deleteProfile(id)
-      const settingsPatch = buildCollectionSettingsPatch(value, baseline)
-      const nextSettings = settingsPatch
-        ? await api.collections.patchSettings(settingsPatch)
-        : deletions.length ? await api.collections.settings() : settings.data
-      const order = kept(value.profileIds)
-      const nextProfiles = !sameJson(order, kept(savedIds))
-        ? await api.collections.reorderProfiles(order)
-        : deletions.length ? await api.collections.profiles() : profiles.data
-      return { settings: nextSettings, profiles: nextProfiles }
-    },
-    onSuccess: ({ settings: nextSettings, profiles: nextProfiles }, { value: submitted }) => {
+    mutationFn: ({ value, baseline }: {
+      value: CollectionSettingsDraft
+      baseline: CollectionSettingsDraft
+      account: string
+    }) => executeCollectionSave(value, baseline, settings.data, profiles.data, {
+      reorderProfiles: (profileIds) => api.collections.reorderProfiles(profileIds),
+      deleteProfile: (id) => api.collections.deleteProfile(id),
+      patchSettings: (patch) => api.collections.patchSettings(patch),
+      fetchSettings: () => api.collections.settings(),
+      fetchProfiles: () => api.collections.profiles(),
+    }),
+    onSuccess: (result, { value: submitted, account: submittedAccount }) => {
+      if (!result.ok) {
+        toastFailure(result.error)
+        if (result.error instanceof ApiError && result.error.accountChanged) return
+        if ((result.committedReorder || result.committedDeletions.length > 0) && result.profiles) {
+          cache.setQueryData(queryKeys.collectionProfiles(submittedAccount), result.profiles)
+        }
+        if (result.committedSettings && result.settings) {
+          cache.setQueryData(queryKeys.collectionSettings(submittedAccount), result.settings)
+        }
+        void cache.invalidateQueries({ queryKey: queryKeys.collectionsOf(submittedAccount) })
+        if (result.committedDeletions.length > 0 || result.committedSettings) {
+          void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
+          void cache.invalidateQueries({ queryKey: queryKeys.home })
+        }
+        return
+      }
       acceptSaved({
-        modeSelection: nextSettings
-          ? nextSettings.modeSelection ?? nextSettings.effectiveMode
+        modeSelection: result.settings
+          ? result.settings.modeSelection ?? result.settings.effectiveMode
           : submitted.modeSelection,
-        includeUnreleased: nextSettings
-          ? nextSettings.franchises.includeUnreleased
+        includeUnreleased: result.settings
+          ? result.settings.franchises.includeUnreleased
           : submitted.includeUnreleased,
-        profileIds: nextProfiles?.profiles.map((profile) => profile.id)
+        profileIds: result.profiles?.profiles.map((profile) => profile.id)
           ?? submitted.profileIds.filter((id) => !submitted.deletedProfileIds.includes(id)),
         deletedProfileIds: [],
       }, submitted)
-      if (nextSettings) cache.setQueryData(queryKeys.collectionSettings(account), nextSettings)
-      if (nextProfiles) cache.setQueryData(queryKeys.collectionProfiles(account), nextProfiles)
+      if (result.settings) cache.setQueryData(queryKeys.collectionSettings(submittedAccount), result.settings)
+      if (result.profiles) cache.setQueryData(queryKeys.collectionProfiles(submittedAccount), result.profiles)
+      if (result.committedDeletions.length > 0) {
+        void cache.invalidateQueries({ queryKey: queryKeys.collectionsOf(submittedAccount) })
+      }
       void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
       void cache.invalidateQueries({ queryKey: queryKeys.home })
       toast.success("Collection settings saved")
-    },
-    onError: (error: Error) => toastFailure(error),
-    onSettled: (_data, _error, { value: submitted }) => {
-      if (submitted.deletedProfileIds.length) void cache.invalidateQueries({ queryKey: queryKeys.collectionsOf(account) })
     },
   })
 
@@ -890,7 +894,7 @@ export default function CollectionSettingsPage() {
       <SaveBar
         dirty={Boolean(draft && savedDraft && !sameJson(draft, savedDraft))}
         saving={save.isPending}
-        onSave={() => { if (draft && savedDraft) save.mutate({ value: draft, baseline: savedDraft }) }}
+        onSave={() => { if (draft && savedDraft) save.mutate({ value: draft, baseline: savedDraft, account }) }}
         onDiscard={() => setDraft(savedDraft)}
         onReset={() => { if (draft && savedDraft && settings.data) setDraft({
           ...savedDraft,
