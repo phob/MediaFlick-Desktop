@@ -12,6 +12,8 @@ export type CollectionProfile = Wire.CollectionProfile
 
 export type CollectionProfilesIndex = Wire.CollectionProfilesIndex
 
+export type ProfileDeleted = Wire.ProfileDeleted
+
 export type CollectionProfileDraft = Wire.CollectionProfileDraft
 
 export type CollectionTemplate = Wire.CollectionTemplate

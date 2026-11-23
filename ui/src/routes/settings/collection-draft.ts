@@ -1,9 +1,10 @@
 import type {
+  CollectionProfile,
   CollectionProfilesIndex,
   CollectionSettings,
   CollectionSettingsPatch,
-} from "../../lib/api/wire/api.collections.profiles.gen.ts"
-import type { CollectionProfile } from "../../lib/api/wire/collections.model.gen.ts"
+  ProfileDeleted,
+} from "../../lib/api/types/collections.ts"
 import { sameJson } from "../../lib/json.ts"
 
 export type CollectionSettingsDraft = {
@@ -21,30 +22,23 @@ export type CollectionSavePlan = {
 
 export type CollectionSaveActions = {
   reorderProfiles: (profileIds: string[]) => Promise<CollectionProfilesIndex>
-  deleteProfile: (profileId: string) => Promise<unknown>
+  deleteProfile: (profileId: string) => Promise<ProfileDeleted>
   patchSettings: (patch: CollectionSettingsPatch) => Promise<CollectionSettings>
   fetchSettings: () => Promise<CollectionSettings>
   fetchProfiles: () => Promise<CollectionProfilesIndex>
 }
 
+type CollectionSaveProgress = {
+  settings: CollectionSettings | undefined
+  profiles: CollectionProfilesIndex | undefined
+  committedDeletions: string[]
+  committedReorder: boolean
+  committedSettings: boolean
+}
+
 export type CollectionSaveResult =
-  | {
-    ok: true
-    settings: CollectionSettings | undefined
-    profiles: CollectionProfilesIndex | undefined
-    committedDeletions: string[]
-    committedReorder: boolean
-    committedSettings: boolean
-  }
-  | {
-    ok: false
-    error: Error
-    settings: CollectionSettings | undefined
-    profiles: CollectionProfilesIndex | undefined
-    committedDeletions: string[]
-    committedReorder: boolean
-    committedSettings: boolean
-  }
+  | (CollectionSaveProgress & { ok: true })
+  | (CollectionSaveProgress & { ok: false; error: Error })
 
 export function savedCollectionDraft(
   settings: CollectionSettings,
