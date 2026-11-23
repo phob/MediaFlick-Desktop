@@ -118,35 +118,16 @@ function useInitialFocus<T extends HTMLElement = HTMLDivElement>(entry: string |
     }
     const focusInitial = () => focusRow(initialRow())
     if (focusInitial()) return
-    const initialActive = document.activeElement
-    let settled = false
-    const stop = () => {
-      if (settled) return
-      settled = true
-      observer.disconnect()
-      document.removeEventListener("focusin", stop, true)
-      document.removeEventListener("pointerdown", stop, true)
-      document.removeEventListener("keydown", stop, true)
-    }
     const observer = new MutationObserver(() => {
-      if (settled) return
-      const active = document.activeElement
-      if (active && active !== initialActive && active !== document.body && active !== document.documentElement) {
-        stop()
-        return
-      }
-      if (focusInitial()) stop()
+      if (container.contains(document.activeElement) || focusInitial()) observer.disconnect()
     })
-    document.addEventListener("focusin", stop, true)
-    document.addEventListener("pointerdown", stop, true)
-    document.addEventListener("keydown", stop, true)
     observer.observe(initialRow() ?? container, {
       subtree: true,
       childList: true,
       attributes: true,
       attributeFilter: ["style"],
     })
-    return stop
+    return () => observer.disconnect()
   }, [entry])
   return list
 }

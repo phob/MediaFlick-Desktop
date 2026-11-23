@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react"
-import { createRef } from "react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { createRef, useState } from "react"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import type { ReaderAppearance } from "@/lib/api"
-import type { ReaderLayer } from "@/reader/model"
+import { nextLayer, type ReaderLayer } from "@/reader/model"
 import { ReaderPanels, type PanelControl } from "@/reader/panels"
 
 const DEFAULT_APPEARANCE: ReaderAppearance = {
@@ -14,9 +14,16 @@ const DEFAULT_APPEARANCE: ReaderAppearance = {
   fit: "page",
 }
 
-function renderPanel(layer: ReaderLayer, layout: "reflowable" | "fixed" = "reflowable") {
+function PanelHarness({
+  initialLayer,
+  layout = "reflowable",
+}: {
+  initialLayer: ReaderLayer
+  layout?: "reflowable" | "fixed"
+}) {
+  const [layer, setLayer] = useState<ReaderLayer>(initialLayer)
   const control = createRef<PanelControl | null>()
-  return render(
+  return (
     <ReaderPanels
       layer={layer}
       control={control}
@@ -36,12 +43,21 @@ function renderPanel(layer: ReaderLayer, layout: "reflowable" | "fixed" = "reflo
       }}
       appearance={DEFAULT_APPEARANCE}
       keyContext={{ flow: "paginated", reflowable: layout === "reflowable" }}
-      run={() => {}}
+      run={(command) => {
+        if (command.kind === "open" || command.kind === "back") {
+          const next = nextLayer(layer, command)
+          if (next !== "leave") setLayer(next)
+        }
+      }}
       jump={() => {}}
       changeAppearance={() => {}}
       leave={() => {}}
-    />,
+    />
   )
+}
+
+function renderPanel(layer: ReaderLayer, layout: "reflowable" | "fixed" = "reflowable") {
+  return render(<PanelHarness initialLayer={layer} layout={layout} />)
 }
 
 function guardHiddenFocus() {
@@ -88,6 +104,34 @@ describe("reader panel initial focus", () => {
     })
   })
 
+  test("moves focus to the Go to slider when opened from the reader menu", async () => {
+    guardHiddenFocus()
+
+    renderPanel({ kind: "menu", focus: "toc" }, "reflowable")
+    const goToButton = screen.getByRole("button", { name: "Go to a position" })
+    goToButton.focus()
+    fireEvent.click(goToButton)
+
+    const slider = await screen.findByRole("slider", { name: "Position in the book" })
+    await waitFor(() => {
+      expect(document.activeElement).toBe(slider)
+    })
+  })
+
+  test("moves focus to the Appearance slider when opened from the reader menu", async () => {
+    guardHiddenFocus()
+
+    renderPanel({ kind: "menu", focus: "toc" }, "reflowable")
+    const appearanceButton = screen.getByRole("button", { name: "Appearance" })
+    appearanceButton.focus()
+    fireEvent.click(appearanceButton)
+
+    const slider = await screen.findByRole("slider", { name: "Text size" })
+    await waitFor(() => {
+      expect(document.activeElement).toBe(slider)
+    })
+  })
+
   test("focuses the requested menu entry and checked radio immediately", () => {
     const { unmount } = renderPanel({ kind: "menu", focus: "settings" })
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Appearance" }))
@@ -95,63 +139,5 @@ describe("reader panel initial focus", () => {
 
     renderPanel({ kind: "settings", from: "menu" }, "fixed")
     expect(document.activeElement).toBe(screen.getByRole("radio", { name: "Whole page" }))
-  })
-
-  test("does not steal focus back if focus moves to another control before the slider thumb unhides", async () => {
-    guardHiddenFocus()
-    const originalObserve = MutationObserver.prototype.observe
-    let movedFocus = false
-    vi.spyOn(MutationObserver.prototype, "observe").mockImplementation(function (
-      this: MutationObserver,
-      target: Node,
-      options?: MutationObserverInit,
-    ) {
-      originalObserve.call(this, target, options)
-      if (target instanceof Element && target.closest("[data-reader-panel]") && !movedFocus) {
-        movedFocus = true
-        const close = document.querySelector<HTMLElement>('[data-slot="sheet-content"] > button')
-        close?.focus()
-      }
-    })
-
-    renderPanel({ kind: "goto", from: "menu" }, "reflowable")
-    const slider = screen.getByRole("slider", { name: "Position in the book" })
-    const close = screen.getByRole("button", { name: "Close" })
-
-    await waitFor(() => {
-      expect(slider.style.display).not.toBe("none")
-    })
-    await Promise.resolve()
-
-    expect(movedFocus).toBe(true)
-    expect(document.activeElement).toBe(close)
-  })
-
-  test("cancels pending slider focus if the user interacts via keyboard before the thumb unhides", async () => {
-    guardHiddenFocus()
-    const originalObserve = MutationObserver.prototype.observe
-    let cancelled = false
-    vi.spyOn(MutationObserver.prototype, "observe").mockImplementation(function (
-      this: MutationObserver,
-      target: Node,
-      options?: MutationObserverInit,
-    ) {
-      originalObserve.call(this, target, options)
-      if (target instanceof Element && target.closest("[data-reader-panel]") && !cancelled) {
-        cancelled = true
-        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }))
-      }
-    })
-
-    renderPanel({ kind: "settings", from: "menu" }, "reflowable")
-    const slider = screen.getByRole("slider", { name: "Text size" })
-
-    await waitFor(() => {
-      expect(slider.style.display).not.toBe("none")
-    })
-    await Promise.resolve()
-
-    expect(cancelled).toBe(true)
-    expect(document.activeElement).not.toBe(slider)
   })
 })
