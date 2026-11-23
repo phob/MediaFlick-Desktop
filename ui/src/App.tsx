@@ -16,7 +16,7 @@ import { useShellNavigation } from "@/lib/shell-navigation"
 import { useBillboard, useHome } from "@/lib/home-queries"
 import { useStatusPulse } from "@/lib/session-queries"
 import { useSettings } from "@/lib/settings-queries"
-import { startupScreenReady } from "@/lib/startup"
+import { shouldRevealLoadingScreen, startupScreenReady } from "@/lib/startup"
 import Discover from "@/routes/Discover"
 import DiscoverDetail from "@/routes/DiscoverDetail"
 import Collections, {
@@ -57,7 +57,7 @@ export default function App() {
   const initialHomeEnabled = bootstrap?.state === "ready" && showingHome
   const initialHome = useHome(initialHomeEnabled)
   const initialBillboard = useBillboard(initialHomeEnabled)
-  const ready = startupScreenReady({
+  const readiness = {
     statusPending: isPending,
     settingsPending: settings.isPending,
     catalogLoading,
@@ -65,7 +65,9 @@ export default function App() {
     initialHomeEnabled,
     homePending: initialHome.isPending,
     billboardPending: initialBillboard.isPending,
-  })
+  }
+  const ready = startupScreenReady(readiness)
+  const revealWhileLoading = shouldRevealLoadingScreen(readiness)
 
   return (
     <ViewingContext value={viewing.data ?? null}>
@@ -130,6 +132,7 @@ export default function App() {
       <LoadingScreen
         key={status?.authenticated ? "authenticated" : "anonymous"}
         ready={ready}
+        revealWhileLoading={revealWhileLoading}
       />
       <WindowTitleSync />
       <AppearanceSync />

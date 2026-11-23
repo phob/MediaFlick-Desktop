@@ -6,7 +6,7 @@ mod input;
 use std::cell::{Cell, RefCell};
 use std::io;
 use std::ptr::{null, null_mut};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::slice;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -19,14 +19,14 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_DBLCLKS, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
-    GetWindowLongPtrW, HTCLIENT, HWND_TOP, IDC_ARROW, IsWindow, LoadCursorW, PostMessageW,
-    RegisterClassW, SW_MINIMIZE, SW_SHOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, WM_APP, WM_CHAR, WM_CLOSE, WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP,
-    WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN,
-    WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY,
-    WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS, WM_SYSCHAR,
-    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW,
-    WS_CHILD, WS_VISIBLE,
+    GetWindowLongPtrW, HTCLIENT, HWND_TOP, IDC_ARROW, IsIconic, IsWindow, LoadCursorW,
+    PostMessageW, RegisterClassW, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_APP, WM_CHAR, WM_CLOSE,
+    WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_SETCURSOR, WM_SETFOCUS, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDBLCLK,
+    WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WS_CHILD, WS_VISIBLE,
 };
 
 use crate::playback::{NativeWindowHandle, PlaybackCoordinator, PlayerCommand};
@@ -55,6 +55,16 @@ const INPUT_CLASS: &[u16] = &[
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static CLASS_REGISTERED: OnceLock<bool> = OnceLock::new();
+thread_local! {
+    static SURFACE: RefCell<Weak<LibmpvOverlaySurface>> = const { RefCell::new(Weak::new()) };
+}
+
+pub(crate) fn focus() {
+    let surface = SURFACE.with(|slot| slot.borrow().upgrade());
+    if let Some(surface) = surface {
+        surface.focus_window();
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct ViewMetrics {
@@ -239,6 +249,7 @@ impl LibmpvOverlaySurface {
             None,
         )?;
         *self.browser.borrow_mut() = Some(browser.clone());
+        SURFACE.with(|slot| *slot.borrow_mut() = Rc::downgrade(self));
         if let Some(browser_host) = browser.host() {
             browser_host.set_focus(1);
         }
@@ -263,6 +274,28 @@ impl LibmpvOverlaySurface {
         }
     }
 
+    fn focus_window(&self) {
+        let host = self.host.get();
+        // SAFETY: IsWindow only inspects the handle value; Win32 validates the handle for ShowWindow and SetForegroundWindow.
+        if !host.is_null() && unsafe { IsWindow(host) } != 0 {
+            // SAFETY: `host` was just verified as a valid window handle above.
+            unsafe {
+                if IsIconic(host) != 0 {
+                    ShowWindow(host, SW_RESTORE);
+                } else {
+                    ShowWindow(host, SW_SHOW);
+                }
+                SetForegroundWindow(host);
+            }
+        }
+        let input = self.input.get();
+        if !input.is_null() {
+            // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
+            unsafe { SetFocus(input) };
+        }
+        self.with_browser_host(|host| host.set_focus(1));
+    }
+
     pub(crate) fn destroy(&self) {
         self.closing.set(true);
         self.save_window_settings();
@@ -282,7 +315,9 @@ impl LibmpvOverlaySurface {
 
     fn schedule_sync(self: &Rc<Self>) {
         let mut task = SurfaceSyncTask::new(Rc::clone(self));
-        if post_delayed_task(ThreadId::UI, Some(&mut task), SYNC_INTERVAL_MS) == 0 {
+        if crate::shell::cef::post_delayed_ui_task(&mut task, SYNC_INTERVAL_MS)
+            == crate::shell::cef::PostOutcome::Failed
+        {
             tracing::warn!(target: "cef.osr", "failed to schedule native-window synchronization");
         }
     }

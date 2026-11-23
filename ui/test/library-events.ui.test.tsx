@@ -90,4 +90,21 @@ describe("native library change bridge", () => {
     for (const queryKey of refreshed) expect(invalidated(queryKey)).toBe(true)
     for (const queryKey of untouched) expect(invalidated(queryKey)).toBe(false)
   })
+
+  test("completed mpv install invalidates settings globally even when PlayerSettings is unmounted", () => {
+    seed(queryKeys.settings)
+    render(<Bridge />)
+
+    shellEvent({
+      type: "mpv-install-progress",
+      payload: { requestId: "req-1", state: "downloading", downloaded: 10, total: 100 },
+    })
+    expect(invalidated(queryKeys.settings)).toBe(false)
+
+    shellEvent({
+      type: "mpv-install-progress",
+      payload: { requestId: "req-1", state: "completed", path: "C:\\MediaFlick\\mpv\\mpv.exe" },
+    })
+    expect(invalidated(queryKeys.settings)).toBe(true)
+  })
 })

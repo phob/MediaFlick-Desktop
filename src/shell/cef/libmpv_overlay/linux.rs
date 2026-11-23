@@ -288,7 +288,9 @@ impl LibmpvOverlaySurface {
 
     fn schedule(self: &Rc<Self>) {
         let mut task = LinuxSurfaceTask::new(Rc::clone(self));
-        if post_delayed_task(ThreadId::UI, Some(&mut task), SYNC_MS) == 0 {
+        if crate::shell::cef::post_delayed_ui_task(&mut task, SYNC_MS)
+            == crate::shell::cef::PostOutcome::Failed
+        {
             tracing::warn!(target: "cef.osr", "failed to schedule the Linux overlay");
         }
     }

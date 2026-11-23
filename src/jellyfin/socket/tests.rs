@@ -1,6 +1,7 @@
 use super::{
-    Duration, Endpoint, LibraryChange, RemoteCommand, ServerMessage, SocketHandle,
-    apply_library_change, apply_user_data, handle_message, parse_message, spawn,
+    Disconnect, Duration, Endpoint, LibraryChange, RECONNECT_MAX, RECONNECT_MIN, ReconnectBackoff,
+    RemoteCommand, STABLE_CONNECTION, ServerMessage, SocketHandle, apply_library_change,
+    apply_user_data, handle_message, parse_message, spawn,
 };
 use crate::app::services::ShellBridge;
 use crate::jellyfin::session::Session;
@@ -45,7 +46,9 @@ fn remote_commands_reach_the_registered_handler_in_order() {
             RemoteCommand::Playstate { data, scope } => {
                 format!("playstate:{}:{}", scope.user_id(), data["Command"])
             }
-            RemoteCommand::General { data } => format!("general:{}", data["Command"]),
+            RemoteCommand::General { data, scope } => {
+                format!("general:{}:{}", scope.user_id(), data["Command"])
+            }
         });
     }));
     for kind in ["Play", "Playstate", "GeneralCommand"] {
@@ -57,9 +60,60 @@ fn remote_commands_reach_the_registered_handler_in_order() {
         [
             r#"play:alice:"x""#,
             r#"playstate:alice:"x""#,
-            r#"general:"x""#
+            r#"general:alice:"x""#
         ]
     );
+}
+
+#[test]
+fn session_changed_resets_backoff_and_reconnects_immediately() {
+    let mut backoff = ReconnectBackoff::new();
+    assert_eq!(backoff.on_connect_error(), RECONNECT_MIN);
+    assert_eq!(backoff.on_connect_error(), RECONNECT_MIN * 2);
+    assert_eq!(backoff.on_connect_error(), RECONNECT_MIN * 4);
+
+    assert_eq!(
+        backoff.on_disconnect(&Disconnect::SessionChanged, Duration::from_secs(1)),
+        None
+    );
+    assert_eq!(backoff.on_connect_error(), RECONNECT_MIN);
+}
+
+#[test]
+fn backoff_grows_exponentially_up_to_cap_and_resets_after_stable_connection() {
+    let mut backoff = ReconnectBackoff::new();
+    let mut last = Duration::ZERO;
+    for _ in 0..12 {
+        last = backoff.on_connect_error();
+    }
+    assert_eq!(last, RECONNECT_MAX);
+
+    assert_eq!(
+        backoff.on_disconnect(&Disconnect::Closed, STABLE_CONNECTION),
+        Some(RECONNECT_MIN)
+    );
+}
+
+#[test]
+fn remote_commands_for_a_signed_out_session_are_dropped() {
+    let library = alice_library("http://127.0.0.1:9");
+    let session = Session::restore(library.clone(), Arc::default());
+    let scope = session.scope().expect("Alice scope");
+    let handle = SocketHandle::detached();
+    let sync = SyncHandle::detached();
+    let (seen_tx, seen) = mpsc::channel();
+    handle.on_remote_command(Arc::new(move |_| {
+        let _ = seen_tx.send(());
+    }));
+
+    session.clear_local(false).expect("sign out");
+
+    for kind in ["Play", "Playstate", "GeneralCommand"] {
+        let message = format!(r#"{{"MessageType":"{kind}","Data":{{"Command":"Pause"}}}}"#);
+        handle_message(&message, &library, &session, &sync, &handle, &scope);
+    }
+
+    assert_eq!(seen.try_iter().count(), 0);
 }
 
 fn receive_request(listener: &TcpListener) -> (TcpStream, String) {

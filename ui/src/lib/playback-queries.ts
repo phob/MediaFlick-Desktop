@@ -31,10 +31,83 @@ export function usePlaybackNeighbors(itemId: string | undefined, enabled = true)
   })
 }
 
+interface PlayerStateSync {
+  generation: number
+  lastActive: boolean | null
+  lastPlaybackId: number | null
+  stoppedPlaybackIds: Set<number>
+}
+
+const MAX_STOPPED_PLAYBACK_IDS = 32
+const playerStateSyncs = new WeakMap<QueryClient, PlayerStateSync>()
+
+function getPlayerStateSync(client: QueryClient): PlayerStateSync {
+  let sync = playerStateSyncs.get(client)
+  if (!sync) {
+    sync = {
+      generation: 0,
+      lastActive: null,
+      lastPlaybackId: null,
+      stoppedPlaybackIds: new Set(),
+    }
+    playerStateSyncs.set(client, sync)
+  }
+  return sync
+}
+
+function recordStoppedPlaybackId(sync: PlayerStateSync, playbackId: number | null | undefined) {
+  if (playbackId == null) return
+  sync.stoppedPlaybackIds.add(playbackId)
+  if (sync.stoppedPlaybackIds.size > MAX_STOPPED_PLAYBACK_IDS) {
+    const oldest = sync.stoppedPlaybackIds.values().next().value
+    if (oldest !== undefined) sync.stoppedPlaybackIds.delete(oldest)
+  }
+}
+
+export function notePlaybackStateEvent(client: QueryClient, payload: PlayerState) {
+  const sync = getPlayerStateSync(client)
+  const playbackId = payload.playbackId ?? null
+  if (sync.lastActive !== payload.active || sync.lastPlaybackId !== playbackId) {
+    sync.generation += 1
+    sync.lastActive = payload.active
+    sync.lastPlaybackId = playbackId
+    if (!payload.active) {
+      void client.cancelQueries({ queryKey: queryKeys.playerState })
+    }
+  }
+}
+
+export function notePlaybackStoppedEvent(
+  client: QueryClient,
+  payload: PlayerState,
+  superseded = false,
+) {
+  const sync = getPlayerStateSync(client)
+  recordStoppedPlaybackId(sync, payload.playbackId)
+  if (superseded) return
+  sync.generation += 1
+  sync.lastActive = false
+  sync.lastPlaybackId = payload.playbackId ?? null
+  void client.cancelQueries({ queryKey: queryKeys.playerState })
+}
+
 export function usePlayerState() {
+  const client = useQueryClient()
   return useQuery({
     queryKey: queryKeys.playerState,
-    queryFn: api.playerState,
+    queryFn: async ({ signal }) => {
+      const sync = getPlayerStateSync(client)
+      const startedGeneration = sync.generation
+      const fetched = await api.playerState(signal)
+      const staleStopped =
+        fetched.active &&
+        fetched.playbackId != null &&
+        sync.stoppedPlaybackIds.has(fetched.playbackId)
+      if (sync.generation !== startedGeneration || staleStopped) {
+        return client.getQueryData<PlayerState>(queryKeys.playerState) ?? { ...fetched, active: false }
+      }
+      return fetched
+    },
     refetchInterval: (query) => (query.state.data?.active ? 10_000 : false),
     staleTime: 0,
   })

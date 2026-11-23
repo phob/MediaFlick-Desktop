@@ -1,3 +1,5 @@
+#[cfg(any(target_os = "windows", test))]
+use std::path::Path;
 use std::path::PathBuf;
 
 use crate::maintenance::updater::UpdaterResult;
@@ -61,9 +63,10 @@ pub fn installed_mpv_path() -> PathBuf {
 }
 
 #[cfg(target_os = "windows")]
-pub fn download_and_install<F>(mut progress: F) -> UpdaterResult<PathBuf>
+pub fn download_and_install<F, B>(mut progress: F, before_replace: B) -> UpdaterResult<PathBuf>
 where
     F: FnMut(MpvSetupPhase),
+    B: FnOnce(),
 {
     use crate::maintenance::updater;
 
@@ -107,20 +110,7 @@ where
         );
     }
 
-    let backup_dir = install_dir.with_extension("old");
-    let _ = std::fs::remove_dir_all(&backup_dir);
-    let had_existing = install_dir.exists();
-    if had_existing {
-        std::fs::rename(&install_dir, &backup_dir)?;
-    }
-    if let Err(error) = std::fs::rename(&staging_dir, &install_dir) {
-        if had_existing {
-            let _ = std::fs::rename(&backup_dir, &install_dir);
-        }
-        let _ = std::fs::remove_dir_all(&staging_dir);
-        return Err(error.into());
-    }
-    let _ = std::fs::remove_dir_all(&backup_dir);
+    replace_install_dir(&staging_dir, &install_dir, before_replace)?;
 
     let mpv = install_dir.join("mpv.exe");
     tracing::info!(target: "mpv.setup", path = %mpv.display(), "installed mpv");
@@ -128,11 +118,36 @@ where
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn download_and_install<F>(_progress: F) -> UpdaterResult<PathBuf>
+pub fn download_and_install<F, B>(_progress: F, _before_replace: B) -> UpdaterResult<PathBuf>
 where
     F: FnMut(MpvSetupPhase),
+    B: FnOnce(),
 {
     Err(std::io::Error::other("automatic mpv download is only supported on Windows").into())
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn replace_install_dir(
+    staging_dir: &Path,
+    install_dir: &Path,
+    before_replace: impl FnOnce(),
+) -> std::io::Result<()> {
+    before_replace();
+    let backup_dir = install_dir.with_extension("old");
+    let _ = std::fs::remove_dir_all(&backup_dir);
+    let had_existing = install_dir.exists();
+    if had_existing {
+        std::fs::rename(install_dir, &backup_dir)?;
+    }
+    if let Err(error) = std::fs::rename(staging_dir, install_dir) {
+        if had_existing {
+            let _ = std::fs::rename(&backup_dir, install_dir);
+        }
+        let _ = std::fs::remove_dir_all(staging_dir);
+        return Err(error);
+    }
+    let _ = std::fs::remove_dir_all(&backup_dir);
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -205,5 +220,73 @@ mod tests {
         ];
         let chosen = select_mpv_asset(assets).expect("an asset");
         assert_eq!(chosen.name, "mpv-x86_64-20260610-git-abc.7z");
+    }
+}
+
+#[cfg(test)]
+mod replace_tests {
+    use super::replace_install_dir;
+    use std::cell::Cell;
+    use std::io::Write;
+    use std::path::Path;
+
+    fn write_marker(path: &Path, content: &str) {
+        let mut file = std::fs::File::create(path).expect("create marker");
+        file.write_all(content.as_bytes()).expect("write marker");
+    }
+
+    fn temp_root(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "mediaflick-mpv-setup-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+        root
+    }
+
+    #[test]
+    fn replace_install_dir_runs_before_replace_hook_before_swapping_directories() {
+        let root = temp_root("swap");
+        let install_dir = root.join("mpv");
+        let staging_dir = install_dir.with_extension("new");
+        std::fs::create_dir_all(&install_dir).expect("install dir");
+        std::fs::create_dir_all(&staging_dir).expect("staging dir");
+        write_marker(&install_dir.join("version.txt"), "old");
+        write_marker(&staging_dir.join("version.txt"), "new");
+
+        let hook_saw_old = Cell::new(false);
+        replace_install_dir(&staging_dir, &install_dir, || {
+            let content = std::fs::read_to_string(install_dir.join("version.txt")).unwrap();
+            hook_saw_old.set(content == "old");
+        })
+        .expect("replace succeeds");
+
+        assert!(hook_saw_old.get());
+        assert_eq!(
+            std::fs::read_to_string(install_dir.join("version.txt")).unwrap(),
+            "new"
+        );
+        assert!(!staging_dir.exists());
+        assert!(!install_dir.with_extension("old").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn replace_install_dir_restores_previous_directory_when_staging_is_missing() {
+        let root = temp_root("rollback");
+        let install_dir = root.join("mpv");
+        let staging_dir = install_dir.with_extension("new");
+        std::fs::create_dir_all(&install_dir).expect("install dir");
+        write_marker(&install_dir.join("version.txt"), "old");
+
+        let result = replace_install_dir(&staging_dir, &install_dir, || {});
+
+        assert!(result.is_err());
+        assert_eq!(
+            std::fs::read_to_string(install_dir.join("version.txt")).unwrap(),
+            "old"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

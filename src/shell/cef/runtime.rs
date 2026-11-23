@@ -1,6 +1,77 @@
 use super::handlers::{ShellClient, cef_i32};
 use super::*;
 
+#[cfg(not(target_os = "windows"))]
+wrap_app! {
+    struct RelaunchApp {}
+
+    impl App {}
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn notify_already_running() {
+    #[cfg(target_os = "macos")]
+    let _framework = match current_exe_path()
+        .ok_or_else(|| "could not resolve the executable path".to_string())
+        .and_then(|exe| mac::load_framework(&exe))
+    {
+        Ok(framework) => framework,
+        Err(error) => {
+            tracing::warn!(target: "app", "could not load CEF for relaunch handoff: {error}");
+            return;
+        }
+    };
+
+    let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
+    let args = args::Args::new();
+    let mut app = RelaunchApp::new();
+    if execute_process(
+        Some(args.as_main_args()),
+        Some(&mut app),
+        std::ptr::null_mut(),
+    ) >= 0
+    {
+        return;
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Err(error) = mac::install_application() {
+        tracing::warn!(target: "app", "could not install macOS application for relaunch handoff: {error}");
+        return;
+    }
+
+    let paths = RuntimePaths::new();
+    if !paths.cache_dir.is_dir() {
+        return;
+    }
+
+    let cache_path = paths.cache_dir.to_string_lossy();
+    let settings = Settings {
+        no_sandbox: 1,
+        browser_subprocess_path: cef_string_from_path(paths.browser_subprocess_path.as_ref()),
+        cache_path: CefString::from(cache_path.as_ref()),
+        root_cache_path: CefString::from(cache_path.as_ref()),
+        log_severity: LogSeverity::DISABLE,
+        resources_dir_path: cef_string_from_path(paths.resources_dir_path.as_ref()),
+        locales_dir_path: cef_string_from_path(paths.locales_dir_path.as_ref()),
+        framework_dir_path: cef_string_from_path(paths.framework_dir_path.as_ref()),
+        disable_signal_handlers: 1,
+        ..Default::default()
+    };
+
+    CEF_SHUTTING_DOWN.store(false, Ordering::Release);
+    if initialize(
+        Some(args.as_main_args()),
+        Some(&settings),
+        Some(&mut app),
+        std::ptr::null_mut(),
+    ) == 1
+    {
+        mark_cef_shutting_down();
+        shutdown();
+    }
+}
+
 wrap_app! {
     pub struct ShellApp {
         config: AppConfig,
@@ -92,6 +163,7 @@ wrap_app! {
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
             Some(JellyfinBrowserProcessHandler::new(
                 RefCell::new(None),
+                RefCell::new(None),
                 self.config.clone(),
             ))
         }
@@ -101,6 +173,7 @@ wrap_app! {
 wrap_browser_process_handler! {
     struct JellyfinBrowserProcessHandler {
         client: RefCell<Option<Client>>,
+        state: RefCell<Option<BrowserState>>,
         config: AppConfig,
     }
 
@@ -126,6 +199,7 @@ wrap_browser_process_handler! {
                 settings.clone(),
                 show_state,
             );
+            *self.state.borrow_mut() = Some(handler_state.clone());
             #[cfg(target_os = "macos")]
             mac::quit_through(&handler_state);
             let url = CefString::from(app_scheme::APP_URL);
@@ -187,6 +261,7 @@ wrap_browser_process_handler! {
 
             let Some(browser_view) = browser_view else {
                 eprintln!("Failed to create CEF BrowserView");
+                mark_cef_shutting_down();
                 quit_message_loop();
                 return;
             };
@@ -204,6 +279,21 @@ wrap_browser_process_handler! {
             );
             window_create_top_level(Some(&mut window_delegate));
             schedule_reveal_deadline(&handler_state);
+        }
+
+        fn on_already_running_app_relaunch(
+            &self,
+            _command_line: Option<&mut CommandLine>,
+            _current_directory: Option<&CefString>,
+        ) -> std::os::raw::c_int {
+            tracing::info!(
+                target: "app",
+                "another launch attempted to reuse this running instance; focusing existing window"
+            );
+            if let Some(state) = self.state.borrow().as_ref() {
+                focus_main_window(state);
+            }
+            1
         }
 
         fn default_client(&self) -> Option<Client> {

@@ -19,8 +19,19 @@ function nextPaint() {
   })
 }
 
-export function LoadingScreen({ ready }: { ready: boolean }) {
+export function LoadingScreen({
+  ready,
+  revealWhileLoading = false,
+}: {
+  ready: boolean
+  revealWhileLoading?: boolean
+}) {
   const [mounted, setMounted] = useState(true)
+
+  useEffect(() => {
+    if (!revealWhileLoading || windowRevealed()) return
+    signalWindowReady()
+  }, [revealWhileLoading])
 
   useEffect(() => {
     if (!ready) return
@@ -33,7 +44,7 @@ export function LoadingScreen({ ready }: { ready: boolean }) {
 
   useEffect(() => {
     if (mounted) return
-    signalWindowReady()
+    if (!windowRevealed()) signalWindowReady()
   }, [mounted])
 
   if (!mounted) return null

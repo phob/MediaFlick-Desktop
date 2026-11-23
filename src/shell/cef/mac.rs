@@ -94,6 +94,7 @@ define_class!(
                 Some(state) => initiate_app_exit(&state),
                 None => {
                     tracing::info!(target: "app", "quit before the main window was created");
+                    super::mark_cef_shutting_down();
                     cef::quit_message_loop();
                 }
             }

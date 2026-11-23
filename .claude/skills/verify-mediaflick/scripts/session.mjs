@@ -108,7 +108,7 @@ if (!existsSync(exe)) throw new Error(`${exe} is missing; \`just verify\` builds
 const real = realProfileDirs()
 const GUARDED = [
   ["config", "accounts.json"], ["config", "settings.json"], ["config", "collections.json"], ["config", "playback-preferences.json"],
-  ["config", "pending-deletions.json"], ["config", "instance.json"], ["data", "library.db"],
+  ["config", "pending-deletions.json"], ["config", "instance.json"], ["data", "instance.lock"], ["data", "library.db"],
 ]
 const fingerprint = () => Object.fromEntries(GUARDED.map(([kind, name]) => {
   const file = path.join(real[kind], name)
@@ -253,7 +253,8 @@ async function doctor(port, file = "doctor.json") {
   if (!href.startsWith("mediaflick-desktop://app")) problems.push(`CDP page is ${href}, not the app`)
   const expectedStatus = options["services-down"] ? 503 : 200
   if (status.status !== expectedStatus) problems.push(`/api/status answered ${status.status}, expected ${expectedStatus}`)
-  if (!existsSync(path.join(configDir, "instance.json"))) problems.push("the app did not create instance.json in the disposable config dir")
+  if (!existsSync(path.join(configDir, "mediaflick-desktop.log"))) problems.push("the app did not create mediaflick-desktop.log in the disposable config dir")
+  if (process.platform !== "win32" && !existsSync(path.join(dataDir, "instance.lock"))) problems.push("the app did not create instance.lock in the disposable data dir")
   if (!processes.some((row) => row.pid === child.pid) && !listProcesses().some((row) => row.pid === child.pid && isAppProcess(row))) problems.push(`pid ${child.pid} is not a running app process`)
   if (problems.length) throw new Error(`doctor: ${problems.join("; ")}`)
   log(`doctor ok: ${version.Browser}, ${processes.length} app processes on this profile, signed in: ${status.body?.authenticated === true}`)

@@ -99,6 +99,9 @@ enum ControllerMessage {
     MpvEventsDisconnected {
         session_id: u64,
     },
+    ReleaseExternal {
+        ack: Sender<()>,
+    },
     Shutdown {
         ack: Sender<()>,
     },
@@ -447,6 +450,20 @@ impl MpvController {
             .clone()
     }
 
+    pub fn release_external_runtime(&self) {
+        let (ack, ack_rx) = mpsc::channel();
+        if self
+            .tx
+            .send(ControllerMessage::ReleaseExternal { ack })
+            .is_err()
+        {
+            return;
+        }
+        if ack_rx.recv_timeout(Duration::from_secs(10)).is_err() {
+            tracing::warn!(target: "mpv.ipc", "timed out waiting for external mpv runtime release");
+        }
+    }
+
     pub fn shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         let (ack, ack_rx) = mpsc::channel();
@@ -598,6 +615,11 @@ impl ControllerState {
                 Ok(ControllerMessage::MpvEventsDisconnected { session_id }) => {
                     self.handle_event_stream_disconnected(session_id);
                 }
+                Ok(ControllerMessage::ReleaseExternal { ack }) => {
+                    tracing::debug!(target: "playback", "received external mpv release request");
+                    self.release_external_runtime();
+                    let _ = ack.send(());
+                }
                 Ok(ControllerMessage::Shutdown { ack }) => {
                     tracing::debug!(target: "playback", "received playback shutdown request");
                     self.shutdown();
@@ -648,6 +670,7 @@ impl ControllerState {
         }
 
         if self.handle_prompt_skip_control(command) {
+            self.cancel_startup_seek("user seek skipped segment");
             return;
         }
 
@@ -670,10 +693,20 @@ impl ControllerState {
             }
             return;
         }
+        if matches!(command, PlayerCommand::SeekMilliseconds(_)) {
+            self.cancel_startup_seek("user requested seek");
+        }
         if matches!(command, PlayerCommand::Stop) && self.phase.pending().is_some() {
             self.replacement_end_file_pending = false;
             self.next_playback_handoff_until = None;
             self.finish_active(Some(StopReason::Stop));
+        }
+    }
+
+    fn cancel_startup_seek(&mut self, reason: &'static str) {
+        if self.startup_seek.take().is_some() {
+            tracing::debug!(target: "playback", reason, "cancelled pending mpv startup seek");
+            self.load_pending_external_subtitle();
         }
     }
 
@@ -791,15 +824,8 @@ impl ControllerState {
         let reporter = PlaybackReporter::from_launch(&launch);
         self.startup_seek = None;
         self.reset_chapter_markers();
-        let replacing_active_file = self.mpv_playback_active || self.phase.active().is_some();
-        if let Some(active) = self.phase.take_active() {
-            tracing::info!(
-                target: "playback",
-                state = %self.last_state,
-                "stopping previous active playback before loading replacement"
-            );
-            active.reporter.report_stopped(&self.last_state, false);
-        }
+        let previous_stopped = self.take_replaced_playback_stop();
+        let replacing_active_file = previous_stopped.is_some();
 
         match self.send_loadfile_with_reconnect(mpv_path, fullscreen, &launch) {
             Ok(entry) => {
@@ -837,19 +863,55 @@ impl ControllerState {
                     self.schedule_mpv_raise("loadfile accepted");
                 }
                 self.publish_snapshot();
+                self.notify_replaced_stop(previous_stopped);
             }
             Err(IpcCommandFailure::Rejected(error)) => {
                 tracing::warn!(target: "mpv.ipc", "mpv rejected loadfile command: {error}");
+                self.notify_replaced_stop(previous_stopped);
                 self.handle_rejected_loadfile(replacing_active_file, identity);
             }
             Err(error) => {
                 tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command after reconnect attempt: {error}");
                 self.mpv_playback_active = false;
                 self.ipc.pending_stop = true;
+                self.notify_replaced_stop(previous_stopped);
                 self.report_playback_failure(launch.load_id, REJECTED_LOAD);
                 self.handle_mpv_session_lost("loadfile transport failed");
             }
         }
+    }
+
+    fn notify_replaced_stop(&self, previous: Option<PlayerSnapshot>) {
+        if let Some(previous) = previous {
+            self.notify_playback_stopped(previous);
+        }
+    }
+
+    fn take_replaced_playback_stop(&mut self) -> Option<PlayerSnapshot> {
+        let replacing_active_file = self.mpv_playback_active || self.phase.active().is_some();
+        if let Some(active) = self.phase.take_active() {
+            tracing::info!(
+                target: "playback",
+                state = %self.last_state,
+                "stopping previous active playback before loading replacement"
+            );
+            active.reporter.report_stopped(&self.last_state, false);
+            self.playback_runtime_ticks = None;
+            return Some(self.snapshot_for_identity(
+                false,
+                Some(StopReason::Stop),
+                Some(&active.identity),
+            ));
+        }
+        if replacing_active_file {
+            self.playback_runtime_ticks = None;
+            return Some(self.snapshot_for_identity(
+                false,
+                Some(StopReason::Stop),
+                self.current_identity(),
+            ));
+        }
+        None
     }
 
     fn make_way_for_load(&mut self, key: &str, load_id: i64) -> bool {

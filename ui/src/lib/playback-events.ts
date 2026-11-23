@@ -6,7 +6,12 @@ import { useViewing } from "./viewing"
 import { accountKey, useStatus } from "./session-queries"
 import { api, type PlayerState } from "./api"
 import type * as Wire from "./api/wire.gen.ts"
-import { clearPendingSeek, reconcilePendingSeekForClient } from "./playback-queries"
+import {
+  clearPendingSeek,
+  notePlaybackStateEvent,
+  notePlaybackStoppedEvent,
+  reconcilePendingSeekForClient,
+} from "./playback-queries"
 import { invalidateMediaSurfaces, queryKeys } from "./query-client"
 
 declare global {
@@ -48,12 +53,23 @@ export function usePlaybackEventsBridge() {
         ...previous,
         ...payload,
       }))
+      notePlaybackStateEvent(queryClient, payload)
       reconcilePendingSeekForClient(queryClient, merged)
     }
 
     window.__mediaFlickDesktopPlaybackStopped = (payload) => {
-      clearPendingSeek(queryClient)
-      queryClient.setQueryData<PlayerState>(queryKeys.playerState, { ...payload, active: false })
+      const previous = queryClient.getQueryData<PlayerState>(queryKeys.playerState)
+      const superseded = Boolean(
+        previous?.active &&
+        previous.playbackId != null &&
+        payload.playbackId != null &&
+        previous.playbackId !== payload.playbackId,
+      )
+      if (!superseded) {
+        clearPendingSeek(queryClient)
+        queryClient.setQueryData<PlayerState>(queryKeys.playerState, { ...payload, active: false })
+      }
+      notePlaybackStoppedEvent(queryClient, payload, superseded)
 
       if (!payload?.itemId) invalidateMediaSurfaces(queryClient)
       if (payload.nowPlaying?.kind === "audio") { manualPlay(); return }

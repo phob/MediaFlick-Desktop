@@ -129,18 +129,66 @@ pub fn spawn(
     handle
 }
 
+struct ReconnectBackoff {
+    delay: Duration,
+}
+
+impl ReconnectBackoff {
+    const fn new() -> Self {
+        Self {
+            delay: RECONNECT_MIN,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.delay = RECONNECT_MIN;
+    }
+
+    fn on_disconnect(&mut self, reason: &Disconnect, elapsed: Duration) -> Option<Duration> {
+        if matches!(reason, Disconnect::SessionChanged) {
+            self.reset();
+            return None;
+        }
+        if elapsed >= STABLE_CONNECTION {
+            self.reset();
+        }
+        Some(self.next_wait())
+    }
+
+    fn on_connect_error(&mut self) -> Duration {
+        self.next_wait()
+    }
+
+    fn next_wait(&mut self) -> Duration {
+        let wait = self.delay;
+        self.delay = (self.delay * 2).min(RECONNECT_MAX);
+        wait
+    }
+}
+
 fn run(library: &Arc<Library>, session: &Arc<Session>, sync: &SyncHandle, handle: &SocketHandle) {
-    let mut backoff = RECONNECT_MIN;
+    let mut backoff = ReconnectBackoff::new();
     let mut lost_generation = None;
+    let mut last_generation = None;
     while !handle.is_stopped() {
         if !session.is_authenticated() {
+            backoff.reset();
+            lost_generation = None;
+            last_generation = None;
             if !handle.wait(IDLE_INTERVAL) {
                 return;
             }
             continue;
         }
 
-        match connect(session) {
+        let current_generation = session.generation();
+        if last_generation != Some(current_generation) {
+            backoff.reset();
+            lost_generation = None;
+            last_generation = Some(current_generation);
+        }
+
+        let wait_delay = match connect(session) {
             Ok((mut socket, scope)) => {
                 tracing::info!(target: "jellyfin.socket", "listening for Jellyfin server events");
                 announce_capabilities(session, &scope);
@@ -153,44 +201,52 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, sync: &SyncHandle, handle
                     handle.shell.live_resynced();
                 }
                 let connected_at = Instant::now();
-                match listen(&mut socket, library, session, sync, handle, &scope) {
+                let disconnect = listen(&mut socket, library, session, sync, handle, &scope);
+                match &disconnect {
                     Disconnect::Stopped => return,
                     Disconnect::SessionChanged => {
                         tracing::debug!(
                             target: "jellyfin.socket",
                             "the session changed; reconnecting the event stream"
                         );
+                        lost_generation = None;
                     }
                     Disconnect::Closed => {
                         tracing::info!(
                             target: "jellyfin.socket",
                             "the Jellyfin server closed the event stream"
                         );
+                        lost_generation = Some(scope.generation());
                     }
                     Disconnect::Failed(reason) => {
                         tracing::debug!(
                             target: "jellyfin.socket",
                             "the Jellyfin event stream dropped: {reason}"
                         );
+                        lost_generation = Some(scope.generation());
                     }
                 }
-                lost_generation = Some(scope.generation());
-                if connected_at.elapsed() >= STABLE_CONNECTION {
-                    backoff = RECONNECT_MIN;
-                }
+                backoff.on_disconnect(&disconnect, connected_at.elapsed())
             }
             Err(reason) => {
                 tracing::debug!(
                     target: "jellyfin.socket",
                     "could not open the Jellyfin event stream: {reason}"
                 );
+                if session.generation() != current_generation {
+                    backoff.reset();
+                    None
+                } else {
+                    Some(backoff.on_connect_error())
+                }
             }
-        }
+        };
 
-        if !handle.wait(backoff) {
+        if let Some(delay) = wait_delay
+            && !handle.wait(delay)
+        {
             return;
         }
-        backoff = (backoff * 2).min(RECONNECT_MAX);
     }
 }
 
@@ -292,6 +348,11 @@ fn listen(
 
         match socket.read() {
             Ok(Message::Text(text)) => {
+                if !session.scope_is_current(scope) {
+                    let _ = socket.close(None);
+                    let _ = socket.flush();
+                    return Disconnect::SessionChanged;
+                }
                 if let Some(interval) =
                     handle_message(text.as_str(), library, session, sync, handle, scope)
                 {
@@ -331,15 +392,36 @@ fn handle_message(
         ServerMessage::LibraryChanged(change) => {
             apply_library_change(library, session, sync, shell, scope, &change);
         }
-        ServerMessage::Play(data) => handle.remote(RemoteCommand::Play {
-            data,
-            scope: scope.clone(),
-        }),
-        ServerMessage::Playstate(data) => handle.remote(RemoteCommand::Playstate {
-            data,
-            scope: scope.clone(),
-        }),
-        ServerMessage::GeneralCommand(data) => handle.remote(RemoteCommand::General { data }),
+        ServerMessage::Play(data) => {
+            if session.scope_is_current(scope) {
+                handle.remote(RemoteCommand::Play {
+                    data,
+                    scope: scope.clone(),
+                });
+            } else {
+                log_stale_push();
+            }
+        }
+        ServerMessage::Playstate(data) => {
+            if session.scope_is_current(scope) {
+                handle.remote(RemoteCommand::Playstate {
+                    data,
+                    scope: scope.clone(),
+                });
+            } else {
+                log_stale_push();
+            }
+        }
+        ServerMessage::GeneralCommand(data) => {
+            if session.scope_is_current(scope) {
+                handle.remote(RemoteCommand::General {
+                    data,
+                    scope: scope.clone(),
+                });
+            } else {
+                log_stale_push();
+            }
+        }
         ServerMessage::Ignored => {}
     }
     None

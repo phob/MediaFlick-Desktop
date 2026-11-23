@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -26,6 +27,44 @@ pub mod api;
 pub mod app_scheme;
 
 const PLAYSTATE_CACHE_REFRESH_TIMEOUT: Duration = Duration::from_secs(11);
+
+static CEF_SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PostOutcome {
+    Posted,
+    ShuttingDown,
+    Failed,
+}
+
+fn guarded_post(shutting_down: &AtomicBool, post: impl FnOnce() -> bool) -> PostOutcome {
+    if shutting_down.load(Ordering::Acquire) {
+        return PostOutcome::ShuttingDown;
+    }
+    if post() {
+        PostOutcome::Posted
+    } else if shutting_down.load(Ordering::Acquire) {
+        PostOutcome::ShuttingDown
+    } else {
+        PostOutcome::Failed
+    }
+}
+
+pub(super) fn mark_cef_shutting_down() {
+    CEF_SHUTTING_DOWN.store(true, Ordering::SeqCst);
+}
+
+pub(super) fn post_ui_task(task: &mut Task) -> PostOutcome {
+    guarded_post(&CEF_SHUTTING_DOWN, || {
+        post_task(ThreadId::UI, Some(task)) != 0
+    })
+}
+
+pub(super) fn post_delayed_ui_task(task: &mut Task, delay_ms: i64) -> PostOutcome {
+    guarded_post(&CEF_SHUTTING_DOWN, || {
+        post_delayed_task(ThreadId::UI, Some(task), delay_ms) != 0
+    })
+}
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -124,6 +163,7 @@ pub fn run(config: &AppConfig) -> i32 {
         tracing::warn!(target: "main", "could not start services early: {error}");
     }
 
+    CEF_SHUTTING_DOWN.store(false, Ordering::Release);
     if initialize(
         Some(args.as_main_args()),
         Some(&settings),
@@ -131,11 +171,13 @@ pub fn run(config: &AppConfig) -> i32 {
         std::ptr::null_mut(),
     ) != 1
     {
+        mark_cef_shutting_down();
         eprintln!("CEF initialization failed");
         return 1;
     }
 
     run_message_loop();
+    mark_cef_shutting_down();
     shutdown();
     0
 }
@@ -248,6 +290,8 @@ use events::{
     start_update_check_bridge, warm_configured_player,
 };
 use runtime::ShellApp;
+#[cfg(not(target_os = "windows"))]
+pub use runtime::notify_already_running;
 
 fn update_webui_window_from_window(state: Option<&BrowserState>, window: Option<&Window>) {
     let bounds = window.map(Window::bounds);
@@ -461,6 +505,45 @@ fn clear_main_window(state: &BrowserState) {
     }
 }
 
+fn focus_main_window(state: &BrowserState) {
+    debug_assert_ne!(currently_on(ThreadId::UI), 0);
+
+    let overlay_active = libmpv_overlay::is_active();
+    let window = match state.lock() {
+        Ok(state) => {
+            if state.close.is_exiting() {
+                return;
+            }
+            if overlay_active {
+                None
+            } else {
+                state.main_window.clone()
+            }
+        }
+        Err(_) => return,
+    };
+
+    #[cfg(target_os = "linux")]
+    if overlay_active {
+        libmpv_overlay::reveal();
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    if overlay_active {
+        libmpv_overlay::focus();
+        return;
+    }
+
+    if let Some(window) = window {
+        if window.is_minimized() != 0 {
+            window.restore();
+        }
+        window.show();
+        window.activate();
+    }
+}
+
 fn reveal_main_window(state: &BrowserState) {
     debug_assert_ne!(currently_on(ThreadId::UI), 0);
 
@@ -522,7 +605,7 @@ fn schedule_reveal_deadline(state: &BrowserState) {
         return;
     };
     let mut task = RevealDeadlineTask::new(Arc::downgrade(state), generation);
-    if post_delayed_task(ThreadId::UI, Some(&mut task), recovery::REVEAL_DEADLINE_MS) == 0 {
+    if post_delayed_ui_task(&mut task, recovery::REVEAL_DEADLINE_MS) == PostOutcome::Failed {
         tracing::warn!(target: "shell", "failed to schedule main window reveal deadline");
     }
 }
@@ -691,6 +774,39 @@ mod tests {
             close: WindowCloseState::default(),
             player_warmed: false,
         }))
+    }
+
+    #[test]
+    fn guarded_post_skips_callback_once_shutdown_starts() {
+        let shutting_down = AtomicBool::new(false);
+        let mut called = 0usize;
+        assert_eq!(
+            guarded_post(&shutting_down, || {
+                called += 1;
+                true
+            }),
+            PostOutcome::Posted
+        );
+        assert_eq!(called, 1);
+
+        assert_eq!(
+            guarded_post(&shutting_down, || {
+                called += 1;
+                false
+            }),
+            PostOutcome::Failed
+        );
+        assert_eq!(called, 2);
+
+        shutting_down.store(true, Ordering::SeqCst);
+        assert_eq!(
+            guarded_post(&shutting_down, || {
+                called += 1;
+                true
+            }),
+            PostOutcome::ShuttingDown
+        );
+        assert_eq!(called, 2);
     }
 
     #[test]

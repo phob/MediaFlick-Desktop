@@ -262,6 +262,7 @@ pub(super) fn initiate_app_exit(state: &BrowserState) {
         if let Some(playback) = playback {
             playback.shutdown();
         }
+        mark_cef_shutting_down();
         quit_message_loop();
     }
 }
@@ -353,26 +354,34 @@ pub(super) fn start_mpv_download(state: &BrowserState, request_id: String) {
     }
 
     tracing::info!(target: "mpv.setup", "starting mpv download");
+    let playback = state.lock().ok().map(|state| state.playback.clone());
     let state_for_thread = state.clone();
     spawn_named("mpv-install", move || {
         let progress_state = state_for_thread.clone();
         let progress_request_id = request_id.clone();
-        let result = mpv_setup::download_and_install(move |phase| match phase {
-            MpvSetupPhase::Downloading { downloaded, total } => post_mpv_setup_event(
-                progress_state.clone(),
-                MpvSetupEvent::Progress {
-                    request_id: progress_request_id.clone(),
-                    downloaded,
-                    total,
-                },
-            ),
-            MpvSetupPhase::Extracting => post_mpv_setup_event(
-                progress_state.clone(),
-                MpvSetupEvent::Extracting {
-                    request_id: progress_request_id.clone(),
-                },
-            ),
-        });
+        let result = mpv_setup::download_and_install(
+            move |phase| match phase {
+                MpvSetupPhase::Downloading { downloaded, total } => post_mpv_setup_event(
+                    progress_state.clone(),
+                    MpvSetupEvent::Progress {
+                        request_id: progress_request_id.clone(),
+                        downloaded,
+                        total,
+                    },
+                ),
+                MpvSetupPhase::Extracting => post_mpv_setup_event(
+                    progress_state.clone(),
+                    MpvSetupEvent::Extracting {
+                        request_id: progress_request_id.clone(),
+                    },
+                ),
+            },
+            move || {
+                if let Some(playback) = &playback {
+                    playback.release_external_runtime();
+                }
+            },
+        );
         match result {
             Ok(path) => {
                 post_mpv_setup_event(state_for_thread, MpvSetupEvent::Ready { request_id, path })

@@ -335,3 +335,181 @@ fn replacing_active_playback_ignores_stale_restart_and_pre_restart_seeking() {
     );
     fake.finish(state.ipc.worker.take().expect("worker"));
 }
+
+#[test]
+fn early_backward_user_seek_cancels_startup_seek_and_keeps_new_position() {
+    use crate::players::mpv::runtime::MpvRuntime;
+    use crate::preferences::FullscreenBehavior;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    let fake = FakeMpv::start(|command| {
+        vec![json!({ "request_id": command["request_id"].clone(), "error": "success" })]
+    });
+    let (worker, _events) = fake.connect();
+    let mut state = controller_with_pending_load(Some(1_200_000_000));
+    state.ipc.worker = Some(worker);
+    state.ipc.active_id = Some(SESSION);
+    state.remember_configured_mpv("mpv", FullscreenBehavior::Windowed);
+    state.current_mpv_path = Some("mpv".to_string());
+    state.runtime = Some(MpvRuntime::TestRuntime {
+        alive: Arc::new(AtomicBool::new(true)),
+        stopped: Arc::new(AtomicBool::new(false)),
+        native_window: None,
+    });
+    state
+        .phase
+        .pending_mut()
+        .expect("pending")
+        .launch
+        .subtitle_url = Some("https://example.test/subtitles.vtt".to_string());
+    state.prepare_pending_playback_state();
+    state.handle_session_event(SESSION, &mpv_event("file-loaded", None, None));
+    assert!(state.startup_seek.is_some());
+
+    state.control(&PlayerCommand::SeekMilliseconds(10_000.0));
+    assert_eq!(
+        next_seek_command(&fake),
+        json!(["seek", 10.0, "absolute+exact"])
+    );
+    assert!(
+        state.startup_seek.is_none(),
+        "explicit user seek must cancel pending startup resume seek"
+    );
+    assert!(
+        state.pending_external_subtitle_url.is_none(),
+        "cancelling startup seek must load any pending external subtitle"
+    );
+
+    time_pos(&mut state, 10.0);
+    assert_eq!(state.last_state.position_ticks, 100_000_000);
+
+    state.maybe_send_startup_seek();
+    assert_eq!(state.last_state.position_ticks, 100_000_000);
+    fake.finish(state.ipc.worker.take().expect("worker"));
+}
+
+#[test]
+fn release_external_runtime_stops_external_mpv_and_ignores_libmpv() {
+    use crate::players::mpv::runtime::{MpvRuntime, MpvRuntimeKind};
+    use crate::preferences::FullscreenBehavior;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let external_stopped = Arc::new(AtomicBool::new(false));
+    let mut external = controller_with_pending_load(None);
+    external.runtime_kind = MpvRuntimeKind::External;
+    external.remember_configured_mpv("mpv", FullscreenBehavior::Windowed);
+    external.current_mpv_path = Some("mpv".to_string());
+    external.runtime = Some(MpvRuntime::TestRuntime {
+        alive: Arc::new(AtomicBool::new(false)),
+        stopped: Arc::clone(&external_stopped),
+        native_window: None,
+    });
+
+    external.release_external_runtime();
+    assert!(external_stopped.load(Ordering::SeqCst));
+    assert!(external.configured_mpv.is_none());
+    assert!(external.runtime.is_none());
+
+    let library_stopped = Arc::new(AtomicBool::new(false));
+    let mut library = controller_with_pending_load(None);
+    library.runtime_kind = MpvRuntimeKind::Library;
+    library.remember_configured_mpv("libmpv", FullscreenBehavior::Windowed);
+    library.runtime = Some(MpvRuntime::TestRuntime {
+        alive: Arc::new(AtomicBool::new(true)),
+        stopped: Arc::clone(&library_stopped),
+        native_window: None,
+    });
+
+    library.release_external_runtime();
+    assert!(!library_stopped.load(Ordering::SeqCst));
+    assert!(library.configured_mpv.is_some());
+    assert!(library.runtime.is_some());
+}
+
+#[test]
+fn replacing_active_playback_emits_stopped_event_for_previous_item() {
+    use crate::playback::{BackendEvent, StopReason};
+    use crate::players::mpv::runtime::MpvRuntime;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Arc, mpsc};
+
+    let fake = FakeMpv::start(|command| {
+        if command["command"][0] == "loadfile" {
+            vec![json!({
+                "request_id": command["request_id"].clone(),
+                "error": "success",
+                "data": { "playlist_entry_id": 2 }
+            })]
+        } else {
+            vec![json!({ "request_id": command["request_id"].clone(), "error": "success" })]
+        }
+    });
+    let (worker, _events) = fake.connect();
+    let (event_tx, event_rx) = mpsc::channel();
+    let mut state = controller_with_pending_load(None);
+    state.event_tx = Some(event_tx);
+    state.ipc.worker = Some(worker);
+    state.ipc.active_id = Some(SESSION);
+    state.current_mpv_path = Some("mpv".to_string());
+    state.runtime = Some(MpvRuntime::TestRuntime {
+        alive: Arc::new(AtomicBool::new(true)),
+        stopped: Arc::new(AtomicBool::new(false)),
+        native_window: None,
+    });
+    state.phase.pending_mut().expect("pending").identity.item_id = Some("item-a".to_string());
+    state.handle_session_event(SESSION, &mpv_event("file-loaded", None, None));
+    while event_rx.try_recv().is_ok() {}
+
+    let mut replacement = PlaybackRequest::new("https://example.test/video-b.mkv");
+    replacement.load_id = 2;
+    replacement.item_id = Some("item-b".to_string());
+    state.load(
+        "mpv",
+        crate::preferences::FullscreenBehavior::Windowed,
+        replacement,
+    );
+
+    let events: Vec<BackendEvent> = event_rx.try_iter().collect();
+    let replacement_active_index = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                BackendEvent::StateChanged(snapshot)
+                    if snapshot.active
+                        && snapshot.playback_id == Some(2)
+                        && snapshot.item_id.as_deref() == Some("item-b")
+            )
+        })
+        .expect("expected active StateChanged for replacement item");
+    let previous_stopped_index = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                BackendEvent::Stopped(snapshot)
+                    if !snapshot.active
+                        && snapshot.playback_id == Some(1)
+                        && snapshot.item_id.as_deref() == Some("item-a")
+                        && snapshot.stop_reason == Some(StopReason::Stop)
+            )
+        })
+        .expect("expected Stopped event for previous item");
+    assert!(
+        replacement_active_index < previous_stopped_index,
+        "replacement active state must be published before Stopped for previous item to avoid UI flicker: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            BackendEvent::StateChanged(snapshot) if !snapshot.active
+        )),
+        "replacement must not emit an inactive StateChanged gap: {events:?}"
+    );
+    let current = state.snapshot.lock().expect("snapshot").clone();
+    assert!(current.active);
+    assert_eq!(current.playback_id, Some(2));
+    fake.finish(state.ipc.worker.take().expect("worker"));
+}
