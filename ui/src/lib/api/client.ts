@@ -136,8 +136,9 @@ export const api = {
   settings: () => request("GET /api/settings"),
   whatsNew: () => request("GET /api/settings/whats-new"),
   closeWhatsNew: () => request("POST /api/settings/whats-new/seen"),
-  homeSettings: () => request("GET /api/settings/home"),
-  saveHomeSettings: (body: HomeSettingsWrite) => request("PATCH /api/settings/home", { body }),
+  homeSettings: (account?: string) => request("GET /api/settings/home", { query: { account } }),
+  saveHomeSettings: (body: HomeSettingsWrite, account?: string) =>
+    request("PATCH /api/settings/home", { body, query: { account } }),
   settingsPatch: {
     player: (body: PlayerSettingsWrite) => request("PATCH /api/settings/client/player", { body }),
     playback: (body: PlaybackSettingsWrite) => request("PATCH /api/settings/client/playback", { body }),

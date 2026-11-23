@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { useSourceDraft } from "@/hooks/use-source-draft"
-import { ApiError, api, homeSettingsWrite, type HomeConfiguration } from "@/lib/api"
+import { ApiError, api, homeSettingsWrite, type HomeConfiguration, type Status } from "@/lib/api"
 import { toastFailure } from "@/lib/failure-toast"
 import { useHomeSettings } from "@/lib/home-queries"
 import { accountKey, useStatus } from "@/lib/session-queries"
@@ -90,10 +90,11 @@ function DragPreview({ element, dragging }: { element: HomeElement; dragging: Ho
 export default function HomeSettings() {
   const cache = useQueryClient()
   const status = useStatus()
+  const account = accountKey(status.data)
   const query = useHomeSettings(Boolean(status.data?.authenticated))
   const [draft, setDraft, updateDraft, acceptSaved] = useSourceDraft(
     query.data?.settings,
-    accountKey(status.data),
+    account,
     reconcileHomeDraft,
   )
   const [dragging, setDragging] = useState<HomeDrag | null>(null)
@@ -149,22 +150,42 @@ export default function HomeSettings() {
       window.removeEventListener("blur", cancelDrag)
     }
   }, [dragging?.key, updateDraft, visible])
+  const isCurrentAccount = (expected: string) =>
+    accountKey(cache.getQueryData<Status>(queryKeys.status)) === expected
   const mutation = useMutation({
-    mutationFn: async ({ value, baseline }: { value: HomeConfiguration; baseline: HomeConfiguration }) => {
+    mutationFn: async ({ value, baseline, account: submittedAccount }: {
+      value: HomeConfiguration
+      baseline: HomeConfiguration
+      account: string
+    }) => {
+      const assertCurrentAccount = () => {
+        if (!isCurrentAccount(submittedAccount)) {
+          throw new ApiError("The signed-in account changed. Save these settings again.", 409, {
+            accountChanged: true,
+          })
+        }
+      }
+      assertCurrentAccount()
       try {
-        const saved = await api.saveHomeSettings(homeSettingsWrite(value))
+        const saved = await api.saveHomeSettings(homeSettingsWrite(value), submittedAccount)
+        assertCurrentAccount()
         return { saved, submitted: value }
       } catch (error) {
         if (!(error instanceof ApiError) || error.status !== 409 || error.accountChanged) throw error
-        const latest = await api.homeSettings()
+        assertCurrentAccount()
+        const latest = await api.homeSettings(submittedAccount)
+        assertCurrentAccount()
         cache.setQueryData(queryKeys.homeSettings, latest)
         const reconciled = reconcileHomeDraft(baseline, value, latest.settings)
         if (!reconciled) throw error
-        const saved = await api.saveHomeSettings(homeSettingsWrite(reconciled))
+        assertCurrentAccount()
+        const saved = await api.saveHomeSettings(homeSettingsWrite(reconciled), submittedAccount)
+        assertCurrentAccount()
         return { saved, submitted: reconciled }
       }
     },
-    onSuccess: ({ saved, submitted }) => {
+    onSuccess: ({ saved, submitted }, { account: submittedAccount }) => {
+      if (!isCurrentAccount(submittedAccount)) return
       acceptSaved(saved.settings, submitted)
       cache.setQueryData(queryKeys.homeSettings, saved)
       void cache.invalidateQueries({ queryKey: queryKeys.home })
@@ -172,8 +193,13 @@ export default function HomeSettings() {
       cache.removeQueries({ queryKey: queryKeys.billboard })
       toast.success("Home settings saved")
     },
-    onError: (error: Error) => {
-      if (error instanceof ApiError && error.status === 409 && !error.accountChanged) {
+    onError: (error: Error, { account: submittedAccount }) => {
+      if (
+        error instanceof ApiError
+        && error.status === 409
+        && !error.accountChanged
+        && isCurrentAccount(submittedAccount)
+      ) {
         void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
       }
       toastFailure(error)
@@ -346,7 +372,7 @@ export default function HomeSettings() {
       <SaveBar
         dirty={!same(draft, query.data.settings)}
         saving={mutation.isPending}
-        onSave={() => mutation.mutate({ value: draft, baseline: query.data.settings })}
+        onSave={() => mutation.mutate({ value: draft, baseline: query.data.settings, account })}
         onDiscard={() => setDraft(query.data.settings)}
         onReset={() => setDraft(query.data.defaults)}
       />

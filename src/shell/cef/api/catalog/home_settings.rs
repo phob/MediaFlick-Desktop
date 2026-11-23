@@ -300,19 +300,33 @@ fn home_settings_response(home: &ResolvedHome) -> HomeSettingsResponse {
     }
 }
 
-pub(super) fn home_settings(services: &Arc<Services>) -> Result<HomeSettingsResponse, ApiResponse> {
-    Ok(home_settings_response(&resolved_home(services)?))
+fn home_scope(services: &Services, request: &ApiRequest) -> Result<SessionScope, ApiResponse> {
+    expected_scope(services, request, || {
+        ApiResponse::error(401, "sign in to configure Home")
+    })
+}
+
+pub(super) fn home_settings(
+    services: &Arc<Services>,
+    request: &ApiRequest,
+) -> Result<HomeSettingsResponse, ApiResponse> {
+    let scope = home_scope(services, request)?;
+    Ok(home_settings_response(&resolved_home_for_account(
+        services,
+        scope.account(),
+    )?))
 }
 
 pub(super) fn patch_home_settings(
     services: &Arc<Services>,
+    request: &ApiRequest,
     body: Body<'_, HomeSettings>,
 ) -> Result<HomeSettingsResponse, ApiResponse> {
     let requested = body.decode()?;
     if let Err(error) = requested.validate() {
         return Err(ApiResponse::error(400, error.to_string()));
     }
-    let scope = session_scope(services)?;
+    let scope = home_scope(services, request)?;
     let current = resolved_home_for_account(services, scope.account())?;
     let requested_ids = requested
         .elements
@@ -523,5 +537,73 @@ mod tests {
         };
         let response = send(&fixture, &request);
         assert_eq!(response.status, 401);
+    }
+
+    #[test]
+    fn home_settings_requests_carrying_previous_account_reject_with_409_after_account_switch() {
+        use std::net::TcpListener;
+
+        use serde_json::Value;
+
+        use crate::app::services::test_support::TestServices;
+        use crate::shell::cef::api::tests::{login_as, post, send, server_url};
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let url = server_url(&listener);
+        let fixture = TestServices::signed_in_as(&url, "alice");
+        let bob = AccountKey::new("server", "bob").expect("bob");
+
+        let mut bob_home = HomeSettings::fresh(&[]);
+        bob_home.billboard = false;
+        fixture
+            .services
+            .accounts
+            .save_home(&bob, &bob_home)
+            .expect("save bob home");
+
+        login_as(&fixture, listener, &url, "bob", "Bob");
+        let expected = crate::app::urls::encode_path_segment(&format!("{url}:alice"));
+        let query = format!("account={expected}");
+
+        let alice_write = HomeSettings::fresh(&[]);
+        let body = serde_json::to_vec(&alice_write).expect("body");
+        let patch = ApiRequest {
+            method: "PATCH".to_string(),
+            query: query.clone(),
+            ..post("/api/settings/home", &body)
+        };
+        let patch_resp = send(&fixture, &patch);
+        assert_eq!(patch_resp.status, 409);
+        let patch_json: Value = serde_json::from_slice(&patch_resp.body).expect("json");
+        assert_eq!(patch_json["accountChanged"], true);
+
+        let get = ApiRequest {
+            method: "GET".to_string(),
+            query,
+            ..post("/api/settings/home", b"")
+        };
+        let get_resp = send(&fixture, &get);
+        assert_eq!(get_resp.status, 409);
+        let get_json: Value = serde_json::from_slice(&get_resp.body).expect("json");
+        assert_eq!(get_json["accountChanged"], true);
+
+        assert_eq!(fixture.services.accounts.home(&bob), Some(bob_home));
+
+        fixture
+            .services
+            .session
+            .clear_local(false)
+            .expect("sign out");
+        let signed_out_patch = send(&fixture, &patch);
+        assert_eq!(signed_out_patch.status, 409);
+        let signed_out_patch_json: Value =
+            serde_json::from_slice(&signed_out_patch.body).expect("json");
+        assert_eq!(signed_out_patch_json["accountChanged"], true);
+
+        let signed_out_get = send(&fixture, &get);
+        assert_eq!(signed_out_get.status, 409);
+        let signed_out_get_json: Value =
+            serde_json::from_slice(&signed_out_get.body).expect("json");
+        assert_eq!(signed_out_get_json["accountChanged"], true);
     }
 }

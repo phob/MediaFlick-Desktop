@@ -57,9 +57,9 @@ impl ItemLetters {
 routes! {
     |services, request|
     GET ["calendar"] -> Relay = calendar(services, request),
-    GET ["settings", "home"] -> HomeSettingsResponse = home_settings(services),
+    GET ["settings", "home"] -> HomeSettingsResponse = home_settings(services, request),
     PATCH ["settings", "home"] (body: HomeSettings) -> HomeSettingsResponse =
-        patch_home_settings(services, body),
+        patch_home_settings(services, request, body),
     GET ["home", "resume"] -> HomeResumeResponse = home_resume(services),
     GET ["home"] -> HomeResponse = home_view(services),
     GET ["billboard"] -> Billboard = billboard_view(services),
