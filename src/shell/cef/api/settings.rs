@@ -17,7 +17,7 @@ routes! {
         save_viewing(services, body),
     GET ["settings", "browsing"] -> BrowsingRoutes = browsing(services),
     PATCH ["settings", "browsing"] (body: BrowsingBody) -> BrowsingSaved =
-        save_browsing(services, body),
+        save_browsing(services, request, body),
     PATCH ["settings", "client", "player"] (body: PlayerSettingsPatch) -> SettingsView =
         patch_player_settings(services, body),
     PATCH ["settings", "client", "playback"] (body: PlaybackSettingsPatch) -> SettingsView =
@@ -50,33 +50,45 @@ fn close_whats_new(services: &Services) -> Result<WhatsNew, ApiResponse> {
 }
 
 pub(super) fn settings_snapshot(services: &Services) -> SettingsView {
+    settings_view_for(services, &services.preferences.snapshot())
+}
+
+fn active_recoveries(services: &Services) -> Vec<Recovery> {
     let mut recoveries = Vec::new();
     push_recovery(
         &mut recoveries,
         "Application settings",
-        crate::preferences::store::take_device_recovery_notice(),
+        crate::preferences::store::device_recovery_notice(),
     );
     push_recovery(
         &mut recoveries,
         "Account settings",
-        services.accounts.take_recovery_notice(),
+        services.accounts.recovery_notice(),
     );
     push_recovery(
         &mut recoveries,
         "Playback preferences",
-        services.playback_preferences.take_recovery_notice(),
+        services.playback_preferences.recovery_notice(),
     );
     push_recovery(
         &mut recoveries,
         "Reading places and reader appearance",
-        services.reader.take_recovery_notice(),
+        services.reader.recovery_notice(),
     );
     push_recovery(
         &mut recoveries,
         "Deletion journal",
-        services.pending_deletions.take_recovery_notice(),
+        services.pending_deletions.recovery_notice(),
     );
-    settings_view(&services.preferences.snapshot(), recoveries)
+    recoveries
+}
+
+fn settings_view_for(services: &Services, settings: &AppSettings) -> SettingsView {
+    settings_view(
+        settings,
+        active_recoveries(services),
+        services.preferences.restart_required(settings),
+    )
 }
 
 fn push_recovery(
@@ -100,6 +112,7 @@ pub(super) struct SettingsView {
     defaults: SettingsDefaults,
     capabilities: Capabilities,
     recoveries: Vec<Recovery>,
+    restart_required: crate::preferences::RestartRequired,
     server_url: Option<String>,
 }
 
@@ -245,7 +258,11 @@ fn settings_defaults(libmpv: bool) -> SettingsDefaults {
     }
 }
 
-fn settings_view(settings: &AppSettings, recoveries: Vec<Recovery>) -> SettingsView {
+fn settings_view(
+    settings: &AppSettings,
+    recoveries: Vec<Recovery>,
+    restart_required: crate::preferences::RestartRequired,
+) -> SettingsView {
     let libmpv = crate::players::bundled_libmpv_path().is_some();
     SettingsView {
         client: ClientView {
@@ -269,6 +286,7 @@ fn settings_view(settings: &AppSettings, recoveries: Vec<Recovery>) -> SettingsV
             mpv_installer: player_setup::supported(),
         },
         recoveries,
+        restart_required,
         server_url: settings.jellyfin_url.clone(),
     }
 }
@@ -279,7 +297,7 @@ fn patch_player_settings(
 ) -> Result<SettingsView, ApiResponse> {
     let patch = body.decode()?;
     match services.preferences.patch_player(patch) {
-        Ok(change) => Ok(settings_view(&change.settings, Vec::new())),
+        Ok(change) => Ok(settings_view_for(services, &change.settings)),
         Err(error) => Err(ApiResponse::error(400, error.to_string())),
     }
 }
@@ -290,7 +308,7 @@ fn patch_playback_settings(
 ) -> Result<SettingsView, ApiResponse> {
     let patch = body.decode()?;
     match services.preferences.patch_playback(patch) {
-        Ok(change) => Ok(settings_view(&change.settings, Vec::new())),
+        Ok(change) => Ok(settings_view_for(services, &change.settings)),
         Err(error) => Err(ApiResponse::error(400, error.to_string())),
     }
 }
@@ -301,7 +319,7 @@ fn patch_application_settings(
 ) -> Result<SettingsView, ApiResponse> {
     let patch = body.decode()?;
     match services.preferences.patch_application(patch) {
-        Ok(change) => Ok(settings_view(&change.settings, Vec::new())),
+        Ok(change) => Ok(settings_view_for(services, &change.settings)),
         Err(error) => Err(ApiResponse::error(400, error.to_string())),
     }
 }
@@ -316,7 +334,7 @@ fn patch_appearance_settings(
         .session
         .commit_if_current(&scope, stale_account_response, |live| {
             match services.preferences.patch_appearance(live.account(), patch) {
-                Ok(change) => Ok(settings_view(&change.settings, Vec::new())),
+                Ok(change) => Ok(settings_view_for(services, &change.settings)),
                 Err(error) => Err(ApiResponse::error(400, error.to_string())),
             }
         })
@@ -440,9 +458,12 @@ pub(super) fn browsing(services: &Services) -> Result<BrowsingRoutes, ApiRespons
 
 fn save_browsing(
     services: &Arc<Services>,
+    request: &ApiRequest,
     body: Body<'_, BrowsingBody>,
 ) -> Result<BrowsingSaved, ApiResponse> {
-    let scope = session_scope(services)?;
+    let scope = expected_scope(services, request, || {
+        ApiResponse::from_api_error(&ApiError::NotConfigured)
+    })?;
     let key = scope.account();
     let body = body.decode()?;
     let (page, route) = (body.page.as_str(), body.route.as_str());
@@ -471,7 +492,11 @@ mod tests {
             area: "Account settings",
             restored_backup: true,
         }];
-        let body = serde_json::to_value(super::settings_view(&settings, recoveries))?;
+        let body = serde_json::to_value(super::settings_view(
+            &settings,
+            recoveries,
+            crate::preferences::RestartRequired::default(),
+        ))?;
         assert_has_keys(
             &body,
             &[
@@ -480,6 +505,7 @@ mod tests {
                 "client",
                 "defaults",
                 "recoveries",
+                "restartRequired",
                 "serverUrl",
             ],
         );
@@ -536,7 +562,11 @@ mod tests {
             ..crate::preferences::AppSettings::default()
         };
 
-        let body = serde_json::to_value(super::settings_view(&customized, Vec::new()))?;
+        let body = serde_json::to_value(super::settings_view(
+            &customized,
+            Vec::new(),
+            crate::preferences::RestartRequired::default(),
+        ))?;
         let canonical = crate::preferences::AppSettings::default();
         assert_eq!(
             body["defaults"]["client"]["playback"],
@@ -599,30 +629,11 @@ mod tests {
     fn patch_appearance_writes_to_scoped_account_even_if_preferences_active_account_lags() {
         use crate::app::services::test_support::TestServices;
         use crate::preferences::{AccountKey, AppearanceAccent};
-        use crate::shell::cef::api::tests::{
-            error_of, post, read_request_with_headers, respond, send, server_url,
-        };
+        use crate::shell::cef::api::tests::{error_of, login_as, post, send, server_url};
         use std::net::TcpListener;
-        use std::thread;
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
         let url = server_url(&listener);
-        let server = thread::spawn(move || {
-            let (mut info, _) = listener.accept().expect("info");
-            let _ = read_request_with_headers(&mut info);
-            respond(
-                &mut info,
-                "200 OK",
-                r#"{"ServerName":"Server","Version":"12.4.0"}"#,
-            );
-            let (mut login, _) = listener.accept().expect("login");
-            let _ = read_request_with_headers(&mut login);
-            respond(
-                &mut login,
-                "200 OK",
-                r#"{"AccessToken":"bob-token","ServerId":"server","User":{"Id":"bob","Name":"Bob","Policy":{"IsAdministrator":false}}}"#,
-            );
-        });
 
         let fixture = TestServices::signed_in_as(&url, "alice");
         let alice = AccountKey::new("server", "alice").expect("alice");
@@ -635,12 +646,7 @@ mod tests {
         let alice_response = send(&fixture, &alice_patch);
         assert_eq!(alice_response.status, 200, "{}", error_of(&alice_response));
 
-        fixture
-            .services
-            .session
-            .login(&url, "bob", "secret")
-            .expect("sign in Bob without updating preferences active_account");
-        server.join().expect("server");
+        login_as(&fixture, listener, &url, "bob", "Bob");
 
         let bob_patch = super::ApiRequest {
             method: "PATCH".to_string(),
@@ -675,5 +681,73 @@ mod tests {
             fixture.services.preferences.snapshot().appearance,
             AppearanceSettings::default()
         );
+    }
+
+    #[test]
+    fn settings_patches_preserve_restart_required_and_recovery_notices_and_guard_browsing() {
+        use crate::app::services::test_support::TestServices;
+        use crate::preferences::AccountKey;
+        use crate::shell::cef::api::tests::{error_of, login_as, post, send, server_url};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let url = server_url(&listener);
+        let fixture = TestServices::signed_in_as(&url, "alice");
+        let alice = AccountKey::new("server", "alice").expect("alice");
+        let bob = AccountKey::new("server", "bob").expect("bob");
+
+        let warn_patch = super::ApiRequest {
+            method: "PATCH".to_string(),
+            ..post(
+                "/api/settings/client/application",
+                br#"{"logLevel":"warn"}"#,
+            )
+        };
+        let warn_resp = send(&fixture, &warn_patch);
+        assert_eq!(warn_resp.status, 200, "{}", error_of(&warn_resp));
+        let warn_json: serde_json::Value = serde_json::from_slice(&warn_resp.body).expect("json");
+        assert_eq!(warn_json["restartRequired"]["logLevel"], true);
+
+        let unrelated_patch = super::ApiRequest {
+            method: "PATCH".to_string(),
+            ..post(
+                "/api/settings/client/playback",
+                br#"{"streamingQuality":"20_mbps"}"#,
+            )
+        };
+        let unrelated_resp = send(&fixture, &unrelated_patch);
+        assert_eq!(unrelated_resp.status, 200, "{}", error_of(&unrelated_resp));
+        let unrelated_json: serde_json::Value =
+            serde_json::from_slice(&unrelated_resp.body).expect("json");
+        assert_eq!(unrelated_json["restartRequired"]["logLevel"], true);
+
+        let revert_patch = super::ApiRequest {
+            method: "PATCH".to_string(),
+            ..post(
+                "/api/settings/client/application",
+                br#"{"logLevel":"debug"}"#,
+            )
+        };
+        let revert_resp = send(&fixture, &revert_patch);
+        assert_eq!(revert_resp.status, 200, "{}", error_of(&revert_resp));
+        let revert_json: serde_json::Value =
+            serde_json::from_slice(&revert_resp.body).expect("json");
+        assert_eq!(revert_json["restartRequired"]["logLevel"], false);
+
+        login_as(&fixture, listener, &url, "bob", "Bob");
+
+        let expected = crate::app::urls::encode_path_segment(&format!("{url}:alice"));
+        let stale_browsing = super::ApiRequest {
+            method: "PATCH".to_string(),
+            query: format!("account={expected}"),
+            ..post(
+                "/api/settings/browsing",
+                br#"{"page":"last","route":"/library"}"#,
+            )
+        };
+        let browsing_resp = send(&fixture, &stale_browsing);
+        assert_eq!(browsing_resp.status, 409);
+        assert!(fixture.services.accounts.browsing(&bob).is_empty());
+        assert!(fixture.services.accounts.browsing(&alice).is_empty());
     }
 }

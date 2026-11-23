@@ -120,7 +120,8 @@ export const api = {
   viewing: () => request("GET /api/settings/viewing"),
   saveViewing: (value: ViewingSettingsWrite) => request("PATCH /api/settings/viewing", { body: value }),
   browsing: () => request("GET /api/settings/browsing"),
-  saveBrowsing: (page: BrowsingPage, route: string) => request("PATCH /api/settings/browsing", { body: { page, route } }),
+  saveBrowsing: (page: BrowsingPage, route: string, account?: string) =>
+    request("PATCH /api/settings/browsing", { body: { page, route }, query: { account } }),
   status: () => request("GET /api/status"),
   recovery: {
     status: () => request("GET /api/recovery"),
@@ -274,9 +275,12 @@ export const api = {
   },
 
   collections: {
-    settings: (reprobe = false) =>
-      reprobe ? request("POST /api/collections/settings/reprobe") : request("GET /api/collections/settings"),
-    patchSettings: (body: CollectionSettingsPatch) => request("PATCH /api/collections/settings", { body }),
+    settings: (reprobe = false, account?: string) =>
+      reprobe
+        ? request("POST /api/collections/settings/reprobe", { query: { account } })
+        : request("GET /api/collections/settings", { query: { account } }),
+    patchSettings: (body: CollectionSettingsPatch, account?: string) =>
+      request("PATCH /api/collections/settings", { body, query: { account } }),
     templates: (signal?: AbortSignal) => request("GET /api/collections/templates", { signal }),
     searchPublicLists: (query: string, signal?: AbortSignal) =>
       request("POST /api/collections/mdblist/search", { body: { query }, signal }),
@@ -284,12 +288,16 @@ export const api = {
       request("POST /api/collections/mdblist/validate", { body: { selector }, signal }),
     preview: (body: CollectionProfileDraft, signal?: AbortSignal) =>
       request("POST /api/collections/preview", { body, signal }),
-    profiles: (signal?: AbortSignal) => request("GET /api/collections/profiles", { signal }),
-    createProfile: (body: CollectionProfileDraft) => request("POST /api/collections/profiles", { body }),
-    updateProfile: (id: string, body: CollectionProfileDraft) =>
-      request("PATCH /api/collections/profiles/{profileId}", { params: { profileId: id }, body }),
-    deleteProfile: (id: string) => request("DELETE /api/collections/profiles/{profileId}", { params: { profileId: id } }),
-    reorderProfiles: (profileIds: string[]) => request("PUT /api/collections/profiles/order", { body: { profileIds } }),
+    profiles: (signal?: AbortSignal, account?: string) =>
+      request("GET /api/collections/profiles", { signal, query: { account } }),
+    createProfile: (body: CollectionProfileDraft, account?: string) =>
+      request("POST /api/collections/profiles", { body, query: { account } }),
+    updateProfile: (id: string, body: CollectionProfileDraft, account?: string) =>
+      request("PATCH /api/collections/profiles/{profileId}", { params: { profileId: id }, body, query: { account } }),
+    deleteProfile: (id: string, account?: string) =>
+      request("DELETE /api/collections/profiles/{profileId}", { params: { profileId: id }, query: { account } }),
+    reorderProfiles: (profileIds: string[], account?: string) =>
+      request("PUT /api/collections/profiles/order", { body: { profileIds }, query: { account } }),
     refreshProfile: (id: string) =>
       request("POST /api/collections/profiles/{profileId}/refresh", { params: { profileId: id } }),
     mine: (signal?: AbortSignal) => request("GET /api/collections/mine", { signal }),

@@ -348,11 +348,11 @@ impl AccountConfigurationService {
         })
     }
 
-    pub fn take_recovery_notice(&self) -> Option<RecoveryNotice> {
+    pub fn recovery_notice(&self) -> Option<RecoveryNotice> {
         self.recovery
             .lock()
             .ok()
-            .and_then(|mut recovery| recovery.take())
+            .and_then(|recovery| recovery.clone())
     }
 
     pub fn appearance(&self, key: &AccountKey) -> AppearanceSettings {

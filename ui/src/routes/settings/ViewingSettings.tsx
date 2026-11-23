@@ -10,9 +10,9 @@ import { toastFailure } from "@/lib/failure-toast"
 import { useLibraries } from "@/lib/library-queries"
 import { accountKey, useStatus } from "@/lib/session-queries"
 import { queryKeys } from "@/lib/query-client"
-import { isSettingsNumberValid } from "@/lib/settings-numbers"
 import { DEFAULT_VIEWING, useViewing } from "@/lib/viewing"
 import { same } from "./helpers"
+import { parseLanguageList, validateViewingDraft } from "./viewing-validation"
 import {
   PageTitle,
   Section,
@@ -31,10 +31,6 @@ const POSTER_WIDTHS = [
   [200, "Large"],
   [240, "Extra large"],
 ] as const
-
-function languageList(text: string | undefined) {
-  return (text ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean)
-}
 
 function posterWidthOptions(current: number) {
   const known = POSTER_WIDTHS.some(([width]) => width === current)
@@ -92,17 +88,16 @@ export default function ViewingSettings() {
   if (!draft) return <SettingsLoading />
   const update = <Key extends keyof ViewingDraft>(key: Key, value: ViewingDraft[Key]) =>
     setDraft({ ...draft, [key]: value })
-  const numbersValid = isSettingsNumberValid(draft.countdownSeconds, 3, 60) &&
-    isSettingsNumberValid(draft.episodeLimit, 0, 20) &&
-    isSettingsNumberValid(draft.textScale, 80, 150)
+  const validation = validateViewingDraft(draft, audioText, subtitleText)
   const dirty = !same(draft, query.data) ||
     audioText !== query.data?.audioLanguages.join(", ") ||
     subtitleText !== query.data?.subtitleLanguages.join(", ")
   const saveDraft = () => {
+    if (!validation.valid) return
     const submitted = {
       ...draft,
-      audioLanguages: languageList(audioText),
-      subtitleLanguages: languageList(subtitleText),
+      audioLanguages: parseLanguageList(audioText),
+      subtitleLanguages: parseLanguageList(subtitleText),
     }
     setDraft(submitted)
     setAudioText(submitted.audioLanguages.join(", "))
@@ -186,12 +181,21 @@ export default function ViewingSettings() {
         description="Use language codes in preference order, separated by commas (for example en, de, ja). Individual title choices take priority."
       >
         <SettingsRow controlId="settings-audio-languages" title="Audio languages">
-          <Input
-            id="settings-audio-languages"
-            aria-label="Audio languages"
-            value={audioText ?? ""}
-            onChange={(event) => setAudioText(event.target.value)}
-          />
+          <div className="w-80 max-w-full space-y-2">
+            <Input
+              id="settings-audio-languages"
+              aria-label="Audio languages"
+              aria-invalid={Boolean(validation.audioLanguagesError)}
+              aria-describedby={validation.audioLanguagesError ? "settings-audio-languages-error" : undefined}
+              value={audioText ?? ""}
+              onChange={(event) => setAudioText(event.target.value)}
+            />
+            {validation.audioLanguagesError && (
+              <p id="settings-audio-languages-error" className="text-sm text-destructive" role="alert">
+                {validation.audioLanguagesError}
+              </p>
+            )}
+          </div>
         </SettingsRow>
         <SettingsRow
           controlId="settings-prefer-original-audio"
@@ -207,27 +211,45 @@ export default function ViewingSettings() {
           />
         </SettingsRow>
         <SettingsRow controlId="settings-subtitle-languages" title="Subtitle languages">
-          <Input
-            id="settings-subtitle-languages"
-            aria-label="Subtitle languages"
-            value={subtitleText ?? ""}
-            onChange={(event) => setSubtitleText(event.target.value)}
-          />
+          <div className="w-80 max-w-full space-y-2">
+            <Input
+              id="settings-subtitle-languages"
+              aria-label="Subtitle languages"
+              aria-invalid={Boolean(validation.subtitleLanguagesError)}
+              aria-describedby={validation.subtitleLanguagesError ? "settings-subtitle-languages-error" : undefined}
+              value={subtitleText ?? ""}
+              onChange={(event) => setSubtitleText(event.target.value)}
+            />
+            {validation.subtitleLanguagesError && (
+              <p id="settings-subtitle-languages-error" className="text-sm text-destructive" role="alert">
+                {validation.subtitleLanguagesError}
+              </p>
+            )}
+          </div>
         </SettingsRow>
         <SettingsRow controlId="settings-subtitles" title="Subtitles">
-          <SelectField
-            id="settings-subtitles"
-            label="Subtitles"
-            value={draft.subtitleMode}
-            onValueChange={(value) => update("subtitleMode", value)}
-            options={[
-              { value: "server", label: "Jellyfin default" },
-              { value: "off", label: "Off" },
-              { value: "forced", label: "Forced only" },
-              { value: "always", label: "Always" },
-              { value: "foreignAudio", label: "When audio differs from preferred languages" },
-            ]}
-          />
+          <div className="w-80 max-w-full space-y-2">
+            <SelectField
+              id="settings-subtitles"
+              label="Subtitles"
+              aria-invalid={Boolean(validation.subtitleModeError)}
+              aria-describedby={validation.subtitleModeError ? "settings-subtitles-error" : undefined}
+              value={draft.subtitleMode}
+              onValueChange={(value) => update("subtitleMode", value)}
+              options={[
+                { value: "server", label: "Jellyfin default" },
+                { value: "off", label: "Off" },
+                { value: "forced", label: "Forced only" },
+                { value: "always", label: "Always" },
+                { value: "foreignAudio", label: "When audio differs from preferred languages" },
+              ]}
+            />
+            {validation.subtitleModeError && (
+              <p id="settings-subtitles-error" className="text-sm text-destructive" role="alert">
+                {validation.subtitleModeError}
+              </p>
+            )}
+          </div>
         </SettingsRow>
       </Section>
       <Section title="Browsing">
@@ -287,7 +309,7 @@ export default function ViewingSettings() {
         </SettingsRow>
       </Section>
       <SaveBar
-        saveDisabled={!numbersValid}
+        saveDisabled={!validation.valid}
         dirty={dirty}
         saving={save.isPending}
         onSave={saveDraft}

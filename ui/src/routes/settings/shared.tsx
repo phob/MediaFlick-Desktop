@@ -55,9 +55,11 @@ export function SelectField<const Value extends string>({
   disabled,
   placeholder,
   "aria-describedby": descriptionId,
+  "aria-invalid": invalid,
 }: {
   id?: string
   "aria-describedby"?: string
+  "aria-invalid"?: boolean
   value: Value | ""
   onValueChange: (value: Value) => void
   options: readonly SelectOption<Value>[]
@@ -75,6 +77,7 @@ export function SelectField<const Value extends string>({
         id={id}
         aria-label={label}
         aria-describedby={descriptionId}
+        aria-invalid={invalid}
         className="w-64 max-w-full h-auto min-h-9 whitespace-normal [&_[data-slot=select-value]]:line-clamp-none"
       >
         <SelectValue placeholder={placeholder} />

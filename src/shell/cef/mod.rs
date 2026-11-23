@@ -461,6 +461,7 @@ fn request_main_window_close(
 struct BrowserStateInner {
     title: String,
     settings: AppSettings,
+    preferences_revision: u64,
     browsers: Vec<Browser>,
     main_window: Option<Window>,
     initial_show_state: ShowState,
@@ -672,6 +673,7 @@ fn new_browser_state(
     let state = Arc::new(Mutex::new(BrowserStateInner {
         title,
         settings,
+        preferences_revision: 0,
         browsers: Vec::new(),
         main_window: None,
         initial_show_state,
@@ -732,6 +734,7 @@ fn test_browser_state(playback: Arc<PlaybackCoordinator>) -> BrowserState {
     Arc::new(Mutex::new(BrowserStateInner {
         title: "Test".to_string(),
         settings: AppSettings::default(),
+        preferences_revision: 0,
         browsers: Vec::new(),
         main_window: None,
         initial_show_state: ShowState::NORMAL,
@@ -762,6 +765,7 @@ mod tests {
         Arc::new(Mutex::new(BrowserStateInner {
             title: "MediaFlick Desktop".to_string(),
             settings,
+            preferences_revision: 0,
             browsers: Vec::new(),
             main_window: None,
             initial_show_state: ShowState::NORMAL,

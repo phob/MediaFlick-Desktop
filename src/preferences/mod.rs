@@ -30,7 +30,7 @@ pub use playback::{PlaybackPreferenceService, playback_preferences_file_path};
 pub use reader::{ReaderStore, reader_file_path};
 pub use service::{
     AppearanceSettingsPatch, ApplicationSettingsPatch, PlaybackSettingsPatch, PlayerSettingsPatch,
-    PreferencesService, SettingsChange,
+    PreferencesService, RestartRequired, SettingsApplyPlan, SettingsChange,
 };
 pub use store::*;
 pub use v0_1_6::carries_0_1_6_data;

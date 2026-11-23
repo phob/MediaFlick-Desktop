@@ -79,6 +79,27 @@ fn session_scope(services: &Services) -> Result<SessionScope, ApiResponse> {
         .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
+fn expected_scope(
+    services: &Services,
+    request: &ApiRequest,
+    unauthenticated: impl FnOnce() -> ApiResponse,
+) -> Result<SessionScope, ApiResponse> {
+    let expected = request.param("account");
+    match services.session.scope() {
+        Ok(scope) => {
+            if let Some(expected) = expected
+                && expected != scope.ui_account_key()
+            {
+                return Err(stale_account_response());
+            }
+            Ok(scope)
+        }
+        Err(ApiError::NotConfigured) if expected.is_some() => Err(stale_account_response()),
+        Err(ApiError::Unauthorized) => Err(ApiResponse::from_api_error(&ApiError::Unauthorized)),
+        Err(_) => Err(unauthenticated()),
+    }
+}
+
 fn scoped_failure(services: &Services, scope: &SessionScope, error: &ApiError) -> ApiResponse {
     ApiResponse::from_api_error(&services.session.scoped_error(scope, error.clone()))
 }
@@ -577,6 +598,44 @@ mod tests {
             "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
+    }
+
+    pub(super) fn login_as(
+        fixture: &TestServices,
+        listener: std::net::TcpListener,
+        url: &str,
+        user_id: &str,
+        name: &str,
+    ) {
+        let user_id_owned = user_id.to_string();
+        let name_owned = name.to_string();
+        let server = std::thread::spawn(move || {
+            let (mut info, _) = listener.accept().expect("info");
+            let _ = read_request_with_headers(&mut info);
+            respond(
+                &mut info,
+                "200 OK",
+                r#"{"ServerName":"Server","Version":"12.4.0"}"#,
+            );
+            let (mut login, _) = listener.accept().expect("login");
+            let _ = read_request_with_headers(&mut login);
+            let payload = serde_json::json!({
+                "AccessToken": format!("{user_id_owned}-token"),
+                "ServerId": "server",
+                "User": {
+                    "Id": user_id_owned,
+                    "Name": name_owned,
+                    "Policy": { "IsAdministrator": false },
+                },
+            });
+            respond(&mut login, "200 OK", &payload.to_string());
+        });
+        fixture
+            .services
+            .session
+            .login(url, user_id, "secret")
+            .expect("sign in test user");
+        server.join().expect("server");
     }
 
     fn movie_row(fixture: &TestServices, id: &str) {

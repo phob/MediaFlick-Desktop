@@ -65,6 +65,7 @@ export function clientSettingsFixture(): ClientSettings {
     },
     capabilities: { platform: "windows", libmpv: true, integratedLibmpvOverlay: false, mpvInstaller: true },
     recoveries: [],
+    restartRequired: { logLevel: false, playerBackend: false },
     serverUrl: "https://jellyfin.example",
   }
 }

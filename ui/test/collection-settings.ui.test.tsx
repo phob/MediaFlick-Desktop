@@ -164,7 +164,7 @@ describe("collection settings wizard", () => {
     await act(async () => finish({ id: "c".repeat(32) }))
     expect(isDisabled(createButton())).toBe(false)
     fireEvent.click(createButton())
-    await waitFor(() => expect(update).toHaveBeenCalledWith(current.id, expect.objectContaining({ customPosterId: "c".repeat(32) })))
+    await waitFor(() => expect(update).toHaveBeenCalledWith(current.id, expect.objectContaining({ customPosterId: "c".repeat(32) }), "https://jellyfin.example:user-1"))
   })
 
   test("Reset cancels a poster upload and ignores its late response", async () => {
@@ -509,7 +509,7 @@ describe("collection settings wizard", () => {
       cadence: "weekly",
       availableOnHome: true,
       source: { kind: "mdbListPublicList", listId: "12345" },
-    })))
+    }), "https://jellyfin.example:user-1"))
   })
 
   test("changing MDBList URL or reopening the wizard discards in-flight preview sourceIdentity", async () => {
@@ -594,7 +594,7 @@ describe("collection settings management", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(patch).toHaveBeenCalledWith({
       includeUnreleased: true,
-    }))
+    }, "https://jellyfin.example:user-1"))
   })
 
   test("toggling Include unreleased in automatic mode does not send modeSelection", async () => {
@@ -616,7 +616,7 @@ describe("collection settings management", () => {
     fireEvent.click(await screen.findByRole("switch", { name: "Include unreleased titles" }))
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
-    expect(patch).toHaveBeenCalledWith({ includeUnreleased: true })
+    expect(patch).toHaveBeenCalledWith({ includeUnreleased: true }, "https://jellyfin.example:user-1")
     expect(patch.mock.calls[0][0]).not.toHaveProperty("modeSelection")
   })
 
@@ -640,7 +640,7 @@ describe("collection settings management", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Move First down" }))
     expect(reorder).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
-    await waitFor(() => expect(reorder).toHaveBeenCalledWith([second.id, first.id]))
+    await waitFor(() => expect(reorder).toHaveBeenCalledWith([second.id, first.id], "https://jellyfin.example:user-1"))
     expect(patch).not.toHaveBeenCalled()
   })
 
@@ -680,7 +680,7 @@ describe("collection settings management", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Delete Only collection" }))
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
 
-    await waitFor(() => expect(remove).toHaveBeenCalledWith(only.id))
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(only.id, "https://jellyfin.example:user-1"))
     await waitFor(() => expect(screen.getByText("No collections are configured.")).toBeTruthy())
     expect(patch).not.toHaveBeenCalled()
     expect(screen.queryByText("You have unsaved changes.")).toBeNull()
@@ -707,7 +707,7 @@ describe("collection settings management", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
 
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
-    expect(patch).toHaveBeenCalledWith({ modeSelection: "jellyfin" })
+    expect(patch).toHaveBeenCalledWith({ modeSelection: "jellyfin" }, "https://jellyfin.example:user-1")
     expect(patch.mock.calls[0][0]).not.toHaveProperty("includeUnreleased")
   })
 
@@ -757,7 +757,7 @@ describe("collection settings management", () => {
     expect(rowButtons).toEqual(["Edit Second", "Edit First", "Edit Third"])
 
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
-    await waitFor(() => expect(reorder).toHaveBeenCalledWith([second.id, first.id, third.id]))
+    await waitFor(() => expect(reorder).toHaveBeenCalledWith([second.id, first.id, third.id], "https://jellyfin.example:user-1"))
     expect(patch).not.toHaveBeenCalled()
     await waitFor(() => expect(screen.queryByText("You have unsaved changes.")).toBeNull())
   })
@@ -782,7 +782,7 @@ describe("collection settings management", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Include unreleased titles" }))
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
 
-    await waitFor(() => expect(reorder).toHaveBeenCalledWith([first.id, third.id, second.id]))
+    await waitFor(() => expect(reorder).toHaveBeenCalledWith([first.id, third.id, second.id], "https://jellyfin.example:user-1"))
     expect(remove).not.toHaveBeenCalled()
     expect(patch).not.toHaveBeenCalled()
     expect(screen.getByRole("button", { name: "Undo deletion of First" })).toBeTruthy()

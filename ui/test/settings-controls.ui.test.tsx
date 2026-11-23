@@ -60,7 +60,7 @@ test("visible labels operate switches", () => {
 
 test("shortcut drafts reject conflicts, Discard restores, and Save and Reset use the shelf workflow", async () => {
   const settings = page("/settings/client/player")
-  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({...settings, client:{...settings.client, player:{...settings.client.player, ...player}}}))
+  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({...settings, client:{...settings.client, player:{...settings.client.player, ...player, comfort: player.comfort ?? settings.client.player.comfort}}}))
   const recorder = screen.getByRole("button", {name:"Stop playback key"})
   fireEvent.click(recorder)
   fireEvent.keyDown(recorder, {key:"w"})
@@ -83,7 +83,7 @@ test("shortcut drafts reject conflicts, Discard restores, and Save and Reset use
 
 test.each(["windows", "macos"] as const)("the watched-next recorder saves and clears combinations on %s", async (platform) => {
   const settings = page("/settings/client/player", platform)
-  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({...settings, client:{...settings.client, player:{...settings.client.player, ...player}}}))
+  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({...settings, client:{...settings.client, player:{...settings.client.player, ...player, comfort: player.comfort ?? settings.client.player.comfort}}}))
   const recorder = screen.getByRole("button", {name:"Mark watched key"})
   fireEvent.click(recorder)
   fireEvent.keyDown(recorder, {key:"w", metaKey:platform === "macos", ctrlKey:platform === "windows"})
@@ -98,7 +98,7 @@ test.each(["windows", "macos"] as const)("the watched-next recorder saves and cl
 
 test("Player saves a W/stop shortcut swap in one request", async () => {
   const settings = page("/settings/client/player")
-  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({...settings, client:{...settings.client, player:{...settings.client.player, ...player}}}))
+  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({...settings, client:{...settings.client, player:{...settings.client.player, ...player, comfort: player.comfort ?? settings.client.player.comfort}}}))
   const playbackSave = vi.spyOn(api.settingsPatch, "playback")
   const watched = screen.getByRole("button", {name:"Mark watched key"})
   const stop = screen.getByRole("button", {name:"Stop playback key"})
@@ -190,7 +190,7 @@ test("Player Reset loads server-provided defaults rather than hardcoded constant
   }))
   const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({
     ...settings,
-    client: { ...settings.client, player: { ...settings.client.player, ...player } },
+    client: { ...settings.client, player: { ...settings.client.player, ...player, comfort: player.comfort ?? settings.client.player.comfort } },
   }))
   fireEvent.click(screen.getByRole("button", { name: "Restore defaults" }))
   expect(save).not.toHaveBeenCalled()
@@ -291,4 +291,77 @@ test("Appearance Reset loads server-provided defaults rather than hardcoded cons
     artworkIntensity: 75,
     reducedMotion: true,
   })))
+})
+
+test("switching to External mpv ignores hidden built-in shortcut conflicts and invalid hidden comfort numbers on Save", async () => {
+  const settings = page("/settings/client/player")
+  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({
+    ...settings,
+    client: {
+      ...settings.client,
+      player: {
+        ...settings.client.player,
+        playerBackend: player.playerBackend ?? settings.client.player.playerBackend,
+        mpvPath: player.mpvPath,
+        defaultFullscreen: player.defaultFullscreen ?? settings.client.player.defaultFullscreen,
+        markWatchedNext: player.markWatchedNext,
+        comfort: player.comfort ?? settings.client.player.comfort,
+      },
+    },
+  }))
+
+  const stopRecorder = screen.getByRole("button", { name: "Stop playback key" })
+  fireEvent.click(stopRecorder)
+  fireEvent.keyDown(stopRecorder, { key: "k" })
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Subtitle size (%)" }), { target: { value: "10" } })
+  expect(screen.getByRole("button", { name: "Save" }).hasAttribute("disabled")).toBe(true)
+
+  fireEvent.click(screen.getByRole("combobox", { name: "Player backend" }))
+  fireEvent.click(await screen.findByRole("option", { name: "External mpv" }))
+
+  const saveButton = screen.getByRole("button", { name: "Save" })
+  expect(saveButton.hasAttribute("disabled")).toBe(false)
+  fireEvent.click(saveButton)
+
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+  expect(save).toHaveBeenCalledWith(expect.objectContaining({
+    playerBackend: "mpv",
+    comfort: null,
+  }))
+})
+
+test("Application preserves recovery and restart-required notices across Save and unrelated saves", async () => {
+  const recoveries = [{ area: "Application settings", restoredBackup: true }]
+  const initial = page("/settings/client/application", "windows", (cached) => ({
+    ...cached,
+    recoveries,
+  }))
+  const save = vi.spyOn(api.settingsPatch, "application").mockImplementation(async (application) => ({
+    ...initial,
+    client: { ...initial.client, application: { ...initial.client.application, ...application } },
+    recoveries,
+    restartRequired: { logLevel: application.logLevel !== "debug", playerBackend: false },
+  }))
+
+  expect(screen.getByText(/Application settings: the last valid backup was restored\./)).toBeTruthy()
+
+  fireEvent.click(screen.getByRole("combobox", { name: "Log level" }))
+  fireEvent.click(await screen.findByRole("option", { name: "Warn" }))
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save" }).hasAttribute("disabled")).toBe(true))
+  expect(screen.getByText("Log-level changes apply after restarting MediaFlick.")).toBeTruthy()
+  expect(screen.getByText(/Application settings: the last valid backup was restored\./)).toBeTruthy()
+
+  fireEvent.click(screen.getByRole("switch", { name: "Show scrollbars" }))
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+  expect(screen.getByText("Log-level changes apply after restarting MediaFlick.")).toBeTruthy()
+  expect(screen.getByText(/Application settings: the last valid backup was restored\./)).toBeTruthy()
+
+  fireEvent.click(screen.getByRole("combobox", { name: "Log level" }))
+  fireEvent.click(await screen.findByRole("option", { name: "Debug" }))
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(3))
+  await waitFor(() => expect(screen.queryByText("Log-level changes apply after restarting MediaFlick.")).toBeNull())
 })

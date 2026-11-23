@@ -125,9 +125,13 @@ impl ProfileDraft {
 
 pub(super) fn settings(
     services: &Arc<Services>,
+    request: Option<&ApiRequest>,
     force_probe: bool,
 ) -> Result<CollectionSettings, ApiResponse> {
-    let scope = active_scope(services)?;
+    let scope = match request {
+        Some(request) => scoped_for_request(services, request)?,
+        None => active_scope(services)?,
+    };
     let account = scope.account().clone();
     let readiness = services.companion.collection_readiness(force_probe);
     let repository = SnapshotRepository::new(&services.library);
@@ -151,7 +155,7 @@ pub(super) fn settings(
         .collections
         .effective_mode(&account, &readiness, has_results);
     let settings = services.collections.account(&account);
-    let recovery = services.collections.take_recovery_notice();
+    let recovery = services.collections.recovery_notice();
     Ok(CollectionSettings {
         effective_mode,
         media_flick_available: readiness.tmdb || !settings.profiles.is_empty() || has_results,
@@ -183,10 +187,11 @@ pub(in super::super) struct ReorderBody {
 
 pub(super) fn patch_settings(
     services: &Arc<Services>,
+    request: &ApiRequest,
     body: Body<'_, SettingsPatch>,
 ) -> Result<CollectionSettings, ApiResponse> {
     let patch = body.decode()?;
-    let scope = active_scope(services)?;
+    let scope = scoped_for_request(services, request)?;
     let account = scope.account().clone();
     let updates_mode = patch.mode_selection.is_some();
     let mode = patch.mode_selection.unwrap_or_default();
@@ -234,7 +239,7 @@ pub(super) fn patch_settings(
         });
     match mutation? {
         Some(failure) => Err(failure),
-        None => settings(services, false),
+        None => settings(services, Some(request), false),
     }
 }
 
@@ -330,9 +335,12 @@ pub(super) fn preview(
     }
 }
 
-pub(super) fn list(services: &Arc<Services>) -> Result<CollectionProfilesIndex, ApiResponse> {
-    let account = active_account(services)?;
-    Ok(CollectionProfilesIndex::of(services, &account))
+pub(super) fn list(
+    services: &Arc<Services>,
+    request: &ApiRequest,
+) -> Result<CollectionProfilesIndex, ApiResponse> {
+    let scope = scoped_for_request(services, request)?;
+    Ok(CollectionProfilesIndex::of(services, scope.account()))
 }
 
 pub(super) fn read(
@@ -348,9 +356,10 @@ pub(super) fn read(
 
 pub(super) fn create(
     services: &Arc<Services>,
+    request: &ApiRequest,
     body: Body<'_, ProfileDraft>,
 ) -> Result<CommittedProfile, ApiResponse> {
-    let account = active_account(services)?;
+    let account = scoped_for_request(services, request)?.account().clone();
     let draft = body.decode()?;
     let profile = match draft.into_profile(allocate_profile_id(), allocate_revision_id()) {
         Ok(profile) => profile,
@@ -366,10 +375,11 @@ pub(super) fn create(
 
 pub(super) fn edit(
     services: &Arc<Services>,
+    request: &ApiRequest,
     profile_id: &str,
     body: Body<'_, ProfileDraft>,
 ) -> Result<ProfileEdit, ApiResponse> {
-    let scope = active_scope(services)?;
+    let scope = scoped_for_request(services, request)?;
     let account = scope.account().clone();
     let Some(previous) = profile(services, &account, profile_id) else {
         return Err(ApiResponse::error(404, "that collection does not exist"));
@@ -457,9 +467,13 @@ pub(super) fn refresh(
 
 pub(super) fn delete(
     services: &Arc<Services>,
+    request: Option<&ApiRequest>,
     profile_id: &str,
 ) -> Result<ProfileDeleted, ApiResponse> {
-    let scope = active_scope(services)?;
+    let scope = match request {
+        Some(request) => scoped_for_request(services, request)?,
+        None => active_scope(services)?,
+    };
     let account = scope.account().clone();
     services
         .session
@@ -483,10 +497,11 @@ pub(super) fn delete(
 
 pub(super) fn reorder(
     services: &Arc<Services>,
+    request: &ApiRequest,
     body: Body<'_, ReorderBody>,
 ) -> Result<CollectionProfilesIndex, ApiResponse> {
     let ids = body.decode()?.profile_ids;
-    let scope = active_scope(services)?;
+    let scope = scoped_for_request(services, request)?;
     let account = scope.account().clone();
     services
         .session

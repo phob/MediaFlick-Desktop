@@ -83,7 +83,7 @@ pub(in super::super) struct CollectionTitle {
 }
 
 pub(super) fn redirect_state(services: &Arc<Services>) -> Result<CollectionSettings, ApiResponse> {
-    super::profiles::settings(services, false)
+    super::profiles::settings(services, None, false)
 }
 
 pub(super) fn mine(services: &Arc<Services>) -> Result<CollectionProfilesIndex, ApiResponse> {

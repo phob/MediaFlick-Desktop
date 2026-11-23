@@ -132,3 +132,37 @@ test("Viewing Reset preserves the Appearance-owned preview delay", async () => {
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
   await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({posterSize:168, previewDelayMs:850})))
 })
+
+test("Viewing validates conditional subtitles and language codes inline before Save", async () => {
+  seed()
+  const save = vi.spyOn(api, "saveViewing")
+  render(<TestProviders client={queryClient} initialEntries={["/settings/viewing"]}>
+    <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
+  </TestProviders>)
+
+  const saveButton = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement
+  fireEvent.pointerDown(screen.getByRole("combobox", { name: "Subtitles" }), { button: 0, ctrlKey: false, pointerType: "mouse" })
+  fireEvent.click(await screen.findByRole("option", { name: "When audio differs from preferred languages" }))
+
+  expect(screen.getByRole("alert").textContent).toContain("preferred audio language")
+  expect(saveButton.disabled).toBe(true)
+
+  const audioInput = screen.getByRole("textbox", { name: "Audio languages" })
+  fireEvent.change(audioInput, { target: { value: "e" } })
+  expect(screen.getByRole("alert").textContent).toContain("language codes")
+  expect(saveButton.disabled).toBe(true)
+
+  fireEvent.change(audioInput, { target: { value: "en, de, fr, es, it, ja, ko, zh, pt" } })
+  expect(screen.getByRole("alert").textContent).toContain("language codes")
+  expect(saveButton.disabled).toBe(true)
+
+  fireEvent.change(audioInput, { target: { value: "en, de" } })
+  expect(screen.queryByRole("alert")).toBeNull()
+  expect(saveButton.disabled).toBe(false)
+
+  const subtitleInput = screen.getByRole("textbox", { name: "Subtitle languages" })
+  fireEvent.change(subtitleInput, { target: { value: "en1" } })
+  expect(screen.getByRole("alert").textContent).toContain("language codes")
+  expect(saveButton.disabled).toBe(true)
+  expect(save).not.toHaveBeenCalled()
+})

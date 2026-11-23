@@ -1,6 +1,6 @@
 import { QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render, screen } from "@testing-library/react"
-import { type ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import {
   MemoryRouter,
   Route,
@@ -10,6 +10,7 @@ import {
 } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { SearchBox } from "@/components/AppSidebar"
+import { useLiveSearch } from "@/hooks/use-live-search"
 import {
   SidebarContext,
   type SidebarContextValue,
@@ -153,5 +154,37 @@ describe("Discover live search", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }))
     expect(routeLocation()).toBe("/settings")
     client.clear()
+  })
+})
+
+describe("useLiveSearch transition race", () => {
+  test("preserves keystrokes typed while an earlier committed search transition is still pending", () => {
+    const pendingCommits: Array<() => void> = []
+    const committed: string[] = []
+
+    function Harness() {
+      const [source, setSource] = useState("")
+      const [draft, setDraft] = useLiveSearch(source, (term) => {
+        committed.push(term)
+        pendingCommits.push(() => setSource(term))
+      })
+      return <input aria-label="Search" value={draft} onChange={(event) => setDraft(event.target.value)} />
+    }
+
+    render(<Harness />)
+    const input = screen.getByRole("textbox", { name: "Search" }) as HTMLInputElement
+
+    fireEvent.change(input, { target: { value: "ma" } })
+    act(() => vi.advanceTimersByTime(200))
+    expect(committed).toEqual(["ma"])
+
+    fireEvent.change(input, { target: { value: "mat" } })
+    expect(input.value).toBe("mat")
+
+    act(() => pendingCommits.shift()?.())
+    expect(input.value).toBe("mat")
+
+    act(() => vi.advanceTimersByTime(200))
+    expect(committed).toEqual(["ma", "mat"])
   })
 })

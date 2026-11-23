@@ -2,7 +2,7 @@
 
 import type { Platform } from "./maintenance.player_setup.gen.ts"
 import type { AppearanceAccent, AppearanceDensity, CloseBehavior, FullscreenBehavior, PlayerBackend, SegmentSkipMode, StreamingQuality } from "./preferences.model.gen.ts"
-import type { AppearanceSettingsPatch, ApplicationSettingsPatch, PlaybackSettingsPatch, PlayerSettingsPatch } from "./preferences.service.gen.ts"
+import type { AppearanceSettingsPatch, ApplicationSettingsPatch, PlaybackSettingsPatch, PlayerSettingsPatch, RestartRequired } from "./preferences.service.gen.ts"
 import type { NextEpisode, PlayerComfort, StartupView, SubtitleMode } from "./preferences.viewing.gen.ts"
 
 export type AppearanceView = {
@@ -93,6 +93,7 @@ export type SettingsView = {
   defaults: SettingsDefaults,
   capabilities: Capabilities,
   recoveries: Array<Recovery>,
+  restartRequired: RestartRequired,
   serverUrl: string | null,
 };
 

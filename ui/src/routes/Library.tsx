@@ -1,5 +1,6 @@
 import { useScrollRestoration } from "@/lib/scroll-restoration"
-import { api } from "@/lib/api"
+import { saveBrowsingOrdered } from "@/lib/browsing-saves"
+import { accountKey, useStatus } from "@/lib/session-queries"
 import { DEFAULT_VIEWING, useViewing } from "@/lib/viewing"
 import { useBrowsing } from "@/lib/settings-queries"
 import { useEffect, useRef, useState, type ComponentType } from "react"
@@ -171,6 +172,8 @@ function BrowsePage({
   const CastDiscovery = components?.CastDiscover ?? CastDiscover
   const ServerExtras = components?.ServerCastExtras ?? ServerCastExtras
   const [routeParams, setParams] = useSearchParams()
+  const { data: status } = useStatus()
+  const account = accountKey(status)
   const viewing = useViewing()
   const history = useBrowsing()
   const preferences = viewing.data ?? DEFAULT_VIEWING
@@ -219,7 +222,10 @@ function BrowsePage({
     next.set("filters", "true")
     setParams(next, {replace:false})
     if (library && rememberKey && preferences.rememberFilters) {
-      void api.saveBrowsing(rememberKey, libraryPath(library.id, next)).then(() => { void history.refetch() }).catch((error: Error) => toastFailure(error, `Could not remember library filters: ${error.message}`))
+      saveBrowsingOrdered(account, rememberKey, libraryPath(library.id, next), {
+        onSettled: () => { void history.refetch() },
+        onError: (error) => toastFailure(error, `Could not remember library filters: ${error.message}`),
+      })
     }
   }
 

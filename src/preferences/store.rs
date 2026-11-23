@@ -81,13 +81,15 @@ impl AppSettings {
                 format!("not overwriting settings.json that could not be read: {reason}"),
             ));
         }
-        let settings = device_settings(self);
+        self.save_to(&config_file_path())
+    }
 
-        let path = config_file_path();
+    pub(in crate::preferences) fn save_to(&self, path: &Path) -> io::Result<()> {
+        let settings = device_settings(self);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        save_with_backup(&path, &settings)
+        save_with_backup(path, &settings)
     }
 }
 
@@ -179,11 +181,11 @@ fn config_file_path() -> PathBuf {
     config_dir().join("settings.json")
 }
 
-pub fn take_device_recovery_notice() -> Option<RecoveryNotice> {
+pub fn device_recovery_notice() -> Option<RecoveryNotice> {
     DEVICE_RECOVERY
         .lock()
         .ok()
-        .and_then(|mut recovery| recovery.take())
+        .and_then(|recovery| recovery.clone())
 }
 
 pub fn config_dir() -> PathBuf {

@@ -2,6 +2,8 @@ use crate::collections::{CollectionProfile, ProviderResult};
 
 use super::*;
 
+#[cfg(test)]
+mod account_guard_tests;
 mod browse;
 mod profiles;
 #[cfg(test)]
@@ -18,11 +20,12 @@ pub(super) use profiles::{
 
 routes! {
     |services, request|
-    GET ["collections", "settings"] -> CollectionSettings = profiles::settings(services, false),
+    GET ["collections", "settings"] -> CollectionSettings =
+        profiles::settings(services, Some(request), false),
     POST ["collections", "settings", "reprobe"] -> CollectionSettings =
-        profiles::settings(services, true),
+        profiles::settings(services, Some(request), true),
     PATCH ["collections", "settings"] (body: SettingsPatch) -> CollectionSettings =
-        profiles::patch_settings(services, body),
+        profiles::patch_settings(services, request, body),
     GET ["collections", "templates"] -> CollectionTemplates = profiles::templates(services),
     POST ["collections", "mdblist", "search"] (body: PublicListSearchBody) -> Relay =
         search_public_lists(services, body),
@@ -35,17 +38,17 @@ routes! {
         custom_artwork(services, &percent_decode(artwork_id)),
     POST ["collections", "preview"] (body: ProfileDraft) -> ProviderResult =
         profiles::preview(services, body),
-    GET ["collections", "profiles"] -> CollectionProfilesIndex = profiles::list(services),
+    GET ["collections", "profiles"] -> CollectionProfilesIndex = profiles::list(services, request),
     POST ["collections", "profiles"] (body: ProfileDraft) -> CommittedProfile =
-        profiles::create(services, body),
+        profiles::create(services, request, body),
     PUT ["collections", "profiles", "order"] (body: ReorderBody) -> CollectionProfilesIndex =
-        profiles::reorder(services, body),
+        profiles::reorder(services, request, body),
     GET ["collections", "profiles", profile_id] -> CollectionProfile =
         profiles::read(services, &percent_decode(profile_id)),
     PATCH ["collections", "profiles", profile_id] (body: ProfileDraft) -> ProfileEdit =
-        profiles::edit(services, &percent_decode(profile_id), body),
+        profiles::edit(services, request, &percent_decode(profile_id), body),
     DELETE ["collections", "profiles", profile_id] -> ProfileDeleted =
-        profiles::delete(services, &percent_decode(profile_id)),
+        profiles::delete(services, Some(request), &percent_decode(profile_id)),
     POST ["collections", "profiles", profile_id, "refresh"] -> CommittedProfile =
         profiles::refresh(services, &percent_decode(profile_id)),
     GET ["collections"] -> CollectionSettings = browse::redirect_state(services),
@@ -72,6 +75,15 @@ fn active_scope(services: &Arc<Services>) -> Result<SessionScope, ApiResponse> {
         .session
         .scope()
         .map_err(|_| ApiResponse::error(401, "sign in to use collections"))
+}
+
+fn scoped_for_request(
+    services: &Services,
+    request: &ApiRequest,
+) -> Result<SessionScope, ApiResponse> {
+    expected_scope(services, request, || {
+        ApiResponse::error(401, "sign in to use collections")
+    })
 }
 
 fn active_account(services: &Arc<Services>) -> Result<AccountKey, ApiResponse> {

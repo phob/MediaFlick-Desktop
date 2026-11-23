@@ -101,7 +101,7 @@ fn accounts_json_from_0_2_0_loads_and_survives_a_save() {
     let before = released.json("accounts.json");
     let accounts =
         AccountConfigurationService::open(released.path("accounts.json")).expect("opens");
-    assert!(accounts.take_recovery_notice().is_none());
+    assert!(accounts.recovery_notice().is_none());
     released.assert_untouched("accounts.json");
 
     let viewing = accounts.viewing(&key());
@@ -139,7 +139,7 @@ fn collections_json_from_0_2_0_loads_and_survives_a_save() {
     let before = released.json("collections.json");
     let collections =
         CollectionConfigurationService::open(released.path("collections.json")).expect("opens");
-    assert!(collections.take_recovery_notice().is_none());
+    assert!(collections.recovery_notice().is_none());
     released.assert_untouched("collections.json");
 
     let account = collections.account(&key());
@@ -193,7 +193,7 @@ fn playback_preferences_json_from_0_2_0_loads_and_survives_a_save() {
         .to_owned();
     let playback =
         PlaybackPreferenceService::open(released.path("playback-preferences.json")).expect("opens");
-    assert!(playback.take_recovery_notice().is_none());
+    assert!(playback.recovery_notice().is_none());
     released.assert_untouched("playback-preferences.json");
 
     let preference = playback.get(&key(), &item).expect("the saved choice");

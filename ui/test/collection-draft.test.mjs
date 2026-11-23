@@ -445,3 +445,46 @@ test("invariant: applyPreviewSourceIdentity never mutates non-source fields acro
     }
   }
 })
+
+test("executeCollectionSave aborts remaining steps with 409 accountChanged when the active account changes mid-save", async () => {
+  const calls = []
+  const a = makeProfile("a")
+  const b = makeProfile("b")
+  const c = makeProfile("c")
+  const settings = makeSettings()
+  const profiles = { profiles: [a, b, c], errors: {} }
+  const baseline = savedCollectionDraft(settings, profiles)
+  const value = {
+    ...baseline,
+    includeUnreleased: true,
+    profileIds: ["a", "c", "b"],
+    deletedProfileIds: ["a"],
+  }
+  let currentAccount = "server:alice"
+
+  const outcome = await executeCollectionSave(value, baseline, settings, profiles, {
+    isCurrentAccount: () => currentAccount === "server:alice",
+    reorderProfiles: async (ids) => {
+      calls.push(["reorder", ids])
+      currentAccount = "server:bob"
+      return { profiles: [a, c, b], errors: {} }
+    },
+    deleteProfile: async (id) => {
+      calls.push(["delete", id])
+      return { deleted: true }
+    },
+    patchSettings: async (patch) => {
+      calls.push(["patch", patch])
+      return settings
+    },
+    fetchSettings: async () => settings,
+    fetchProfiles: async () => profiles,
+  })
+
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.error.accountChanged, true)
+  assert.equal(outcome.error.status, 409)
+  assert.deepEqual(calls, [["reorder", ["a", "c", "b"]]])
+  assert.deepEqual(outcome.committedDeletions, [])
+  assert.equal(outcome.committedSettings, false)
+})

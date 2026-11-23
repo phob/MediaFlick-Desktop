@@ -5,7 +5,9 @@ type SettingsWrite<Patch, View extends Record<keyof Patch, unknown>> = Patch & P
 
 export type PlayerSettings = Wire.PlayerView
 
-export type PlayerSettingsWrite = SettingsWrite<Wire.PlayerSettingsPatch, PlayerSettings>
+export type PlayerSettingsWrite = Omit<SettingsWrite<Wire.PlayerSettingsPatch, PlayerSettings>, "comfort"> & {
+  comfort: PlayerComfort | null
+}
 
 export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWrite {
   return {
@@ -13,7 +15,7 @@ export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWri
     mpvPath: settings.mpvPath,
     defaultFullscreen: settings.defaultFullscreen,
     markWatchedNext: settings.markWatchedNext,
-    comfort: settings.comfort,
+    comfort: settings.playerBackend === "libmpv" ? settings.comfort : null,
   }
 }
 
