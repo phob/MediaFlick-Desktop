@@ -59,7 +59,7 @@ test("dragging a Home shelf above another stages the new order until Save", asyn
       { kind: "builtIn", id: "watching", enabled: true },
       { kind: "genre", id: "Drama", enabled: false },
     ],
-  })))
+  }), "anonymous:anonymous"))
 })
 
 test("background sync adding and removing Home options reconciles a dirty draft so Save succeeds", async () => {
@@ -108,7 +108,7 @@ test("background sync adding and removing Home options reconciles a dirty draft 
       { kind: "builtIn", id: "watching", enabled: true },
       { kind: "genre", id: "Comedy", enabled: false },
     ],
-  })))
+  }), "anonymous:anonymous"))
 })
 
 test("a 409 conflict on Home Save refreshes and reconciles options so the next Save succeeds without Discard", async () => {
@@ -126,7 +126,7 @@ test("a 409 conflict on Home Save refreshes and reconciles options so the next S
       ],
     },
   }
-  vi.spyOn(api, "homeSettings").mockResolvedValue(synced)
+  const refetch = vi.spyOn(api, "homeSettings").mockResolvedValue(synced)
   let serverIds = new Set(synced.settings.elements.map((element) => `${element.kind}:${element.id}`))
   const save = vi.spyOn(api, "saveHomeSettings").mockImplementation(async (write) => {
     const requestIds = new Set(write.elements.map((element) => `${element.kind}:${element.id}`))
@@ -155,11 +155,161 @@ test("a 409 conflict on Home Save refreshes and reconciles options so the next S
   fireEvent.click(screen.getByRole("button", { name: "Save" }))
   await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
   expect(await screen.findByText("Comedy")).toBeTruthy()
+  expect(refetch).toHaveBeenCalledWith("anonymous:anonymous")
   expect(save).toHaveBeenLastCalledWith(expect.objectContaining({
     elements: [
       { kind: "builtIn", id: "watching", enabled: true },
       { kind: "genre", id: "Action", enabled: false },
       { kind: "genre", id: "Comedy", enabled: false },
     ],
+  }), "anonymous:anonymous")
+})
+
+const bobSettings: HomeSettingsResponse = {
+  ...settings,
+  settings: {
+    ...settings.settings,
+    billboard: false,
+  },
+}
+
+test("switching accounts between a 409 response and refetch aborts retry without touching the new account", async () => {
+  const client = testQueryClient()
+  client.setQueryData(queryKeys.status, appStatus({
+    authenticated: true,
+    serverUrl: "http://jellyfin.test",
+    userId: "alice",
   }))
+  client.setQueryData(queryKeys.homeSettings, settings)
+
+  let rejectFirstSave: ((reason: Error) => void) | null = null
+  const save = vi.spyOn(api, "saveHomeSettings").mockImplementationOnce(
+    () => new Promise<HomeSettingsResponse>((_resolve, reject) => {
+      rejectFirstSave = reject
+    }),
+  )
+  const refetch = vi.spyOn(api, "homeSettings").mockResolvedValue(bobSettings)
+
+  render(
+    <TestProviders client={client} initialEntries={["/settings/home"]}>
+      <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
+    </TestProviders>,
+  )
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show Action" }))
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+  expect(save).toHaveBeenCalledWith(expect.any(Object), "http://jellyfin.test:alice")
+
+  act(() => {
+    client.setQueryData(queryKeys.status, appStatus({
+      authenticated: true,
+      serverUrl: "http://jellyfin.test",
+      userId: "bob",
+    }))
+    client.setQueryData(queryKeys.homeSettings, bobSettings)
+    rejectFirstSave?.(new ApiError("Home options changed while the page was open", 409))
+  })
+
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Saving…" })).toBeNull())
+  expect(refetch).not.toHaveBeenCalled()
+  expect(save).toHaveBeenCalledTimes(1)
+  expect(client.getQueryData(queryKeys.homeSettings)).toEqual(bobSettings)
+})
+
+test("switching accounts between refetch and retry save aborts retry and keeps the new account cache intact", async () => {
+  const client = testQueryClient()
+  client.setQueryData(queryKeys.status, appStatus({
+    authenticated: true,
+    serverUrl: "http://jellyfin.test",
+    userId: "alice",
+  }))
+  client.setQueryData(queryKeys.homeSettings, settings)
+  const aliceSynced: HomeSettingsResponse = {
+    ...settings,
+    settings: {
+      ...settings.settings,
+      elements: [
+        { kind: "builtIn", id: "watching", enabled: true, label: "Watching", available: true, category: "Built-in" },
+        { kind: "genre", id: "Action", enabled: true, label: "Action", available: true, category: "Genre" },
+        { kind: "genre", id: "Comedy", enabled: false, label: "Comedy", available: true, category: "Genre" },
+      ],
+    },
+  }
+
+  let resolveRefetch: ((value: HomeSettingsResponse) => void) | null = null
+  const refetch = vi.spyOn(api, "homeSettings").mockImplementationOnce(
+    () => new Promise<HomeSettingsResponse>((resolve) => {
+      resolveRefetch = resolve
+    }),
+  )
+  const save = vi.spyOn(api, "saveHomeSettings").mockRejectedValueOnce(
+    new ApiError("Home options changed while the page was open", 409),
+  )
+
+  render(
+    <TestProviders client={client} initialEntries={["/settings/home"]}>
+      <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
+    </TestProviders>,
+  )
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show Action" }))
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(refetch).toHaveBeenCalledTimes(1))
+  expect(refetch).toHaveBeenCalledWith("http://jellyfin.test:alice")
+
+  act(() => {
+    client.setQueryData(queryKeys.status, appStatus({
+      authenticated: true,
+      serverUrl: "http://jellyfin.test",
+      userId: "bob",
+    }))
+    client.setQueryData(queryKeys.homeSettings, bobSettings)
+    resolveRefetch?.(aliceSynced)
+  })
+
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Saving…" })).toBeNull())
+  expect(save).toHaveBeenCalledTimes(1)
+  expect(client.getQueryData(queryKeys.homeSettings)).toEqual(bobSettings)
+})
+
+test("switching accounts while Home save is in flight prevents a late 200 from overwriting the new account cache", async () => {
+  const client = testQueryClient()
+  client.setQueryData(queryKeys.status, appStatus({
+    authenticated: true,
+    serverUrl: "http://jellyfin.test",
+    userId: "alice",
+  }))
+  client.setQueryData(queryKeys.homeSettings, settings)
+
+  let resolveSave: ((value: HomeSettingsResponse) => void) | null = null
+  const save = vi.spyOn(api, "saveHomeSettings").mockImplementationOnce(
+    () => new Promise<HomeSettingsResponse>((resolve) => {
+      resolveSave = resolve
+    }),
+  )
+
+  render(
+    <TestProviders client={client} initialEntries={["/settings/home"]}>
+      <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
+    </TestProviders>,
+  )
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show Action" }))
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+  expect(save).toHaveBeenCalledWith(expect.any(Object), "http://jellyfin.test:alice")
+
+  act(() => {
+    client.setQueryData(queryKeys.status, appStatus({
+      authenticated: true,
+      serverUrl: "http://jellyfin.test",
+      userId: "bob",
+    }))
+    client.setQueryData(queryKeys.homeSettings, bobSettings)
+    resolveSave?.(settings)
+  })
+
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Saving…" })).toBeNull())
+  expect(client.getQueryData(queryKeys.homeSettings)).toEqual(bobSettings)
 })

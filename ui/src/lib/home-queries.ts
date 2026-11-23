@@ -7,7 +7,7 @@ export function useHome(enabled = true) {
 }
 
 export function useHomeSettings(enabled = true) {
-  return useQuery({ queryKey: queryKeys.homeSettings, queryFn: api.homeSettings, enabled })
+  return useQuery({ queryKey: queryKeys.homeSettings, queryFn: () => api.homeSettings(), enabled })
 }
 
 export function useHomeResume(enabled = true) {
