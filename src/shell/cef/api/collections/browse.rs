@@ -113,10 +113,20 @@ pub(super) fn profile_detail(
     let refresh = repository
         .refresh_state(&account, &profile.id)
         .map_err(|error| storage_failure(&error))?;
+    let now = crate::library::now_unix();
+    let overdue = crate::collections::scheduler::is_due(&refresh, profile.cadence, now);
     let snapshot = match repository.profile(&account, &profile.id, &profile.revision) {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => {
-            let unavailable = profile.validate().is_err() || refresh.latest_failure.is_some();
+            let valid = profile.validate().is_ok();
+            let unavailable = !valid || refresh.latest_failure.is_some();
+            if valid
+                && crate::library::sync::ownership_available(&services.library)
+                && overdue
+                && !crate::collections::scheduler::in_failure_backoff(&refresh, now)
+            {
+                crate::collections::scheduler::request_run(services.clone());
+            }
             return Ok(CollectionProfileDetail {
                 profile,
                 status: if unavailable {
@@ -130,7 +140,7 @@ pub(super) fn profile_detail(
                 library_items: Vec::new(),
                 ownership_available: None,
                 refresh,
-                overdue: None,
+                overdue: Some(overdue),
             });
         }
         Err(error) => return Err(storage_failure(&error)),
@@ -160,11 +170,6 @@ pub(super) fn profile_detail(
         Ok(items) => items,
         Err(error) => return Err(storage_failure(&error)),
     };
-    let overdue = crate::collections::scheduler::is_due(
-        refresh.last_success,
-        profile.cadence,
-        crate::library::now_unix(),
-    );
     Ok(CollectionProfileDetail {
         profile,
         status: ResultsStatus::Ready,

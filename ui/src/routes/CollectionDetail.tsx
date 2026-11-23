@@ -305,12 +305,15 @@ export function MyCollectionDetail() {
   const data = query.data
   const profile = data?.profile
   const updated = lastUpdated(data?.refresh?.lastSuccess)
-  const stale = data?.refresh?.latestFailure
-    ? updated ? `Update failed. Last updated ${updated}.` : "Results unavailable. Update failed."
-    : data?.overdue ? updated ? `Last updated ${updated}.` : "Results unavailable." : null
   const providerAvailable = profile?.source.kind === "mdbListPublicList"
     ? Boolean(settings.data?.readiness.mdblist)
     : Boolean(settings.data?.readiness.tmdb)
+  const providerUnavailable = Boolean(profile && settings.data && !providerAvailable)
+  const stale = data?.refresh?.latestFailure
+    ? updated ? `Update failed. Last updated ${updated}.` : "Results unavailable. Update failed."
+    : data?.status === "updating"
+      ? providerUnavailable ? "Provider unavailable." : "Waiting for results."
+      : data?.overdue ? updated ? `Last updated ${updated}.` : "Results unavailable." : null
   const retry = profile && stale && providerAvailable ? () => {
     setRefreshing(true)
     void api.collections.refreshProfile(profile.id).then(
@@ -323,7 +326,11 @@ export function MyCollectionDetail() {
       backTo="My Collections"
       backHref="/collections/mine"
       name={profile?.title ?? "…"}
-      countLine={data?.status === "updating" ? "Updating results" : data?.status === "resultsUnavailable" ? "Results unavailable" : data ? `${data.owned.length} owned${data.missing.length ? ` · ${data.missing.length} missing` : ""}` : null}
+      countLine={data?.status === "updating"
+        ? providerUnavailable ? "Results unavailable" : "Updating results"
+        : data?.status === "resultsUnavailable"
+          ? "Results unavailable"
+          : data ? `${data.owned.length} owned${data.missing.length ? ` · ${data.missing.length} missing` : ""}` : null}
       overview={profile?.description ?? null}
       backdrop={null}
       poster={profile?.customPosterId ? api.collections.artworkUrl(profile.customPosterId) : null}

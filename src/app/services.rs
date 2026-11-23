@@ -40,7 +40,7 @@ pub struct Services {
     pub pending_deletions: Arc<PendingDeletionService>,
     pub preferences: Arc<PreferencesService>,
     pub shell: Arc<ShellBridge>,
-    pub home_watched: Mutex<HashMap<AccountKey, Option<crate::library::ItemDetail>>>,
+    pub home_watched: Mutex<HashMap<AccountKey, crate::library::ItemDetail>>,
     pub children_sources: ChildrenSources,
     pub open_books: OpenBooks,
     playback: RwLock<Option<Arc<PlaybackCoordinator>>>,

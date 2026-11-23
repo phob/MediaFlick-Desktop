@@ -16,6 +16,8 @@ use crate::collections::{
 use crate::jellyfin::session::Live;
 use crate::preferences::backup_path;
 
+mod audit;
+
 #[derive(Clone)]
 struct CompanionBehavior {
     info_status: &'static str,
@@ -67,32 +69,42 @@ impl LoopbackCompanion {
                 if stop.load(Ordering::SeqCst) {
                     break;
                 }
-                let Ok(mut stream) = incoming else {
+                let Ok(stream) = incoming else {
                     break;
                 };
-                let (request_line, _) = read_request_with_headers(&mut stream);
-                let path = request_line.split_whitespace().nth(1).unwrap_or("");
-                let snapshot = behavior.lock().expect("behavior").clone();
-                let (status, response_body) = if path.starts_with("/MediaFlick/info") {
-                    (snapshot.info_status, snapshot.info_body)
-                } else if path.starts_with("/MediaFlick/collection-experience/v1/identities") {
-                    identities_hits.fetch_add(1, Ordering::SeqCst);
-                    ("200 OK", r#"{"mappings":[]}"#.to_string())
-                } else if path.starts_with("/MediaFlick/collection-experience/v1/franchises") {
-                    franchises_hits.fetch_add(1, Ordering::SeqCst);
-                    (snapshot.franchises_status, snapshot.franchises_body)
-                } else if path.starts_with("/MediaFlick/collection-experience/v1/results") {
-                    results_hits.fetch_add(1, Ordering::SeqCst);
-                    let gate = results_gate.lock().expect("gate").take();
-                    if let Some(gate) = gate {
-                        let _ = gate.entered.send(());
-                        let _ = gate.release.lock().expect("release").recv();
-                    }
-                    (snapshot.results_status, snapshot.results_body)
-                } else {
-                    ("404 Not Found", "{}".to_string())
-                };
-                respond(&mut stream, status, &response_body);
+                let behavior = behavior.clone();
+                let results_gate = results_gate.clone();
+                let identities_hits = identities_hits.clone();
+                let franchises_hits = franchises_hits.clone();
+                let results_hits = results_hits.clone();
+                std::thread::spawn(move || {
+                    let mut stream = stream;
+                    let (request_line, _) = read_request_with_headers(&mut stream);
+                    let path = request_line.split_whitespace().nth(1).unwrap_or("");
+                    let (status, response_body) = if path.starts_with("/MediaFlick/info") {
+                        let snapshot = behavior.lock().expect("behavior").clone();
+                        (snapshot.info_status, snapshot.info_body)
+                    } else if path.starts_with("/MediaFlick/collection-experience/v1/identities") {
+                        identities_hits.fetch_add(1, Ordering::SeqCst);
+                        ("200 OK", r#"{"mappings":[]}"#.to_string())
+                    } else if path.starts_with("/MediaFlick/collection-experience/v1/franchises") {
+                        franchises_hits.fetch_add(1, Ordering::SeqCst);
+                        let snapshot = behavior.lock().expect("behavior").clone();
+                        (snapshot.franchises_status, snapshot.franchises_body)
+                    } else if path.starts_with("/MediaFlick/collection-experience/v1/results") {
+                        results_hits.fetch_add(1, Ordering::SeqCst);
+                        let gate = results_gate.lock().expect("gate").take();
+                        if let Some(gate) = gate {
+                            let _ = gate.entered.send(());
+                            let _ = gate.release.lock().expect("release").recv();
+                        }
+                        let snapshot = behavior.lock().expect("behavior").clone();
+                        (snapshot.results_status, snapshot.results_body)
+                    } else {
+                        ("404 Not Found", "{}".to_string())
+                    };
+                    respond(&mut stream, status, &response_body);
+                });
             }
         });
         server

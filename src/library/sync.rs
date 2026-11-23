@@ -295,16 +295,16 @@ impl SyncHandle {
     }
 
     pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::Relaxed)
+        self.running.load(Ordering::Acquire)
     }
 
     pub fn status(&self, catalog: BootstrapProgress, generation: u64) -> SyncStatus {
+        let running = self.is_running();
         let state = *self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let retry = state
             .failure
             .filter(|failure| failure.generation == generation)
             .map(|failure| failure.retry);
-        let running = self.is_running();
         let active = running || !catalog.complete;
         let phase = if running {
             state.phase
@@ -327,6 +327,24 @@ impl SyncHandle {
             },
             bootstrap,
         }
+    }
+
+    pub(super) fn begin_cycle(&self, phase: SyncPhase) {
+        self.set_phase(phase);
+        self.running.store(true, Ordering::Release);
+    }
+
+    pub(super) fn end_cycle(&self) {
+        self.running.store(false, Ordering::Release);
+        self.set_phase(SyncPhase::Complete);
+    }
+
+    #[cfg(test)]
+    pub(super) fn stored_phase(&self) -> SyncPhase {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .phase
     }
 
     pub(super) fn set_phase(&self, phase: SyncPhase) {

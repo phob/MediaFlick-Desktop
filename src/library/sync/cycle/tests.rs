@@ -20,6 +20,7 @@ use crate::library::sync::{
 };
 use crate::library::{ItemQuery, Library, LibraryChangeBatch, StoredCredentials};
 
+mod audit;
 mod deletions;
 mod libraries;
 
