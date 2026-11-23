@@ -24,16 +24,20 @@ use crate::shell::cef::api::{ApiRequest, dispatch};
 
 use super::logout_with_timeouts;
 
-static PLAYSTATE_TEST_LOCK: Mutex<()> = Mutex::new(());
+pub(super) static PLAYSTATE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-fn post_with_cancellation(path: &str, body: &[u8], cancelled: Arc<AtomicBool>) -> ApiRequest {
+pub(super) fn post_with_cancellation(
+    path: &str,
+    body: &[u8],
+    cancelled: Arc<AtomicBool>,
+) -> ApiRequest {
     ApiRequest {
         cancelled,
         ..post(path, body)
     }
 }
 
-fn spawn_login_server(
+pub(super) fn spawn_login_server(
     listener: TcpListener,
     played_tx: mpsc::Sender<(String, String)>,
     stop: Arc<AtomicBool>,
@@ -314,7 +318,7 @@ fn cancelling_an_in_flight_probe_skips_the_quick_connect_check() {
 }
 
 #[derive(Debug, Clone)]
-struct RecordedRequest {
+pub(super) struct RecordedRequest {
     request_line: String,
     token: Option<String>,
     body: String,
@@ -334,15 +338,15 @@ fn write_status(stream: &mut TcpStream, status: u16) {
     let _ = stream.flush();
 }
 
-struct TokenRevokingServer {
-    url: String,
+pub(super) struct TokenRevokingServer {
+    pub(super) url: String,
     recorded: Arc<Mutex<Vec<RecordedRequest>>>,
     stop: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
 }
 
 impl TokenRevokingServer {
-    fn start(on_stopped: impl Fn(&TestHttpRequest) + Send + Sync + 'static) -> Self {
+    pub(super) fn start(on_stopped: impl Fn(&TestHttpRequest) + Send + Sync + 'static) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
         let addr = listener.local_addr().expect("listener address");
         listener
@@ -419,7 +423,7 @@ impl TokenRevokingServer {
         self.recorded.lock().expect("recorded").clone()
     }
 
-    fn finish(mut self) -> Vec<RecordedRequest> {
+    pub(super) fn finish(mut self) -> Vec<RecordedRequest> {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
@@ -437,7 +441,7 @@ impl Drop for TokenRevokingServer {
     }
 }
 
-fn playback_request(server_url: &str, item_id: &str) -> PlaybackRequest {
+pub(super) fn playback_request(server_url: &str, item_id: &str) -> PlaybackRequest {
     let mut request = PlaybackRequest::new(format!("{server_url}/Videos/{item_id}/stream.mkv"));
     request.item_id = Some(item_id.to_string());
     request.play_session_id = Some("play-session-1".to_string());
@@ -448,7 +452,7 @@ fn playback_request(server_url: &str, item_id: &str) -> PlaybackRequest {
     request
 }
 
-struct AlwaysCurrentOwner;
+pub(super) struct AlwaysCurrentOwner;
 
 impl PlaybackOwner for AlwaysCurrentOwner {
     fn is_current(&self) -> bool {
@@ -456,12 +460,12 @@ impl PlaybackOwner for AlwaysCurrentOwner {
     }
 }
 
-struct ReportingTestBackend {
+pub(super) struct ReportingTestBackend {
     active: Mutex<Option<(PlaybackReporter, ReportingState)>>,
 }
 
 impl ReportingTestBackend {
-    fn new(reporter: PlaybackReporter, position_ticks: i64) -> Self {
+    pub(super) fn new(reporter: PlaybackReporter, position_ticks: i64) -> Self {
         Self {
             active: Mutex::new(Some((
                 reporter,

@@ -82,20 +82,31 @@ export function useQuickConnectStart() {
   return useMutation({ mutationFn: (server: string) => api.quickConnectStart(server) })
 }
 
-export function useQuickConnectPoll(started: QuickConnectStart | undefined) {
+export function useQuickConnectPoll(
+  started: QuickConnectStart | undefined,
+  onError?: (error: Error) => void,
+) {
   const client = useQueryClient()
   return useQuery({
     ...optionalIdQuery(started, queryKeys.quickConnect(started?.secret ?? ""), async (started, { signal }) => {
-      const result = await api.quickConnectPoll(started.serverUrl, started.secret, signal)
-      if (result.authenticated) {
-        client.removeQueries({ queryKey: queryKeys.billboard })
-        await client.invalidateQueries({ queryKey: queryKeys.status })
-        resetAccountQueries(client)
-        invalidateMediaSurfaces(client)
+      try {
+        const result = await api.quickConnectPoll(started.serverUrl, started.secret, signal)
+        if (result.authenticated) {
+          client.removeQueries({ queryKey: queryKeys.billboard })
+          await client.invalidateQueries({ queryKey: queryKeys.status })
+          resetAccountQueries(client)
+          invalidateMediaSurfaces(client)
+        }
+        return result
+      } catch (error) {
+        if (!signal.aborted && error instanceof Error) onError?.(error)
+        throw error
       }
-      return result
     }),
-    refetchInterval: (query) => (query.state.data?.authenticated ? false : 2000),
+    refetchInterval: (query) =>
+      query.state.data?.authenticated || query.state.status === "error" || query.state.error != null
+        ? false
+        : 2000,
     staleTime: 0,
     gcTime: 0,
     retry: false,

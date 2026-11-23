@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { ApiError } from "@/lib/api"
 import {
   useLogin,
   useQuickConnectPoll,
@@ -48,9 +49,17 @@ export default function SignIn() {
   }, [addressComplete, serverAddress])
 
   const quickConnect = useQuickConnectStart()
-  const poll = useQuickConnectPoll(quickConnect.data)
+  const [quickConnectError, setQuickConnectError] = useState<string | null>(null)
+  const poll = useQuickConnectPoll(quickConnect.data, (error) => {
+    setQuickConnectError(
+      error instanceof ApiError && error.status === 404
+        ? "That Quick Connect code expired. Request a new code to try again."
+        : error.message,
+    )
+    quickConnect.reset()
+  })
 
-  const quickError = quickConnect.error ?? poll.error
+  const quickErrorMessage = quickConnect.error?.message ?? poll.error?.message ?? quickConnectError
   const quickConnectAvailable = Boolean(serverAddress && info.data?.quickConnect)
   const tooOld = info.data?.tooOld
   let quickConnectHelp = "Enter your server address first to use Quick Connect without a password."
@@ -101,6 +110,7 @@ export default function SignIn() {
                 onChange={(event) => {
                   setServer(event.target.value)
                   if (event.target.value.trim() === serverAddress) return
+                  setQuickConnectError(null)
                   quickConnect.reset()
                 }}
                 onBlur={() => setSettled(serverAddress)}
@@ -135,12 +145,15 @@ export default function SignIn() {
                   variant="secondary"
                   aria-describedby="quick-connect-help"
                   disabled={quickConnect.isPending || !quickConnectAvailable}
-                  onClick={() => quickConnect.mutate(serverAddress)}
+                  onClick={() => {
+                    setQuickConnectError(null)
+                    quickConnect.mutate(serverAddress)
+                  }}
                 >
                   {quickConnect.isPending ? "Starting…" : "Use Quick Connect"}
                 </Button>
               )}
-              {quickError && <p className="text-sm text-destructive">{quickError.message}</p>}
+              {quickErrorMessage && <p className="text-sm text-destructive">{quickErrorMessage}</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="username">Username</Label>

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, expect, test, vi } from "vitest"
-import { api, type ServerInfo } from "@/lib/api"
+import { api, ApiError, type ServerInfo } from "@/lib/api"
 import SignIn from "@/routes/SignIn"
 import { clientSettingsFixture } from "./support/settings"
 import { testQueryClient } from "./test-query-client"
@@ -17,7 +17,10 @@ beforeEach(() => {
   vi.spyOn(api, "login").mockRejectedValue(new Error("Incorrect username or password"))
 })
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 function renderSignIn() {
   return render(<TestProviders client={testQueryClient()}><SignIn /></TestProviders>)
@@ -119,4 +122,76 @@ test("a late code from a previous server cannot start polling after the address 
   expect(screen.queryByText("123456")).toBeNull()
   expect(quickConnectButton().disabled).toBe(true)
   expect(api.quickConnectPoll).not.toHaveBeenCalled()
+})
+
+test("an expired Quick Connect code stops polling, restores the start button, and allows requesting a new code", async () => {
+  vi.useFakeTimers()
+  vi.mocked(api.quickConnectStart)
+    .mockResolvedValueOnce({ serverUrl, code: "111111", secret: "expired-secret" })
+    .mockResolvedValueOnce({ serverUrl, code: "222222", secret: "fresh-secret" })
+  vi.mocked(api.quickConnectPoll)
+    .mockResolvedValueOnce({ authenticated: false })
+    .mockRejectedValueOnce(new ApiError("Jellyfin returned HTTP 404", 404))
+    .mockResolvedValue({ authenticated: false })
+
+  renderSignIn()
+  await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+  enterServer()
+  await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+  expect(quickConnectButton().disabled).toBe(false)
+
+  fireEvent.click(quickConnectButton())
+  await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+  expect(screen.getByText("111111")).toBeTruthy()
+  expect(api.quickConnectPoll).toHaveBeenCalledTimes(1)
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+  expect(api.quickConnectPoll).toHaveBeenCalledTimes(2)
+  expect(screen.queryByText("111111")).toBeNull()
+  expect(quickConnectButton().disabled).toBe(false)
+  expect(screen.getByText(/expired/i)).toBeTruthy()
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(6_000) })
+  expect(api.quickConnectPoll).toHaveBeenCalledTimes(2)
+
+  fireEvent.click(quickConnectButton())
+  await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+  expect(screen.getByText("222222")).toBeTruthy()
+  expect(screen.queryByText(/expired/i)).toBeNull()
+  expect(api.quickConnectPoll).toHaveBeenCalledWith(serverUrl, "fresh-secret", expect.any(AbortSignal))
+})
+
+test("a Quick Connect poll failure stops the 2-second polling loop and restores the start button", async () => {
+  vi.useFakeTimers()
+  vi.mocked(api.quickConnectStart)
+    .mockResolvedValueOnce({ serverUrl, code: "123456", secret: "first-secret" })
+    .mockResolvedValueOnce({ serverUrl, code: "654321", secret: "retry-secret" })
+  vi.mocked(api.quickConnectPoll)
+    .mockResolvedValueOnce({ authenticated: false })
+    .mockRejectedValueOnce(new ApiError("could not reach Jellyfin", 502))
+    .mockResolvedValue({ authenticated: false })
+
+  renderSignIn()
+  await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+  enterServer()
+  await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+
+  fireEvent.click(quickConnectButton())
+  await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+  expect(api.quickConnectPoll).toHaveBeenCalledTimes(1)
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+  expect(api.quickConnectPoll).toHaveBeenCalledTimes(2)
+  expect(screen.getByText("could not reach Jellyfin")).toBeTruthy()
+  expect(screen.queryByText("123456")).toBeNull()
+  expect(quickConnectButton().disabled).toBe(false)
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(6_000) })
+  expect(api.quickConnectPoll).toHaveBeenCalledTimes(2)
+
+  fireEvent.click(quickConnectButton())
+  await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+  expect(screen.getByText("654321")).toBeTruthy()
+  expect(screen.queryByText("could not reach Jellyfin")).toBeNull()
+  expect(api.quickConnectPoll).toHaveBeenCalledWith(serverUrl, "retry-secret", expect.any(AbortSignal))
 })

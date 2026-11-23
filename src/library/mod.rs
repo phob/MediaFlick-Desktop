@@ -97,6 +97,7 @@ pub struct StoredCredentials {
     pub token: Option<String>,
 }
 
+#[cfg(test)]
 impl StoredCredentials {
     pub fn is_authenticated(&self) -> bool {
         self.token.is_some()

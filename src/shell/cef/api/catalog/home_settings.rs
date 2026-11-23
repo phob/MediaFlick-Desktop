@@ -20,32 +20,39 @@ pub(super) fn resolved_home(services: &Services) -> Result<ResolvedHome, ApiResp
         .session
         .account_key()
         .ok_or_else(|| ApiResponse::error(401, "sign in to configure Home"))?;
+    resolved_home_for_account(services, &account)
+}
+
+fn resolved_home_for_account(
+    services: &Services,
+    account: &AccountKey,
+) -> Result<ResolvedHome, ApiResponse> {
     let genres = services
         .library
         .facet_values(Facet::Genre, None)
         .map_err(|error| storage_failure(&error))?;
-    let profiles = services.collections.account(&account).profiles;
+    let profiles = services.collections.account(account).profiles;
     let libraries = services
         .library
         .libraries()
         .map_err(|error| storage_failure(&error))?;
     let readiness = services.companion.cached_collection_readiness();
     let has_results = crate::collections::snapshots::SnapshotRepository::new(&services.library)
-        .has_account_results(&account)
+        .has_account_results(account)
         .unwrap_or(false);
     let mediaflick_collections =
         services
             .collections
-            .effective_mode(&account, &readiness, has_results)
+            .effective_mode(account, &readiness, has_results)
             == CollectionMode::MediaFlick;
     let mut settings = services
         .accounts
-        .home(&account)
+        .home(account)
         .unwrap_or_else(|| HomeSettings::fresh(&genres));
     reconcile_home_elements(&mut settings, &genres, &profiles, &libraries);
     let defaults = home_defaults(&settings, &genres, &profiles, &libraries);
     Ok(ResolvedHome {
-        account,
+        account: account.clone(),
         settings,
         defaults,
         genres: genres.into_iter().collect(),
@@ -305,7 +312,8 @@ pub(super) fn patch_home_settings(
     if let Err(error) = requested.validate() {
         return Err(ApiResponse::error(400, error.to_string()));
     }
-    let current = resolved_home(services)?;
+    let scope = session_scope(services)?;
+    let current = resolved_home_for_account(services, scope.account())?;
     let requested_ids = requested
         .elements
         .iter()
@@ -323,18 +331,20 @@ pub(super) fn patch_home_settings(
             "Home options changed while the page was open",
         ));
     }
-    let scope = session_scope(services)?;
     services
         .session
-        .commit_if_current(&scope, stale_account_response, |_live| {
+        .commit_if_current(&scope, stale_account_response, |live| {
             services
                 .accounts
-                .save_home(&current.account, &requested)
+                .save_home(live.account(), &requested)
                 .map_err(|error| {
                     ApiResponse::error(500, format!("could not save Home settings: {error}"))
                 })
         })?;
-    Ok(home_settings_response(&resolved_home(services)?))
+    Ok(home_settings_response(&resolved_home_for_account(
+        services,
+        scope.account(),
+    )?))
 }
 
 #[cfg(test)]
@@ -491,5 +501,27 @@ mod tests {
             genre("Gone", false),
         ]);
         assert_eq!(defaults.elements, expected);
+    }
+
+    #[test]
+    fn patch_home_settings_checks_session_scope_before_resolving_home() {
+        use crate::app::services::test_support::TestServices;
+        use crate::shell::cef::api::tests::{post, send};
+
+        let fixture = TestServices::signed_in("http://127.0.0.1:8096");
+        let scope = fixture.services.session.scope().expect("scope");
+        fixture
+            .services
+            .session
+            .note_scoped_error(&scope, &ApiError::Unauthorized);
+
+        let mismatched = HomeSettings::fresh(&["Action".to_owned()]);
+        let body = serde_json::to_vec(&mismatched).expect("body");
+        let request = ApiRequest {
+            method: "PATCH".to_string(),
+            ..post("/api/settings/home", &body)
+        };
+        let response = send(&fixture, &request);
+        assert_eq!(response.status, 401);
     }
 }

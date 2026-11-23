@@ -194,9 +194,9 @@ pub fn open(
     initial_settings: AppSettings,
 ) -> Result<Arc<Services>, StartupFailure> {
     let library = open_library()?;
-    let restored = library.credentials().is_authenticated();
     let shell = Arc::new(ShellBridge::default());
     let session = Arc::new(Session::restore(library.clone(), shell.clone()));
+    let restored = session.is_authenticated();
     let account_path = accounts_file_path();
     let accounts = open_configuration(&account_path, AccountConfigurationService::open)?;
     let active_account = session.account_key();
