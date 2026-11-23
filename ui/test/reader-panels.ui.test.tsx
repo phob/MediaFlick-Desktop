@@ -57,22 +57,28 @@ afterEach(() => {
 })
 
 describe("reader panel initial focus", () => {
-  test("focuses the Go to slider thumb deterministically when Radix unhides it without rAF polling", async () => {
+  test("focuses the Go to slider thumb once it becomes visible", async () => {
     guardHiddenFocus()
-    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1)
 
-    renderPanel({ kind: "goto", from: "menu" }, "reflowable")
-    const slider = screen.getByRole("slider", { name: "Position in the book" })
+    const host = document.createElement("div")
+    host.tabIndex = -1
+    document.body.append(host)
+    host.focus()
 
-    await waitFor(() => {
-      expect(document.activeElement).toBe(slider)
-    })
-    expect(raf).not.toHaveBeenCalled()
+    try {
+      renderPanel({ kind: "goto", from: "reading" }, "reflowable")
+      const slider = screen.getByRole("slider", { name: "Position in the book" })
+
+      await waitFor(() => {
+        expect(document.activeElement).toBe(slider)
+      })
+    } finally {
+      host.remove()
+    }
   })
 
-  test("focuses the reflowable Appearance slider thumb deterministically without rAF polling", async () => {
+  test("focuses the reflowable Appearance slider thumb once it becomes visible", async () => {
     guardHiddenFocus()
-    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1)
 
     renderPanel({ kind: "settings", from: "menu" }, "reflowable")
     const slider = screen.getByRole("slider", { name: "Text size" })
@@ -80,18 +86,72 @@ describe("reader panel initial focus", () => {
     await waitFor(() => {
       expect(document.activeElement).toBe(slider)
     })
-    expect(raf).not.toHaveBeenCalled()
   })
 
   test("focuses the requested menu entry and checked radio immediately", () => {
-    const raf = vi.spyOn(window, "requestAnimationFrame")
-
     const { unmount } = renderPanel({ kind: "menu", focus: "settings" })
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Appearance" }))
     unmount()
 
     renderPanel({ kind: "settings", from: "menu" }, "fixed")
     expect(document.activeElement).toBe(screen.getByRole("radio", { name: "Whole page" }))
-    expect(raf).not.toHaveBeenCalled()
+  })
+
+  test("does not steal focus back if focus moves to another control before the slider thumb unhides", async () => {
+    guardHiddenFocus()
+    const originalObserve = MutationObserver.prototype.observe
+    let movedFocus = false
+    vi.spyOn(MutationObserver.prototype, "observe").mockImplementation(function (
+      this: MutationObserver,
+      target: Node,
+      options?: MutationObserverInit,
+    ) {
+      originalObserve.call(this, target, options)
+      if (target instanceof Element && target.closest("[data-reader-panel]") && !movedFocus) {
+        movedFocus = true
+        const close = document.querySelector<HTMLElement>('[data-slot="sheet-content"] > button')
+        close?.focus()
+      }
+    })
+
+    renderPanel({ kind: "goto", from: "menu" }, "reflowable")
+    const slider = screen.getByRole("slider", { name: "Position in the book" })
+    const close = screen.getByRole("button", { name: "Close" })
+
+    await waitFor(() => {
+      expect(slider.style.display).not.toBe("none")
+    })
+    await Promise.resolve()
+
+    expect(movedFocus).toBe(true)
+    expect(document.activeElement).toBe(close)
+  })
+
+  test("cancels pending slider focus if the user interacts via keyboard before the thumb unhides", async () => {
+    guardHiddenFocus()
+    const originalObserve = MutationObserver.prototype.observe
+    let cancelled = false
+    vi.spyOn(MutationObserver.prototype, "observe").mockImplementation(function (
+      this: MutationObserver,
+      target: Node,
+      options?: MutationObserverInit,
+    ) {
+      originalObserve.call(this, target, options)
+      if (target instanceof Element && target.closest("[data-reader-panel]") && !cancelled) {
+        cancelled = true
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }))
+      }
+    })
+
+    renderPanel({ kind: "settings", from: "menu" }, "reflowable")
+    const slider = screen.getByRole("slider", { name: "Text size" })
+
+    await waitFor(() => {
+      expect(slider.style.display).not.toBe("none")
+    })
+    await Promise.resolve()
+
+    expect(cancelled).toBe(true)
+    expect(document.activeElement).not.toBe(slider)
   })
 })

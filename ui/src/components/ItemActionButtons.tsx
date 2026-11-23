@@ -22,7 +22,8 @@ const VARIANTS = {
     icon: "size-4",
     button: "",
     toggle: "bg-scrim/85",
-    off: "border-white/35 text-white hover:border-primary/70 hover:text-primary",
+    off: "border-white/35 text-white",
+    offHover: "hover:border-primary/70 hover:text-primary",
     favoriteOn: "border-primary/70 text-primary",
     playedOn: "border-primary/70 text-primary",
   },
@@ -30,7 +31,8 @@ const VARIANTS = {
     icon: "size-5",
     button: "relative z-20",
     toggle: "",
-    off: "border-foreground/30 text-foreground/80 hover:border-primary/60 hover:text-primary",
+    off: "border-foreground/30 text-foreground/80",
+    offHover: "hover:border-primary/60 hover:text-primary",
     favoriteOn: "border-primary/70 text-primary",
     playedOn: "border-primary/70 bg-primary/15 text-primary",
   },
@@ -55,19 +57,25 @@ type ItemActionButtonsProps =
 
 export function ItemActionButtons(props: ItemActionButtonsProps) {
   const { item, variant } = props
+  const interactive = props.interactive !== false
   const styles = VARIANTS[variant]
-  const playClass = cn("preview-action bg-primary text-primary-foreground hover:bg-primary/85", styles.button)
+  const playClass = cn(
+    "preview-action bg-primary text-primary-foreground",
+    interactive && "hover:bg-primary/85",
+    styles.button,
+  )
+  const offClass = cn(styles.off, interactive && styles.offHover)
   const favoriteClass = cn(
     "preview-action border",
     styles.button,
     styles.toggle,
-    item.favorite ? styles.favoriteOn : styles.off,
+    item.favorite ? styles.favoriteOn : offClass,
   )
   const playedClass = cn(
     "preview-action border",
     styles.button,
     styles.toggle,
-    item.played ? styles.playedOn : styles.off,
+    item.played ? styles.playedOn : offClass,
   )
 
   if (props.interactive === false) {

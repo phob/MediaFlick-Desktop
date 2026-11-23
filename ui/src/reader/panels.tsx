@@ -112,21 +112,41 @@ function useInitialFocus<T extends HTMLElement = HTMLDivElement>(entry: string |
   useEffect(() => {
     const container = list.current
     if (!container) return
-    const focusInitial = () => {
+    const initialRow = () => {
       const rows = [...container.querySelectorAll<HTMLElement>(ROW)]
-      return focusRow(rows.find((row) => row.dataset.readerEntry === entry) ?? rows[0])
+      return rows.find((row) => row.dataset.readerEntry === entry) ?? rows[0]
     }
+    const focusInitial = () => focusRow(initialRow())
     if (focusInitial()) return
+    const initialActive = document.activeElement
+    let settled = false
+    const stop = () => {
+      if (settled) return
+      settled = true
+      observer.disconnect()
+      document.removeEventListener("focusin", stop, true)
+      document.removeEventListener("pointerdown", stop, true)
+      document.removeEventListener("keydown", stop, true)
+    }
     const observer = new MutationObserver(() => {
-      if (container.contains(document.activeElement) || focusInitial()) observer.disconnect()
+      if (settled) return
+      const active = document.activeElement
+      if (active && active !== initialActive && active !== document.body && active !== document.documentElement) {
+        stop()
+        return
+      }
+      if (focusInitial()) stop()
     })
-    observer.observe(container, {
+    document.addEventListener("focusin", stop, true)
+    document.addEventListener("pointerdown", stop, true)
+    document.addEventListener("keydown", stop, true)
+    observer.observe(initialRow() ?? container, {
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ["style", "hidden", "disabled", "tabindex", "aria-valuenow"],
+      attributeFilter: ["style"],
     })
-    return () => observer.disconnect()
+    return stop
   }, [entry])
   return list
 }

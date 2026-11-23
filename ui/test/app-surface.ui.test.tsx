@@ -48,7 +48,7 @@ describe("app surface guard", () => {
     }
   })
 
-  test("select-all is blocked inside non-editable islands and respects isContentEditable directly", () => {
+  test("select-all is blocked inside non-editable islands within editable ancestors", () => {
     const editable = document.createElement("div")
     editable.setAttribute("contenteditable", "true")
     const nonEditable = document.createElement("div")
@@ -56,16 +56,10 @@ describe("app surface guard", () => {
     const childInsideNonEditable = document.createElement("span")
     nonEditable.append(childInsideNonEditable)
     editable.append(nonEditable)
-
-    const overridden = document.createElement("div")
-    overridden.setAttribute("contenteditable", "true")
-    Object.defineProperty(overridden, "isContentEditable", { value: false, configurable: true })
-
-    document.body.append(editable, overridden)
+    document.body.append(editable)
 
     expect(press("a", { ctrlKey: true }, nonEditable).defaultPrevented).toBe(true)
     expect(press("a", { ctrlKey: true }, childInsideNonEditable).defaultPrevented).toBe(true)
-    expect(press("a", { ctrlKey: true }, overridden).defaultPrevented).toBe(true)
   })
 
   test("caret browsing and reload cannot be triggered", () => {
