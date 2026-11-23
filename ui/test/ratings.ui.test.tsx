@@ -1,4 +1,3 @@
-import { DEFAULT_COMFORT } from "@/lib/viewing"
 import { QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, test, vi } from "vitest"
@@ -20,6 +19,7 @@ import { RatingsProvider } from "../src/lib/ratings"
 import { Appearance, RatingSourceSelector } from "../src/routes/settings/AppearanceSettings"
 import { queryKeys } from "../src/lib/query-client"
 import { appStatus, itemSummary } from "./support/fixtures"
+import { clientSettingsFixture } from "./support/settings"
 import { testQueryClient } from "./test-query-client"
 import { TestProviders } from "./test-utils"
 
@@ -54,15 +54,14 @@ const integrationStatus: RatingsIntegrationStatus = {
   selectedSources: ["letterboxd"],
 }
 
+const baseClientSettings = clientSettingsFixture()
 const clientSettings: ClientSettings = {
+  ...baseClientSettings,
   client: {
-    player: { playerBackend: "mpv", mpvPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w", playerConfigured: false, comfort: DEFAULT_COMFORT },
-    playback: { streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" },
-    application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" },
+    ...baseClientSettings.client,
+    player: { ...baseClientSettings.client.player, playerBackend: "mpv", playerConfigured: false },
   },
-  appearance: { accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: ["letterboxd"] },
-  capabilities: { platform: "windows", libmpv: true, integratedLibmpvOverlay: false, mpvInstaller: true },
-  recoveries: [],
+  appearance: { ...baseClientSettings.appearance, ratingSources: ["letterboxd"] },
   serverUrl: null,
 }
 

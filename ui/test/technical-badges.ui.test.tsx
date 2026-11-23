@@ -1,4 +1,3 @@
-import { DEFAULT_COMFORT } from "@/lib/viewing"
 import { QueryClientProvider } from "@tanstack/react-query"
 import { act, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, test, vi } from "vitest"
@@ -8,17 +7,16 @@ import { queryKeys } from "../src/lib/query-client"
 import { TechnicalProvider } from "../src/lib/technical"
 import { useCardTechnical } from "../src/lib/technical-context"
 import { parseJsonObject } from "./support/fixtures"
+import { clientSettingsFixture } from "./support/settings"
 import { testQueryClient } from "./test-query-client"
 
+const baseClientSettings = clientSettingsFixture()
 const clientSettings: ClientSettings = {
+  ...baseClientSettings,
   client: {
-    player: { playerBackend: "mpv", mpvPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w", playerConfigured: false, comfort: DEFAULT_COMFORT },
-    playback: { streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" },
-    application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" },
+    ...baseClientSettings.client,
+    player: { ...baseClientSettings.client.player, playerBackend: "mpv", playerConfigured: false },
   },
-  appearance: { accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: [] },
-  capabilities: { platform: "windows", libmpv: true, integratedLibmpvOverlay: false, mpvInstaller: true },
-  recoveries: [],
   serverUrl: null,
 }
 

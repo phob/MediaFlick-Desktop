@@ -1,9 +1,10 @@
 // Generated from src/shell/cef/api/wire.rs by `just wire-types`. Do not edit.
 
+import type { ExternalProvider } from "./library.external.gen.ts"
 import type { ItemSummary, ResolvedPlaybackPreference } from "./library.model.gen.ts"
 
 export type ExternalLinkBody = {
-  provider: string,
+  provider: ExternalProvider,
 };
 
 export type ExternalLinkOpened = {

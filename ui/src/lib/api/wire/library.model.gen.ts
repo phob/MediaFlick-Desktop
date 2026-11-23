@@ -1,6 +1,7 @@
 // Generated from src/shell/cef/api/wire.rs by `just wire-types`. Do not edit.
 
 import type { ReadingState } from "./books.gen.ts"
+import type { ExternalLink } from "./library.external.gen.ts"
 import type { LibraryId } from "./library.libraries.gen.ts"
 import type { AudioDisplay, AudioKind } from "./playback.model.gen.ts"
 
@@ -165,6 +166,7 @@ export type ResolvedPlaybackPreference = {
 
 export type TitleDetail = {
   libraryId: LibraryId | null,
+  externalLinks: Array<ExternalLink>,
   genres: Array<string>,
   originalTitle: string | null,
   providerIds: ProviderIds,

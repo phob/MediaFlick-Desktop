@@ -196,7 +196,7 @@ pub fn cached_title(library: &Library, item_id: &str) -> rusqlite::Result<Option
         return Ok(None);
     };
     let library_id = library.library_of(item_id)?;
-    Ok(Some(TitleDetail { item, library_id }))
+    Ok(Some(TitleDetail::new(item, library_id)))
 }
 
 #[derive(Debug)]
@@ -241,12 +241,8 @@ pub fn write_live_title(
 ) -> Result<TitleDetail, DetailError> {
     let LiveTitle(dto) = title;
     library.ingest_page(live, std::slice::from_ref(dto))?;
-    Ok(
-        cached_title(library, &dto.id)?.unwrap_or_else(|| TitleDetail {
-            item: ItemDetail::from_dto(dto),
-            library_id: None,
-        }),
-    )
+    Ok(cached_title(library, &dto.id)?
+        .unwrap_or_else(|| TitleDetail::new(ItemDetail::from_dto(dto), None)))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

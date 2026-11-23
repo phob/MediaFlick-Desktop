@@ -54,6 +54,7 @@ export function itemDetail(
     genres: [],
     originalTitle: null,
     providerIds: { tmdb: null, imdb: null, tvdb: null },
+    externalLinks: [],
     parentId: null,
     dateCreated: null,
     libraryId: null,

@@ -1,4 +1,3 @@
-import { DEFAULT_COMFORT } from "@/lib/viewing"
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { Route, Routes } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
@@ -8,41 +7,22 @@ import { useStatus } from "@/lib/session-queries"
 import { createQueryClient, queryKeys } from "@/lib/query-client"
 import Settings from "@/routes/Settings"
 import { appStatus } from "./support/fixtures"
+import { clientSettingsFixture } from "./support/settings"
 import { TestProviders } from "./test-utils"
 
 const queryClient = createQueryClient()
 
+const baseSettings = clientSettingsFixture()
 const settings: ClientSettings = {
+  ...baseSettings,
   client: {
+    ...baseSettings.client,
     player: {
+      ...baseSettings.client.player,
       playerBackend: "mpv",
-      mpvPath: null,
-      defaultFullscreen: "fullscreen",
-      markWatchedNext: "w",
-      playerConfigured: false, comfort: DEFAULT_COMFORT,
+      playerConfigured: false,
     },
-    playback: {
-      streamingQuality: "original",
-      skipIntro: "prompt",
-      skipCredits: "prompt",
-      skipRecap: "prompt",
-      skipCommercial: "prompt",
-    },
-    application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" },
   },
-  appearance: {
-    accent: "signal",
-    density: "comfortable",
-    artworkIntensity: 100,
-    backdropIntensity: 100,
-    reducedMotion: false,
-    cardPreviews: true,
-    showMediaInfo: true,
-    ratingSources: [],
-  },
-  capabilities: { platform: "windows", libmpv: true, integratedLibmpvOverlay: false, mpvInstaller: true },
-  recoveries: [],
-  serverUrl: "https://jellyfin.example",
 }
 
 const authenticated: Status = appStatus({

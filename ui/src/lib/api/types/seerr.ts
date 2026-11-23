@@ -1,5 +1,6 @@
 import type * as Wire from "../wire.gen.ts"
 import type { ItemSummary } from "./catalog.ts"
+import type { ExternalLink } from "./media.ts"
 
 export type SeerrMediaType = "movie" | "tv"
 
@@ -101,6 +102,7 @@ export interface SeerrMediaDetail extends SeerrResult {
   originalLanguage: string | null
   homepage: string | null
   externalIds?: { imdb: string | null; tvdb: number | null }
+  externalLinks: ExternalLink[]
   budget: number | null
   revenue: number | null
   studios: string[]

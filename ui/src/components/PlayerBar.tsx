@@ -1,5 +1,5 @@
 import { normalizeShortcut, shortcutFromEvent, shortcutLabel } from "@/lib/player-shortcuts"
-import { DEFAULT_COMFORT, useSpoilerProtection } from "@/lib/viewing"
+import { useSpoilerProtection } from "@/lib/viewing"
 import {
   AudioLines,
   Captions,
@@ -146,9 +146,13 @@ function ActivePlayerBar({
   const qualityChange = useChangePlaybackQuality()
   const settings = useSettings()
   const builtIn = settings.data?.client.player.playerBackend === "libmpv"
-  const comfort = builtIn ? settings.data?.client.player.comfort ?? DEFAULT_COMFORT : DEFAULT_COMFORT
-  const seekBackMs = comfort.seekBackSeconds * 1000
-  const seekForwardMs = comfort.seekForwardSeconds * 1000
+  const comfort = builtIn
+    ? settings.data?.client.player.comfort ?? settings.data?.defaults?.client.player.comfort
+    : settings.data?.defaults?.client.player.comfort
+  const seekBackSeconds = comfort?.seekBackSeconds ?? 10
+  const seekForwardSeconds = comfort?.seekForwardSeconds ?? 30
+  const seekBackMs = seekBackSeconds * 1000
+  const seekForwardMs = seekForwardSeconds * 1000
   const [scrubMs, setScrubMs] = useState<number | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
   const [showRemaining, setShowRemaining] = useState(
@@ -156,7 +160,7 @@ function ActivePlayerBar({
   )
   const [volumeDraft, setVolumeDraft] = useState<number | null>(null)
   const [qualityOverride, setQualityOverride] = useState<StreamingQualityId | null>(null)
-  const [tuning, setTuning] = useState(() => ({...DEFAULT_TUNING, subtitleScale:String(comfort.subtitleSize / 100)}))
+  const [tuning, setTuning] = useState(() => ({...DEFAULT_TUNING, subtitleScale:String((comfort?.subtitleSize ?? 100) / 100)}))
   const feedbackTimer = useRef<number | undefined>(undefined)
   const itemId = player.itemId ?? undefined
   const { data: item } = useItem(itemId)
@@ -281,31 +285,31 @@ function ActivePlayerBar({
     if (builtIn && matches(settings.data?.client.player.markWatchedNext)) {
       event.preventDefault()
       send({ command: "mark-watched-next" }, "Marked watched")
-    } else if (binding === "SPACE" || matches(comfort.pauseKey)) {
+    } else if (binding === "SPACE" || matches(comfort?.pauseKey)) {
       event.preventDefault()
       togglePause()
-    } else if (binding === "LEFT" || matches(comfort.seekBackKey)) {
+    } else if (binding === "LEFT" || matches(comfort?.seekBackKey)) {
       event.preventDefault()
       relativeSeek(-seekBackMs)
-    } else if (binding === "RIGHT" || matches(comfort.seekForwardKey)) {
+    } else if (binding === "RIGHT" || matches(comfort?.seekForwardKey)) {
       event.preventDefault()
       relativeSeek(seekForwardMs)
-    } else if (matches(comfort.muteKey)) {
+    } else if (matches(comfort?.muteKey)) {
       event.preventDefault()
       toggleMute()
-    } else if (matches(comfort.fullscreenKey)) {
+    } else if (matches(comfort?.fullscreenKey)) {
       event.preventDefault()
       send({ command: "toggle-fullscreen" }, "Fullscreen toggled")
-    } else if (builtIn && matches(comfort.stopKey)) {
+    } else if (builtIn && matches(comfort?.stopKey)) {
       event.preventDefault()
       send({ command: "stop" }, "Playback stopped")
-    } else if (builtIn && matches(comfort.subtitlesKey)) {
+    } else if (builtIn && matches(comfort?.subtitlesKey)) {
       event.preventDefault()
       send({ command: "toggle-subtitles" }, "Subtitles toggled")
-    } else if (builtIn && matches(comfort.seekBackThirtyKey)) {
+    } else if (builtIn && matches(comfort?.seekBackThirtyKey)) {
       event.preventDefault()
       relativeSeek(-30_000)
-    } else if (builtIn && matches(comfort.seekForwardThirtyKey)) {
+    } else if (builtIn && matches(comfort?.seekForwardThirtyKey)) {
       event.preventDefault()
       relativeSeek(30_000)
     }
@@ -383,8 +387,8 @@ function ActivePlayerBar({
       <Button
         variant="ghost"
         size="icon"
-        title={withShortcuts(`Back ${comfort.seekBackSeconds} seconds`, ["←"], [comfort.seekBackKey])}
-        aria-label={`Back ${comfort.seekBackSeconds} seconds`}
+        title={withShortcuts(`Back ${seekBackSeconds} seconds`, ["←"], [comfort?.seekBackKey])}
+        aria-label={`Back ${seekBackSeconds} seconds`}
         onClick={() => relativeSeek(-seekBackMs)}
         className="hidden sm:inline-flex"
       >
@@ -393,7 +397,7 @@ function ActivePlayerBar({
       <Button
         variant="secondary"
         size="icon"
-        title={withShortcuts(paused ? "Resume" : "Pause", ["Space"], [comfort.pauseKey])}
+        title={withShortcuts(paused ? "Resume" : "Pause", ["Space"], [comfort?.pauseKey])}
         aria-label={paused ? "Resume" : "Pause"}
         onClick={togglePause}
       >
@@ -402,8 +406,8 @@ function ActivePlayerBar({
       <Button
         variant="ghost"
         size="icon"
-        title={withShortcuts(`Forward ${comfort.seekForwardSeconds} seconds`, ["→"], [comfort.seekForwardKey])}
-        aria-label={`Forward ${comfort.seekForwardSeconds} seconds`}
+        title={withShortcuts(`Forward ${seekForwardSeconds} seconds`, ["→"], [comfort?.seekForwardKey])}
+        aria-label={`Forward ${seekForwardSeconds} seconds`}
         onClick={() => relativeSeek(seekForwardMs)}
         className="hidden sm:inline-flex"
       >
@@ -423,7 +427,7 @@ function ActivePlayerBar({
       <Button
         variant="ghost"
         size="icon"
-        title={withShortcuts("Stop", [], builtIn ? [comfort.stopKey] : [])}
+        title={withShortcuts("Stop", [], builtIn ? [comfort?.stopKey] : [])}
         aria-label="Stop"
         onClick={() => send({ command: "stop" })}
         className="hidden 2xl:inline-flex"
@@ -470,7 +474,7 @@ function ActivePlayerBar({
         <VolumeControl
           muted={muted}
           volume={volume}
-          muteTitle={withShortcuts(muted ? "Unmute" : "Mute", [], [comfort.muteKey])}
+          muteTitle={withShortcuts(muted ? "Unmute" : "Mute", [], [comfort?.muteKey])}
           onToggleMute={toggleMute}
           onVolumeDraft={setVolumeDraft}
           onVolumeCommit={setVolume}
@@ -586,7 +590,7 @@ function ActivePlayerBar({
       <Button
         variant="secondary"
         size="icon"
-        title={withShortcuts("Toggle fullscreen", [], [comfort.fullscreenKey])}
+        title={withShortcuts("Toggle fullscreen", [], [comfort?.fullscreenKey])}
         aria-label="Toggle fullscreen"
         onClick={() => send({ command: "toggle-fullscreen" }, "Fullscreen toggled")}
         className="hidden sm:inline-flex"
@@ -601,8 +605,8 @@ function ActivePlayerBar({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="end" sideOffset={10} className="w-64">
-          <DropdownMenuItem onSelect={() => relativeSeek(-seekBackMs)}>Back {comfort.seekBackSeconds} seconds</DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => relativeSeek(seekForwardMs)}>Forward {comfort.seekForwardSeconds} seconds</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => relativeSeek(-seekBackMs)}>Back {seekBackSeconds} seconds</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => relativeSeek(seekForwardMs)}>Forward {seekForwardSeconds} seconds</DropdownMenuItem>
           <DropdownMenuItem disabled={!neighbors.data?.previous} onSelect={() => itemId && neighborPlayback.mutate({ itemId, direction: "previous" })}>
             Previous episode
           </DropdownMenuItem>
