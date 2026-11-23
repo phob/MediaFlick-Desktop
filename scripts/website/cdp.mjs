@@ -1,5 +1,12 @@
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+export class CdpClosedError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = "CdpClosedError"
+  }
+}
+
 export async function connect(port, accept = (target) => target.url.startsWith("mediaflick-desktop://app")) {
   let page
   for (let attempt = 0; attempt < 120 && !page; attempt++) {
@@ -15,11 +22,32 @@ export async function connect(port, accept = (target) => target.url.startsWith("
   const socket = new WebSocket(page.webSocketDebuggerUrl)
   await new Promise((resolve, reject) => {
     socket.onopen = resolve
-    socket.onerror = reject
+    socket.onerror = () => reject(new Error(`CDP socket error on port ${port}`))
+    socket.onclose = (event) => reject(new CdpClosedError(`CDP socket closed before open (${event.code})`))
   })
+  socket.onopen = null
   let nextId = 0
+  let closedReason = null
   const pending = new Map()
   const listeners = new Map()
+
+  function failPending(reason) {
+    if (closedReason !== null) return
+    closedReason = reason
+    for (const waiter of pending.values()) {
+      waiter.reject(new CdpClosedError(`${waiter.method}: ${reason}`))
+    }
+    pending.clear()
+  }
+
+  socket.onerror = () => {
+    if (closedReason === null) failPending("CDP socket error")
+  }
+  socket.onclose = (event) => {
+    const detail = event.reason ? `CDP socket closed (${event.code}: ${event.reason})` : `CDP socket closed (${event.code})`
+    if (closedReason === null) failPending(detail)
+    else if (closedReason === "CDP socket error") closedReason = detail
+  }
   socket.onmessage = (event) => {
     const message = JSON.parse(event.data)
     if (message.method) {
@@ -34,9 +62,19 @@ export async function connect(port, accept = (target) => target.url.startsWith("
   }
 
   function send(method, params = {}) {
+    if (closedReason !== null || socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new CdpClosedError(`${method}: ${closedReason ?? "CDP socket is not open"}`))
+    }
     const id = ++nextId
-    socket.send(JSON.stringify({ id, method, params }))
-    return new Promise((resolve, reject) => pending.set(id, { resolve, reject, method }))
+    return new Promise((resolve, reject) => {
+      try {
+        socket.send(JSON.stringify({ id, method, params }))
+      } catch (error) {
+        reject(new CdpClosedError(`${method}: ${error instanceof Error ? error.message : String(error)}`))
+        return
+      }
+      pending.set(id, { resolve, reject, method })
+    })
   }
 
   function on(method, listener) {
@@ -57,7 +95,13 @@ export async function connect(port, accept = (target) => target.url.startsWith("
   async function waitFor(expression, { timeout = 20000, interval = 250 } = {}) {
     const deadline = Date.now() + timeout
     while (Date.now() < deadline) {
-      const value = await evaluate(expression).catch(() => false)
+      let value
+      try {
+        value = await evaluate(expression)
+      } catch (error) {
+        if (error instanceof CdpClosedError) throw error
+        value = false
+      }
       if (value) return value
       await sleep(interval)
     }
@@ -119,5 +163,12 @@ export async function connect(port, accept = (target) => target.url.startsWith("
     await mouse("mouseMoved", point.x, point.y)
   }
 
-  return { send, on, evaluate, waitFor, route, type, mouse, center, click, hover, close: () => socket.close() }
+  function close() {
+    failPending("CDP socket closed")
+    if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+      socket.close()
+    }
+  }
+
+  return { send, on, evaluate, waitFor, route, type, mouse, center, click, hover, close }
 }

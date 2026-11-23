@@ -137,7 +137,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | Helper | Use |
 |---|---|
 | `find(target, { timeout, nth })` | Wait for exactly one rendered match; more than one is an error unless `nth` is given. Returns `{ backendNodeId, properties, rect }`. |
-| `press(target)` | Scroll into view, wait until the target holds still, hit-test, click the centre with the real mouse. A toast over it is waited out (up to about 9 s). Any other cover first gets about 0.3 s to settle; then the target is scrolled to the middle of the viewport (a sticky bar such as the settings save bar can cover the viewport's edge), and after about 0.3 s more the pointer is parked and it is tested again. Fails if still covered. If the click closes the app, `press` returns once the app has exited. Fails on disabled elements. |
+| `press(target)` | Scroll into view, wait until the target holds still, hit-test, click the centre with the real mouse. A toast over it is waited out (up to about 9 s). Any other cover first gets about 0.3 s to settle; then the target is scrolled to the middle of the viewport (a sticky bar such as the settings save bar can cover the viewport's edge), and after about 0.3 s more the pointer is parked and it is tested again. Fails if still covered. If the click closes the app, `press` returns once the CDP socket closes. Fails on disabled elements. |
 | `fill(target, text)` | Click into a text field, select all, type `text` (`Input.insertText`). |
 | `choose({ name }, option)` | Open a Radix Select (role `combobox`, named by its `label`) and pick the option by name. |
 | `hover(target)` | Park the pointer, then move onto the target (fires `pointerenter`; the sidebar expands on it). |
@@ -147,7 +147,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | `exists(target)`, `count(target)` | Rendered matches right now. |
 | `until(exprOrFn, description, timeout)` | Poll a page expression or Node function until truthy; logs `saw <description>`. Never use fixed sleeps for state. |
 | `check(condition, message)` | Fail, or log `ok: message`. |
-| `signIn({ server, username, password })` | Drive the sign-in form and wait for the sidebar. Under `--account`, only confirm that the app started signed in as the cached user; under `--account … --signed-out`, sign in with Quick Connect approved by the harness. |
+| `signIn({ server, username, password, signedIn })` | Drive the sign-in form and wait for `signedIn` (default the sidebar's `Settings` link; pass a dialog locator when one opens over it, such as What's new). Under `--account`, only confirm that the app started signed in as the cached user; under `--account … --signed-out`, sign in with Quick Connect approved by the harness. |
 | `quickConnect({ timeout, approve, signedIn })` | From the sign-in screen, press `Use Quick Connect`, log the code (`QUICK CONNECT CODE …`) and wait up to `timeout` ms (default 600000) for someone to approve it. `approve: true` (only with `--signed-out`) approves it as the cached account. `signedIn` is the target that shows once signed in, default the sidebar's `Settings` link; pass the dialog when one opens over it, such as What's new. |
 | `saveAccount()` | Under `just verify-login` only: cache the signed-in session for `--account` runs and write `account.json`. |
 | `account` | `{ server, userName, userId, login: false, signedOut }` under `--account`, `{ server, login: true }` under `verify-login`, else `null`. Never holds the token. |

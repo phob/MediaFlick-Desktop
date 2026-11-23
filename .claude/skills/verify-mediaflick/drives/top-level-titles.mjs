@@ -82,6 +82,58 @@ async function cardIds(ctx) {
   return ctx.app.evaluate(`[...document.querySelectorAll('main a[aria-label^="Open details for"]')].map((a) => decodeURIComponent(a.getAttribute("href").split("/item/")[1]))`)
 }
 
+async function collectVirtualizedFavorites(ctx, targetId) {
+  await ctx.until(
+    `document.querySelector("[data-item-grid-canvas]") !== null`,
+    "the Favorites grid to render",
+    20000,
+  )
+
+  await ctx.app.evaluate(`(() => {
+    const scroller = document.querySelector("[data-item-grid-canvas]")?.closest(".overflow-y-auto")
+    if (scroller) scroller.scrollTop = 0
+  })()`)
+
+  const maxScrollSteps = 500
+  const seen = new Set()
+  let captured = false
+  let reachedEnd = false
+  for (let step = 0; step < maxScrollSteps; step += 1) {
+    await ctx.until(`!document.querySelector("[data-item-grid-canvas] [data-slot=skeleton]")`, "the visible Favorites pages to load", 30000)
+    const ids = await cardIds(ctx)
+    for (const id of ids) seen.add(id)
+    if (!captured && ids.includes(targetId)) {
+      await ctx.park()
+      await ctx.snapshot("favorites")
+      await ctx.screenshot("favorites")
+      captured = true
+    }
+    const advanced = await ctx.app.evaluate(`(async () => {
+      const scroller = document.querySelector("[data-item-grid-canvas]")?.closest(".overflow-y-auto")
+      if (!scroller) return false
+      const maxScroll = scroller.scrollHeight - scroller.clientHeight
+      if (scroller.scrollTop >= maxScroll - 2) return false
+      const before = scroller.scrollTop
+      scroller.scrollTop = Math.min(maxScroll, before + Math.max(1, Math.floor(scroller.clientHeight * 0.75)))
+      if (scroller.scrollTop === before) return false
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      return true
+    })()`)
+    if (!advanced) {
+      reachedEnd = true
+      break
+    }
+  }
+  if (!reachedEnd) throw new Error(`Favorites grid did not reach the end within ${maxScrollSteps} scroll steps`)
+
+  if (!captured) {
+    await ctx.park()
+    await ctx.snapshot("favorites")
+    await ctx.screenshot("favorites")
+  }
+  return [...seen]
+}
+
 async function homeFavoritesShelf(ctx) {
   return ctx.app.evaluate(`(() => {
     const section = [...document.querySelectorAll("section[aria-labelledby]")].find((s) => s.querySelector("h2")?.textContent.trim() === "Favorites")
@@ -108,18 +160,17 @@ async function provesFavorites(ctx, report, expect) {
   await toggleFavorite(ctx, episode, true)
   await ctx.screenshot("favorite-episode")
 
-  const favorites = await items(ctx, { favorite: "true", limit: 500 })
+  const favorites = await ctx.until(async () => {
+    const result = await items(ctx, { favorite: "true", limit: 500 })
+    return result.items.some((item) => item.id === movie.id) ? result : null
+  }, `${movie.name} in /api/items?favorite=true`, 15000)
   const favoriteEpisodes = await items(ctx, { kind: "Episode", favorite: "true", limit: 500 })
   const letters = (await ctx.api("/api/items/letters?favorite=true")).body?.letters ?? null
   const topLevelLetters = (await ctx.api("/api/items/letters?kind=Movie,Series&favorite=true")).body?.letters ?? null
 
   await ctx.press({ role: "link", name: "Favorites" })
   await ctx.until(async () => (await ctx.pathname()) === "/library?favorite=true", "the Favorites route")
-  await ctx.until(async () => (await ctx.count(cardFor(movie.id))) > 0, `${movie.name} among the Favorites cards`)
-  await ctx.park()
-  const favoriteCards = await cardIds(ctx)
-  await ctx.snapshot("favorites")
-  await ctx.screenshot("favorites")
+  const favoriteCards = await collectVirtualizedFavorites(ctx, movie.id)
 
   await ctx.press({ role: "link", name: "Home" })
   await ctx.until(async () => (await ctx.pathname()) === "/", "Home")

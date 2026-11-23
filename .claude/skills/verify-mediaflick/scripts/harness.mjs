@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process"
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import net from "node:net"
 import path from "node:path"
-import { sleep } from "../../../../scripts/website/cdp.mjs"
+import { CdpClosedError, sleep } from "../../../../scripts/website/cdp.mjs"
 import { approveQuickConnect, cancelSeerrRequest, jellyfinGet, playlistWrite, readStoredSession, resetUserData, revokeToken, saveAccount as cacheAccount, publicAccount, sessionCommand, tokenStatus } from "./account.mjs"
 import { isFavorite, journalFavorite, journalFile, settleFavorite } from "./favorites.mjs"
 import { isLinux, isWindows, listProcesses, sendWindowClose } from "./platform.mjs"
@@ -113,9 +113,13 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
 
   async function mouseAt(x, y) {
     const event = { x, y, button: "left", clickCount: 1 }
-    const exited = currentChild().exited
     for (const params of [{ type: "mouseMoved", x, y, button: "none" }, { type: "mousePressed", ...event }, { type: "mouseReleased", ...event }]) {
-      await Promise.race([app.send("Input.dispatchMouseEvent", params), exited])
+      try {
+        await app.send("Input.dispatchMouseEvent", params)
+      } catch (error) {
+        if (error instanceof CdpClosedError && params.type !== "mouseMoved") return
+        throw error
+      }
     }
   }
 
@@ -377,13 +381,13 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return file
   }
 
-  async function signIn({ server, username, password = "" }) {
+  async function signIn({ server, username, password = "", signedIn = { role: "link", name: "Settings" } }) {
     if (account?.signedOut) {
-      await quickConnect({ approve: true, timeout: 60000 })
+      await quickConnect({ approve: true, timeout: 60000, signedIn })
       return
     }
     if (account && !account.login) {
-      await find({ role: "link", name: "Settings" }, { timeout: 60000 })
+      await find(signedIn, { timeout: 60000 })
       const status = (await api("/api/status")).body
       if (status?.authenticated !== true || status.userName !== account.userName) throw new Error(`the app did not start signed in as ${account.userName} from the cached session (status: ${JSON.stringify({ authenticated: status?.authenticated, expired: status?.expired, userName: status?.userName })})`)
       log(`signed in from the cached session as ${account.userName}`)
@@ -394,7 +398,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     await fill({ role: "textbox", name: "Username" }, username)
     if (password) await fill({ role: "textbox", name: "Password" }, password)
     await press({ role: "button", name: "Sign in" })
-    await find({ role: "link", name: "Settings" }, { timeout: 60000 })
+    await find(signedIn, { timeout: 60000 })
     log(`signed in as ${username}`)
   }
 
