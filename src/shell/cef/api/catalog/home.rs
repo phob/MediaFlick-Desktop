@@ -197,17 +197,21 @@ fn watched_seed(services: &Services, account: &AccountKey) -> rusqlite::Result<O
         .unwrap_or_else(PoisonError::into_inner)
         .get(account)
         .cloned();
-    if let Some(seed) = kept {
-        return Ok(seed);
+    if kept.is_some() {
+        return Ok(kept);
     }
-    let picked = services.library.random_played_movie_with_genre()?;
-    Ok(services
-        .home_watched
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .entry(account.clone())
-        .or_insert(picked)
-        .clone())
+    let Some(picked) = services.library.random_played_movie_with_genre()? else {
+        return Ok(None);
+    };
+    Ok(Some(
+        services
+            .home_watched
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(account.clone())
+            .or_insert(picked)
+            .clone(),
+    ))
 }
 
 fn home_collection(
@@ -395,5 +399,45 @@ mod tests {
             .map(|item| item.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(ids, ["e9"]);
+    }
+
+    #[test]
+    fn because_you_watched_does_not_cache_missing_seed_before_first_page() {
+        let fixture = crate::app::services::test_support::TestServices::signed_in_as(
+            "http://127.0.0.1:9",
+            "user-byw",
+        );
+        let account = fixture.services.session.account_key().expect("account");
+
+        assert!(
+            because_you_watched(&fixture.services, &account)
+                .expect("empty library")
+                .is_none()
+        );
+
+        let items: Vec<BaseItemDto> = [
+            r#"{"Id":"played-1","Name":"Inception","Type":"Movie","Genres":["Sci-Fi"],"UserData":{"Played":true}}"#,
+            r#"{"Id":"unwatched-1","Name":"Arrival","Type":"Movie","Genres":["Sci-Fi"],"UserData":{"Played":false}}"#,
+        ]
+        .into_iter()
+        .map(|value| serde_json::from_str(value).expect("dto"))
+        .collect();
+        fixture
+            .services
+            .library
+            .ingest_page(&crate::jellyfin::session::Live::for_test(), &items)
+            .expect("ingest");
+
+        let row = because_you_watched(&fixture.services, &account)
+            .expect("populated library")
+            .expect("row after catalog items arrive");
+        assert_eq!(row.title, "Because you watched Inception");
+        assert_eq!(row.items.len(), 1);
+        assert_eq!(row.items[0].id, "unwatched-1");
+
+        let second = because_you_watched(&fixture.services, &account)
+            .expect("cached seed")
+            .expect("row from cached seed");
+        assert_eq!(second.title, "Because you watched Inception");
     }
 }

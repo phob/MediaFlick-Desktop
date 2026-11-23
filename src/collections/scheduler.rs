@@ -1,5 +1,6 @@
 use crate::app::threads::spawn_named;
 use std::collections::HashSet;
+use std::hash::Hash;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -20,30 +21,31 @@ const SCHEDULER_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const FRANCHISE_MEMBERSHIP_TTL_SECONDS: i64 = 30 * 24 * 60 * 60;
 pub(crate) const FAILURE_BACKOFF_SECONDS: i64 = 5 * 60;
 static FRANCHISE_FLIGHTS: OnceLock<Mutex<HashSet<AccountKey>>> = OnceLock::new();
+static PROFILE_FLIGHTS: OnceLock<Mutex<HashSet<(AccountKey, String)>>> = OnceLock::new();
 
-struct FranchiseFlight {
-    account: AccountKey,
+struct FlightGuard<K: Eq + Hash + 'static> {
+    set: &'static OnceLock<Mutex<HashSet<K>>>,
+    key: K,
 }
 
-impl FranchiseFlight {
-    fn acquire(account: &AccountKey) -> Option<Self> {
-        let mut flights = FRANCHISE_FLIGHTS
+impl<K: Eq + Hash + Clone + 'static> FlightGuard<K> {
+    fn acquire(set: &'static OnceLock<Mutex<HashSet<K>>>, key: K) -> Option<Self> {
+        let mut flights = set
             .get_or_init(|| Mutex::new(HashSet::new()))
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        flights.insert(account.clone()).then(|| Self {
-            account: account.clone(),
-        })
+        flights.insert(key.clone()).then(|| Self { set, key })
     }
 }
 
-impl Drop for FranchiseFlight {
+impl<K: Eq + Hash + 'static> Drop for FlightGuard<K> {
     fn drop(&mut self) {
-        let mut flights = FRANCHISE_FLIGHTS
+        let mut flights = self
+            .set
             .get_or_init(|| Mutex::new(HashSet::new()))
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        flights.remove(&self.account);
+        flights.remove(&self.key);
     }
 }
 
@@ -120,7 +122,7 @@ fn refresh_due_profiles_for_account(services: &Services, account: &AccountKey) -
                 continue;
             }
         };
-        if !is_due(state.last_success, profile.cadence, now) || in_failure_backoff(&state, now) {
+        if !is_due(&state, profile.cadence, now) || in_failure_backoff(&state, now) {
             continue;
         }
         changed |= refresh_profile(services, &repository, account, &profile, now);
@@ -129,7 +131,7 @@ fn refresh_due_profiles_for_account(services: &Services, account: &AccountKey) -
 }
 
 pub fn refresh_franchises(services: &Services, account: &AccountKey) -> bool {
-    let Some(_flight) = FranchiseFlight::acquire(account) else {
+    let Some(_flight) = FlightGuard::acquire(&FRANCHISE_FLIGHTS, account.clone()) else {
         return false;
     };
     let scope = match services.session.scope() {
@@ -342,6 +344,11 @@ fn refresh_profile(
     profile: &CollectionProfile,
     attempt: i64,
 ) -> bool {
+    let Some(_flight) =
+        FlightGuard::acquire(&PROFILE_FLIGHTS, (account.clone(), profile.id.clone()))
+    else {
+        return false;
+    };
     let scope = match services.session.scope() {
         Ok(scope) if scope.account() == account => scope,
         _ => return false,
@@ -371,6 +378,9 @@ fn refresh_profile(
                     &scope,
                     || false,
                     |_live| {
+                        if !profile_is_current(services, account, profile) {
+                            return Ok(false);
+                        }
                         Ok(save_failed_refresh(
                             repository,
                             account,
@@ -382,24 +392,26 @@ fn refresh_profile(
                 .unwrap_or(false);
         }
     };
-    if !profile_is_current(services, account, profile) {
-        return false;
-    }
     let snapshot = CollectionSnapshot {
         profile_id: profile.id.clone(),
         revision: profile.revision.clone(),
         committed_at: attempt,
         items: result.items,
     };
-    if let Err(error) = repository.commit_profile(account, &snapshot) {
-        let changed = save_failed_refresh(repository, account, &profile.id, attempt);
-        tracing::warn!(
-            target: "collections",
-            profile_id = profile.id,
-            "could not save automatic collection refresh: {error}"
-        );
-        return changed;
-    }
+    commit_profile_refresh(
+        services, &scope, repository, account, profile, &snapshot, attempt,
+    )
+}
+
+fn commit_profile_refresh(
+    services: &Services,
+    scope: &crate::jellyfin::session::SessionScope,
+    repository: &SnapshotRepository<'_>,
+    account: &AccountKey,
+    profile: &CollectionProfile,
+    snapshot: &CollectionSnapshot,
+    attempt: i64,
+) -> bool {
     let state = RefreshState {
         last_attempt: Some(attempt),
         last_success: Some(attempt),
@@ -407,14 +419,56 @@ fn refresh_profile(
         next_due: next_due_at(attempt, profile.cadence),
         initialized: true,
     };
-    if let Err(error) = repository.save_refresh_state(account, &profile.id, &state) {
-        tracing::warn!(
-            target: "collections",
-            profile_id = profile.id,
-            "could not save automatic collection refresh state: {error}"
-        );
+    enum ProfileCommit {
+        Skipped,
+        Committed {
+            state_error: Option<rusqlite::Error>,
+        },
+        Failed {
+            error: rusqlite::Error,
+            changed: bool,
+        },
     }
-    true
+    let outcome = match services.session.commit_if_current(
+        scope,
+        || ProfileCommit::Skipped,
+        |_live| {
+            if !profile_is_current(services, account, profile) {
+                return Ok(ProfileCommit::Skipped);
+            }
+            if let Err(error) = repository.commit_profile(account, snapshot) {
+                let changed = save_failed_refresh(repository, account, &profile.id, attempt);
+                return Ok(ProfileCommit::Failed { error, changed });
+            }
+            let state_error = repository
+                .save_refresh_state(account, &profile.id, &state)
+                .err();
+            Ok(ProfileCommit::Committed { state_error })
+        },
+    ) {
+        Ok(outcome) | Err(outcome) => outcome,
+    };
+    match outcome {
+        ProfileCommit::Skipped => false,
+        ProfileCommit::Failed { error, changed } => {
+            tracing::warn!(
+                target: "collections",
+                profile_id = profile.id,
+                "could not save automatic collection refresh: {error}"
+            );
+            changed
+        }
+        ProfileCommit::Committed { state_error } => {
+            if let Some(error) = state_error {
+                tracing::warn!(
+                    target: "collections",
+                    profile_id = profile.id,
+                    "could not save automatic collection refresh state: {error}"
+                );
+            }
+            true
+        }
+    }
 }
 
 fn profile_is_current(
@@ -475,8 +529,11 @@ pub fn next_due_at(last_success: i64, cadence: RefreshCadence) -> Option<i64> {
     }
 }
 
-pub fn is_due(last_success: Option<i64>, cadence: RefreshCadence, now: i64) -> bool {
-    match last_success {
+pub fn is_due(state: &RefreshState, cadence: RefreshCadence, now: i64) -> bool {
+    if !state.initialized {
+        return true;
+    }
+    match state.last_success {
         None => cadence != RefreshCadence::Manual,
         Some(last_success) => next_due_at(last_success, cadence).is_some_and(|due| due <= now),
     }
@@ -544,9 +601,47 @@ mod tests {
     }
 
     #[test]
-    fn manual_profiles_never_become_due() {
-        assert!(!is_due(None, RefreshCadence::Manual, i64::MAX));
+    fn manual_profiles_are_due_until_initialized_and_never_due_after() {
+        assert!(is_due(&RefreshState::default(), RefreshCadence::Manual, 0));
+        let initialized = RefreshState {
+            last_attempt: Some(100),
+            last_success: Some(100),
+            latest_failure: None,
+            next_due: None,
+            initialized: true,
+        };
+        assert!(!is_due(&initialized, RefreshCadence::Manual, i64::MAX));
         assert_eq!(next_due_at(0, RefreshCadence::Manual), None);
+    }
+
+    #[test]
+    fn flight_guard_isolates_accounts_and_releases_on_drop_and_panic() {
+        static TEST_FLIGHTS: OnceLock<Mutex<HashSet<(AccountKey, String)>>> = OnceLock::new();
+        let account_a = AccountKey::new("server", "user-a").expect("account a");
+        let account_b = AccountKey::new("server", "user-b").expect("account b");
+
+        let guard_a = FlightGuard::acquire(&TEST_FLIGHTS, (account_a.clone(), "p1".to_string()));
+        assert!(guard_a.is_some());
+        assert!(
+            FlightGuard::acquire(&TEST_FLIGHTS, (account_a.clone(), "p1".to_string())).is_none()
+        );
+        let guard_other_profile =
+            FlightGuard::acquire(&TEST_FLIGHTS, (account_a.clone(), "p2".to_string()));
+        assert!(guard_other_profile.is_some());
+        let guard_other_account =
+            FlightGuard::acquire(&TEST_FLIGHTS, (account_b.clone(), "p1".to_string()));
+        assert!(guard_other_account.is_some());
+
+        drop(guard_a);
+        assert!(FlightGuard::acquire(&TEST_FLIGHTS, (account_a, "p1".to_string())).is_some());
+
+        let panicked = std::panic::catch_unwind(|| {
+            let _guard = FlightGuard::acquire(&TEST_FLIGHTS, (account_b.clone(), "p3".to_string()))
+                .expect("acquire before panic");
+            panic!("simulated refresh panic");
+        });
+        assert!(panicked.is_err());
+        assert!(FlightGuard::acquire(&TEST_FLIGHTS, (account_b, "p3".to_string())).is_some());
     }
 
     #[test]

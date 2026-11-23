@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -10,7 +9,7 @@ use crate::jellyfin::session::Session;
 use crate::library::Library;
 
 use super::cycle::run_cycle_inner;
-use super::{SYNC_INTERVAL, SyncHandle, Trigger};
+use super::{SYNC_INTERVAL, SyncHandle, SyncPhase, Trigger};
 
 const IDLE_INTERVAL: Duration = Duration::from_secs(30);
 const STARTUP_HOLD_MAX: Duration = Duration::from_secs(15);
@@ -37,7 +36,7 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
     loop {
         if !session.is_authenticated() {
             startup_hold = None;
-            handle.running.store(false, Ordering::Relaxed);
+            handle.end_cycle();
             match wait(handle, IDLE_INTERVAL) {
                 Wake::Stopped => return,
                 Wake::Requested => trigger = Trigger::Requested,
@@ -63,9 +62,9 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
         }
 
         let normal_due = trigger == Trigger::Requested || Instant::now() >= normal_deadline;
-        handle.running.store(normal_due, Ordering::Relaxed);
 
         if normal_due {
+            handle.begin_cycle(initial_cycle_phase(library));
             let generation = session.generation();
             let outcome = run_cycle_inner(library, session, trigger, Some(handle));
             trigger = Trigger::Scheduled;
@@ -85,7 +84,10 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
                     }
                     jittered(SYNC_INTERVAL)
                 }
-                Err(ApiError::Cancelled) if handle.is_stopped() => return,
+                Err(ApiError::Cancelled) if handle.is_stopped() => {
+                    handle.end_cycle();
+                    return;
+                }
                 Err(ApiError::Cancelled) => {
                     backoff = Duration::ZERO;
                     IDLE_INTERVAL
@@ -103,8 +105,8 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
                 }
             };
             normal_deadline = Instant::now() + delay;
+            handle.end_cycle();
         }
-        handle.running.store(false, Ordering::Relaxed);
 
         let delay = normal_deadline.saturating_duration_since(Instant::now());
         match wait(handle, delay) {
@@ -120,6 +122,20 @@ fn startup_hold_deadline(until: Instant, window_ready: bool, now: Instant) -> In
         until.min(now + STARTUP_HOLD_SETTLE)
     } else {
         until
+    }
+}
+
+fn initial_cycle_phase(library: &Library) -> SyncPhase {
+    match super::first_catalog_download(library) {
+        Ok(true) => SyncPhase::Catalog,
+        Ok(false) => SyncPhase::Reconciling,
+        Err(error) => {
+            tracing::warn!(
+                target: "library.sync",
+                "could not read catalog bootstrap state for cycle phase: {error}"
+            );
+            SyncPhase::Reconciling
+        }
     }
 }
 

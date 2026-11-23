@@ -87,7 +87,9 @@ pub(super) fn run_cycle_inner(
         Ok(())
     })();
 
-    if result.is_err() {
+    if !matches!(result, Ok(()) | Err(ApiError::Cancelled))
+        && !control.is_some_and(SyncHandle::is_stopped)
+    {
         record_failure(library, session, &scope);
     }
     let result = result.and_then(|()| {
@@ -494,13 +496,17 @@ fn incremental(
     let mut newest = watermark.clone();
     let mut newest_ids = known_watermark_ids.clone();
 
-    for _ in 0..MAX_INCREMENTAL_PAGES {
+    let mut pages = 0;
+    let truncated = loop {
         cancelled(control, session, scope)?;
+        if pages >= MAX_INCREMENTAL_PAGES {
+            break true;
+        }
         let page = fetch_page(session, scope, |client, user_id| {
             items::fetch_items_page(client, user_id, offset, "DateCreated", "Descending")
         })?;
         if page.items.is_empty() {
-            break;
+            break false;
         }
         advance_watermark_with_ids(&mut newest, &mut newest_ids, &page.items);
 
@@ -524,11 +530,27 @@ fn incremental(
         })?;
         written += fresh.len();
         changes.merge(page_changes);
+        pages += 1;
 
         if reached_watermark || (page.items.len() as i64) < PAGE_SIZE {
-            break;
+            break false;
         }
         offset += page.items.len() as i64;
+    };
+
+    if truncated {
+        commit(session, scope, |live| {
+            library
+                .set_meta(live, META_LAST_BOOTSTRAP, "0")
+                .map_err(ApiError::from)
+        })?;
+        tracing::warn!(
+            target: "library.sync",
+            pages,
+            offset,
+            "stopped incremental sync at the page cap; keeping the previous watermark and scheduling a full catalog refresh"
+        );
+        return Ok(written);
     }
 
     if let Some(newest) = newest {
