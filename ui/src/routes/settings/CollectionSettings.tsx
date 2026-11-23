@@ -1,13 +1,23 @@
 import { ArrowDown, ArrowUp, ImagePlus, Layers, Pencil, Search, Trash2 } from "lucide-react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { useSearchParams } from "react-router-dom"
+import { useLocation, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import collectionTemplateArt from "@/assets/collection-template.svg"
 import CollectionTemplatePictogram from "@/components/CollectionTemplatePictogram"
 import SaveBar from "@/components/SettingsSaveBar"
 import SettingsNumberField from "@/components/SettingsNumberField"
 import PublicListCombobox from "@/components/PublicListCombobox"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -305,22 +315,24 @@ function CollectionWizard({
   initial,
   profileId,
   open,
-  onOpenChange,
+  onClose,
 }: {
   initial: CollectionProfileDraft | null
   profileId: string | null
   open: boolean
-  onOpenChange: (open: boolean) => void
+  onClose: () => void
 }) {
   const cache = useQueryClient()
   const { data: status } = useStatus()
   const account = accountKey(status)
   const [draft, setDraft] = useState<CollectionProfileDraft | null>(initial)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof api.collections.preview>> | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [posterError, setPosterError] = useState<string | null>(null)
   const [posterName, setPosterName] = useState("")
+  const mounted = useRef(true)
   const posterInput = useRef<HTMLInputElement>(null)
   const posterRequest = useRef<AbortController | null>(null)
   const [previewing, setPreviewing] = useState(false)
@@ -336,17 +348,29 @@ function CollectionWizard({
       void cache.invalidateQueries({ queryKey: queryKeys.collectionsOf(account) })
       void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
       void cache.invalidateQueries({ queryKey: queryKeys.home })
+      if (!mounted.current) return
       toast.success(profileId ? "Collection saved" : "Collection created")
-      onOpenChange(false)
+      onClose()
     },
-    onError: (error: Error) => toastFailure(error),
+    onError: (error: Error) => {
+      if (!mounted.current) return
+      toastFailure(error)
+    },
   })
-  const busy = previewing || saveProfile.isPending
+  const saving = saveProfile.isPending
+  const blockingClose = saving || uploading
+  const busy = previewing || saving
+  const hasUnsavedEdits = Boolean(draft) && (uploading || Boolean(posterError) || !sameJson(draft, initial))
+  const dirty = hasUnsavedEdits || !profileId
 
-  useEffect(() => () => {
-    previewRequest.current.generation += 1
-    previewRequest.current.controller?.abort()
-    posterRequest.current?.abort()
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      previewRequest.current.generation += 1
+      previewRequest.current.controller?.abort()
+      posterRequest.current?.abort()
+    }
   }, [])
 
   if (!draft) return null
@@ -477,6 +501,20 @@ function CollectionWizard({
     setPreview(null)
     setPreviewError(null)
   }
+  const closeImmediately = () => {
+    cancelPoster()
+    invalidatePreview()
+    setConfirmDiscard(false)
+    onClose()
+  }
+  const requestClose = () => {
+    if (blockingClose) return
+    if (hasUnsavedEdits) {
+      setConfirmDiscard(true)
+      return
+    }
+    closeImmediately()
+  }
   const save = () => {
     if (uploading || posterError || readOnly || !validDraft || refreshesResults && !providerAvailable) return
     if (!profileId && !preview) {
@@ -486,8 +524,34 @@ function CollectionWizard({
     saveProfile.mutate(draft)
   }
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) cancelPoster(); onOpenChange(next) }}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) requestClose()
+      }}
+    >
+      <DialogContent
+        className="max-h-[90vh] overflow-y-auto sm:max-w-3xl"
+        closeDisabled={blockingClose}
+        onEscapeKeyDown={(event) => {
+          if (blockingClose || hasUnsavedEdits) {
+            event.preventDefault()
+            requestClose()
+          }
+        }}
+        onPointerDownOutside={(event) => {
+          if (blockingClose || hasUnsavedEdits) {
+            event.preventDefault()
+            requestClose()
+          }
+        }}
+        onInteractOutside={(event) => {
+          if (blockingClose || hasUnsavedEdits) {
+            event.preventDefault()
+            requestClose()
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{profileId ? "Edit collection" : "Add collection"}</DialogTitle>
           <DialogDescription>Saving a new collection previews it first. Changing a result option clears the current preview.</DialogDescription>
@@ -632,14 +696,35 @@ function CollectionWizard({
           )}
         </div>
         <SaveBar
-          dirty={uploading || Boolean(posterError) || !profileId || !sameJson(draft, initial)}
+          dirty={dirty}
           saving={busy}
           saveDisabled={uploading || Boolean(posterError) || readOnly || !validDraft || (refreshesResults && !providerAvailable)}
           onSave={save}
-          onDiscard={() => { cancelPoster(); onOpenChange(false) }}
+          onDiscard={closeImmediately}
           onReset={reset}
           resetLabel="Undo changes"
         />
+        <AlertDialog
+          open={confirmDiscard}
+          onOpenChange={(next) => {
+            if (!next) setConfirmDiscard(false)
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Your unsaved changes to this collection will be discarded.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Keep editing</AlertDialogCancel>
+              <AlertDialogAction variant="destructive" onClick={closeImmediately}>
+                Discard changes
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   )
@@ -647,6 +732,7 @@ function CollectionWizard({
 
 export default function CollectionSettingsPage() {
   const cache = useQueryClient()
+  const location = useLocation()
   const statusQuery = useStatus()
   const { data: status } = statusQuery
   const account = accountKey(status)
@@ -654,7 +740,9 @@ export default function CollectionSettingsPage() {
   const templates = useCollectionTemplates(Boolean(status?.authenticated))
   const profiles = useCollectionProfiles(Boolean(status?.authenticated))
   const [params, setParams] = useSearchParams()
+  const wizardSessionSeq = useRef(0)
   const [selection, setSelection] = useState<{
+    sessionId: string
     draft: CollectionProfileDraft
     profileId: string | null
   } | null>(null)
@@ -723,6 +811,7 @@ export default function CollectionSettingsPage() {
     ? profiles.data?.profiles.find((candidate) => candidate.id === requestedEdit)
     : null
   const active = selection ?? (requestedProfile ? {
+    sessionId: `param:${location.key}:${requestedProfile.id}`,
     draft: draftFromProfile(requestedProfile),
     profileId: requestedProfile.id,
   } : null)
@@ -739,13 +828,22 @@ export default function CollectionSettingsPage() {
   if (statusQuery.isPending) return <SettingsLoading />
   if (!status?.authenticated) return <SignInRequired name="Collections" />
   const edit = (profile: CollectionProfile) => {
-    setSelection({ draft: draftFromProfile(profile), profileId: profile.id })
+    wizardSessionSeq.current += 1
+    setSelection({
+      sessionId: `local:${wizardSessionSeq.current}`,
+      draft: draftFromProfile(profile),
+      profileId: profile.id,
+    })
   }
   const add = (template: CollectionTemplate) => {
-    setSelection({ draft: draftFromTemplate(template), profileId: null })
+    wizardSessionSeq.current += 1
+    setSelection({
+      sessionId: `local:${wizardSessionSeq.current}`,
+      draft: draftFromTemplate(template),
+      profileId: null,
+    })
   }
-  const setWizardOpen = (next: boolean) => {
-    if (next) return
+  const closeWizard = () => {
     setSelection(null)
     if (requestedEdit) setParams({}, { replace: true })
   }
@@ -787,11 +885,11 @@ export default function CollectionSettingsPage() {
       />
       {active && (
         <CollectionWizard
-          key={active.profileId ?? active.draft.template.id}
+          key={active.sessionId}
           initial={active.draft}
           profileId={active.profileId}
           open
-          onOpenChange={setWizardOpen}
+          onClose={closeWizard}
         />
       )}
     </div>

@@ -187,13 +187,7 @@ impl CollectionConfigurationService {
         profile.validate().map_err(invalid_data)?;
         self.mutate(|document| {
             let account = account_mut(document, key);
-            if account.profiles.iter().any(|candidate| {
-                candidate.id != profile.id
-                    && candidate
-                        .title
-                        .trim()
-                        .eq_ignore_ascii_case(profile.title.trim())
-            }) {
+            if has_duplicate_title(&account.profiles, &profile) {
                 return Err(invalid_data(
                     "collection names must be unique for this account",
                 ));
@@ -208,6 +202,37 @@ impl CollectionConfigurationService {
                 account.profiles.push(profile.clone());
             }
             Ok(profile)
+        })
+    }
+
+    pub fn update_profile(
+        &self,
+        key: &AccountKey,
+        profile: CollectionProfile,
+    ) -> io::Result<Option<CollectionProfile>> {
+        profile.validate().map_err(invalid_data)?;
+        self.mutate_some(|document| {
+            let Some(account) = document
+                .accounts
+                .iter_mut()
+                .find(|account| account.key == *key)
+            else {
+                return Ok(None);
+            };
+            let Some(index) = account
+                .profiles
+                .iter()
+                .position(|candidate| candidate.id == profile.id)
+            else {
+                return Ok(None);
+            };
+            if has_duplicate_title(&account.profiles, &profile) {
+                return Err(invalid_data(
+                    "collection names must be unique for this account",
+                ));
+            }
+            account.profiles[index] = profile.clone();
+            Ok(Some(profile))
         })
     }
 
@@ -331,6 +356,35 @@ impl CollectionConfigurationService {
         drop(current);
         Ok(result)
     }
+
+    fn mutate_some<T>(
+        &self,
+        change: impl FnOnce(&mut CollectionConfigurationFile) -> io::Result<Option<T>>,
+    ) -> io::Result<Option<T>> {
+        let mut current = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut next = current.document.clone();
+        let Some(result) = change(&mut next)? else {
+            return Ok(None);
+        };
+        validate_accounts(&next)?;
+        save_with_backup(&self.path, &next)?;
+        current.document = next;
+        drop(current);
+        Ok(Some(result))
+    }
+}
+
+fn has_duplicate_title(profiles: &[CollectionProfile], profile: &CollectionProfile) -> bool {
+    profiles.iter().any(|candidate| {
+        candidate.id != profile.id
+            && candidate
+                .title
+                .trim()
+                .eq_ignore_ascii_case(profile.title.trim())
+    })
 }
 
 pub fn collections_file_path() -> PathBuf {
@@ -463,5 +517,80 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert_left_untouched(&path, NEWER_DOCUMENT);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn update_profile_updates_existing_and_rejects_duplicate_titles() {
+        let path = test_path();
+        let service = CollectionConfigurationService::open(path.clone()).expect("open");
+        let alice = key("server", "alice");
+        let first = profile("a", "First");
+        let second = profile("c", "Second");
+        service.save_profile(&alice, first.clone()).expect("first");
+        service.save_profile(&alice, second).expect("second");
+
+        let mut renamed = first.clone();
+        renamed.title = "First Renamed".to_string();
+        let updated = service
+            .update_profile(&alice, renamed)
+            .expect("update")
+            .expect("updated profile");
+        assert_eq!(updated.title, "First Renamed");
+        assert_eq!(service.account(&alice).profiles.len(), 2);
+        assert_eq!(service.account(&alice).profiles[0].title, "First Renamed");
+
+        let mut duplicate = first;
+        duplicate.title = "  second  ".to_string();
+        let error = service
+            .update_profile(&alice, duplicate)
+            .expect_err("duplicate title must fail");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(super::super::json_file::backup_path(&path));
+    }
+
+    #[test]
+    fn update_profile_returns_none_without_rewriting_file_when_profile_was_deleted() {
+        let path = test_path();
+        let backup = super::super::json_file::backup_path(&path);
+        let service = CollectionConfigurationService::open(path.clone()).expect("open");
+        let alice = key("server", "alice");
+        let bob = key("server", "bob");
+        let first = profile("a", "First");
+        let second = profile("c", "Second");
+        service.save_profile(&alice, first.clone()).expect("first");
+        service
+            .save_profile(&alice, second.clone())
+            .expect("second");
+        service
+            .remove_profile(&alice, &first.id)
+            .expect("remove")
+            .expect("removed profile");
+
+        let before = std::fs::read(&path).expect("saved collections");
+        let _ = std::fs::remove_file(&backup);
+
+        let mut edited = first;
+        edited.title = second.title;
+        let result = service
+            .update_profile(&alice, edited.clone())
+            .expect("update deleted");
+        assert!(result.is_none());
+        assert_eq!(service.account(&alice).profiles.len(), 1);
+        assert_eq!(service.account(&alice).profiles[0].id, second.id);
+        assert_eq!(std::fs::read(&path).expect("unchanged collections"), before);
+        assert!(!backup.exists());
+
+        let missing_account = service
+            .update_profile(&bob, edited)
+            .expect("update missing account");
+        assert!(missing_account.is_none());
+        assert!(service.account(&bob).profiles.is_empty());
+        assert_eq!(std::fs::read(&path).expect("still unchanged"), before);
+        assert!(!backup.exists());
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&backup);
     }
 }

@@ -357,7 +357,7 @@ pub(super) fn create(
         Err(error) => return Err(configuration_failure(&error)),
     };
     let staged_artwork = profile.custom_poster_id.clone();
-    let committed = commit_result_profile(services, &account, profile, true);
+    let committed = commit_result_profile(services, &account, profile, ProfileCommit::Create);
     if committed.is_err() {
         remove_unreferenced_artwork(services, &account, staged_artwork.as_deref());
     }
@@ -391,7 +391,7 @@ pub(super) fn edit(
                 revision: allocate_revision_id(),
                 ..next
             },
-            true,
+            ProfileCommit::Update,
         );
         if committed.is_err() {
             remove_unreferenced_artwork(services, &account, staged_artwork.as_deref());
@@ -401,10 +401,14 @@ pub(super) fn edit(
         services
             .session
             .commit_if_current(&scope, stale_account_response, |_live| {
-                match services.collections.save_profile(&account, next) {
-                    Ok(profile) => {
+                match services.collections.update_profile(&account, next) {
+                    Ok(Some(profile)) => {
                         update_next_due(services, &account, &profile);
                         Ok(ProfileEdit::Saved(profile))
+                    }
+                    Ok(None) => {
+                        remove_unreferenced_artwork(services, &account, staged_artwork.as_deref());
+                        Err(ApiResponse::error(404, "that collection does not exist"))
                     }
                     Err(error) => {
                         remove_unreferenced_artwork(services, &account, staged_artwork.as_deref());
@@ -448,7 +452,7 @@ pub(super) fn refresh(
     if let Err(error) = profile.validate() {
         return Err(ApiResponse::error(409, error));
     }
-    commit_result_profile(services, &account, profile, false)
+    commit_result_profile(services, &account, profile, ProfileCommit::RefreshOnly)
 }
 
 pub(super) fn delete(
@@ -494,11 +498,99 @@ pub(super) fn reorder(
         })
 }
 
+#[derive(Clone, Copy)]
+enum ProfileCommit {
+    Create,
+    Update,
+    RefreshOnly,
+}
+
+fn rollback_revision(
+    repository: &SnapshotRepository<'_>,
+    account: &AccountKey,
+    profile_id: &str,
+    revision: &str,
+) {
+    if let Err(cleanup_error) = repository.remove_revision(account, profile_id, revision) {
+        tracing::warn!(
+            target: "collections",
+            "could not roll back an unreferenced collection revision: {cleanup_error}"
+        );
+    }
+}
+
+fn persist_committed_profile(
+    services: &Arc<Services>,
+    repository: &SnapshotRepository<'_>,
+    account: &AccountKey,
+    profile: CollectionProfile,
+    snapshot: &CollectionSnapshot,
+    mode: ProfileCommit,
+    visible_total: u32,
+) -> Result<CommittedProfile, ApiResponse> {
+    if matches!(mode, ProfileCommit::RefreshOnly)
+        && self::profile(services, account, &profile.id).is_none()
+    {
+        return Err(ApiResponse::error(404, "that collection does not exist"));
+    }
+    if let Err(error) = repository.commit_profile(account, snapshot) {
+        return Err(storage_failure(&error));
+    }
+    let persisted = match mode {
+        ProfileCommit::Create => services
+            .collections
+            .save_profile(account, profile.clone())
+            .map(Some),
+        ProfileCommit::Update => services
+            .collections
+            .update_profile(account, profile.clone()),
+        ProfileCommit::RefreshOnly => Ok(Some(profile.clone())),
+    };
+    match persisted {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            rollback_revision(repository, account, &profile.id, &profile.revision);
+            return Err(ApiResponse::error(404, "that collection does not exist"));
+        }
+        Err(error) => {
+            rollback_revision(repository, account, &profile.id, &profile.revision);
+            return Err(configuration_failure(&error));
+        }
+    }
+    if matches!(mode, ProfileCommit::Create | ProfileCommit::Update) {
+        let active = services
+            .collections
+            .account(account)
+            .profiles
+            .into_iter()
+            .map(|stored| (stored.id, stored.revision))
+            .collect();
+        let _ = repository.remove_unreferenced_revisions(account, &active);
+    }
+    let next_due =
+        crate::collections::scheduler::next_due_at(snapshot.committed_at, profile.cadence);
+    let _ = repository.save_refresh_state(
+        account,
+        &profile.id,
+        &RefreshState {
+            last_attempt: Some(snapshot.committed_at),
+            last_success: Some(snapshot.committed_at),
+            latest_failure: None,
+            next_due,
+            initialized: true,
+        },
+    );
+    Ok(CommittedProfile {
+        profile,
+        total: visible_total,
+    })
+}
+
 fn commit_result_profile(
     services: &Arc<Services>,
     account: &AccountKey,
     mut profile: CollectionProfile,
-    save_configuration: bool,
+    mode: ProfileCommit,
 ) -> Result<CommittedProfile, ApiResponse> {
     let scope = match services.session.scope() {
         Ok(scope) if scope.account() == account => scope,
@@ -516,12 +608,16 @@ fn commit_result_profile(
                 &scope,
                 || (),
                 |_live| {
-                    let _ = crate::collections::scheduler::save_failed_refresh(
-                        &repository,
-                        account,
-                        &profile.id,
-                        attempt,
-                    );
+                    if matches!(mode, ProfileCommit::Update | ProfileCommit::RefreshOnly)
+                        && self::profile(services, account, &profile.id).is_some()
+                    {
+                        let _ = crate::collections::scheduler::save_failed_refresh(
+                            &repository,
+                            account,
+                            &profile.id,
+                            attempt,
+                        );
+                    }
                     Ok(())
                 },
             );
@@ -557,48 +653,15 @@ fn commit_result_profile(
     services
         .session
         .commit_if_current(&scope, stale_account_response, |_live| {
-            if let Err(error) = repository.commit_profile(account, &snapshot) {
-                return Err(storage_failure(&error));
-            }
-            if save_configuration
-                && let Err(error) = services.collections.save_profile(account, profile.clone())
-            {
-                if let Err(cleanup_error) =
-                    repository.remove_revision(account, &profile.id, &profile.revision)
-                {
-                    tracing::warn!(
-                        target: "collections",
-                        "could not roll back an unreferenced collection revision: {cleanup_error}"
-                    );
-                }
-                return Err(configuration_failure(&error));
-            }
-            if save_configuration {
-                let active = services
-                    .collections
-                    .account(account)
-                    .profiles
-                    .into_iter()
-                    .map(|stored| (stored.id, stored.revision))
-                    .collect();
-                let _ = repository.remove_unreferenced_revisions(account, &active);
-            }
-            let next_due = crate::collections::scheduler::next_due_at(attempt, profile.cadence);
-            let _ = repository.save_refresh_state(
+            persist_committed_profile(
+                services,
+                &repository,
                 account,
-                &profile.id,
-                &RefreshState {
-                    last_attempt: Some(attempt),
-                    last_success: Some(attempt),
-                    latest_failure: None,
-                    next_due,
-                    initialized: true,
-                },
-            );
-            Ok(CommittedProfile {
                 profile,
-                total: visible_total,
-            })
+                &snapshot,
+                mode,
+                visible_total,
+            )
         })
 }
 
