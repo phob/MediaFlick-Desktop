@@ -4,7 +4,7 @@ import type { BookPositionWrite, ReaderAppearance } from "./types/books.ts"
 import type { ReleaseCalendar } from "./types/calendar.ts"
 import type { ItemQuery, PersonResolveQuery } from "./types/catalog.ts"
 import type { TitleKind } from "../kinds.ts"
-import type { CollectionProfileDraft, PublicCollectionList } from "./types/collections.ts"
+import type { CollectionProfileDraft, CollectionSettingsPatch, PublicCollectionList } from "./types/collections.ts"
 import type { HomeSettingsWrite } from "./types/home.ts"
 import type { BrowsingPage, LibraryQuery } from "./types/libraries.ts"
 import type { ExternalProvider, PlaybackTrackPreferenceWrite } from "./types/media.ts"
@@ -276,7 +276,7 @@ export const api = {
   collections: {
     settings: (reprobe = false) =>
       reprobe ? request("POST /api/collections/settings/reprobe") : request("GET /api/collections/settings"),
-    patchSettings: (body: Wire.CollectionSettingsPatch) => request("PATCH /api/collections/settings", { body }),
+    patchSettings: (body: CollectionSettingsPatch) => request("PATCH /api/collections/settings", { body }),
     templates: (signal?: AbortSignal) => request("GET /api/collections/templates", { signal }),
     searchPublicLists: (query: string, signal?: AbortSignal) =>
       request("POST /api/collections/mdblist/search", { body: { query }, signal }),

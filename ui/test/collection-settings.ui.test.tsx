@@ -97,10 +97,11 @@ function catalog(...templates: CollectionTemplate[]): CollectionTemplates {
 }
 
 function mockPage(options: {
+  settings?: CollectionSettings
   profiles?: CollectionProfile[]
   templates?: CollectionTemplates
 } = {}) {
-  vi.spyOn(api.api.collections, "settings").mockResolvedValue(accountSettings)
+  vi.spyOn(api.api.collections, "settings").mockResolvedValue(options.settings ?? accountSettings)
   vi.spyOn(api.api.collections, "profiles").mockResolvedValue({
     profiles: options.profiles ?? [],
     errors: {},
@@ -481,16 +482,44 @@ describe("collection settings management", () => {
     fireEvent.click(includeUnreleased)
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(patch).toHaveBeenCalledWith({
-      modeSelection: "mediaFlick",
       includeUnreleased: true,
     }))
   })
 
-  test("stages collection ordering until Save", async () => {
+  test("toggling Include unreleased in automatic mode does not send modeSelection", async () => {
+    const automaticJellyfin: CollectionSettings = {
+      effectiveMode: "jellyfin",
+      mediaFlickAvailable: false,
+      modeSelection: null,
+      franchises: { includeUnreleased: false },
+      readiness: { tmdb: false, mdblist: false },
+      recovery: null,
+    }
+    mockPage({ settings: automaticJellyfin })
+    const patch = vi.spyOn(api.api.collections, "patchSettings").mockResolvedValue({
+      ...automaticJellyfin,
+      franchises: { includeUnreleased: true },
+    })
+    page()
+
+    fireEvent.click(await screen.findByRole("switch", { name: "Include unreleased titles" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
+    expect(patch).toHaveBeenCalledWith({ includeUnreleased: true })
+    expect(patch.mock.calls[0][0]).not.toHaveProperty("modeSelection")
+  })
+
+  test("stages collection ordering until Save and skips settings PATCH when unchanged", async () => {
     const first = profile("a".repeat(16), { title: "First" })
     const second = profile("c".repeat(16), { title: "Second" })
-    mockPage({ profiles: [first, second] })
-    vi.spyOn(api.api.collections, "patchSettings").mockResolvedValue(accountSettings)
+    mockPage({
+      settings: { ...accountSettings, modeSelection: null },
+      profiles: [first, second],
+    })
+    const patch = vi.spyOn(api.api.collections, "patchSettings").mockResolvedValue({
+      ...accountSettings,
+      modeSelection: null,
+    })
     const reorder = vi.spyOn(api.api.collections, "reorderProfiles").mockResolvedValue({
       profiles: [second, first],
       errors: {},
@@ -501,6 +530,74 @@ describe("collection settings management", () => {
     expect(reorder).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(reorder).toHaveBeenCalledWith([second.id, first.id]))
+    expect(patch).not.toHaveBeenCalled()
+  })
+
+  test("deleting the last profile while TMDB is not ready skips settings PATCH and clears dirty state", async () => {
+    const only = profile("a".repeat(16), { title: "Only collection" })
+    const beforeDelete: CollectionSettings = {
+      effectiveMode: "mediaFlick",
+      mediaFlickAvailable: true,
+      modeSelection: null,
+      franchises: { includeUnreleased: false },
+      readiness: { tmdb: false, mdblist: true },
+      recovery: null,
+    }
+    const afterDelete: CollectionSettings = {
+      ...beforeDelete,
+      effectiveMode: "jellyfin",
+      mediaFlickAvailable: false,
+    }
+    let deleted = false
+    vi.spyOn(api.api.collections, "settings").mockImplementation(async () =>
+      deleted ? afterDelete : beforeDelete,
+    )
+    vi.spyOn(api.api.collections, "profiles").mockImplementation(async () => ({
+      profiles: deleted ? [] : [only],
+      errors: {},
+    }))
+    vi.spyOn(api.api.collections, "templates").mockResolvedValue(catalog(template()))
+    const remove = vi.spyOn(api.api.collections, "deleteProfile").mockImplementation(async () => {
+      deleted = true
+      return { deleted: true }
+    })
+    const patch = vi.spyOn(api.api.collections, "patchSettings").mockRejectedValue(
+      new api.ApiError("MediaFlick collections are unavailable", 409),
+    )
+    page()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Only collection" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(only.id))
+    await waitFor(() => expect(screen.getByText("No collections are configured.")).toBeTruthy())
+    expect(patch).not.toHaveBeenCalled()
+    expect(screen.queryByText("You have unsaved changes.")).toBeNull()
+    expect(screen.getByRole("combobox", { name: "Collection mode" }).textContent).toBe("Jellyfin")
+  })
+
+  test("explicitly changing collection mode sends only modeSelection", async () => {
+    const automatic: CollectionSettings = {
+      ...accountSettings,
+      modeSelection: null,
+    }
+    mockPage({ settings: automatic })
+    const patch = vi.spyOn(api.api.collections, "patchSettings").mockResolvedValue({
+      ...automatic,
+      effectiveMode: "jellyfin",
+      modeSelection: "jellyfin",
+    })
+    page()
+
+    const modeSelect = await screen.findByRole("combobox", { name: "Collection mode" })
+    await waitFor(() => expect(modeSelect.hasAttribute("disabled")).toBe(false))
+    fireEvent.click(modeSelect)
+    fireEvent.click(await screen.findByRole("option", { name: "Jellyfin" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
+    expect(patch).toHaveBeenCalledWith({ modeSelection: "jellyfin" })
+    expect(patch.mock.calls[0][0]).not.toHaveProperty("includeUnreleased")
   })
 })
 

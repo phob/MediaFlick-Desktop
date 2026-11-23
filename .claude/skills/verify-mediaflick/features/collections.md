@@ -31,7 +31,7 @@ Preconditions: your own server with the Companion (`collection-experience-v1` an
 ## Gotchas
 
 - The sidebar shows `Jellyfin Collections` until `/api/collections/settings` has answered, even in MediaFlick mode; read the sidebar after that call.
-- Every Settings Save writes the chosen mode, so after `Back to defaults` `collections.json` holds `modeSelection: "mediaFlick"`, not `null`.
+- Changing `Collection mode` writes the chosen mode (so after `Back to defaults` `collections.json` holds `modeSelection: "mediaFlick"`, not `null`); saving other changes (`Include unreleased titles`, reorder, or delete) without changing `Collection mode` leaves an automatic (`null`) mode unpinned.
 - `Collections` in Settings navigation and the sidebar's collection links are different elements; inside Settings, `Collections` is the only link with that name, but `Home` exists twice (sidebar and shelf).
 - The first franchise visit can sit on `Finding movie franchises...` for several seconds while the scheduler runs; poll the API, not the text.
 - Once, creating a collection stayed on `Saving…` for over 60 s with nothing in `app.log`, then saved; the next runs took under 3 s. The drive allows 240 s and logs the time it took.
