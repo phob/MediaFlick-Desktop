@@ -599,6 +599,238 @@ describe("collection settings management", () => {
     expect(patch).toHaveBeenCalledWith({ modeSelection: "jellyfin" })
     expect(patch.mock.calls[0][0]).not.toHaveProperty("includeUnreleased")
   })
+
+  test("creating a collection while reorder draft is dirty keeps the new collection visible and saves the complete order", async () => {
+    const first = profile("a".repeat(16), { title: "First" })
+    const second = profile("b".repeat(16), { title: "Second" })
+    const third = profile("c".repeat(16), { title: "Third" })
+    let serverProfiles = [first, second]
+    vi.spyOn(api.api.collections, "settings").mockResolvedValue({
+      ...accountSettings,
+      modeSelection: null,
+    })
+    vi.spyOn(api.api.collections, "profiles").mockImplementation(async () => ({
+      profiles: [...serverProfiles],
+      errors: {},
+    }))
+    vi.spyOn(api.api.collections, "templates").mockResolvedValue(catalog(template({ title: "Third" })))
+    vi.spyOn(api.api.collections, "preview").mockResolvedValue(preview())
+    vi.spyOn(api.api.collections, "createProfile").mockImplementation(async () => {
+      serverProfiles = [...serverProfiles, third]
+      return { profile: third, total: 1 }
+    })
+    const patch = vi.spyOn(api.api.collections, "patchSettings").mockResolvedValue({
+      ...accountSettings,
+      modeSelection: null,
+    })
+    const reorder = vi.spyOn(api.api.collections, "reorderProfiles").mockImplementation(async (ids) => {
+      if (ids.length !== serverProfiles.length) {
+        throw new api.ApiError("the collection order is incomplete", 400)
+      }
+      const byId = new Map(serverProfiles.map((item) => [item.id, item]))
+      serverProfiles = ids.map((id) => byId.get(id)).filter((item): item is CollectionProfile => Boolean(item))
+      return { profiles: [...serverProfiles], errors: {} }
+    })
+    page()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Move First down" }))
+    await openTemplate("Third")
+    const dialog = screen.getByRole("dialog", { name: "Add collection" })
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }))
+    await within(dialog).findByText("The Matrix (1999)")
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add collection" })).toBeNull())
+
+    expect(await screen.findByRole("button", { name: "Edit Third" })).toBeTruthy()
+    const rowButtons = screen.getAllByRole("button", { name: /^Edit / }).map((button) => button.getAttribute("aria-label"))
+    expect(rowButtons).toEqual(["Edit Second", "Edit First", "Edit Third"])
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(reorder).toHaveBeenCalledWith([second.id, first.id, third.id]))
+    expect(patch).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByText("You have unsaved changes.")).toBeNull())
+  })
+
+  test("reorder runs before destructive deletes and settings PATCH on Save", async () => {
+    const first = profile("a".repeat(16), { title: "First" })
+    const second = profile("b".repeat(16), { title: "Second" })
+    const third = profile("c".repeat(16), { title: "Third" })
+    mockPage({ profiles: [first, second, third] })
+    const reorder = vi.spyOn(api.api.collections, "reorderProfiles").mockRejectedValue(
+      new api.ApiError("the collection order is incomplete", 400),
+    )
+    const remove = vi.spyOn(api.api.collections, "deleteProfile").mockResolvedValue({ deleted: true })
+    const patch = vi.spyOn(api.api.collections, "patchSettings").mockResolvedValue({
+      ...accountSettings,
+      franchises: { includeUnreleased: true },
+    })
+    page()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete First" }))
+    fireEvent.click(screen.getByRole("button", { name: "Move Second down" }))
+    fireEvent.click(screen.getByRole("switch", { name: "Include unreleased titles" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() => expect(reorder).toHaveBeenCalledWith([first.id, third.id, second.id]))
+    expect(remove).not.toHaveBeenCalled()
+    expect(patch).not.toHaveBeenCalled()
+    expect(screen.getByRole("button", { name: "Undo deletion of First" })).toBeTruthy()
+  })
+
+  test("partial Save failure after one delete clears the committed delete and retries only the remaining delete", async () => {
+    const first = profile("a".repeat(16), { title: "First" })
+    const second = profile("b".repeat(16), { title: "Second" })
+    const third = profile("c".repeat(16), { title: "Third" })
+    let serverProfiles = [first, second, third]
+    let failSecond = true
+    vi.spyOn(api.api.collections, "settings").mockResolvedValue(accountSettings)
+    vi.spyOn(api.api.collections, "profiles").mockImplementation(async () => ({
+      profiles: [...serverProfiles],
+      errors: {},
+    }))
+    vi.spyOn(api.api.collections, "templates").mockResolvedValue(catalog(template()))
+    const remove = vi.spyOn(api.api.collections, "deleteProfile").mockImplementation(async (id) => {
+      if (!serverProfiles.some((item) => item.id === id)) {
+        throw new api.ApiError("that collection does not exist", 404)
+      }
+      if (id === second.id && failSecond) {
+        failSecond = false
+        throw new api.ApiError("disk busy", 500)
+      }
+      serverProfiles = serverProfiles.filter((item) => item.id !== id)
+      return { deleted: true }
+    })
+    page()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete First" }))
+    fireEvent.click(screen.getByRole("button", { name: "Delete Second" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Undo deletion of First" })).toBeNull())
+    expect(screen.getByRole("button", { name: "Undo deletion of Second" })).toBeTruthy()
+    expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo deletion of Second" }))
+    await waitFor(() => expect(screen.queryByText("You have unsaved changes.")).toBeNull())
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Second" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(3))
+    expect(remove.mock.calls.map((call) => call[0])).toEqual([first.id, second.id, second.id])
+    await waitFor(() => expect(screen.queryByText("You have unsaved changes.")).toBeNull())
+  })
+
+  test("partial Save failure after the only delete succeeds leaves no phantom unsaved changes", async () => {
+    const first = profile("a".repeat(16), { title: "First" })
+    const second = profile("b".repeat(16), { title: "Second" })
+    let serverProfiles = [first, second]
+    let failSettings = true
+    vi.spyOn(api.api.collections, "settings").mockResolvedValue(accountSettings)
+    vi.spyOn(api.api.collections, "profiles").mockImplementation(async () => ({
+      profiles: [...serverProfiles],
+      errors: {},
+    }))
+    vi.spyOn(api.api.collections, "templates").mockResolvedValue(catalog(template()))
+    const remove = vi.spyOn(api.api.collections, "deleteProfile").mockImplementation(async (id) => {
+      serverProfiles = serverProfiles.filter((item) => item.id !== id)
+      return { deleted: true }
+    })
+    const patch = vi.spyOn(api.api.collections, "patchSettings").mockImplementation(async (body) => {
+      if (failSettings) {
+        failSettings = false
+        throw new api.ApiError("settings write failed", 500)
+      }
+      return { ...accountSettings, franchises: { includeUnreleased: Boolean(body.includeUnreleased) } }
+    })
+    page()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete First" }))
+    fireEvent.click(screen.getByRole("switch", { name: "Include unreleased titles" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Undo deletion of First" })).toBeNull())
+    expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("switch", { name: "Include unreleased titles" }))
+    await waitFor(() => expect(screen.queryByText("You have unsaved changes.")).toBeNull())
+  })
+
+  test("partial Save failure after reorder succeeds and delete fails does not repeat reorder on retry", async () => {
+    const first = profile("a".repeat(16), { title: "First" })
+    const second = profile("b".repeat(16), { title: "Second" })
+    const third = profile("c".repeat(16), { title: "Third" })
+    let serverProfiles = [first, second, third]
+    let failDelete = true
+    vi.spyOn(api.api.collections, "settings").mockResolvedValue(accountSettings)
+    vi.spyOn(api.api.collections, "profiles").mockImplementation(async () => ({
+      profiles: [...serverProfiles],
+      errors: {},
+    }))
+    vi.spyOn(api.api.collections, "templates").mockResolvedValue(catalog(template()))
+    const reorder = vi.spyOn(api.api.collections, "reorderProfiles").mockImplementation(async (ids) => {
+      const byId = new Map(serverProfiles.map((item) => [item.id, item]))
+      serverProfiles = ids.map((id) => byId.get(id)).filter((item): item is CollectionProfile => Boolean(item))
+      return { profiles: [...serverProfiles], errors: {} }
+    })
+    const remove = vi.spyOn(api.api.collections, "deleteProfile").mockImplementation(async (id) => {
+      if (failDelete) {
+        failDelete = false
+        throw new api.ApiError("delete failed", 500)
+      }
+      serverProfiles = serverProfiles.filter((item) => item.id !== id)
+      return { deleted: true }
+    })
+    page()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete First" }))
+    fireEvent.click(screen.getByRole("button", { name: "Move Second down" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() => expect(reorder).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole("button", { name: "Undo deletion of First" })).toBeTruthy()
+    expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(2))
+    expect(reorder).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(screen.queryByText("You have unsaved changes.")).toBeNull())
+  })
+
+  test("partial Save failure when follow-up settings refresh fails after delete leaves no phantom dirty state", async () => {
+    const first = profile("a".repeat(16), { title: "First" })
+    const second = profile("b".repeat(16), { title: "Second" })
+    let serverProfiles = [first, second]
+    let failRefresh = false
+    vi.spyOn(api.api.collections, "settings").mockImplementation(async () => {
+      if (failRefresh) {
+        failRefresh = false
+        throw new api.ApiError("settings refresh failed", 500)
+      }
+      return accountSettings
+    })
+    vi.spyOn(api.api.collections, "profiles").mockImplementation(async () => ({
+      profiles: [...serverProfiles],
+      errors: {},
+    }))
+    vi.spyOn(api.api.collections, "templates").mockResolvedValue(catalog(template()))
+    const remove = vi.spyOn(api.api.collections, "deleteProfile").mockImplementation(async (id) => {
+      serverProfiles = serverProfiles.filter((item) => item.id !== id)
+      failRefresh = true
+      return { deleted: true }
+    })
+    page()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete First" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByText("You have unsaved changes.")).toBeNull())
+    expect(screen.queryByRole("button", { name: "Undo deletion of First" })).toBeNull()
+  })
 })
 
 test("signed-out users see the sign-in prompt instead of being redirected away", () => {

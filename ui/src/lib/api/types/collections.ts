@@ -10,6 +10,8 @@ export type CollectionSettingsPatch = Wire.CollectionSettingsPatch
 
 export type CollectionProfile = Wire.CollectionProfile
 
+export type CollectionProfilesIndex = Wire.CollectionProfilesIndex
+
 export type CollectionProfileDraft = Wire.CollectionProfileDraft
 
 export type CollectionTemplate = Wire.CollectionTemplate
