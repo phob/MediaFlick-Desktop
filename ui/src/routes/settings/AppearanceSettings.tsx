@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Film } from "lucide-react"
-import { useContext, useEffect, useId, useMemo, useRef, type MouseEvent } from "react"
+import { useContext, useEffect, useId, useMemo } from "react"
 import { toast } from "sonner"
 import { MediaCard } from "@/components/MediaCard"
 import { PreviewProvider, type PreviewDependencies } from "@/components/PreviewCard"
@@ -115,10 +115,6 @@ function AppearancePreview({ appearance, previewDelay }: { appearance: Appearanc
     () => savedRatings && { ...savedRatings, selected: appearance.ratingSources },
     [savedRatings, appearance.ratingSources],
   )
-  const holdStill = (event: MouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
-  }
   useEffect(() => {
     document.body.appendChild(PANEL_HOST)
     return () => PANEL_HOST.remove()
@@ -130,12 +126,6 @@ function AppearancePreview({ appearance, previewDelay }: { appearance: Appearanc
     PANEL_HOST.style.setProperty("--artwork-intensity", String(appearance.artworkIntensity / 100))
     PANEL_HOST.style.setProperty("--backdrop-intensity", String(appearance.backdropIntensity / 100))
   }, [appearance.accent, appearance.density, appearance.artworkIntensity, appearance.backdropIntensity, reducedMotion])
-  const shelfRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    for (const link of shelfRef.current?.querySelectorAll("a") ?? []) {
-      link.setAttribute("inert", "")
-    }
-  })
   const style: CSSVariableProperties = {
     "--artwork-intensity": String(appearance.artworkIntensity / 100),
     "--backdrop-intensity": String(appearance.backdropIntensity / 100),
@@ -178,7 +168,7 @@ function AppearancePreview({ appearance, previewDelay }: { appearance: Appearanc
             <span>Series</span>
             <span className="appearance-preview-online">Online</span>
           </header>
-          <div ref={shelfRef} className="appearance-preview-shelf" onClickCapture={holdStill}>
+          <div className="appearance-preview-shelf">
             <RatingsContext.Provider value={draftRatings ?? NO_RATINGS}>
               <div className="flex items-center gap-3">
                 <span className="rail-marker" />
@@ -197,9 +187,9 @@ function AppearancePreview({ appearance, previewDelay }: { appearance: Appearanc
                 </p>
               ) : (
                 <div className="flex gap-[var(--card-gap)] overflow-hidden pt-1 pb-1">
-                  {resume && <MediaCard item={resume} landscape className="home-media-card shrink-0" />}
+                  {resume && <MediaCard item={resume} landscape interactive={false} className="home-media-card shrink-0" />}
                   {recent.map((item) => (
-                    <MediaCard key={item.id} item={item} className="home-media-card shrink-0" />
+                    <MediaCard key={item.id} item={item} interactive={false} className="home-media-card shrink-0" />
                   ))}
                 </div>
               )}

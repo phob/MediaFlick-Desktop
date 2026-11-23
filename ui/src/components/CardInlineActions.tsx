@@ -6,7 +6,7 @@ import { useQualityOverride } from "@/lib/playback-quality"
 import { useNextUp, useSetFavorite, useSetPlayed } from "@/lib/item-queries"
 import { usePlay } from "@/lib/playback-queries"
 
-export function CardInlineActions({
+function InteractiveCardInlineActions({
   item,
   playedContext = item.seriesId,
 }: {
@@ -54,4 +54,23 @@ export function CardInlineActions({
       />
     </div>
   )
+}
+
+export function CardInlineActions({
+  item,
+  playedContext = item.seriesId,
+  interactive = true,
+}: {
+  item: ItemSummary
+  playedContext?: string | null
+  interactive?: boolean
+}) {
+  if (!interactive) {
+    return (
+      <div className="card-inline-actions">
+        <ItemActionButtons variant="card" item={item} play interactive={false} />
+      </div>
+    )
+  }
+  return <InteractiveCardInlineActions item={item} playedContext={playedContext} />
 }

@@ -35,11 +35,37 @@ describe("app surface guard", () => {
     const textarea = document.createElement("textarea")
     const editable = document.createElement("div")
     editable.setAttribute("contenteditable", "true")
-    document.body.append(input, textarea, editable)
+    const nested = document.createElement("span")
+    editable.append(nested)
+    const plaintext = document.createElement("div")
+    plaintext.setAttribute("contenteditable", "plaintext-only")
+    const bare = document.createElement("div")
+    bare.setAttribute("contenteditable", "")
+    document.body.append(input, textarea, editable, plaintext, bare)
 
-    for (const target of [input, textarea, editable]) {
+    for (const target of [input, textarea, editable, nested, plaintext, bare]) {
       expect(press("a", { ctrlKey: true }, target).defaultPrevented).toBe(false)
     }
+  })
+
+  test("select-all is blocked inside non-editable islands and respects isContentEditable directly", () => {
+    const editable = document.createElement("div")
+    editable.setAttribute("contenteditable", "true")
+    const nonEditable = document.createElement("div")
+    nonEditable.setAttribute("contenteditable", "false")
+    const childInsideNonEditable = document.createElement("span")
+    nonEditable.append(childInsideNonEditable)
+    editable.append(nonEditable)
+
+    const overridden = document.createElement("div")
+    overridden.setAttribute("contenteditable", "true")
+    Object.defineProperty(overridden, "isContentEditable", { value: false, configurable: true })
+
+    document.body.append(editable, overridden)
+
+    expect(press("a", { ctrlKey: true }, nonEditable).defaultPrevented).toBe(true)
+    expect(press("a", { ctrlKey: true }, childInsideNonEditable).defaultPrevented).toBe(true)
+    expect(press("a", { ctrlKey: true }, overridden).defaultPrevented).toBe(true)
   })
 
   test("caret browsing and reload cannot be triggered", () => {

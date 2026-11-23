@@ -1,8 +1,9 @@
 import { api } from "@/lib/api"
 import { DEFAULT_VIEWING } from "@/lib/viewing"
 import { act, fireEvent, render, screen, within, waitFor } from "@testing-library/react"
+import { useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
-import type { ClientSettings, RatingsIntegrationStatus } from "@/lib/api"
+import type { ClientSettings, ItemSummary, RatingsIntegrationStatus } from "@/lib/api"
 import { queryKeys } from "@/lib/query-client"
 import { Appearance } from "@/routes/settings/AppearanceSettings"
 import { appStatus, itemSummary, requireElement } from "./support/fixtures"
@@ -58,14 +59,27 @@ const ratingsStatus: RatingsIntegrationStatus = {
 }
 
 const movie = itemSummary({ id: "movie-1", kind: "Movie", name: "The Matrix", year: 1999 })
+const resumeMovie = itemSummary({
+  id: "movie-2",
+  kind: "Movie",
+  name: "Blade Runner",
+  year: 1982,
+  positionTicks: 12_000_000_000,
+  runtimeTicks: 70_000_000_000,
+})
 
-function renderAppearance(cardPreviews: boolean) {
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="appearance-location">{location.pathname}</output>
+}
+
+function renderAppearance(cardPreviews: boolean, continueWatching: ItemSummary[] = []) {
   const client = testQueryClient()
   client.setQueryData(queryKeys.settings, settings(cardPreviews))
   client.setQueryData(queryKeys.viewing("anonymous:anonymous"), DEFAULT_VIEWING)
   client.setQueryData(queryKeys.status, appStatus({ authenticated: true }))
   client.setQueryData(queryKeys.home, {
-    continueWatching: [],
+    continueWatching,
     rows: [{ kind: "builtIn", id: "recentlyAdded", title: "Recently Added", items: [movie] }],
   })
   client.setQueryData(queryKeys.ratingsStatus, ratingsStatus)
@@ -76,7 +90,8 @@ function renderAppearance(cardPreviews: boolean) {
   }))
   render(
     <TestProviders client={client} initialEntries={["/settings/appearance"]}>
-        <Appearance />
+      <Appearance />
+      <LocationProbe />
     </TestProviders>,
   )
   return requests
@@ -124,6 +139,36 @@ describe("appearance settings live preview", () => {
     fireEvent.click(within(panel).getByRole("button", { name: "Add to favorites" }))
     fireEvent.click(within(panel).getByRole("button", { name: "Mark watched" }))
 
+    expect(requests.some((path) => path.includes("/api/play"))).toBe(false)
+    expect(requests.some((path) => path.includes("/favorite"))).toBe(false)
+    expect(requests.some((path) => path.includes("/played"))).toBe(false)
+  })
+
+  test("renders preview shelf cards declaratively without links, buttons, or inert DOM mutations", () => {
+    const requests = renderAppearance(false, [resumeMovie])
+    const shelf = requireElement(
+      document.querySelector<HTMLElement>(".appearance-preview-shelf"),
+      "appearance preview shelf",
+    )
+
+    expect(shelf.querySelectorAll("a")).toHaveLength(0)
+    expect(shelf.querySelectorAll("button")).toHaveLength(0)
+    expect(shelf.querySelectorAll("[inert]")).toHaveLength(0)
+
+    const inlineActions = shelf.querySelectorAll(".card-inline-actions .preview-action")
+    expect(inlineActions.length).toBeGreaterThanOrEqual(6)
+
+    for (const action of inlineActions) {
+      fireEvent.click(action)
+    }
+    for (const target of [
+      ...within(shelf).getAllByText("The Matrix"),
+      ...within(shelf).getAllByText("Blade Runner"),
+    ]) {
+      fireEvent.click(target)
+    }
+
+    expect(screen.getByTestId("appearance-location").textContent).toBe("/settings/appearance")
     expect(requests.some((path) => path.includes("/api/play"))).toBe(false)
     expect(requests.some((path) => path.includes("/favorite"))).toBe(false)
     expect(requests.some((path) => path.includes("/played"))).toBe(false)

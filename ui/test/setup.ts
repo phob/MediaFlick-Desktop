@@ -23,3 +23,24 @@ if (!HTMLElement.prototype.hasPointerCapture) {
 if (!HTMLElement.prototype.scrollIntoView) {
   HTMLElement.prototype.scrollIntoView = () => {}
 }
+
+function isElementContentEditable(element: HTMLElement): boolean {
+  if (element.ownerDocument.designMode === "on") return true
+  let current: HTMLElement | null = element
+  while (current) {
+    const value = current.getAttribute("contenteditable")?.toLowerCase()
+    if (value === "" || value === "true" || value === "plaintext-only") return true
+    if (value === "false") return false
+    current = current.parentElement
+  }
+  return false
+}
+
+if (!("isContentEditable" in HTMLElement.prototype)) {
+  Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
+    configurable: true,
+    get(this: HTMLElement): boolean {
+      return isElementContentEditable(this)
+    },
+  })
+}
