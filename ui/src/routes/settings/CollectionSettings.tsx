@@ -59,6 +59,7 @@ import {
 } from "@/lib/collection-queries"
 import { accountKey, useStatus } from "@/lib/session-queries"
 import {
+  applyPreviewSourceIdentity,
   executeCollectionSave,
   reconcileCollectionDraft,
   savedCollectionDraft,
@@ -439,6 +440,8 @@ function CollectionWizard({
     patchSource({ ...draft.source, parameters })
   }
   const runPreview = async () => {
+    if (uploading || readOnly || !providerAvailable || !validDraft) return
+    const snapshot = structuredClone(draft)
     const generation = previewRequest.current.generation + 1
     const controller = new AbortController()
     previewRequest.current.controller?.abort()
@@ -447,22 +450,19 @@ function CollectionWizard({
     setPreviewError(null)
     setPreviewing(true)
     try {
-      const result = await api.collections.preview(structuredClone(draft), controller.signal)
-      if (previewRequest.current.generation !== generation) return null
-      const previewedDraft = result.sourceIdentity && draft.source.kind === "mdbListPublicList"
-        ? { ...draft, source: { ...draft.source, listId: result.sourceIdentity } }
-        : draft
-      if (previewedDraft !== draft) setDraft(previewedDraft)
+      const result = await api.collections.preview(snapshot, controller.signal)
+      if (!mounted.current || previewRequest.current.generation !== generation) return
+      if (result.sourceIdentity) {
+        setDraft((current) => applyPreviewSourceIdentity(current, snapshot.source, result.sourceIdentity))
+      }
       setPreview(result)
-      return previewedDraft
     } catch (error) {
       const failure = error instanceof Error ? error : new Error("Preview failed")
-      if (previewRequest.current.generation !== generation || failure.name === "AbortError") return null
+      if (!mounted.current || previewRequest.current.generation !== generation || failure.name === "AbortError") return
       setPreviewError(failure.message)
       toastFailure(failure)
-      return null
     } finally {
-      if (previewRequest.current.generation === generation) {
+      if (mounted.current && previewRequest.current.generation === generation) {
         previewRequest.current.controller = null
         setPreviewing(false)
       }
@@ -674,7 +674,7 @@ function CollectionWizard({
         <div className="rounded-lg border p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div><strong>Preview</strong>{preview && <p className="text-sm text-muted-foreground">{preview.total} total · {preview.movies} movies · {preview.series} series</p>}</div>
-            <Button variant="outline" disabled={readOnly || !providerAvailable || busy || !validDraft} onClick={() => void runPreview()}>{previewing ? "Previewing…" : preview ? "Preview again" : "Preview"}</Button>
+            <Button variant="outline" disabled={readOnly || !providerAvailable || busy || uploading || !validDraft} onClick={() => void runPreview()}>{previewing ? "Previewing…" : preview ? "Preview again" : "Preview"}</Button>
           </div>
           {previewError && <p className="mt-3 text-sm text-destructive" role="alert">Preview failed: {previewError}</p>}
           {preview && (

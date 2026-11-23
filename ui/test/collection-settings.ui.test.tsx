@@ -74,17 +74,20 @@ function title(id: number, patch: Partial<NormalizedCollectionTitle> = {}): Norm
   }
 }
 
-function preview(items = [title(603, {
-  title: "The Matrix",
-  year: 1999,
-  posterPath: "/matrix.jpg",
-})]) {
+function preview(
+  items = [title(603, {
+    title: "The Matrix",
+    year: 1999,
+    posterPath: "/matrix.jpg",
+  })],
+  sourceIdentity: string | null = null,
+) {
   return {
     items,
     total: items.length,
     movies: items.filter((item) => item.mediaType === "movie").length,
     series: items.filter((item) => item.mediaType === "series").length,
-    sourceIdentity: null,
+    sourceIdentity,
   }
 }
 
@@ -461,6 +464,114 @@ describe("collection settings wizard", () => {
 
     expect(screen.getByRole("heading", { name: "Edit collection" })).toBeTruthy()
     expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("Second edited")
+  })
+
+  test("MDBList preview resolves sourceIdentity without overwriting concurrent draft edits", async () => {
+    const mdblist = template({
+      id: "mdblist.public.custom",
+      title: "MDBList template",
+      description: "Initial description",
+      source: { kind: "mdbListPublicList", listId: "https://mdblist.com/lists/alice/top" },
+      mediaType: "mixed",
+      cadence: "daily",
+    })
+    mockPage({ templates: catalog(mdblist) })
+    let resolvePreview!: (value: ReturnType<typeof preview>) => void
+    vi.spyOn(api.api.collections, "preview").mockReturnValue(new Promise((resolve) => { resolvePreview = resolve }))
+    const create = vi.spyOn(api.api.collections, "createProfile").mockResolvedValue({
+      profile: profile("a".repeat(16)),
+      total: 1,
+    })
+    page()
+    await openTemplate("MDBList template")
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }))
+
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Concurrent title" } })
+    fireEvent.change(screen.getByRole("textbox", { name: "Description" }), { target: { value: "Concurrent description" } })
+    fireEvent.click(screen.getByRole("combobox", { name: "Refresh cadence" }))
+    fireEvent.click(await screen.findByRole("option", { name: "Weekly" }))
+    fireEvent.click(screen.getByRole("switch", { name: "Available on Home" }))
+
+    await act(async () => resolvePreview(preview(undefined, "12345")))
+
+    expect(await screen.findByText("The Matrix (1999)")).toBeTruthy()
+    expect((screen.getByLabelText("MDBList public list ID or canonical URL") as HTMLInputElement).value).toBe("12345")
+    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("Concurrent title")
+    expect((screen.getByRole("textbox", { name: "Description" }) as HTMLTextAreaElement).value).toBe("Concurrent description")
+    expect(screen.getByRole("combobox", { name: "Refresh cadence" }).textContent).toBe("Weekly")
+    expect(screen.getByRole("switch", { name: "Available on Home" }).getAttribute("aria-checked")).toBe("true")
+
+    fireEvent.click(createButton())
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Concurrent title",
+      description: "Concurrent description",
+      cadence: "weekly",
+      availableOnHome: true,
+      source: { kind: "mdbListPublicList", listId: "12345" },
+    })))
+  })
+
+  test("changing MDBList URL or reopening the wizard discards in-flight preview sourceIdentity", async () => {
+    const mdblist = template({
+      id: "mdblist.public.custom",
+      title: "MDBList template",
+      source: { kind: "mdbListPublicList", listId: "https://mdblist.com/lists/alice/first" },
+      mediaType: "mixed",
+    })
+    mockPage({ templates: catalog(mdblist) })
+    const resolvers: Array<(value: ReturnType<typeof preview>) => void> = []
+    vi.spyOn(api.api.collections, "preview").mockImplementation(
+      () => new Promise((resolve) => { resolvers.push(resolve) }),
+    )
+    page()
+    await openTemplate("MDBList template")
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }))
+    fireEvent.change(screen.getByLabelText("MDBList public list ID or canonical URL"), {
+      target: { value: "https://mdblist.com/lists/bob/second" },
+    })
+
+    await act(async () => resolvers[0](preview(undefined, "11111")))
+
+    expect((screen.getByLabelText("MDBList public list ID or canonical URL") as HTMLInputElement).value).toBe("https://mdblist.com/lists/bob/second")
+    expect(screen.queryByText("The Matrix (1999)")).toBeNull()
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }))
+    fireEvent.click(screen.getByRole("button", { name: "Close" }))
+    const confirm = await screen.findByRole("alertdialog")
+    fireEvent.click(within(confirm).getByRole("button", { name: "Discard changes" }))
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Add collection" })).toBeNull())
+
+    await openTemplate("MDBList template")
+    await act(async () => resolvers[1](preview(undefined, "22222")))
+
+    expect((screen.getByLabelText("MDBList public list ID or canonical URL") as HTMLInputElement).value).toBe("https://mdblist.com/lists/alice/first")
+    expect(screen.queryByText("The Matrix (1999)")).toBeNull()
+  })
+
+  test("Preview button is disabled while a poster upload is in progress", async () => {
+    const current = profile("a".repeat(16))
+    mockPage({ profiles: [current] })
+    let finishUpload!: (value: { id: string }) => void
+    const upload = vi.spyOn(api.api.collections, "uploadArtwork").mockReturnValue(
+      new Promise((resolve) => { finishUpload = resolve }),
+    )
+    page(`/settings/collections?edit=${current.id}`)
+    await screen.findByRole("heading", { name: "Edit collection" })
+
+    const previewButton = screen.getByRole("button", { name: "Preview" })
+    expect(isDisabled(previewButton)).toBe(false)
+
+    const file = new File(["poster"], "poster.png", { type: "image/png" })
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new ArrayBuffer(6) })
+    fireEvent.change(screen.getByLabelText("Custom poster file"), { target: { files: [file] } })
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
+
+    expect(isDisabled(previewButton)).toBe(true)
+
+    await act(async () => finishUpload({ id: "e".repeat(32) }))
+    expect(isDisabled(previewButton)).toBe(false)
   })
 })
 
