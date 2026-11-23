@@ -22,5 +22,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["test/**/*.ts", "test/**/*.tsx", "vitest.config.ts"]
+  "include": ["src/**/*.d.ts", "test/**/*.ts", "test/**/*.tsx", "vitest.config.ts"]
 }

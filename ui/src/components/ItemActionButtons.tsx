@@ -9,7 +9,7 @@ export interface ItemActionMutation<Input> {
   mutate: (input: Input) => void
 }
 
-export interface ItemPlayAction {
+interface ItemPlayAction {
   label: string
   disabled: boolean
   onPlay: () => void
@@ -22,7 +22,8 @@ const VARIANTS = {
     icon: "size-4",
     button: "",
     toggle: "bg-scrim/85",
-    off: "border-white/35 text-white hover:border-primary/70 hover:text-primary",
+    off: "border-white/35 text-white",
+    offHover: "hover:border-primary/70 hover:text-primary",
     favoriteOn: "border-primary/70 text-primary",
     playedOn: "border-primary/70 text-primary",
   },
@@ -30,28 +31,72 @@ const VARIANTS = {
     icon: "size-5",
     button: "relative z-20",
     toggle: "",
-    off: "border-foreground/30 text-foreground/80 hover:border-primary/60 hover:text-primary",
+    off: "border-foreground/30 text-foreground/80",
+    offHover: "hover:border-primary/60 hover:text-primary",
     favoriteOn: "border-primary/70 text-primary",
     playedOn: "border-primary/70 bg-primary/15 text-primary",
   },
 } satisfies Record<ItemActionVariant, Record<string, string>>
 
-export function ItemActionButtons({
-  item,
-  play,
-  favorite,
-  played,
-  playedContext,
-  variant,
-}: {
-  item: Pick<ItemSummary, "id" | "favorite" | "played">
-  play?: ItemPlayAction | null
-  favorite: ItemActionMutation<{ id: string; favorite: boolean }>
-  played: ItemActionMutation<{ id: string; played: boolean; context?: string | null }>
-  playedContext?: string | null
-  variant: ItemActionVariant
-}) {
+type ItemActionButtonsProps =
+  | {
+      item: Pick<ItemSummary, "id" | "favorite" | "played">
+      play?: ItemPlayAction | null
+      favorite: ItemActionMutation<{ id: string; favorite: boolean }>
+      played: ItemActionMutation<{ id: string; played: boolean; context?: string | null }>
+      playedContext?: string | null
+      variant: ItemActionVariant
+      interactive?: true
+    }
+  | {
+      item: Pick<ItemSummary, "id" | "favorite" | "played">
+      play?: boolean
+      variant: ItemActionVariant
+      interactive: false
+    }
+
+export function ItemActionButtons(props: ItemActionButtonsProps) {
+  const { item, variant } = props
+  const interactive = props.interactive !== false
   const styles = VARIANTS[variant]
+  const playClass = cn(
+    "preview-action bg-primary text-primary-foreground",
+    interactive && "hover:bg-primary/85",
+    styles.button,
+  )
+  const offClass = cn(styles.off, interactive && styles.offHover)
+  const favoriteClass = cn(
+    "preview-action border",
+    styles.button,
+    styles.toggle,
+    item.favorite ? styles.favoriteOn : offClass,
+  )
+  const playedClass = cn(
+    "preview-action border",
+    styles.button,
+    styles.toggle,
+    item.played ? styles.playedOn : offClass,
+  )
+
+  if (props.interactive === false) {
+    return (
+      <>
+        {props.play && (
+          <span aria-hidden className={playClass}>
+            <Play className={cn(styles.icon, "fill-current")} />
+          </span>
+        )}
+        <span aria-hidden className={favoriteClass}>
+          <Heart className={cn(styles.icon, item.favorite && "fill-current")} />
+        </span>
+        <span aria-hidden className={playedClass}>
+          <Check className={styles.icon} />
+        </span>
+      </>
+    )
+  }
+
+  const { play, favorite, played, playedContext } = props
   const act = (action: () => void) => (event: MouseEvent) => {
     if (variant === "panel") event.stopPropagation()
     action()
@@ -66,7 +111,7 @@ export function ItemActionButtons({
           aria-label={play.label}
           title={play.label}
           onClick={act(play.onPlay)}
-          className={cn("preview-action bg-primary text-primary-foreground hover:bg-primary/85", styles.button)}
+          className={playClass}
         >
           <Play className={cn(styles.icon, "fill-current")} />
         </Pressable>
@@ -77,12 +122,7 @@ export function ItemActionButtons({
         aria-pressed={item.favorite}
         title={favoriteLabel}
         onClick={act(() => favorite.mutate({ id: item.id, favorite: !item.favorite }))}
-        className={cn(
-          "preview-action border",
-          styles.button,
-          styles.toggle,
-          item.favorite ? styles.favoriteOn : styles.off,
-        )}
+        className={favoriteClass}
       >
         <Heart className={cn(styles.icon, item.favorite && "fill-current")} />
       </Pressable>
@@ -92,12 +132,7 @@ export function ItemActionButtons({
         aria-pressed={item.played}
         title={playedLabel}
         onClick={act(() => played.mutate({ id: item.id, played: !item.played, context: playedContext }))}
-        className={cn(
-          "preview-action border",
-          styles.button,
-          styles.toggle,
-          item.played ? styles.playedOn : styles.off,
-        )}
+        className={playedClass}
       >
         <Check className={styles.icon} />
       </Pressable>

@@ -1,8 +1,7 @@
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
   if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return true
-  const mode = target.getAttribute("contenteditable")
-  return target.isContentEditable || mode === "true" || mode === "" || mode === "plaintext-only"
+  return target.isContentEditable
 }
 
 const BROWSER_SHORTCUTS = new Set(["p", "s", "u", "r", "-", "=", "+", "0"])

@@ -30,11 +30,18 @@ function moveFocus(container: HTMLElement | null, to: Move) {
   focusRow(rows[index])
 }
 
-function focusRow(row: HTMLElement | undefined) {
-  const target =
+function focusTarget(row: HTMLElement | undefined) {
+  return (
     row?.querySelector<HTMLElement>('[role="slider"], [role="radio"][data-state="checked"], [role="radio"]') ?? row
-  target?.focus()
+  )
+}
+
+function focusRow(row: HTMLElement | undefined): boolean {
+  const target = focusTarget(row)
+  if (!target || target.style.display === "none") return false
+  target.focus()
   row?.scrollIntoView({ block: "nearest" })
+  return document.activeElement === target
 }
 
 interface PanelsProps {
@@ -103,14 +110,24 @@ export function ReaderPanels(props: PanelsProps) {
 function useInitialFocus<T extends HTMLElement = HTMLDivElement>(entry: string | null) {
   const list = useRef<T>(null)
   useEffect(() => {
-    let frame = 0
-    const attempt = (left: number) => {
-      const rows = [...(list.current?.querySelectorAll<HTMLElement>(ROW) ?? [])]
-      focusRow(rows.find((row) => row.dataset.readerEntry === entry) ?? rows[0])
-      if (left > 0 && !list.current?.contains(document.activeElement)) frame = requestAnimationFrame(() => attempt(left - 1))
+    const container = list.current
+    if (!container) return
+    const initialRow = () => {
+      const rows = [...container.querySelectorAll<HTMLElement>(ROW)]
+      return rows.find((row) => row.dataset.readerEntry === entry) ?? rows[0]
     }
-    attempt(5)
-    return () => cancelAnimationFrame(frame)
+    const focusInitial = () => focusRow(initialRow())
+    if (focusInitial()) return
+    const observer = new MutationObserver(() => {
+      if (container.contains(document.activeElement) || focusInitial()) observer.disconnect()
+    })
+    observer.observe(initialRow() ?? container, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["style"],
+    })
+    return () => observer.disconnect()
   }, [entry])
   return list
 }

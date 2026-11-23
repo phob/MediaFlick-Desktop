@@ -56,12 +56,14 @@ export const MediaCard = memo(function MediaCard({
   landscape = false,
   ribbon,
   preview = true,
+  interactive = true,
 }: {
   item: ItemSummary
   className?: string
   landscape?: boolean
   ribbon?: string
   preview?: boolean
+  interactive?: boolean
 }) {
   const protectedEpisode = useSpoilerProtection(originalItem)
   const item = protectedEpisode ? concealEpisode(originalItem) : originalItem
@@ -81,6 +83,79 @@ export const MediaCard = memo(function MediaCard({
   const image = images[imageIndex]
   const unplayed = item.kind === "Series" ? item.unplayedCount ?? 0 : 0
   const unplayedId = useId()
+  const detailPath = `/item/${encodeURIComponent(item.id)}`
+
+  const artwork = (
+    <>
+      {image ? (
+        <img
+          src={image}
+          alt=""
+          decoding="async"
+          onError={() => setImageIndex((current) => current + 1)}
+          className={cn(
+            "media-artwork-image h-full w-full",
+            !landscape && artworkShape(item.primaryAspect) === "square" ? "object-contain" : "object-cover",
+          )}
+        />
+      ) : (
+        <span className="flex h-full w-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
+          {item.name}
+        </span>
+      )}
+      {catalogItem && <RatingOverlay item={item} topRightOccupied={Boolean(ribbon) || unplayed > 0} />}
+      {(ribbon || unplayed > 0) && (
+        <div className="absolute top-0 right-0 z-[4] flex flex-col items-end gap-px">
+          {ribbon && (
+            <div className="data-label bg-primary px-1.5 py-1 leading-none text-primary-foreground">
+              {ribbon}
+            </div>
+          )}
+          {unplayed > 0 && (
+            <div
+              id={unplayedId}
+              data-unplayed-count={unplayed}
+              title={`${unplayed} unwatched ${unplayed === 1 ? "episode" : "episodes"}`}
+              className="data-label min-w-6 bg-primary px-1.5 py-1 text-center leading-none text-primary-foreground"
+            >
+              <span aria-hidden="true">{unplayed.toLocaleString()}</span>
+              <span className="sr-only">
+                {unplayed} unwatched {unplayed === 1 ? "episode" : "episodes"}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      <CardTechnicalReadout item={item} active={technicalVisible} />
+      {(progress > 0 || item.played) && (
+        <div
+          className="absolute inset-x-0 bottom-0 z-[7] h-[3px] bg-scrim/65"
+          title={progress > 0 ? undefined : "Watched"}
+        >
+          <div className="h-full bg-primary" style={{ width: `${(progress || 1) * 100}%` }} />
+        </div>
+      )}
+    </>
+  )
+
+  const caption = (
+    <>
+      <div className="truncate text-sm font-medium transition-colors group-hover:text-primary">
+        {item.name}
+      </div>
+      {(subtitle || remaining) && (
+        <div className="data-value flex min-w-0 items-center gap-1.5 text-muted-foreground">
+          {subtitle && <span className="truncate">{subtitle}</span>}
+          {subtitle && remaining && (
+            <span className="shrink-0 text-primary/50" aria-hidden>
+              /
+            </span>
+          )}
+          {remaining && <span className="shrink-0">{remaining}</span>}
+        </div>
+      )}
+    </>
+  )
 
   return (
     <article
@@ -99,84 +174,32 @@ export const MediaCard = memo(function MediaCard({
           landscape ? "h-landscape-h w-landscape-w" : "h-poster-h w-poster-w",
         )}
       >
-        <Link
-          to={`/item/${encodeURIComponent(item.id)}`}
-          state={navigationState}
-          aria-label={`Open details for ${item.name}`}
-          aria-describedby={unplayed > 0 ? unplayedId : undefined}
-          className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-        >
-          {image ? (
-            <img
-              src={image}
-              alt=""
-              decoding="async"
-              onError={() => setImageIndex((current) => current + 1)}
-              className={cn(
-                "media-artwork-image h-full w-full",
-                !landscape && artworkShape(item.primaryAspect) === "square" ? "object-contain" : "object-cover",
-              )}
-            />
-          ) : (
-            <span className="flex h-full w-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
-              {item.name}
-            </span>
-          )}
-          {catalogItem && <RatingOverlay item={item} topRightOccupied={Boolean(ribbon) || unplayed > 0} />}
-          {(ribbon || unplayed > 0) && (
-            <div className="absolute top-0 right-0 z-[4] flex flex-col items-end gap-px">
-              {ribbon && (
-                <div className="data-label bg-primary px-1.5 py-1 leading-none text-primary-foreground">
-                  {ribbon}
-                </div>
-              )}
-              {unplayed > 0 && (
-                <div
-                  id={unplayedId}
-                  data-unplayed-count={unplayed}
-                  title={`${unplayed} unwatched ${unplayed === 1 ? "episode" : "episodes"}`}
-                  className="data-label min-w-6 bg-primary px-1.5 py-1 text-center leading-none text-primary-foreground"
-                >
-                  <span aria-hidden="true">{unplayed.toLocaleString()}</span>
-                  <span className="sr-only">
-                    {unplayed} unwatched {unplayed === 1 ? "episode" : "episodes"}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-          <CardTechnicalReadout item={item} active={technicalVisible} />
-          {(progress > 0 || item.played) && (
-            <div
-              className="absolute inset-x-0 bottom-0 z-[7] h-[3px] bg-scrim/65"
-              title={progress > 0 ? undefined : "Watched"}
-            >
-              <div className="h-full bg-primary" style={{ width: `${(progress || 1) * 100}%` }} />
-            </div>
-          )}
-        </Link>
-        {catalogItem && !previewsEnabled && <CardInlineActions item={item} />}
-      </div>
-      <Link
-        to={`/item/${encodeURIComponent(item.id)}`}
-        state={navigationState}
-        className="min-w-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <div className="truncate text-sm font-medium transition-colors group-hover:text-primary">
-          {item.name}
-        </div>
-        {(subtitle || remaining) && (
-          <div className="data-value flex min-w-0 items-center gap-1.5 text-muted-foreground">
-            {subtitle && <span className="truncate">{subtitle}</span>}
-            {subtitle && remaining && (
-              <span className="shrink-0 text-primary/50" aria-hidden>
-                /
-              </span>
-            )}
-            {remaining && <span className="shrink-0">{remaining}</span>}
-          </div>
+        {interactive ? (
+          <Link
+            to={detailPath}
+            state={navigationState}
+            aria-label={`Open details for ${item.name}`}
+            aria-describedby={unplayed > 0 ? unplayedId : undefined}
+            className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          >
+            {artwork}
+          </Link>
+        ) : (
+          <div className="absolute inset-0">{artwork}</div>
         )}
-      </Link>
+        {catalogItem && !previewsEnabled && <CardInlineActions item={item} interactive={interactive} />}
+      </div>
+      {interactive ? (
+        <Link
+          to={detailPath}
+          state={navigationState}
+          className="min-w-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {caption}
+        </Link>
+      ) : (
+        <div className="min-w-0 rounded-sm">{caption}</div>
+      )}
     </article>
   )
 })
