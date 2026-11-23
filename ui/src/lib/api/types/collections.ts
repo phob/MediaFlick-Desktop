@@ -6,6 +6,8 @@ export type CollectionTemplatePictogram = Wire.TemplatePictogram
 
 export type CollectionSettings = Wire.CollectionSettings
 
+export type CollectionSettingsPatch = Wire.CollectionSettingsPatch
+
 export type CollectionProfile = Wire.CollectionProfile
 
 export type CollectionProfileDraft = Wire.CollectionProfileDraft

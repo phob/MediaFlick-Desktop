@@ -909,3 +909,57 @@ fn editing_to_duplicate_title_rolls_back_staged_snapshot_revision() {
     assert_eq!(stored[0].title, "Daily MDBList");
     assert_eq!(stored[0].revision, existing.revision);
 }
+
+#[test]
+fn patching_collection_settings_leaves_omitted_fields_untouched() {
+    let fixture = TestServices::signed_in_as("http://127.0.0.1:9", "user-patch-partial");
+    let account = fixture.services.session.account_key().expect("account");
+    let patch_request = |payload: serde_json::Value| ApiRequest {
+        method: "PATCH".to_string(),
+        path: "/api/collections/settings".to_string(),
+        query: String::new(),
+        body: RawBody::new(serde_json::to_vec(&payload).expect("patch json")),
+        range: None,
+        cancelled: Arc::new(AtomicBool::new(false)),
+    };
+
+    let unreleased_only =
+        super::super::dispatch(&patch_request(json!({ "includeUnreleased": true })), || {
+            Ok(fixture.services.clone())
+        });
+    assert_eq!(unreleased_only.status, 200);
+    let body: serde_json::Value = serde_json::from_slice(&unreleased_only.body).expect("json");
+    assert_eq!(body["modeSelection"], serde_json::Value::Null);
+    assert_eq!(body["effectiveMode"], "jellyfin");
+    assert_eq!(body["franchises"]["includeUnreleased"], true);
+    let stored = fixture.services.collections.account(&account);
+    assert_eq!(stored.mode_selection, None);
+    assert!(stored.franchises.include_unreleased);
+
+    let mode_only = super::super::dispatch(
+        &patch_request(json!({ "modeSelection": "jellyfin" })),
+        || Ok(fixture.services.clone()),
+    );
+    assert_eq!(mode_only.status, 200);
+    let body: serde_json::Value = serde_json::from_slice(&mode_only.body).expect("json");
+    assert_eq!(body["modeSelection"], "jellyfin");
+    assert_eq!(body["franchises"]["includeUnreleased"], true);
+    let stored = fixture.services.collections.account(&account);
+    assert_eq!(
+        stored.mode_selection,
+        Some(crate::collections::CollectionMode::Jellyfin)
+    );
+    assert!(stored.franchises.include_unreleased);
+
+    let clear_unreleased = super::super::dispatch(
+        &patch_request(json!({ "includeUnreleased": false })),
+        || Ok(fixture.services.clone()),
+    );
+    assert_eq!(clear_unreleased.status, 200);
+    let stored = fixture.services.collections.account(&account);
+    assert_eq!(
+        stored.mode_selection,
+        Some(crate::collections::CollectionMode::Jellyfin)
+    );
+    assert!(!stored.franchises.include_unreleased);
+}

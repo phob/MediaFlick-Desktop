@@ -45,6 +45,7 @@ import {
   type CollectionProfile,
   type CollectionProfileDraft,
   type CollectionSettings,
+  type CollectionSettingsPatch,
   type CollectionTemplate,
   type CollectionTemplates,
 } from "@/lib/api"
@@ -122,6 +123,16 @@ type CollectionSettingsDraft = {
   includeUnreleased: boolean
   profileIds: string[]
   deletedProfileIds: string[]
+}
+
+function buildCollectionSettingsPatch(
+  value: CollectionSettingsDraft,
+  baseline: CollectionSettingsDraft,
+): CollectionSettingsPatch | null {
+  const patch: CollectionSettingsPatch = {}
+  if (value.modeSelection !== baseline.modeSelection) patch.modeSelection = value.modeSelection
+  if (value.includeUnreleased !== baseline.includeUnreleased) patch.includeUnreleased = value.includeUnreleased
+  return Object.keys(patch).length ? patch : null
 }
 
 const GENERAL_DESCRIPTION = "Choose which collection experience this account sees."
@@ -754,37 +765,41 @@ export default function CollectionSettingsPage() {
   }) : null, [profiles.data, settings.data])
   const [draft, setDraft, , acceptSaved] = useSourceDraft(savedDraft, account)
   const save = useMutation({
-    mutationFn: async (value: CollectionSettingsDraft) => {
-      const savedIds = savedDraft?.profileIds ?? []
+    mutationFn: async ({ value, baseline }: { value: CollectionSettingsDraft; baseline: CollectionSettingsDraft }) => {
+      const savedIds = baseline.profileIds
       const kept = (ids: string[]) => ids.filter((id) => !value.deletedProfileIds.includes(id))
       const deletions = value.deletedProfileIds.filter((id) => savedIds.includes(id))
       for (const id of deletions) await api.collections.deleteProfile(id)
-      const nextSettings = await api.collections.patchSettings({
-        modeSelection: value.modeSelection,
-        includeUnreleased: value.includeUnreleased,
-      })
+      const settingsPatch = buildCollectionSettingsPatch(value, baseline)
+      const nextSettings = settingsPatch
+        ? await api.collections.patchSettings(settingsPatch)
+        : deletions.length ? await api.collections.settings() : settings.data
       const order = kept(value.profileIds)
       const nextProfiles = !sameJson(order, kept(savedIds))
         ? await api.collections.reorderProfiles(order)
         : deletions.length ? await api.collections.profiles() : profiles.data
       return { settings: nextSettings, profiles: nextProfiles }
     },
-    onSuccess: ({ settings: nextSettings, profiles: nextProfiles }, submitted) => {
+    onSuccess: ({ settings: nextSettings, profiles: nextProfiles }, { value: submitted }) => {
       acceptSaved({
-        modeSelection: nextSettings.modeSelection ?? nextSettings.effectiveMode,
-        includeUnreleased: nextSettings.franchises.includeUnreleased,
+        modeSelection: nextSettings
+          ? nextSettings.modeSelection ?? nextSettings.effectiveMode
+          : submitted.modeSelection,
+        includeUnreleased: nextSettings
+          ? nextSettings.franchises.includeUnreleased
+          : submitted.includeUnreleased,
         profileIds: nextProfiles?.profiles.map((profile) => profile.id)
           ?? submitted.profileIds.filter((id) => !submitted.deletedProfileIds.includes(id)),
         deletedProfileIds: [],
       }, submitted)
-      cache.setQueryData(queryKeys.collectionSettings(account), nextSettings)
+      if (nextSettings) cache.setQueryData(queryKeys.collectionSettings(account), nextSettings)
       if (nextProfiles) cache.setQueryData(queryKeys.collectionProfiles(account), nextProfiles)
       void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
       void cache.invalidateQueries({ queryKey: queryKeys.home })
       toast.success("Collection settings saved")
     },
     onError: (error: Error) => toastFailure(error),
-    onSettled: (_data, _error, submitted) => {
+    onSettled: (_data, _error, { value: submitted }) => {
       if (submitted.deletedProfileIds.length) void cache.invalidateQueries({ queryKey: queryKeys.collectionsOf(account) })
     },
   })
@@ -875,7 +890,7 @@ export default function CollectionSettingsPage() {
       <SaveBar
         dirty={Boolean(draft && savedDraft && !sameJson(draft, savedDraft))}
         saving={save.isPending}
-        onSave={() => { if (draft) save.mutate(draft) }}
+        onSave={() => { if (draft && savedDraft) save.mutate({ value: draft, baseline: savedDraft }) }}
         onDiscard={() => setDraft(savedDraft)}
         onReset={() => { if (draft && savedDraft && settings.data) setDraft({
           ...savedDraft,
