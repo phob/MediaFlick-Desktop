@@ -235,7 +235,7 @@ export const api = {
   playPrevious: (itemId: string) => request("POST /api/play/previous", { body: { itemId } }),
   playbackNeighbors: (itemId: string) => request("POST /api/play/neighbors", { body: { itemId } }),
 
-  playerState: () => request("GET /api/player/state"),
+  playerState: (signal?: AbortSignal) => request("GET /api/player/state", { signal }),
   playerCommand: (command: PlayerCommand) => request("POST /api/player/command", { body: command }),
 
   sync: () => request("POST /api/sync"),

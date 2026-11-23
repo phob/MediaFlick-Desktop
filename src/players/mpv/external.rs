@@ -44,6 +44,7 @@ impl ExternalMpv {
         command.arg("--input-vo-keyboard=yes");
         command.arg("--load-scripts=yes");
         command.arg("--idle=yes");
+        command.arg("--keep-open=no");
         command.arg(format!("--input-ipc-server={ipc_path}"));
         command
     }

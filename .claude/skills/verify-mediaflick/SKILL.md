@@ -13,8 +13,8 @@ How it works:
   - Windows (`scripts/isolate-windows.ps1`): a new desktop `MediaFlick.Verify.<pid>.<tick>`, never switched to, and a kill-on-close job.
   - Linux (`scripts/isolate-linux.sh`): a private Xvfb display chosen with `-displayfd`. `WAYLAND_DISPLAY` is unset, `XDG_RUNTIME_DIR` is private, the session bus is private or absent, and the run gets its own session and process group.
 - `session.mjs` refuses to launch anything until `platform.mjs` has confirmed that isolation from inside it. On Windows a child process reports its own desktop, which must differ from the visible input desktop. On Linux, `DISPLAY` must belong to the wrapper's Xvfb, with no Wayland and the private runtime dir.
-- The disposable profile is `<os tmp>/mediaflick-verify-<run-id>-<session-pid>-<random>`. On Windows the app gets `APPDATA`, `LOCALAPPDATA` and `TEMP` inside it. On Linux it gets `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` inside it, and the wrapper's private runtime dir as `TMPDIR`. Chromium's singleton socket and mpv's IPC socket live in `TMPDIR`, and a Unix socket path may not exceed 107 bytes; inside the profile it would. The app resolves its directories from exactly these variables (`src/app/paths.rs`). Its single-instance gate is keyed by `instance.json` in that config dir, so a verify run never collides with the user's own MediaFlick, which can keep running.
-- The user's real `accounts.json`, `settings.json`, `collections.json`, `playback-preferences.json`, `pending-deletions.json`, `instance.json` and `library.db` are never opened for writing. The session fingerprints their size and mtime before and after (`guard.json`) and fails the run if they changed while no user instance was running.
+- The disposable profile is `<os tmp>/mediaflick-verify-<run-id>-<session-pid>-<random>`. On Windows the app gets `APPDATA`, `LOCALAPPDATA` and `TEMP` inside it. On Linux it gets `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` inside it, and the wrapper's private runtime dir as `TMPDIR`. Chromium's singleton socket and mpv's IPC socket live in `TMPDIR`, and a Unix socket path may not exceed 107 bytes; inside the profile it would. The app resolves its directories from exactly these variables (`src/app/paths.rs`). Its single-instance gate is keyed by its data directory (`instance.lock` on Unix, or a deterministic mutex derived from the canonical data dir on Windows), so a verify run never collides with the user's own MediaFlick, which can keep running.
+- The user's real `accounts.json`, `settings.json`, `collections.json`, `playback-preferences.json`, `pending-deletions.json`, `instance.json`, `instance.lock` and `library.db` are never opened for writing. The session fingerprints their size and mtime before and after (`guard.json`) and fails the run if they changed while no user instance was running.
 
 Drive scripts, the harness and the session are platform-neutral Node. Only the two wrappers and `scripts/platform.mjs` (isolation check, process listing, tree kill, app environment) are per-OS.
 
@@ -109,7 +109,7 @@ Each session also runs an in-session doctor and writes `doctor.json`. It require
 
 - the CDP page at `mediaflick-desktop://app`;
 - `/api/status` answering 200;
-- `instance.json` created in the disposable config dir, which proves the app really resolved its profile there;
+- `mediaflick-desktop.log` created in the disposable config dir (and `instance.lock` in the disposable data dir on Unix), which proves the app really resolved its profile there;
 - our PID alive as an app process.
 
 ## Drive

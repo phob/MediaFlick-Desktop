@@ -65,3 +65,5 @@ pub(super) fn is_active() -> bool {
 
 #[cfg(target_os = "linux")]
 pub(super) use self::linux::reveal;
+#[cfg(target_os = "windows")]
+pub(super) use self::windows::focus;

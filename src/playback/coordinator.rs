@@ -279,6 +279,10 @@ impl PlaybackCoordinator {
         self.shared.project(self.shared.backend().snapshot())
     }
 
+    pub fn release_external_runtime(&self) {
+        self.shared.backend().release_external_runtime();
+    }
+
     pub fn shutdown(&self) {
         self.shared.backend().shutdown();
     }
@@ -415,6 +419,13 @@ impl Actor {
                 mut request,
                 owner,
             } => {
+                if !owner.is_current() {
+                    tracing::info!(
+                        target: "playback",
+                        "dropped a queued video load for an account that is no longer signed in"
+                    );
+                    return;
+                }
                 self.abandon_audio();
                 let load_id = allocate_playback_id();
                 request.load_id = load_id;
@@ -840,6 +851,66 @@ mod tests {
                 .expect("snapshot answered while native_window waited")
                 .active,
             "the snapshot came from the backend"
+        );
+    }
+
+    struct LoadRecordingBackend {
+        loads: Mutex<mpsc::Sender<i64>>,
+    }
+
+    impl PlayerBackend for LoadRecordingBackend {
+        fn warm(&self, _path: String, _fullscreen: FullscreenBehavior) {}
+
+        fn native_window(&self, _timeout: Duration) -> Option<NativeWindowHandle> {
+            None
+        }
+
+        fn load(&self, _path: String, _fullscreen: FullscreenBehavior, request: PlaybackRequest) {
+            let _ = self.loads.lock().expect("loads").send(request.load_id);
+        }
+
+        fn control(&self, _command: PlayerCommand) {}
+
+        fn stop_and_wait(&self, _timeout: Duration) -> bool {
+            true
+        }
+
+        fn set_preferences(&self, _preferences: PlayerPreferences) {}
+
+        fn snapshot(&self) -> PlayerSnapshot {
+            PlayerSnapshot::default()
+        }
+
+        fn shutdown(&self) {}
+    }
+
+    struct StaleOwner;
+
+    impl PlaybackOwner for StaleOwner {
+        fn is_current(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn queued_video_load_for_a_signed_out_owner_does_not_reach_backend() {
+        let (loads_tx, loads_rx) = mpsc::channel();
+        let (shell, _events) = mpsc::channel();
+        let coordinator = PlaybackCoordinator::new(shell, move |_| {
+            Box::new(LoadRecordingBackend {
+                loads: Mutex::new(loads_tx),
+            })
+        });
+        coordinator.open(
+            "mpv".to_string(),
+            FullscreenBehavior::Windowed,
+            PlaybackRequest::new("https://example.test/video.mkv"),
+            Arc::new(StaleOwner),
+        );
+        let loaded = loads_rx.recv_timeout(Duration::from_millis(150));
+        assert!(
+            loaded.is_err(),
+            "stale video load reached backend: {loaded:?}"
         );
     }
 }

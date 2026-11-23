@@ -36,16 +36,34 @@ pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<Pla
     let state = Arc::downgrade(state);
     spawn_named("playback-event-bridge", move || {
         let mut last_logged_snapshot = None;
-        let mut post = |event| {
+        let mut last_posted_identity: Option<(bool, Option<i64>)> = None;
+        let mut post = |event, last_identity: &mut Option<(bool, Option<i64>)>| {
             let Some(state) = state.upgrade() else {
                 return false;
             };
+            match &event {
+                PlaybackEvent::StateChanged(snapshot) => {
+                    *last_identity = Some((snapshot.active, snapshot.playback_id));
+                }
+                PlaybackEvent::Stopped(snapshot) => {
+                    if last_identity.is_none_or(|(_, id)| {
+                        snapshot.playback_id.is_none() || id == snapshot.playback_id
+                    }) {
+                        *last_identity = Some((false, None));
+                    }
+                }
+                PlaybackEvent::ItemFinished(_) | PlaybackEvent::Failed { .. } => {}
+            }
             let log_event = playback_event_needs_log(&mut last_logged_snapshot, &event);
             let mut task = PlaybackEventTask::new(state, event, log_event);
-            if post_task(ThreadId::UI, Some(&mut task)) == 0 {
-                tracing::warn!(target: "bridge", "failed to post playback event to CEF UI thread");
+            match post_ui_task(&mut task) {
+                PostOutcome::Posted => true,
+                PostOutcome::ShuttingDown => false,
+                PostOutcome::Failed => {
+                    tracing::warn!(target: "bridge", "failed to post playback event to CEF UI thread");
+                    true
+                }
             }
-            true
         };
         let mut pending_state = None;
         let mut state_deadline: Option<Instant> = None;
@@ -60,17 +78,32 @@ pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<Pla
             };
             match received {
                 Ok(PlaybackEvent::StateChanged(snapshot)) => {
-                    pending_state = Some(snapshot);
-                    state_deadline.get_or_insert_with(|| Instant::now() + STATE_PUSH_INTERVAL);
+                    let identity = (snapshot.active, snapshot.playback_id);
+                    if last_posted_identity != Some(identity) {
+                        pending_state = None;
+                        state_deadline = None;
+                        if !post(
+                            PlaybackEvent::StateChanged(snapshot),
+                            &mut last_posted_identity,
+                        ) {
+                            break;
+                        }
+                    } else {
+                        pending_state = Some(snapshot);
+                        state_deadline.get_or_insert_with(|| Instant::now() + STATE_PUSH_INTERVAL);
+                    }
                 }
                 Ok(event) => {
                     if let Some(snapshot) = pending_state.take()
-                        && !post(PlaybackEvent::StateChanged(snapshot))
+                        && !post(
+                            PlaybackEvent::StateChanged(snapshot),
+                            &mut last_posted_identity,
+                        )
                     {
                         break;
                     }
                     state_deadline = None;
-                    if !post(event) {
+                    if !post(event, &mut last_posted_identity) {
                         break;
                     }
                 }
@@ -80,13 +113,19 @@ pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<Pla
                         continue;
                     };
                     state_deadline = None;
-                    if !post(PlaybackEvent::StateChanged(snapshot)) {
+                    if !post(
+                        PlaybackEvent::StateChanged(snapshot),
+                        &mut last_posted_identity,
+                    ) {
                         break;
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     if let Some(snapshot) = pending_state {
-                        let _ = post(PlaybackEvent::StateChanged(snapshot));
+                        let _ = post(
+                            PlaybackEvent::StateChanged(snapshot),
+                            &mut last_posted_identity,
+                        );
                     }
                     break;
                 }
@@ -136,8 +175,12 @@ pub(super) fn start_preferences_event_bridge(state: &BrowserState, services: &Se
                 break;
             };
             let mut task = PreferencesChangeTask::new(state, change);
-            if post_task(ThreadId::UI, Some(&mut task)) == 0 {
-                tracing::warn!(target: "config", "failed to post preference change to CEF UI thread");
+            match post_ui_task(&mut task) {
+                PostOutcome::Posted => {}
+                PostOutcome::ShuttingDown => break,
+                PostOutcome::Failed => {
+                    tracing::warn!(target: "config", "failed to post preference change to CEF UI thread");
+                }
             }
         }
     });
@@ -152,8 +195,12 @@ pub(super) fn start_shell_request_bridge(state: &BrowserState, services: &Servic
                 break;
             };
             let mut task = ShellRequestTask::new(state, request);
-            if post_task(ThreadId::UI, Some(&mut task)) == 0 {
-                tracing::warn!(target: "shell", "failed to post shell request to CEF UI thread");
+            match post_ui_task(&mut task) {
+                PostOutcome::Posted => {}
+                PostOutcome::ShuttingDown => break,
+                PostOutcome::Failed => {
+                    tracing::warn!(target: "shell", "failed to post shell request to CEF UI thread");
+                }
             }
         }
     });
@@ -169,14 +216,14 @@ pub(super) fn start_update_check_bridge(state: BrowserState) {
 
 pub(super) fn post_update_event(state: BrowserState, event: UpdateEvent) {
     let mut task = UpdateEventTask::new(state, event);
-    if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+    if post_ui_task(&mut task) == PostOutcome::Failed {
         tracing::warn!(target: "updater", "failed to post update event to CEF UI thread");
     }
 }
 
 pub(super) fn post_mpv_setup_event(state: BrowserState, event: MpvSetupEvent) {
     let mut task = MpvSetupEventTask::new(state, event);
-    if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+    if post_ui_task(&mut task) == PostOutcome::Failed {
         tracing::warn!(target: "mpv.setup", "failed to post mpv setup event to CEF UI thread");
     }
 }
@@ -316,7 +363,7 @@ wrap_task! {
 
 pub(super) fn post_bridge_action(request_url: String, state: BrowserState) {
     let mut task = BridgeActionTask::new(request_url, state);
-    if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+    if post_ui_task(&mut task) == PostOutcome::Failed {
         tracing::warn!(target: "bridge", "failed to post bridge action to CEF UI thread");
     }
 }
@@ -357,7 +404,7 @@ wrap_task! {
 
 pub(super) fn post_browser_load_url(state: BrowserState, browser: Browser, url: String) {
     let mut task = BrowserLoadUrlTask::new(state, browser, url);
-    if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+    if post_ui_task(&mut task) == PostOutcome::Failed {
         tracing::warn!(target: "cef", "failed to schedule renderer recovery navigation");
     }
 }
@@ -487,7 +534,7 @@ fn post_playback_cache_refreshed(
     outcome: PlaybackCacheRefreshOutcome,
 ) {
     let mut task = PlaybackCacheRefreshTask::new(state, item_id, outcome);
-    if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+    if post_ui_task(&mut task) == PostOutcome::Failed {
         tracing::warn!(target: "library.db", "failed to post playback cache refresh completion to CEF UI thread");
     }
 }
@@ -600,9 +647,13 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
                 None => Err("preferences service is unavailable".to_string()),
             };
             match save_result {
-                Ok(()) => progress(request_id, MpvInstallState::Completed { path: mpv_path }),
+                Ok(()) => {
+                    rewarm_external_player_after_setup(state);
+                    progress(request_id, MpvInstallState::Completed { path: mpv_path });
+                }
                 Err(message) => {
                     tracing::warn!(target: "mpv.setup", "failed to save installed mpv path: {message}");
+                    rewarm_external_player_after_setup(state);
                     progress(request_id, MpvInstallState::Failed { message });
                 }
             }
@@ -613,8 +664,23 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
         } => {
             tracing::warn!(target: "mpv.setup", "mpv setup failed: {message}");
             finished();
+            rewarm_external_player_after_setup(state);
             progress(request_id, MpvInstallState::Failed { message });
         }
+    }
+}
+
+fn rewarm_external_player_after_setup(state: &BrowserState) {
+    let Some(playback) = state.lock().ok().map(|state| state.playback.clone()) else {
+        return;
+    };
+    let settings = locator::services()
+        .map(|services| services.preferences.snapshot())
+        .or_else(|| state.lock().ok().map(|state| state.settings.clone()));
+    if let Some(settings) = settings
+        && settings.effective_backend() == crate::preferences::PlayerBackend::Mpv
+    {
+        warm_configured_player(&playback, &settings);
     }
 }
 
@@ -771,7 +837,7 @@ pub(super) fn apply_scrollbar_settings_to_frame(frame: &Frame, state: &BrowserSt
 
 pub(super) fn notify_error(state: &BrowserState, title: &str, body: &str) {
     let mut task = ErrorToastTask::new(state.clone(), title.to_string(), body.to_string());
-    if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+    if post_ui_task(&mut task) == PostOutcome::Failed {
         tracing::warn!(target: "bridge", title, "failed to post error toast to CEF UI thread");
     }
 }

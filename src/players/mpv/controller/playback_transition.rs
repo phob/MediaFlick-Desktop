@@ -47,14 +47,28 @@ impl ControllerState {
         self.publish_snapshot_for_identity(stop_reason, self.current_identity())
     }
 
-    fn publish_snapshot_for_identity(
+    pub(super) fn publish_snapshot_for_identity(
         &self,
         stop_reason: Option<StopReason>,
         identity: Option<&PlaybackIdentity>,
     ) -> PlayerSnapshot {
-        let snapshot = PlayerSnapshot {
+        let active = self.mpv_playback_active || !self.phase.is_idle();
+        let snapshot = self.snapshot_for_identity(active, stop_reason, identity);
+        if let Ok(mut target) = self.snapshot.lock() {
+            *target = snapshot.clone();
+        }
+        snapshot
+    }
+
+    pub(super) fn snapshot_for_identity(
+        &self,
+        active: bool,
+        stop_reason: Option<StopReason>,
+        identity: Option<&PlaybackIdentity>,
+    ) -> PlayerSnapshot {
+        PlayerSnapshot {
             now_playing: None,
-            active: self.mpv_playback_active || !self.phase.is_idle(),
+            active,
             playback_id: identity.map(|identity| identity.playback_id),
             item_id: identity.and_then(|identity| identity.item_id.clone()),
             media_source_id: identity.and_then(|identity| identity.media_source_id.clone()),
@@ -74,11 +88,7 @@ impl ControllerState {
             skip_segments: self.shown_skip_segments(),
             diagnostics: self.playback_diagnostics,
             stop_reason,
-        };
-        if let Ok(mut target) = self.snapshot.lock() {
-            *target = snapshot.clone();
         }
-        snapshot
     }
 
     fn playback_chapters(&self) -> Vec<PlayerChapter> {

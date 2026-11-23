@@ -53,6 +53,10 @@ impl PlayerBackend for MpvController {
         self.snapshot()
     }
 
+    fn release_external_runtime(&self) {
+        self.release_external_runtime();
+    }
+
     fn shutdown(&self) {
         self.shutdown();
     }

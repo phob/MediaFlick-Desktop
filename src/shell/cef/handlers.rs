@@ -334,6 +334,7 @@ wrap_life_span_handler! {
 
         fn on_before_close(&self, browser: Option<&mut Browser>) {
             let Some(mut closing_browser) = browser.cloned() else {
+                mark_cef_shutting_down();
                 quit_message_loop();
                 return;
             };
@@ -372,6 +373,7 @@ wrap_life_span_handler! {
                     services.sync.stop();
                     services.socket.stop();
                 }
+                mark_cef_shutting_down();
                 quit_message_loop();
             }
         }

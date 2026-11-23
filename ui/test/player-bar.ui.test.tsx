@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { PlayerBar } from "@/components/PlayerBar"
 import type { PlayerState } from "@/lib/api"
+import { usePlaybackEventsBridge } from "@/lib/playback-events"
 import { usePlaybackKeys } from "@/lib/playback-keys"
 import { DEFAULT_COMFORT } from "./support/settings"
 import { queryKeys } from "@/lib/query-client"
@@ -500,4 +501,131 @@ it("does not re-render usePlaybackKeys host on seek", async () => {
   fireEvent.keyDown(document.body, { key: "ArrowRight" })
   fireEvent.keyDown(document.body, { key: "ArrowRight" })
   await waitFor(() => expect(renders).toBe(1))
+})
+
+function PlaybackBridgeHost() {
+  usePlaybackEventsBridge()
+  return <PlayerBar />
+}
+
+it("stale in-flight playerState GET completing after Stopped does not reopen PlayerBar", async () => {
+  const activeState: PlayerState = playerSnapshot({
+    active: true,
+    playbackId: 50,
+    itemId: "movie-50",
+    positionMs: 12_000,
+    durationMs: 120_000,
+    paused: false,
+  })
+  let resolveStaleGet: ((response: Response) => void) | undefined
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
+      if (url.includes("/api/player/state")) {
+        return new Promise<Response>((resolve) => {
+          resolveStaleGet = resolve
+        })
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+    }),
+  )
+
+  const client = testQueryClient()
+  client.setQueryData(queryKeys.settings, { client: { player: { playerBackend: "libmpv", comfort: DEFAULT_COMFORT } } })
+  client.setQueryData(queryKeys.playerState, activeState)
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <PlaybackBridgeHost />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  )
+
+  expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy()
+  const refetch = client.invalidateQueries({ queryKey: queryKeys.playerState })
+  await waitFor(() => expect(resolveStaleGet).toBeDefined())
+
+  expect(window.__mediaFlickDesktopPlaybackStopped).toBeDefined()
+  act(() => {
+    window.__mediaFlickDesktopPlaybackStopped?.({
+      ...activeState,
+      active: false,
+      stopReason: "stop",
+    })
+  })
+  expect(client.getQueryData<PlayerState>(queryKeys.playerState)?.active).toBe(false)
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).toBeNull())
+
+  await act(async () => {
+    resolveStaleGet?.(
+      new Response(JSON.stringify(activeState), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    await refetch
+  })
+
+  expect(screen.queryByRole("button", { name: "Stop" })).toBeNull()
+  expect(client.getQueryData<PlayerState>(queryKeys.playerState)?.active).toBe(false)
+})
+
+it("replacement StateChanged followed by Stopped for the previous playbackId keeps PlayerBar active without flicker", async () => {
+  const first: PlayerState = playerSnapshot({ active: true, playbackId: 60, itemId: "movie-a", durationMs: 100_000 })
+  const replacement: PlayerState = playerSnapshot({ active: true, playbackId: 61, itemId: "movie-b", durationMs: 200_000 })
+  let stateResponse: PlayerState = first
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
+      const body = url.includes("/api/player/state") ? stateResponse : {}
+      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } })
+    }),
+  )
+  const client = testQueryClient()
+  const observedActive: boolean[] = []
+  const unsubscribe = client.getQueryCache().subscribe((event) => {
+    if (event.type === "updated" && event.query.queryKey[0] === "player" && event.query.queryKey[1] === "state") {
+      const data = event.query.state.data as PlayerState | undefined
+      if (data) observedActive.push(data.active)
+    }
+  })
+  client.setQueryData(queryKeys.settings, { client: { player: { playerBackend: "libmpv", comfort: DEFAULT_COMFORT } } })
+  client.setQueryData(queryKeys.playerState, first)
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <PlaybackBridgeHost />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  )
+
+  act(() => {
+    window.__mediaFlickDesktopPlaybackStateChanged?.(replacement)
+    window.__mediaFlickDesktopPlaybackStopped?.({
+      ...first,
+      active: false,
+      stopReason: "stop",
+    })
+  })
+
+  expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy()
+  expect(observedActive.length).toBeGreaterThan(0)
+  expect(observedActive.every(Boolean)).toBe(true)
+  expect(client.getQueryData<PlayerState>(queryKeys.playerState)?.playbackId).toBe(61)
+  expect(client.getQueryData<PlayerState>(queryKeys.playerState)?.active).toBe(true)
+
+  stateResponse = first
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: queryKeys.playerState })
+  })
+  expect(client.getQueryData<PlayerState>(queryKeys.playerState)?.playbackId).toBe(61)
+  expect(client.getQueryData<PlayerState>(queryKeys.playerState)?.active).toBe(true)
+  unsubscribe()
 })

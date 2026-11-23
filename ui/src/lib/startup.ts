@@ -23,6 +23,15 @@ export function startupScreenReady({
   return !statusPending && !settingsPending && (!catalogLoading || showingSettings) && !waitingForInitialHome
 }
 
+export function shouldRevealLoadingScreen({
+  statusPending,
+  settingsPending,
+  catalogLoading,
+  showingSettings,
+}: Pick<StartupReadiness, "statusPending" | "settingsPending" | "catalogLoading" | "showingSettings">) {
+  return !statusPending && !settingsPending && catalogLoading && !showingSettings
+}
+
 let revealed = false
 
 export function windowRevealed() {

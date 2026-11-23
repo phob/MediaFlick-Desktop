@@ -63,6 +63,12 @@ export function useLibraryMetadataBridge() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.status })
         return
       }
+      if (detail?.type === "mpv-install-progress") {
+        if (detail.payload.state === "completed") {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.settings })
+        }
+        return
+      }
       if (detail?.type === "libraries-changed") {
         invalidateLibrariesChanged(queryClient)
         return

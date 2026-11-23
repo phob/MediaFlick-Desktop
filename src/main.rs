@@ -21,8 +21,13 @@ use crate::preferences::AppSettings;
 use crate::shell::cef::AppConfig;
 
 fn main() {
+    let exit_code = run();
+    std::process::exit(exit_code);
+}
+
+fn run() -> i32 {
     if let Some(exit_code) = windows::run_command_processor_shim() {
-        std::process::exit(exit_code);
+        return exit_code;
     }
 
     jellyfin::bridge::ensure_session_token();
@@ -32,12 +37,12 @@ fn main() {
             clippy::disallowed_methods,
             reason = "a CEF subprocess reads settings.json once; it never opens the services"
         )]
-        std::process::exit(crate::shell::cef::run(&AppConfig {
+        return crate::shell::cef::run(&AppConfig {
             settings: AppSettings::load_at_startup(),
             title: "MediaFlick Desktop".to_string(),
             remote_debugging_port: 0,
             hidden: false,
-        }));
+        });
     }
 
     let cli = Cli::parse();
@@ -55,21 +60,23 @@ fn main() {
     let _log_guard = logger::init(&log_file, effective_log_level);
 
     if cli.library_stats {
-        std::process::exit(library::headless::print_stats());
+        return library::headless::print_stats();
     }
     if cli.library_sync_once {
-        std::process::exit(library::headless::sync_once());
+        return library::headless::sync_once();
     }
-    let instance_id = crate::app::instance::instance_id();
-    let _instance_guard = match crate::app::instance::InstanceGuard::acquire(&instance_id) {
+    let _instance_guard = match crate::app::instance::InstanceGuard::acquire() {
         Some(guard) => guard,
         None => {
             tracing::info!(
                 target: "main",
                 "another mediaflick-desktop session is already running; exiting"
             );
+            #[cfg(target_os = "windows")]
             crate::app::instance::notify_already_running();
-            std::process::exit(0);
+            #[cfg(not(target_os = "windows"))]
+            crate::shell::cef::notify_already_running();
+            return 0;
         }
     };
 
@@ -99,12 +106,12 @@ fn main() {
         player_path.as_deref().unwrap_or("not configured")
     );
 
-    std::process::exit(crate::shell::cef::run(&AppConfig {
+    crate::shell::cef::run(&AppConfig {
         settings,
         title: "MediaFlick Desktop".to_string(),
         remote_debugging_port: cli.remote_debugging_port,
         hidden: cli.hidden,
-    }));
+    })
 }
 
 fn is_cef_subprocess() -> bool {

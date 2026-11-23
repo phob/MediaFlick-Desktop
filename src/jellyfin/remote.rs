@@ -114,14 +114,31 @@ pub(crate) fn parse_general(data: &Value) -> GeneralAction {
 pub enum RemoteCommand {
     Play { data: Value, scope: SessionScope },
     Playstate { data: Value, scope: SessionScope },
-    General { data: Value },
+    General { data: Value, scope: SessionScope },
+}
+
+impl RemoteCommand {
+    fn scope(&self) -> &SessionScope {
+        match self {
+            Self::Play { scope, .. }
+            | Self::Playstate { scope, .. }
+            | Self::General { scope, .. } => scope,
+        }
+    }
 }
 
 pub fn handle(services: &Arc<Services>, command: RemoteCommand) {
+    if !services.session.scope_is_current(command.scope()) {
+        tracing::debug!(
+            target: "jellyfin.remote",
+            "ignoring a remote command from a session that is no longer signed in"
+        );
+        return;
+    }
     match command {
         RemoteCommand::Play { data, scope } => handle_play(services, &data, &scope),
         RemoteCommand::Playstate { data, scope } => handle_playstate(services, &data, &scope),
-        RemoteCommand::General { data } => handle_general_command(services, &data),
+        RemoteCommand::General { data, .. } => handle_general_command(services, &data),
     }
 }
 
@@ -427,6 +444,93 @@ mod tests {
         assert_eq!(
             parse_general(&json!({ "Name": "SetVolume", "Arguments": {} })),
             GeneralAction::Unsupported("SetVolume".to_string())
+        );
+    }
+
+    struct RecordingBackend {
+        commands: std::sync::mpsc::Sender<crate::playback::PlayerCommand>,
+    }
+
+    impl crate::playback::PlayerBackend for RecordingBackend {
+        fn warm(&self, _path: String, _fullscreen: crate::preferences::FullscreenBehavior) {}
+
+        fn native_window(
+            &self,
+            _timeout: std::time::Duration,
+        ) -> Option<crate::playback::NativeWindowHandle> {
+            None
+        }
+
+        fn load(
+            &self,
+            _path: String,
+            _fullscreen: crate::preferences::FullscreenBehavior,
+            _request: crate::playback::PlaybackRequest,
+        ) {
+        }
+
+        fn control(&self, command: crate::playback::PlayerCommand) {
+            let _ = self.commands.send(command);
+        }
+
+        fn stop_and_wait(&self, _timeout: std::time::Duration) -> bool {
+            true
+        }
+
+        fn set_preferences(&self, _preferences: crate::preferences::PlayerPreferences) {}
+
+        fn snapshot(&self) -> crate::playback::PlayerSnapshot {
+            crate::playback::PlayerSnapshot::default()
+        }
+
+        fn shutdown(&self) {}
+    }
+
+    #[test]
+    fn remote_playstate_commands_for_a_signed_out_session_are_ignored() {
+        let fixture =
+            crate::app::services::test_support::TestServices::signed_in("http://127.0.0.1:9");
+        let (shell_tx, _shell_rx) = std::sync::mpsc::channel();
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let playback = std::sync::Arc::new(crate::playback::PlaybackCoordinator::new(
+            shell_tx,
+            move |_| Box::new(RecordingBackend { commands: cmd_tx }),
+        ));
+        fixture.services.attach_playback(playback);
+
+        let scope = fixture.services.session.scope().expect("signed in scope");
+        fixture
+            .services
+            .session
+            .clear_local(false)
+            .expect("sign out");
+
+        super::handle(
+            &fixture.services,
+            super::RemoteCommand::Playstate {
+                data: json!({ "Command": "Pause" }),
+                scope: scope.clone(),
+            },
+        );
+        super::handle(
+            &fixture.services,
+            super::RemoteCommand::Playstate {
+                data: json!({ "Command": "Stop" }),
+                scope: scope.clone(),
+            },
+        );
+        super::handle(
+            &fixture.services,
+            super::RemoteCommand::General {
+                data: json!({ "Name": "Mute" }),
+                scope,
+            },
+        );
+
+        let received = cmd_rx.recv_timeout(std::time::Duration::from_millis(150));
+        assert!(
+            received.is_err(),
+            "stale remote command reached backend: {received:?}"
         );
     }
 }

@@ -59,6 +59,10 @@ pub fn start(
         return Err(StartError::NotReady);
     };
 
+    if !services.session.scope_is_current(scope) {
+        return Err(StartError::AccountChanged);
+    }
+
     let mut options = options.clone();
     options.viewing = services.accounts.viewing(scope.account());
     let prepared = prepare(
@@ -76,26 +80,30 @@ pub fn start(
         ApiError::AccountChanged => StartError::AccountChanged,
         error => StartError::Api(error),
     })?;
-    if !services.session.scope_is_current(scope) {
-        return Err(StartError::AccountChanged);
-    }
 
-    tracing::info!(
-        target: "playback",
-        item_id = %options.item_id,
-        play_method = %prepared.play_method,
-        media_source = %prepared.media_source_name,
-        headers = %crate::app::logger::redacted_header_summary(&prepared.request.headers),
-        launch = %crate::app::logger::launch_summary(&prepared.request),
-        origin,
-        "starting playback"
-    );
-    playback.open(
-        player_path,
-        settings.default_fullscreen,
-        prepared.request.clone(),
-        Arc::new(AccountOwner::new(services, scope)),
-    );
+    services.session.commit_if_current(
+        scope,
+        || StartError::AccountChanged,
+        |_live| {
+            tracing::info!(
+                target: "playback",
+                item_id = %options.item_id,
+                play_method = %prepared.play_method,
+                media_source = %prepared.media_source_name,
+                headers = %crate::app::logger::redacted_header_summary(&prepared.request.headers),
+                launch = %crate::app::logger::launch_summary(&prepared.request),
+                origin,
+                "starting playback"
+            );
+            playback.open(
+                player_path,
+                settings.default_fullscreen,
+                prepared.request.clone(),
+                Arc::new(AccountOwner::new(services, scope)),
+            );
+            Ok(())
+        },
+    )?;
     Ok(prepared)
 }
 

@@ -127,6 +127,7 @@ pub trait PlayerBackend: Send + Sync {
     fn stop_and_wait(&self, timeout: Duration) -> bool;
     fn set_preferences(&self, preferences: PlayerPreferences);
     fn snapshot(&self) -> PlayerSnapshot;
+    fn release_external_runtime(&self) {}
     fn shutdown(&self);
 }
 

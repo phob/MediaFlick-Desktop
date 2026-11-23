@@ -753,9 +753,7 @@ impl ControllerState {
         }
     }
 
-    pub(super) fn shutdown(&mut self) {
-        tracing::debug!(target: "playback", state = %self.last_state, "shutting down mpv controller");
-        self.finish_active(Some(StopReason::Quit));
+    fn stop_runtime_gracefully(&mut self) {
         if let Err(error) = self.send_mpv_command(json!({ "command": ["quit"] })) {
             tracing::debug!(target: "mpv.ipc", "failed to send mpv quit during shutdown: {error}");
         }
@@ -772,6 +770,23 @@ impl ControllerState {
             tracing::warn!(target: "mpv.ipc", "mpv did not exit before shutdown deadline; terminating runtime");
             runtime.stop();
         }
+    }
+
+    pub(super) fn release_external_runtime(&mut self) {
+        if self.runtime_kind != super::MpvRuntimeKind::External {
+            return;
+        }
+        tracing::info!(target: "mpv.ipc", "releasing external mpv runtime");
+        self.configured_mpv = None;
+        self.finish_active(Some(StopReason::Quit));
+        self.stop_runtime_gracefully();
+        self.reset_mpv();
+    }
+
+    pub(super) fn shutdown(&mut self) {
+        tracing::debug!(target: "playback", state = %self.last_state, "shutting down mpv controller");
+        self.finish_active(Some(StopReason::Quit));
+        self.stop_runtime_gracefully();
         self.reset_mpv();
         if !flush_playstate_reports(PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT) {
             tracing::warn!(target: "jellyfin.playstate", "timed out flushing queued Jellyfin playback state during shutdown");
