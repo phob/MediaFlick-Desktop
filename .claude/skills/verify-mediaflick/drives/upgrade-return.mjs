@@ -26,8 +26,10 @@ async function steps(ctx, report, record) {
   report.settings = settings
   report.config = JSON.parse(configJson)
 
-  await ctx.find({ role: "link", name: "Settings" }, { timeout: 60000 })
-  const status = (await ctx.api("/api/status")).body
+  const status = await ctx.until(async () => {
+    const body = (await ctx.api("/api/status")).body
+    return body?.authenticated === true ? body : null
+  }, "the app to start signed in", 60000)
   report.status = { authenticated: status.authenticated, userName: status.userName, server: status.server ?? null }
   record(status.authenticated === true, "the app starts signed in as before going back", status.userName)
   const whatsNewQuery = await ctx.until(`(() => {
@@ -53,9 +55,13 @@ async function steps(ctx, report, record) {
   await ctx.app.evaluate(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
   report.whatsNewQuery = whatsNewQuery
   record(whatsNewQuery.status === "success" && whatsNewQuery.pending === false, "the whats-new query settled with nothing pending", whatsNewQuery)
-  record((await ctx.count(DIALOG)) === 0, "no What's new on the return")
+  const dialogCount = await ctx.count(DIALOG)
+  record(dialogCount === 0, "no What's new on the return")
   record((await ctx.api("/api/settings/whats-new")).body.pending === false, "/api/settings/whats-new has nothing pending")
   await ctx.screenshot("01-home")
+  if (dialogCount > 0) return
+
+  await ctx.find({ role: "link", name: "Settings" }, { timeout: 60000 })
 
   await ctx.press({ role: "link", name: "Settings" })
   await ctx.press({ role: "link", name: "Player", within: { role: "navigation", name: "Settings navigation" } })

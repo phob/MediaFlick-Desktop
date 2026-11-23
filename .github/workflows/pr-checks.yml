@@ -76,6 +76,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: ui/pnpm-lock.yaml
 
+      - name: Test CDP client
+        run: node --test scripts/website/cdp.test.mjs
+
       - name: Install UI dependencies
         run: pnpm --dir ui install --frozen-lockfile
 

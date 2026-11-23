@@ -84,26 +84,21 @@ async function cardIds(ctx) {
 
 async function collectVirtualizedFavorites(ctx, targetId) {
   await ctx.until(
-    `document.querySelector("[data-item-grid-canvas]") !== null || (document.querySelector("main")?.innerText ?? "").includes("Nothing to show")`,
+    `document.querySelector("[data-item-grid-canvas]") !== null`,
     "the Favorites grid to render",
     20000,
   )
-  const hasCanvas = await ctx.app.evaluate(`document.querySelector("[data-item-grid-canvas]") !== null`)
-  if (!hasCanvas) {
-    await ctx.park()
-    await ctx.snapshot("favorites")
-    await ctx.screenshot("favorites")
-    return []
-  }
 
   await ctx.app.evaluate(`(() => {
     const scroller = document.querySelector("[data-item-grid-canvas]")?.closest(".overflow-y-auto")
     if (scroller) scroller.scrollTop = 0
   })()`)
 
+  const maxScrollSteps = 500
   const seen = new Set()
   let captured = false
-  for (let step = 0; step < 500; step += 1) {
+  let reachedEnd = false
+  for (let step = 0; step < maxScrollSteps; step += 1) {
     await ctx.until(`!document.querySelector("[data-item-grid-canvas] [data-slot=skeleton]")`, "the visible Favorites pages to load", 30000)
     const ids = await cardIds(ctx)
     for (const id of ids) seen.add(id)
@@ -124,8 +119,12 @@ async function collectVirtualizedFavorites(ctx, targetId) {
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
       return true
     })()`)
-    if (!advanced) break
+    if (!advanced) {
+      reachedEnd = true
+      break
+    }
   }
+  if (!reachedEnd) throw new Error(`Favorites grid did not reach the end within ${maxScrollSteps} scroll steps`)
 
   if (!captured) {
     await ctx.park()
@@ -161,7 +160,10 @@ async function provesFavorites(ctx, report, expect) {
   await toggleFavorite(ctx, episode, true)
   await ctx.screenshot("favorite-episode")
 
-  const favorites = await items(ctx, { favorite: "true", limit: 500 })
+  const favorites = await ctx.until(async () => {
+    const result = await items(ctx, { favorite: "true", limit: 500 })
+    return result.items.some((item) => item.id === movie.id) ? result : null
+  }, `${movie.name} in /api/items?favorite=true`, 15000)
   const favoriteEpisodes = await items(ctx, { kind: "Episode", favorite: "true", limit: 500 })
   const letters = (await ctx.api("/api/items/letters?favorite=true")).body?.letters ?? null
   const topLevelLetters = (await ctx.api("/api/items/letters?kind=Movie,Series&favorite=true")).body?.letters ?? null

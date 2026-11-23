@@ -40,8 +40,14 @@ export async function connect(port, accept = (target) => target.url.startsWith("
     pending.clear()
   }
 
-  socket.onerror = () => failPending("CDP socket error")
-  socket.onclose = (event) => failPending(event.reason ? `CDP socket closed (${event.code}: ${event.reason})` : `CDP socket closed (${event.code})`)
+  socket.onerror = () => {
+    if (closedReason === null) failPending("CDP socket error")
+  }
+  socket.onclose = (event) => {
+    const detail = event.reason ? `CDP socket closed (${event.code}: ${event.reason})` : `CDP socket closed (${event.code})`
+    if (closedReason === null) failPending(detail)
+    else if (closedReason === "CDP socket error") closedReason = detail
+  }
   socket.onmessage = (event) => {
     const message = JSON.parse(event.data)
     if (message.method) {
