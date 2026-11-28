@@ -1,14 +1,16 @@
 use std::collections::{HashSet, VecDeque};
-use std::sync::{OnceLock, mpsc};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
+use super::playstate_outbox::{OutboxEntry, PlaystateOutbox};
 use crate::app::{logger, urls};
 use crate::playback::{
     HttpHeader, PlaybackRequest, QueueReport, ReportingState, non_empty, query_auth_token,
 };
+use crate::preferences::AccountKey;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -29,6 +31,9 @@ pub struct PlaybackSession {
     playback_start_time_ticks: i64,
     auth_headers: Vec<HttpHeader>,
     queue: Option<Value>,
+    account: Option<AccountKey>,
+    device_id: Option<String>,
+    outbox: Option<Arc<PlaystateOutbox>>,
 }
 
 pub struct PlaybackReporter {
@@ -60,27 +65,30 @@ impl PlaybackReporter {
     }
 
     pub fn report_start(&self, state: &ReportingState) {
-        self.queue_playstate(
-            "Sessions/Playing",
-            playback_progress_body(&self.session, state),
-            state,
-        );
+        let body = playback_progress_body(&self.session, state);
+        if let (Some(outbox), Some(account)) = (&self.session.outbox, &self.session.account) {
+            outbox.enqueue_start(account, &outbox_entry(&self.session, state, false, body));
+            return;
+        }
+        self.queue_playstate("Sessions/Playing", body, state);
     }
 
     pub fn report_progress(&self, state: &ReportingState) {
-        self.queue_playstate(
-            "Sessions/Playing/Progress",
-            playback_progress_body(&self.session, state),
-            state,
-        );
+        let body = playback_progress_body(&self.session, state);
+        if let (Some(outbox), Some(account)) = (&self.session.outbox, &self.session.account) {
+            outbox.enqueue_progress(account, &outbox_entry(&self.session, state, false, body));
+            return;
+        }
+        self.queue_playstate("Sessions/Playing/Progress", body, state);
     }
 
     pub fn report_stopped(&self, state: &ReportingState, failed: bool) {
-        self.queue_playstate(
-            "Sessions/Playing/Stopped",
-            playback_stop_body(&self.session, state, failed),
-            state,
-        );
+        let body = playback_stop_body(&self.session, state, failed);
+        if let (Some(outbox), Some(account)) = (&self.session.outbox, &self.session.account) {
+            outbox.enqueue_stopped(account, &outbox_entry(&self.session, state, failed, body));
+            return;
+        }
+        self.queue_playstate("Sessions/Playing/Stopped", body, state);
     }
 
     fn queue_playstate(&self, endpoint: &'static str, body: Value, state: &ReportingState) {
@@ -133,11 +141,33 @@ fn playstate_reporter() -> &'static mpsc::Sender<PlaystateMessage> {
 }
 
 pub fn flush_playstate_reports(timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
     let (ack, ack_rx) = mpsc::channel();
-    playstate_reporter()
+    let legacy_ok = playstate_reporter()
         .send(PlaystateMessage::Flush(ack))
         .is_ok()
-        && ack_rx.recv_timeout(timeout).is_ok()
+        && ack_rx.recv_timeout(timeout).is_ok();
+    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+    let outbox_ok = super::playstate_outbox::flush_registered(remaining);
+    legacy_ok && outbox_ok
+}
+
+fn outbox_entry(
+    session: &PlaybackSession,
+    state: &ReportingState,
+    failed: bool,
+    payload: Value,
+) -> OutboxEntry {
+    OutboxEntry {
+        item_id: session.item_id.clone(),
+        play_session_id: session.play_session_id.clone().unwrap_or_default(),
+        position_ticks: state.position_ticks.max(0),
+        is_paused: state.pause,
+        failed,
+        play_method: session.play_method.clone(),
+        device_id: session.device_id.clone().unwrap_or_default(),
+        payload,
+    }
 }
 
 fn run_playstate_reporter(rx: &mpsc::Receiver<PlaystateMessage>) {
@@ -266,6 +296,9 @@ impl PlaybackSession {
             playback_start_time_ticks: unix_now_ticks(),
             auth_headers,
             queue: launch.queue.as_ref().map(now_playing_queue),
+            account: launch.account.clone(),
+            device_id: non_empty(launch.device_id.as_deref()).map(str::to_string),
+            outbox: launch.playstate_outbox.clone(),
         })
     }
 

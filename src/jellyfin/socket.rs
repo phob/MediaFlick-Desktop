@@ -116,13 +116,14 @@ pub fn spawn(
     library: Arc<Library>,
     session: Arc<Session>,
     sync: SyncHandle,
+    playstate_outbox: Arc<super::playstate_outbox::PlaystateOutbox>,
     shell: Arc<ShellBridge>,
 ) -> SocketHandle {
     let handle = SocketHandle::new(shell);
     let worker = handle.clone();
     if let Err(error) = thread::Builder::new()
         .name("jellyfin-socket".to_string())
-        .spawn(move || run(&library, &session, &sync, &worker))
+        .spawn(move || run(&library, &session, &sync, &playstate_outbox, &worker))
     {
         tracing::warn!(target: "jellyfin.socket", "failed to start the Jellyfin event thread: {error}");
     }
@@ -166,7 +167,13 @@ impl ReconnectBackoff {
     }
 }
 
-fn run(library: &Arc<Library>, session: &Arc<Session>, sync: &SyncHandle, handle: &SocketHandle) {
+fn run(
+    library: &Arc<Library>,
+    session: &Arc<Session>,
+    sync: &SyncHandle,
+    playstate_outbox: &Arc<super::playstate_outbox::PlaystateOutbox>,
+    handle: &SocketHandle,
+) {
     let mut backoff = ReconnectBackoff::new();
     let mut lost_generation = None;
     let mut last_generation = None;
@@ -192,6 +199,7 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, sync: &SyncHandle, handle
             Ok((mut socket, scope)) => {
                 tracing::info!(target: "jellyfin.socket", "listening for Jellyfin server events");
                 announce_capabilities(session, &scope);
+                playstate_outbox.wake_account(scope.account());
                 sync.request();
                 if lost_generation == Some(scope.generation()) && session.scope_is_current(&scope) {
                     tracing::info!(

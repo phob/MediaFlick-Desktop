@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use serde_json::Value;
 
 use crate::app::logger;
@@ -93,6 +95,11 @@ impl ControllerState {
                 }
             }
             "shutdown" => {
+                #[cfg(target_os = "linux")]
+                if self.runtime_kind == super::super::MpvRuntimeKind::Library {
+                    self.recover_crashed_library_helper("mpv emitted shutdown");
+                    return;
+                }
                 self.finish_active(Some(StopReason::Quit));
                 self.reset_mpv();
                 self.restart_configured_mpv("mpv emitted shutdown");
@@ -112,6 +119,11 @@ impl ControllerState {
                 }
                 if self.mpv_playback_active && self.phase.pending().is_none() {
                     self.playback_restarted = true;
+                    if let Some(seek) = &mut self.startup_seek
+                        && seek.sent_at.is_none()
+                    {
+                        seek.due_at = Instant::now();
+                    }
                 }
             }
             "property-change" => {
@@ -160,8 +172,18 @@ impl ControllerState {
             Some(
                 "paused-for-cache"
                 | "demuxer-cache-time"
-                | "vo-drop-frame-count"
-                | "estimated-vf-fps",
+                | "estimated-vf-fps"
+                | "frame-drop-count"
+                | "decoder-frame-drop-count"
+                | "mistimed-frame-count"
+                | "hwdec-current"
+                | "hwdec-interop"
+                | "current-vo"
+                | "current-gpu-context"
+                | "vsync-jitter"
+                | "avsync"
+                | "video-out-params"
+                | "audio-out-params",
             ) => self.apply_diagnostics_property(property, data),
             Some("eof-reached" | "seeking" | "chapter-list" | "playback-abort") => {
                 self.apply_status_property(property, data);
@@ -257,34 +279,116 @@ impl ControllerState {
     }
 
     fn apply_diagnostics_property(&mut self, property: Option<&str>, data: Option<&Value>) {
-        match property {
+        let immediate = match property {
             Some("paused-for-cache") => {
                 self.playback_diagnostics.buffering =
                     data.and_then(Value::as_bool).unwrap_or(false);
+                true
             }
             Some("demuxer-cache-time") => {
-                self.playback_diagnostics.buffered_until_ms = data
-                    .and_then(Value::as_f64)
-                    .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
-                    .map(|seconds| seconds * 1000.0);
-            }
-            Some("vo-drop-frame-count") => {
-                self.playback_diagnostics.dropped_frames = data
-                    .and_then(|value| {
-                        value
-                            .as_i64()
-                            .or_else(|| value.as_f64().map(|count| count.round() as i64))
-                    })
-                    .filter(|count| *count >= 0);
+                self.playback_diagnostics.buffered_until_ms = parse_finite_f64(data)
+                    .filter(|s| *s >= 0.0)
+                    .map(|s| s * 1000.0);
+                false
             }
             Some("estimated-vf-fps") => {
-                self.playback_diagnostics.frame_rate = data
-                    .and_then(Value::as_f64)
-                    .filter(|rate| rate.is_finite() && *rate > 0.0);
+                self.playback_diagnostics.frame_rate =
+                    parse_finite_f64(data).filter(|rate| *rate > 0.0);
+                false
+            }
+            Some("vsync-jitter") => {
+                self.playback_diagnostics.vsync_jitter =
+                    parse_finite_f64(data).filter(|jitter| *jitter >= 0.0);
+                false
+            }
+            Some("avsync") => {
+                self.playback_diagnostics.avsync_ms = parse_finite_f64(data).map(|s| s * 1000.0);
+                false
+            }
+            Some("frame-drop-count") => {
+                self.playback_diagnostics.dropped_frames = parse_non_negative_i64(data);
+                true
+            }
+            Some("decoder-frame-drop-count") => {
+                self.playback_diagnostics.decoder_dropped_frames = parse_non_negative_i64(data);
+                true
+            }
+            Some("mistimed-frame-count") => {
+                self.playback_diagnostics.mistimed_frames = parse_non_negative_i64(data);
+                true
+            }
+            Some("hwdec-current") => {
+                self.playback_diagnostics.hwdec_current = parse_non_empty_text(data);
+                true
+            }
+            Some("hwdec-interop") => {
+                self.playback_diagnostics.hwdec_interop = parse_non_empty_text(data);
+                true
+            }
+            Some("current-vo") => {
+                self.playback_diagnostics.current_vo = parse_non_empty_text(data);
+                true
+            }
+            Some("current-gpu-context") => {
+                self.playback_diagnostics.gpu_context = parse_non_empty_text(data);
+                true
+            }
+            Some("video-out-params") => {
+                self.apply_video_out_params(data);
+                true
+            }
+            Some("audio-out-params") => {
+                self.apply_audio_out_params(data);
+                true
             }
             _ => return,
+        };
+        if !immediate
+            && self
+                .last_diagnostics_publish
+                .is_some_and(|last| last.elapsed() < Duration::from_millis(250))
+        {
+            return;
         }
+        self.last_diagnostics_publish = Some(Instant::now());
         self.publish_snapshot();
+    }
+
+    fn apply_video_out_params(&mut self, data: Option<&Value>) {
+        let obj = data.and_then(Value::as_object);
+        let text = |key: &str| obj.and_then(|map| parse_non_empty_text(map.get(key)));
+        self.playback_diagnostics.video_pixel_format = text("pixelformat");
+        self.playback_diagnostics.video_colormatrix = text("colormatrix");
+        self.playback_diagnostics.video_primaries = text("primaries");
+        self.playback_diagnostics.video_gamma = text("gamma");
+        self.playback_diagnostics.video_sig_peak = obj
+            .and_then(|map| parse_finite_f64(map.get("sig-peak")))
+            .filter(|peak| *peak > 0.0);
+        self.playback_diagnostics.video_width = obj
+            .and_then(|map| {
+                parse_non_negative_i64(map.get("dw"))
+                    .or_else(|| parse_non_negative_i64(map.get("w")))
+            })
+            .filter(|dim| *dim > 0);
+        self.playback_diagnostics.video_height = obj
+            .and_then(|map| {
+                parse_non_negative_i64(map.get("dh"))
+                    .or_else(|| parse_non_negative_i64(map.get("h")))
+            })
+            .filter(|dim| *dim > 0);
+    }
+
+    fn apply_audio_out_params(&mut self, data: Option<&Value>) {
+        let obj = data.and_then(Value::as_object);
+        self.playback_diagnostics.audio_format =
+            obj.and_then(|map| parse_non_empty_text(map.get("format")));
+        self.playback_diagnostics.audio_sample_rate = obj
+            .and_then(|map| parse_non_negative_i64(map.get("samplerate")))
+            .filter(|rate| *rate > 0);
+        self.playback_diagnostics.audio_channels = obj.and_then(|map| {
+            let value = map.get("channels")?;
+            parse_non_empty_text(Some(value)).or_else(|| value.as_i64().map(|n| format!("{n}ch")))
+        });
     }
 
     fn apply_status_property(&mut self, property: Option<&str>, data: Option<&Value>) {
@@ -366,6 +470,27 @@ fn playback_tracks(data: Option<&Value>) -> Vec<PlayerTrack> {
             })
         })
         .collect()
+}
+
+fn parse_finite_f64(data: Option<&Value>) -> Option<f64> {
+    data.and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+}
+
+fn parse_non_negative_i64(data: Option<&Value>) -> Option<i64> {
+    data.and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_f64().map(|count| count.round() as i64))
+    })
+    .filter(|count| *count >= 0)
+}
+
+fn parse_non_empty_text(data: Option<&Value>) -> Option<String> {
+    data.and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn is_mark_watched_next_message(args: &[String]) -> bool {

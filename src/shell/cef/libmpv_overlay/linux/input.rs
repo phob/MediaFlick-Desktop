@@ -59,6 +59,34 @@ pub(super) fn modifiers(state: KeyButMask) -> u32 {
     flags
 }
 
+pub(super) fn wayland_modifiers(state: crate::players::mpv::WaylandModifiers) -> u32 {
+    let mut flags = 0;
+    for (active, flag) in [
+        (state.shift, cef_event_flags_t::EVENTFLAG_SHIFT_DOWN),
+        (state.caps_lock, cef_event_flags_t::EVENTFLAG_CAPS_LOCK_ON),
+        (state.control, cef_event_flags_t::EVENTFLAG_CONTROL_DOWN),
+        (state.alt, cef_event_flags_t::EVENTFLAG_ALT_DOWN),
+        (state.super_key, cef_event_flags_t::EVENTFLAG_COMMAND_DOWN),
+        (
+            state.left_button,
+            cef_event_flags_t::EVENTFLAG_LEFT_MOUSE_BUTTON,
+        ),
+        (
+            state.middle_button,
+            cef_event_flags_t::EVENTFLAG_MIDDLE_MOUSE_BUTTON,
+        ),
+        (
+            state.right_button,
+            cef_event_flags_t::EVENTFLAG_RIGHT_MOUSE_BUTTON,
+        ),
+    ] {
+        if active {
+            flags |= flag.0;
+        }
+    }
+    flags
+}
+
 pub(super) fn keysym(conn: &RustConnection, event: &KeyPressEvent) -> Option<(u32, u32)> {
     let map = conn
         .get_keyboard_mapping(event.detail, 1)
@@ -87,6 +115,28 @@ pub(super) fn send_key(
     up: bool,
     repeated: bool,
 ) {
+    send_xkb_key(
+        host,
+        i32::from(event.detail),
+        modifiers(event.state),
+        event
+            .state
+            .intersects(KeyButMask::CONTROL | KeyButMask::MOD1 | KeyButMask::MOD4),
+        symbols,
+        up,
+        repeated,
+    );
+}
+
+pub(super) fn send_xkb_key(
+    host: &BrowserHost,
+    native_key_code: i32,
+    modifiers_bits: u32,
+    block_char_mods: bool,
+    symbols: (u32, u32),
+    up: bool,
+    repeated: bool,
+) {
     let (base, symbol) = symbols;
     let character = unicode(symbol);
     let mut key = KeyEvent {
@@ -95,14 +145,14 @@ pub(super) fn send_key(
         } else {
             KeyEventType::RAWKEYDOWN
         },
-        modifiers: modifiers(event.state)
+        modifiers: modifiers_bits
             | if repeated {
                 cef_event_flags_t::EVENTFLAG_IS_REPEAT.0
             } else {
                 0
             },
         windows_key_code: virtual_key(base),
-        native_key_code: i32::from(event.detail),
+        native_key_code,
         character: character as u16,
         unmodified_character: unicode(base) as u16,
         ..KeyEvent::default()
@@ -110,9 +160,7 @@ pub(super) fn send_key(
     host.send_key_event(Some(&key));
     if !up
         && character != 0
-        && !event
-            .state
-            .intersects(KeyButMask::CONTROL | KeyButMask::MOD1 | KeyButMask::MOD4)
+        && !block_char_mods
         && let Some(ch) = char::from_u32(character)
     {
         for unit in ch.encode_utf16(&mut [0; 2]) {

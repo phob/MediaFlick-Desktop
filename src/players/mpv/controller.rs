@@ -44,9 +44,9 @@ const MPV_RAISE_PULSE_DELAY: Duration = Duration::from_millis(1200);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(10);
 const DUPLICATE_DEBOUNCE: Duration = Duration::from_secs(2);
 const MPV_SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
-const REJECTED_LOAD: &str = "mpv did not accept the video. Try playing again.";
-const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
-const CONTROLLER_SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(60);
+pub(super) const REJECTED_LOAD: &str = "mpv did not accept the video. Try playing again.";
+const SHUTDOWN_WAIT: Duration = Duration::from_millis(750);
+const CONTROLLER_SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(15);
 const PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(11);
 const STARTUP_SEEK_DELAY: Duration = Duration::from_millis(500);
 const STARTUP_SEEK_RETRY_DELAY: Duration = Duration::from_secs(1);
@@ -71,6 +71,10 @@ enum ControllerMessage {
     },
     NativeWindow {
         reply: Sender<Option<NativeWindowHandle>>,
+    },
+    #[cfg(target_os = "linux")]
+    WaylandUi {
+        reply: Sender<Option<crate::players::mpv::WaylandUiHandle>>,
     },
     #[cfg(target_os = "linux")]
     PresentOverlay {
@@ -126,6 +130,10 @@ struct ControllerState {
     runtime_kind: MpvRuntimeKind,
     libmpv_profile: LibmpvProfile,
     runtime: Option<MpvRuntime>,
+    #[cfg(target_os = "linux")]
+    host_window: Option<session::host::LinuxHostWindow>,
+    #[cfg(target_os = "linux")]
+    helper_restarts: crate::players::mpv::runtime::helper::HelperRestartBudget,
     configured_mpv: Option<ConfiguredMpv>,
     current_mpv_path: Option<String>,
     ipc: IpcSession,
@@ -141,6 +149,7 @@ struct ControllerState {
     last_state: ReportingState,
     playback_tracks: Vec<PlayerTrack>,
     playback_diagnostics: PlaybackDiagnostics,
+    last_diagnostics_publish: Option<Instant>,
     last_position_log_bucket: Option<i64>,
     skip_segments: Vec<SkipSegment>,
     segment_skip_state: SegmentSkipState,
@@ -149,6 +158,7 @@ struct ControllerState {
     segment_skip_config: SegmentSkipConfig,
     mark_watched_next: Option<String>,
     subtitle_appearance: SubtitleAppearance,
+    audio_passthrough: bool,
     recent_loads: VecDeque<RecentLoad>,
     next_playback_handoff_until: Option<Instant>,
     replacement_end_file_pending: bool,
@@ -399,6 +409,13 @@ impl MpvController {
     }
 
     #[cfg(target_os = "linux")]
+    pub fn wayland_ui(&self, timeout: Duration) -> Option<crate::players::mpv::WaylandUiHandle> {
+        let (reply, response) = mpsc::channel();
+        self.tx.send(ControllerMessage::WaylandUi { reply }).ok()?;
+        response.recv_timeout(timeout).ok().flatten()
+    }
+
+    #[cfg(target_os = "linux")]
     pub fn submit_overlay(
         &self,
         frame: crate::playback::NativeOverlayFrame,
@@ -496,6 +513,10 @@ impl ControllerState {
             runtime_kind: runtime_selection.kind,
             libmpv_profile: runtime_selection.libmpv_profile,
             runtime: None,
+            #[cfg(target_os = "linux")]
+            host_window: None,
+            #[cfg(target_os = "linux")]
+            helper_restarts: crate::players::mpv::runtime::helper::HelperRestartBudget::default(),
             configured_mpv: None,
             current_mpv_path: None,
             ipc: IpcSession::default(),
@@ -514,6 +535,7 @@ impl ControllerState {
             },
             playback_tracks: Vec::new(),
             playback_diagnostics: PlaybackDiagnostics::default(),
+            last_diagnostics_publish: None,
             last_position_log_bucket: None,
             skip_segments: Vec::new(),
             segment_skip_state: SegmentSkipState::default(),
@@ -522,6 +544,7 @@ impl ControllerState {
             segment_skip_config: preferences.segment_skip,
             mark_watched_next: preferences.mark_watched_next,
             subtitle_appearance: preferences.subtitles,
+            audio_passthrough: preferences.audio_passthrough,
             recent_loads: VecDeque::new(),
             next_playback_handoff_until: None,
             replacement_end_file_pending: false,
@@ -550,15 +573,26 @@ impl ControllerState {
                 self.publish_snapshot();
             }
         }
-        self.subtitle_appearance = preferences.subtitles;
+        let writer_alive = self
+            .ipc
+            .worker
+            .as_ref()
+            .is_some_and(IpcWorker::is_writer_alive);
+        if preferences.subtitles != self.subtitle_appearance {
+            self.subtitle_appearance = preferences.subtitles;
+            if writer_alive {
+                self.apply_subtitle_appearance();
+            }
+        }
+        if preferences.audio_passthrough != self.audio_passthrough {
+            self.audio_passthrough = preferences.audio_passthrough;
+            if writer_alive {
+                self.apply_audio_passthrough();
+            }
+        }
         if preferences.mark_watched_next != self.mark_watched_next {
             self.mark_watched_next = preferences.mark_watched_next;
-            if self
-                .ipc
-                .worker
-                .as_ref()
-                .is_some_and(IpcWorker::is_writer_alive)
-            {
+            if writer_alive {
                 tracing::debug!(target: "mpv.ipc", "refreshing live mpv input bindings");
                 self.install_input_bindings();
             } else {
@@ -579,8 +613,11 @@ impl ControllerState {
                     self.warm(&mpv_path, fullscreen);
                 }
                 Ok(ControllerMessage::NativeWindow { reply }) => {
-                    let native_window = self.runtime.as_ref().and_then(MpvRuntime::native_window);
-                    let _ = reply.send(native_window);
+                    let _ = reply.send(self.native_window_handle());
+                }
+                #[cfg(target_os = "linux")]
+                Ok(ControllerMessage::WaylandUi { reply }) => {
+                    let _ = reply.send(self.wayland_ui_handle());
                 }
                 #[cfg(target_os = "linux")]
                 Ok(ControllerMessage::PresentOverlay { frame, reply }) => {
@@ -637,9 +674,7 @@ impl ControllerState {
             self.maybe_send_startup_seek();
             #[cfg(target_os = "linux")]
             {
-                if let Some(runtime) = &self.runtime {
-                    runtime.poll_window_events();
-                }
+                self.poll_host_window_events();
                 self.maybe_finish_library_fullscreen();
             }
             self.poll_runtime();
@@ -939,43 +974,5 @@ impl ControllerState {
         );
         self.phase.take_pending();
         true
-    }
-
-    fn handle_rejected_loadfile(
-        &mut self,
-        replacing_active_file: bool,
-        identity: PlaybackIdentity,
-    ) {
-        self.mpv_playback_active = false;
-        let load_id = identity.playback_id;
-        if replacing_active_file {
-            self.playback_identity = Some(identity);
-            if self.runtime_kind == MpvRuntimeKind::Library && self.runtime_is_alive() {
-                tracing::warn!(
-                    target: "mpv.ipc",
-                    "stopping built-in libmpv playback after rejected replacement loadfile command"
-                );
-                self.clear_playback_session_state();
-                self.stop_mpv("rejected replacement loadfile");
-            } else {
-                tracing::warn!(
-                    target: "mpv.ipc",
-                    "resetting mpv after rejected replacement loadfile command"
-                );
-                self.reset_mpv();
-            }
-            let snapshot = self.publish_snapshot_with_stop_reason(Some(StopReason::Error));
-            self.notify_playback_stopped(snapshot);
-        }
-        self.report_playback_failure(load_id, REJECTED_LOAD);
-    }
-
-    fn report_playback_failure(&self, load_id: i64, message: impl Into<String>) {
-        if let Some(tx) = &self.event_tx {
-            let _ = tx.send(BackendEvent::Failed {
-                load_id,
-                message: message.into(),
-            });
-        }
     }
 }

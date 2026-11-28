@@ -1,6 +1,6 @@
 # 0001. Built-in player is in-process, dynamically loaded libmpv, chosen at startup
 
-Status: Accepted (2026-11-22). Decided in `a4d76905` (Windows, 2026-08-28),
+Status: Superseded by [0017](0017-out-of-process-linux-libmpv-helper.md). Accepted (2026-11-22). Decided in `a4d76905` (Windows, 2026-08-28),
 `b7b93123` (Linux, 2026-09-13) and `695e8553` (Linux default, 2026-10-10).
 
 ## Context

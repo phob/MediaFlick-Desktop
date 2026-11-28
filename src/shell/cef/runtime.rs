@@ -125,9 +125,21 @@ wrap_app! {
 
             #[cfg(target_os = "linux")]
             if libmpv_overlay::is_configured(&self.config.settings) {
-                command_line.append_switch_with_value(Some(&CefString::from("ozone-platform")),
-                    Some(&CefString::from("x11")));
-                command_line.append_switch(Some(&CefString::from("disable-gpu-compositing")));
+                let wayland = crate::players::mpv::use_native_wayland();
+                command_line.append_switch_with_value(
+                    Some(&CefString::from("ozone-platform")),
+                    Some(&CefString::from(if wayland { "wayland" } else { "x11" })),
+                );
+                if wayland {
+                    for (name, value) in [("use-gl", "angle"), ("use-angle", "gl-egl")] {
+                        command_line.append_switch_with_value(
+                            Some(&CefString::from(name)),
+                            Some(&CefString::from(value)),
+                        );
+                    }
+                } else {
+                    command_line.append_switch(Some(&CefString::from("disable-gpu-compositing")));
+                }
                 command_line.append_switch_with_value(
                     Some(&CefString::from("blink-settings")),
                     Some(&CefString::from(
@@ -216,33 +228,51 @@ wrap_browser_process_handler! {
                     handler_state.clone(),
                 )
             }) {
-                prepare_player_for_window(&handler_state);
-                let native_window = configured_player_native_window(
-                    &handler_state,
-                    std::time::Duration::from_secs(20),
-                );
-                if let Some(native_window) = native_window {
-                    match surface.bind(native_window) {
-                        Ok(()) => {
-                            let mut client = ShellClient::new(
-                                handler_state.clone(),
-                                Some(surface.clone()),
-                            );
-                            if surface.create_browser(&mut client).is_some() {
-                                *self.client.borrow_mut() = Some(client);
-                                surface.show();
-                                schedule_reveal_deadline(&handler_state);
-                                return;
-                            }
-                            tracing::error!(target: "cef.osr", "failed to create the windowless React browser");
-                            surface.destroy();
-                        }
-                        Err(error) => {
-                            tracing::error!(target: "cef.osr", "failed to bind the libmpv overlay: {error}");
-                        }
-                    }
+                #[cfg(target_os = "linux")]
+                let bind_result = if crate::players::mpv::use_native_wayland() {
+                    let result = configured_player_wayland_ui(
+                        &handler_state,
+                        std::time::Duration::from_secs(20),
+                    )
+                    .ok_or_else(|| "libmpv did not expose a Wayland UI handle".to_string())
+                    .and_then(|ui| surface.bind_wayland(ui));
+                    prepare_player_for_window(&handler_state);
+                    result
                 } else {
-                    tracing::error!(target: "cef.osr", "libmpv did not expose a native window; using the regular CEF shell");
+                    prepare_player_for_window(&handler_state);
+                    configured_player_native_window(
+                        &handler_state,
+                        std::time::Duration::from_secs(20),
+                    )
+                    .ok_or_else(|| "libmpv did not expose a native window".to_string())
+                    .and_then(|window| surface.bind(window))
+                };
+                #[cfg(not(target_os = "linux"))]
+                let bind_result = {
+                    prepare_player_for_window(&handler_state);
+                    configured_player_native_window(
+                        &handler_state,
+                        std::time::Duration::from_secs(20),
+                    )
+                    .ok_or_else(|| "libmpv did not expose a native window".to_string())
+                    .and_then(|window| surface.bind(window))
+                };
+                match bind_result {
+                    Ok(()) => {
+                        let mut client =
+                            ShellClient::new(handler_state.clone(), Some(surface.clone()));
+                        if surface.create_browser(&mut client).is_some() {
+                            *self.client.borrow_mut() = Some(client);
+                            surface.show();
+                            schedule_reveal_deadline(&handler_state);
+                            return;
+                        }
+                        tracing::error!(target: "cef.osr", "failed to create the windowless React browser");
+                        surface.destroy();
+                    }
+                    Err(error) => {
+                        tracing::error!(target: "cef.osr", "failed to bind the libmpv overlay: {error}");
+                    }
                 }
             }
 

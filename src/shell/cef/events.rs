@@ -30,40 +30,62 @@ fn player_warmup_mode(settings: &AppSettings) -> FullscreenBehavior {
     }
 }
 
+struct PlaybackBridgeContext<'a> {
+    state: &'a std::sync::Weak<Mutex<BrowserStateInner>>,
+    os_media: &'a crate::playback::os_media::OsMediaController,
+    os_meta_cache: &'a mut Option<crate::playback::os_media::OsMediaMetadata>,
+    last_logged_snapshot: &'a mut Option<PlayerSnapshot>,
+    last_identity: &'a mut Option<(bool, Option<i64>)>,
+}
+
+fn post_playback_bridge_event(ctx: &mut PlaybackBridgeContext<'_>, event: PlaybackEvent) -> bool {
+    super::os_media::sync(ctx.os_media, ctx.os_meta_cache, &event);
+    let Some(state) = ctx.state.upgrade() else {
+        return false;
+    };
+    match &event {
+        PlaybackEvent::StateChanged(snapshot) => {
+            *ctx.last_identity = Some((snapshot.active, snapshot.playback_id));
+        }
+        PlaybackEvent::Stopped(snapshot) => {
+            if ctx
+                .last_identity
+                .is_none_or(|(_, id)| snapshot.playback_id.is_none() || id == snapshot.playback_id)
+            {
+                *ctx.last_identity = Some((false, None));
+            }
+        }
+        PlaybackEvent::ItemFinished(_) | PlaybackEvent::Failed { .. } => {}
+    }
+    let log_event = playback_event_needs_log(ctx.last_logged_snapshot, &event);
+    let mut task = PlaybackEventTask::new(state, event, log_event);
+    match post_ui_task(&mut task) {
+        PostOutcome::Posted => true,
+        PostOutcome::ShuttingDown => false,
+        PostOutcome::Failed => {
+            tracing::warn!(target: "bridge", "failed to post playback event to CEF UI thread");
+            true
+        }
+    }
+}
+
 pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<PlaybackEvent>) {
     const STATE_PUSH_INTERVAL: Duration = Duration::from_millis(100);
 
+    #[cfg(target_os = "linux")]
+    super::bridge::start_terminate_signal_watchdog(state);
     let state = Arc::downgrade(state);
     spawn_named("playback-event-bridge", move || {
+        let os_media = super::os_media::start_controller(&state);
+        let mut os_meta_cache = None;
         let mut last_logged_snapshot = None;
         let mut last_posted_identity: Option<(bool, Option<i64>)> = None;
-        let mut post = |event, last_identity: &mut Option<(bool, Option<i64>)>| {
-            let Some(state) = state.upgrade() else {
-                return false;
-            };
-            match &event {
-                PlaybackEvent::StateChanged(snapshot) => {
-                    *last_identity = Some((snapshot.active, snapshot.playback_id));
-                }
-                PlaybackEvent::Stopped(snapshot) => {
-                    if last_identity.is_none_or(|(_, id)| {
-                        snapshot.playback_id.is_none() || id == snapshot.playback_id
-                    }) {
-                        *last_identity = Some((false, None));
-                    }
-                }
-                PlaybackEvent::ItemFinished(_) | PlaybackEvent::Failed { .. } => {}
-            }
-            let log_event = playback_event_needs_log(&mut last_logged_snapshot, &event);
-            let mut task = PlaybackEventTask::new(state, event, log_event);
-            match post_ui_task(&mut task) {
-                PostOutcome::Posted => true,
-                PostOutcome::ShuttingDown => false,
-                PostOutcome::Failed => {
-                    tracing::warn!(target: "bridge", "failed to post playback event to CEF UI thread");
-                    true
-                }
-            }
+        let mut ctx = PlaybackBridgeContext {
+            state: &state,
+            os_media: &os_media,
+            os_meta_cache: &mut os_meta_cache,
+            last_logged_snapshot: &mut last_logged_snapshot,
+            last_identity: &mut last_posted_identity,
         };
         let mut pending_state = None;
         let mut state_deadline: Option<Instant> = None;
@@ -71,20 +93,17 @@ pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<Pla
             let received = if let Some(deadline) = state_deadline {
                 rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
             } else {
-                match rx.recv() {
-                    Ok(event) => Ok(event),
-                    Err(_) => Err(mpsc::RecvTimeoutError::Disconnected),
-                }
+                rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected)
             };
             match received {
                 Ok(PlaybackEvent::StateChanged(snapshot)) => {
                     let identity = (snapshot.active, snapshot.playback_id);
-                    if last_posted_identity != Some(identity) {
+                    if *ctx.last_identity != Some(identity) {
                         pending_state = None;
                         state_deadline = None;
-                        if !post(
+                        if !post_playback_bridge_event(
+                            &mut ctx,
                             PlaybackEvent::StateChanged(snapshot),
-                            &mut last_posted_identity,
                         ) {
                             break;
                         }
@@ -95,36 +114,34 @@ pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<Pla
                 }
                 Ok(event) => {
                     if let Some(snapshot) = pending_state.take()
-                        && !post(
+                        && !post_playback_bridge_event(
+                            &mut ctx,
                             PlaybackEvent::StateChanged(snapshot),
-                            &mut last_posted_identity,
                         )
                     {
                         break;
                     }
                     state_deadline = None;
-                    if !post(event, &mut last_posted_identity) {
+                    if !post_playback_bridge_event(&mut ctx, event) {
                         break;
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    let Some(snapshot) = pending_state.take() else {
-                        state_deadline = None;
-                        continue;
-                    };
                     state_deadline = None;
-                    if !post(
-                        PlaybackEvent::StateChanged(snapshot),
-                        &mut last_posted_identity,
-                    ) {
+                    if let Some(snapshot) = pending_state.take()
+                        && !post_playback_bridge_event(
+                            &mut ctx,
+                            PlaybackEvent::StateChanged(snapshot),
+                        )
+                    {
                         break;
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     if let Some(snapshot) = pending_state {
-                        let _ = post(
+                        let _ = post_playback_bridge_event(
+                            &mut ctx,
                             PlaybackEvent::StateChanged(snapshot),
-                            &mut last_posted_identity,
                         );
                     }
                     break;

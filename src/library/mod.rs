@@ -293,18 +293,14 @@ impl ItemSort {
             Self::Name => indexed(&[BY_NAME], "name COLLATE NOCASE", false),
             Self::ReleaseDate => indexed(&["year", "premiere_date"], BY_NAME, true),
             Self::DateAdded => indexed(&["date_created"], BY_NAME, true),
-            Self::EpisodeAdded => SortOrder::Computed(
-                "COALESCE((SELECT max(e.date_created) FROM items e
-                    WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id
-                      AND e.is_virtual = 0), i.date_created)",
-            ),
+            Self::EpisodeAdded => {
+                SortOrder::Computed("COALESCE(sa.latest_episode_created, i.date_created)")
+            }
             Self::CommunityRating => indexed(&["community_rating"], BY_NAME, true),
             Self::DatePlayed => SortOrder::Computed(
                 "CASE WHEN i.kind = 'Series' THEN NULLIF(max(
                     COALESCE(u.last_played_date, ''),
-                    COALESCE((SELECT max(ue.last_played_date) FROM items e
-                        JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
-                        WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id), '')
+                    COALESCE(sa.latest_episode_played, '')
                 ), '') ELSE u.last_played_date END",
             ),
             Self::PlayCount => SortOrder::Computed("COALESCE(u.play_count, 0)"),

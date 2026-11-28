@@ -238,6 +238,64 @@ pub(super) fn open_settings_page(browser: Option<&mut Browser>, frame: Option<&m
     }
 }
 
+#[cfg(target_os = "linux")]
+static TERMINATE_SIGNAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "linux")]
+extern "C" fn handle_terminate_signal(_: std::ffi::c_int) {
+    TERMINATE_SIGNAL.store(true, std::sync::atomic::Ordering::Release);
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn install_linux_signal_handlers() {
+    unsafe extern "C" {
+        fn signal(sig: std::ffi::c_int, handler: Option<extern "C" fn(std::ffi::c_int)>) -> usize;
+    }
+    // SAFETY: registers an async-signal-safe atomic-store handler for `SIGTERM` (15) and `SIGINT` (2).
+    unsafe {
+        let _ = signal(15, Some(handle_terminate_signal));
+        let _ = signal(2, Some(handle_terminate_signal));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn take_terminate_signal() -> bool {
+    TERMINATE_SIGNAL.swap(false, std::sync::atomic::Ordering::AcqRel)
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn start_terminate_signal_watchdog(state: &BrowserState) {
+    let weak = std::sync::Arc::downgrade(state);
+    spawn_named("term-signal-watch", move || {
+        loop {
+            if super::is_cef_shutting_down() {
+                break;
+            }
+            if take_terminate_signal() {
+                if let Some(state) = weak.upgrade() {
+                    let mut task = TermSignalTask::new(state);
+                    let _ = super::post_ui_task(&mut task);
+                }
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
+wrap_task! {
+    struct TermSignalTask {
+        state: BrowserState,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            initiate_app_exit(&self.state);
+        }
+    }
+}
+
 pub(super) fn initiate_app_exit(state: &BrowserState) {
     tracing::info!(target: "app", "exit requested");
 

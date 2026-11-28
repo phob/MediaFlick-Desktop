@@ -8,8 +8,8 @@ them.
 
 | ADR | Decision | Status |
 | --- | --- | --- |
-| [0001](0001-built-in-libmpv-player.md) | Built-in player is in-process, dynamically loaded libmpv, chosen at startup | Accepted |
-| [0002](0002-native-video-composition.md) | mpv presents video natively; CEF is composited over it per platform | Accepted |
+| [0001](0001-built-in-libmpv-player.md) | Built-in player is in-process, dynamically loaded libmpv, chosen at startup | Superseded by [0017](0017-out-of-process-linux-libmpv-helper.md) |
+| [0002](0002-native-video-composition.md) | mpv presents video natively; CEF is composited over it per platform | Accepted (Windows); Linux superseded by [0018](0018-native-wayland-zero-copy-composition.md) |
 | [0003](0003-mpv-json-ipc-and-post-load-resume.md) | Every mpv runtime is driven over one JSON IPC path and resumes after `file-loaded` | Accepted |
 | [0004](0004-companion-trust-boundary.md) | Provider credentials and calls live only in the server-side Companion | Accepted |
 | [0005](0005-expand-only-persistence.md) | `library.db` evolves expand-only because older releases keep opening it; JSON formats only add defaulted fields | Accepted |
@@ -24,6 +24,8 @@ them.
 | [0014](0014-embedded-book-reader-and-archive-wasm.md) | Embedded book reader uses unbundled foliate-js, no-crypto libarchive.wasm, and query-param ranges | Accepted |
 | [0015](0015-react-ui-rendering-caching-and-interaction.md) | React UI caching, virtualization, portal isolation, and interaction patterns | Accepted |
 | [0016](0016-release-packaging-and-verification-harness.md) | Release state machine, v0.1.6 migration, packaging, and isolated E2E verification | Accepted |
+| [0017](0017-out-of-process-linux-libmpv-helper.md) | Out-of-process Linux built-in libmpv helper and bounded native player shutdown | Accepted |
+| [0018](0018-native-wayland-zero-copy-composition.md) | Native Wayland subsurface video composition and DMA-BUF CEF UI on Linux | Accepted |
 
 ## When to add a record
 

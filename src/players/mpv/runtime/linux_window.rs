@@ -8,7 +8,7 @@ use x11rb::wrapper::ConnectionExt as _;
 use crate::playback::NativeWindowHandle;
 use crate::preferences::FullscreenBehavior;
 
-pub(super) struct HostWindow {
+pub(in crate::players::mpv) struct HostWindow {
     conn: RustConnection,
     root: u32,
     window: u32,

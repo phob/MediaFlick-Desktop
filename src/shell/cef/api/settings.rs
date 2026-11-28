@@ -138,6 +138,7 @@ struct PlayerDefaults {
     default_fullscreen: crate::preferences::FullscreenBehavior,
     mark_watched_next: Option<String>,
     comfort: crate::preferences::PlayerComfort,
+    audio_passthrough: bool,
 }
 
 #[derive(Serialize, ts_rs::TS)]
@@ -155,6 +156,7 @@ struct PlayerView {
     default_fullscreen: crate::preferences::FullscreenBehavior,
     mark_watched_next: Option<String>,
     comfort: crate::preferences::PlayerComfort,
+    audio_passthrough: bool,
     player_configured: bool,
 }
 
@@ -250,6 +252,7 @@ fn settings_defaults(libmpv: bool) -> SettingsDefaults {
                 default_fullscreen: defaults.default_fullscreen,
                 mark_watched_next: defaults.mark_watched_next.clone(),
                 comfort: defaults.comfort.clone(),
+                audio_passthrough: defaults.audio_passthrough,
             },
             playback: playback_view(&defaults),
             application: application_view(&defaults),
@@ -272,6 +275,7 @@ fn settings_view(
                 default_fullscreen: settings.default_fullscreen,
                 mark_watched_next: settings.mark_watched_next.clone(),
                 comfort: settings.comfort.clone(),
+                audio_passthrough: settings.audio_passthrough,
                 player_configured: crate::players::configured_player_path(settings).is_some(),
             },
             playback: playback_view(settings),
@@ -612,6 +616,7 @@ mod tests {
                 "defaultFullscreen": canonical.default_fullscreen,
                 "markWatchedNext": canonical.mark_watched_next,
                 "comfort": canonical.comfort,
+                "audioPassthrough": canonical.audio_passthrough,
             })
         );
         assert_eq!(

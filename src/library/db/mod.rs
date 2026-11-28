@@ -195,7 +195,10 @@ fn configure(connection: &Connection) -> rusqlite::Result<()> {
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
-    connection.busy_timeout(std::time::Duration::from_secs(10))?;
+    connection.pragma_update(None, "cache_size", -32_768)?;
+    connection.pragma_update(None, "temp_store", "MEMORY")?;
+    connection.pragma_update(None, "mmap_size", 134_217_280)?;
+    connection.busy_timeout(std::time::Duration::from_secs(5))?;
     super::query::register_functions(connection)
 }
 

@@ -61,8 +61,9 @@ def smoke_test(path, placebo_config, gpu_api=None):
             "-Dlua=disabled", "-Djavascript=disabled", "-Dvapoursynth=disabled",
             "-Ddvdnav=disabled", "-Dlibbluray=disabled", "-Dcdda=disabled",
             "-Dgl=enabled", "-Dplain-gl=enabled", "-Dvaapi=enabled",
+            "-Dwayland=enabled", "-Degl-wayland=enabled", "-Dvaapi-wayland=enabled", "-Ddmabuf-wayland=enabled",
             "-Dvulkan=enabled", "-Dcuda-hwaccel=enabled", "-Dcuda-interop=enabled",
-            "-Dalsa=enabled", "-Dpulse=enabled", "-Dlcms2=enabled",
+            "-Dalsa=enabled", "-Dpulse=enabled", "-Dpipewire=enabled", "-Dlcms2=enabled",
         ):
             if option not in configuration.split():
                 raise RuntimeError(f"Packaged libmpv lacks required build option: {option}")

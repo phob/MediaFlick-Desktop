@@ -12,8 +12,6 @@ use super::{IpcWorker, MpvEvent};
 pub(in crate::players::mpv) const EVENT_CONNECTION: usize = 0;
 pub(in crate::players::mpv) const COMMAND_CONNECTION: usize = 1;
 
-const OBSERVED_PROPERTIES: usize = 15;
-
 #[cfg(unix)]
 type Stream = std::os::unix::net::UnixStream;
 #[cfg(windows)]
@@ -54,7 +52,7 @@ impl FakeMpv {
                 let mut observers = BufReader::new(clone(&event_stream));
                 let mut line = String::new();
                 let mut observed = true;
-                for _ in 0..OBSERVED_PROPERTIES {
+                for _ in 0..super::OBSERVED_PROPERTIES.len() {
                     line.clear();
                     if observers.read_line(&mut line).unwrap_or(0) == 0 {
                         observed = false;

@@ -55,7 +55,15 @@ class BundleTests(unittest.TestCase):
             bundle.bundle(self.prefix, self.output, self.sources)
 
     def test_host_driver_is_not_copied_or_traversed(self):
-        for interface in ("libva.so.2", "libvulkan.so.1", "libcuda.so.1", "libnvcuvid.so.1"):
+        for interface in (
+            "libva.so.2",
+            "libvulkan.so.1",
+            "libcuda.so.1",
+            "libnvcuvid.so.1",
+            "libwayland-client.so.0",
+            "libpipewire-0.3.so.0",
+            "libxkbcommon.so.0",
+        ):
             with self.subTest(interface=interface):
                 self.compile("libfixture-driver.so.1", "int driver(void) { return 1; }")
                 self.compile(

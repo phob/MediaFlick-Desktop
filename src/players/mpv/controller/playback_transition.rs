@@ -86,7 +86,7 @@ impl ControllerState {
             tracks: self.playback_tracks.clone(),
             chapters: self.playback_chapters(),
             skip_segments: self.shown_skip_segments(),
-            diagnostics: self.playback_diagnostics,
+            diagnostics: self.playback_diagnostics.clone(),
             stop_reason,
         }
     }
@@ -160,11 +160,16 @@ impl ControllerState {
         self.last_state.duration_ticks = pending.launch.runtime_ticks.filter(|ticks| *ticks > 0);
         self.last_state.eof_reached = false;
         self.playback_tracks.clear();
+        let current_vo = self.playback_diagnostics.current_vo.take();
+        let gpu_context = self.playback_diagnostics.gpu_context.take();
         self.playback_diagnostics = Default::default();
+        self.playback_diagnostics.current_vo = current_vo;
+        self.playback_diagnostics.gpu_context = gpu_context;
+        self.last_diagnostics_publish = None;
         self.last_position_log_bucket = None;
     }
 
-    fn apply_subtitle_appearance(&self) {
+    pub(super) fn apply_subtitle_appearance(&self) {
         if self.runtime_kind == crate::players::mpv::runtime::MpvRuntimeKind::Library {
             let appearance = self.subtitle_appearance;
             for (property, value) in [
@@ -199,6 +204,19 @@ impl ControllerState {
         }
     }
 
+    pub(super) fn apply_audio_passthrough(&self) {
+        let codecs = if self.audio_passthrough {
+            "ac3,eac3,dts,dts-hd,truehd"
+        } else {
+            ""
+        };
+        if let Err(error) = self.send_mpv_command(
+            serde_json::json!({"command": ["set_property", "audio-spdif", codecs]}),
+        ) {
+            tracing::warn!(target: "playback", ?error, "could not apply audio-spdif passthrough setting");
+        }
+    }
+
     pub(super) fn activate_pending(&mut self) {
         let Some(pending) = self.phase.take_pending() else {
             tracing::debug!(target: "playback", "mpv reported file-loaded without pending playback");
@@ -212,7 +230,6 @@ impl ControllerState {
             state = %self.last_state,
             "activating pending playback"
         );
-        self.apply_subtitle_appearance();
         self.last_state.position_ticks = pending
             .launch
             .start_seconds()
@@ -258,7 +275,6 @@ impl ControllerState {
         if self.startup_seek.is_none() {
             self.load_pending_external_subtitle();
         }
-        self.read_chapter_list();
         self.publish_snapshot();
     }
 

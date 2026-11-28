@@ -1,3 +1,4 @@
+pub mod capabilities;
 pub mod mpv;
 
 use std::path::{Path, PathBuf};

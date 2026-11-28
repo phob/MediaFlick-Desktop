@@ -911,3 +911,78 @@ fn library_ipc_reconnect_caps_when_core_accepts_connections_but_never_replies() 
     }
     fake.stop();
 }
+
+#[test]
+fn diagnostics_properties_populate_real_mpv_pipeline_metrics() {
+    let mut state = controller_with_pending_load(None);
+    state.activate_pending();
+
+    state.apply_property(Some("hwdec-current"), Some(&json!("vaapi")));
+    state.apply_property(Some("hwdec-interop"), Some(&json!("vaapi-egl")));
+    state.apply_property(Some("current-vo"), Some(&json!("gpu-next")));
+    state.apply_property(Some("current-gpu-context"), Some(&json!("waylandvk")));
+    state.apply_property(Some("frame-drop-count"), Some(&json!(3)));
+    state.apply_property(Some("decoder-frame-drop-count"), Some(&json!(1)));
+    state.apply_property(Some("mistimed-frame-count"), Some(&json!(2)));
+    state.apply_property(Some("vsync-jitter"), Some(&json!(0.0042)));
+    state.apply_property(Some("avsync"), Some(&json!(-0.0125)));
+    state.apply_property(
+        Some("video-out-params"),
+        Some(&json!({
+            "pixelformat": "p010",
+            "colormatrix": "bt.2020-ncl",
+            "primaries": "bt.2020",
+            "gamma": "pq",
+            "sig-peak": 1000.0,
+            "w": 3840,
+            "h": 2160,
+            "dw": 3840,
+            "dh": 1600
+        })),
+    );
+    state.apply_property(
+        Some("audio-out-params"),
+        Some(&json!({
+            "format": "floatp",
+            "samplerate": 48000,
+            "channels": "5.1"
+        })),
+    );
+
+    let diag = &state.playback_diagnostics;
+    assert_eq!(diag.hwdec_current.as_deref(), Some("vaapi"));
+    assert_eq!(diag.hwdec_interop.as_deref(), Some("vaapi-egl"));
+    assert_eq!(diag.current_vo.as_deref(), Some("gpu-next"));
+    assert_eq!(diag.gpu_context.as_deref(), Some("waylandvk"));
+    assert_eq!(diag.dropped_frames, Some(3));
+    assert_eq!(diag.decoder_dropped_frames, Some(1));
+    assert_eq!(diag.mistimed_frames, Some(2));
+    assert_eq!(diag.vsync_jitter, Some(0.0042));
+    assert_eq!(diag.avsync_ms, Some(-12.5));
+    assert_eq!(diag.video_pixel_format.as_deref(), Some("p010"));
+    assert_eq!(diag.video_colormatrix.as_deref(), Some("bt.2020-ncl"));
+    assert_eq!(diag.video_primaries.as_deref(), Some("bt.2020"));
+    assert_eq!(diag.video_gamma.as_deref(), Some("pq"));
+    assert_eq!(diag.video_sig_peak, Some(1000.0));
+    assert_eq!(diag.video_width, Some(3840));
+    assert_eq!(diag.video_height, Some(1600));
+    assert_eq!(diag.audio_format.as_deref(), Some("floatp"));
+    assert_eq!(diag.audio_sample_rate, Some(48000));
+    assert_eq!(diag.audio_channels.as_deref(), Some("5.1"));
+
+    let next = controller_with_pending_load(None)
+        .phase
+        .take_pending()
+        .expect("pending");
+    state.phase = super::super::PlaybackPhase::loading(next);
+    state.prepare_pending_playback_state();
+    assert_eq!(
+        state.playback_diagnostics.current_vo.as_deref(),
+        Some("gpu-next")
+    );
+    assert_eq!(
+        state.playback_diagnostics.gpu_context.as_deref(),
+        Some("waylandvk")
+    );
+    assert_eq!(state.playback_diagnostics.hwdec_current, None);
+}

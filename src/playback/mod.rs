@@ -1,5 +1,7 @@
 pub mod coordinator;
+pub mod inhibit;
 pub mod model;
+pub mod os_media;
 mod queue;
 pub mod segments;
 
@@ -24,6 +26,7 @@ pub struct NativeWindowHandle {
 }
 
 #[cfg(target_os = "linux")]
+#[derive(Debug)]
 pub struct NativeOverlayFrame {
     pub pixels: Vec<u8>,
     pub width: u16,
@@ -118,6 +121,10 @@ pub trait AudioSource: PlaybackOwner {
 pub trait PlayerBackend: Send + Sync {
     fn warm(&self, path: String, fullscreen: FullscreenBehavior);
     fn native_window(&self, timeout: Duration) -> Option<NativeWindowHandle>;
+    #[cfg(target_os = "linux")]
+    fn wayland_ui(&self, _timeout: Duration) -> Option<crate::players::mpv::WaylandUiHandle> {
+        None
+    }
     #[cfg(target_os = "linux")]
     fn submit_overlay(&self, _frame: NativeOverlayFrame) -> Result<NativeOverlayReply, String> {
         Err("this player does not support native UI composition".into())

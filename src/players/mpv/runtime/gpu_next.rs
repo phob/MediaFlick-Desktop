@@ -79,6 +79,14 @@ impl Compositor {
         result
     }
 
+    pub fn current_vo(&self, handle: *mut MpvHandle) -> String {
+        self.property(handle, c"current-vo")
+    }
+
+    pub fn current_gpu_context(&self, handle: *mut MpvHandle) -> String {
+        self.property(handle, c"current-gpu-context")
+    }
+
     pub fn submit(
         &self,
         handle: *mut MpvHandle,
@@ -86,6 +94,23 @@ impl Compositor {
         display: (u16, u16),
     ) -> Result<(), String> {
         frame.validate()?;
+        self.submit_pixels(handle, &frame.pixels, frame.width, frame.height, display)
+    }
+
+    pub fn submit_pixels(
+        &self,
+        handle: *mut MpvHandle,
+        pixels: &[u8],
+        width: u16,
+        height: u16,
+        display: (u16, u16),
+    ) -> Result<(), String> {
+        if width == 0 || height == 0 {
+            return Err("native overlay dimensions are empty".into());
+        }
+        if pixels.len() != usize::from(width) * usize::from(height) * 4 {
+            return Err("native overlay buffer size does not match dimensions".into());
+        }
         if display.0 == 0 || display.1 == 0 {
             return Err("native overlay display dimensions are empty".into());
         }
@@ -94,12 +119,12 @@ impl Compositor {
             ("id", "0".to_string()),
             ("x", "0".to_string()),
             ("y", "0".to_string()),
-            ("file", format!("&{}", frame.pixels.as_ptr() as usize)),
+            ("file", format!("&{}", pixels.as_ptr() as usize)),
             ("offset", "0".to_string()),
             ("fmt", "bgra".to_string()),
-            ("w", frame.width.to_string()),
-            ("h", frame.height.to_string()),
-            ("stride", (u32::from(frame.width) * 4).to_string()),
+            ("w", width.to_string()),
+            ("h", height.to_string()),
+            ("stride", (u32::from(width) * 4).to_string()),
             ("dw", display.0.to_string()),
             ("dh", display.1.to_string()),
         ];

@@ -362,3 +362,309 @@ CREATE INDEX provider_identity_tmdb
     ON provider_identity_map (media_type, tmdb_id);
 
 "#;
+
+pub(super) const SCHEMA_V24_ADDITIONS: &str = r#"
+CREATE TABLE playstate_outbox (
+    id              INTEGER PRIMARY KEY,
+    server_id       TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    item_id         TEXT NOT NULL,
+    play_session_id TEXT NOT NULL DEFAULT '',
+    kind            TEXT NOT NULL CHECK (kind IN ('start', 'progress', 'stopped', 'stop_encoding')),
+    position_ticks  INTEGER NOT NULL DEFAULT 0,
+    is_paused       INTEGER NOT NULL DEFAULT 0,
+    failed          INTEGER NOT NULL DEFAULT 0,
+    play_method     TEXT NOT NULL DEFAULT 'DirectPlay',
+    device_id       TEXT NOT NULL DEFAULT '',
+    payload_json    TEXT NOT NULL CHECK (json_valid(payload_json)),
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    next_retry_at   INTEGER NOT NULL DEFAULT 0,
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL,
+    UNIQUE (server_id, user_id, item_id, play_session_id, kind)
+);
+CREATE INDEX playstate_outbox_due
+    ON playstate_outbox (server_id, user_id, next_retry_at, created_at, id);
+
+CREATE TABLE series_aggregates (
+    series_id              TEXT PRIMARY KEY,
+    latest_episode_created TEXT,
+    latest_episode_played  TEXT,
+    unplayed_present_count INTEGER NOT NULL DEFAULT 0,
+    started_episode_count  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX series_aggregates_ep_added
+    ON series_aggregates (latest_episode_created DESC, series_id);
+CREATE INDEX series_aggregates_ep_played
+    ON series_aggregates (latest_episode_played DESC, series_id);
+
+CREATE TRIGGER series_aggregates_item_insert AFTER INSERT ON items
+    WHEN new.kind = 'Episode' AND new.series_id IS NOT NULL
+BEGIN
+    INSERT INTO series_aggregates (
+        series_id,
+        latest_episode_created,
+        latest_episode_played,
+        unplayed_present_count,
+        started_episode_count
+    )
+    SELECT
+        new.series_id,
+        CASE WHEN new.is_virtual = 0 THEN new.date_created END,
+        ue.last_played_date,
+        CASE WHEN new.is_virtual = 0 AND COALESCE(ue.played, 0) = 0 THEN 1 ELSE 0 END,
+        CASE WHEN COALESCE(ue.played, 0) = 1 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END
+    FROM (SELECT 1)
+    LEFT JOIN user_data ue ON ue.jellyfin_id = new.jellyfin_id
+    ON CONFLICT(series_id) DO UPDATE SET
+        latest_episode_created = CASE
+            WHEN excluded.latest_episode_created IS NULL THEN series_aggregates.latest_episode_created
+            WHEN series_aggregates.latest_episode_created IS NULL THEN excluded.latest_episode_created
+            WHEN excluded.latest_episode_created > series_aggregates.latest_episode_created THEN excluded.latest_episode_created
+            ELSE series_aggregates.latest_episode_created
+        END,
+        latest_episode_played = CASE
+            WHEN excluded.latest_episode_played IS NULL THEN series_aggregates.latest_episode_played
+            WHEN series_aggregates.latest_episode_played IS NULL THEN excluded.latest_episode_played
+            WHEN excluded.latest_episode_played > series_aggregates.latest_episode_played THEN excluded.latest_episode_played
+            ELSE series_aggregates.latest_episode_played
+        END,
+        unplayed_present_count = series_aggregates.unplayed_present_count + excluded.unplayed_present_count,
+        started_episode_count = series_aggregates.started_episode_count + excluded.started_episode_count;
+END;
+
+CREATE TRIGGER series_aggregates_item_update AFTER UPDATE OF kind, series_id, is_virtual, date_created ON items
+    WHEN (old.kind = 'Episode' AND old.series_id IS NOT NULL)
+      OR (new.kind = 'Episode' AND new.series_id IS NOT NULL)
+BEGIN
+    DELETE FROM series_aggregates
+    WHERE series_id IN (old.series_id, new.series_id);
+    INSERT INTO series_aggregates (
+        series_id,
+        latest_episode_created,
+        latest_episode_played,
+        unplayed_present_count,
+        started_episode_count
+    )
+    SELECT
+        e.series_id,
+        max(CASE WHEN e.is_virtual = 0 THEN e.date_created END),
+        max(ue.last_played_date),
+        sum(CASE WHEN e.is_virtual = 0 AND COALESCE(ue.played, 0) = 0 THEN 1 ELSE 0 END),
+        sum(CASE WHEN COALESCE(ue.played, 0) = 1 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END)
+    FROM items e
+    LEFT JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
+    WHERE e.series_id IN (old.series_id, new.series_id)
+      AND e.kind = 'Episode'
+      AND e.series_id IS NOT NULL
+    GROUP BY e.series_id;
+END;
+
+CREATE TRIGGER series_aggregates_item_delete AFTER DELETE ON items
+    WHEN old.kind = 'Episode' AND old.series_id IS NOT NULL
+BEGIN
+    DELETE FROM series_aggregates
+    WHERE series_id = old.series_id;
+    INSERT INTO series_aggregates (
+        series_id,
+        latest_episode_created,
+        latest_episode_played,
+        unplayed_present_count,
+        started_episode_count
+    )
+    SELECT
+        e.series_id,
+        max(CASE WHEN e.is_virtual = 0 THEN e.date_created END),
+        max(ue.last_played_date),
+        sum(CASE WHEN e.is_virtual = 0 AND COALESCE(ue.played, 0) = 0 THEN 1 ELSE 0 END),
+        sum(CASE WHEN COALESCE(ue.played, 0) = 1 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END)
+    FROM items e
+    LEFT JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
+    WHERE e.series_id = old.series_id
+      AND e.kind = 'Episode'
+    GROUP BY e.series_id;
+END;
+
+CREATE TRIGGER series_aggregates_user_data_insert AFTER INSERT ON user_data
+    WHEN EXISTS (SELECT 1 FROM items e WHERE e.jellyfin_id = new.jellyfin_id AND e.kind = 'Episode' AND e.series_id IS NOT NULL)
+BEGIN
+    UPDATE series_aggregates
+    SET
+        latest_episode_played = CASE
+            WHEN new.last_played_date IS NULL THEN series_aggregates.latest_episode_played
+            WHEN series_aggregates.latest_episode_played IS NULL THEN new.last_played_date
+            WHEN new.last_played_date > series_aggregates.latest_episode_played THEN new.last_played_date
+            ELSE series_aggregates.latest_episode_played
+        END,
+        unplayed_present_count = max(
+            0,
+            series_aggregates.unplayed_present_count - CASE WHEN e.is_virtual = 0 AND new.played <> 0 THEN 1 ELSE 0 END
+        ),
+        started_episode_count = series_aggregates.started_episode_count + CASE
+            WHEN new.played <> 0 OR new.playback_position_ticks > 0 THEN 1
+            ELSE 0
+        END
+    FROM items e
+    WHERE e.jellyfin_id = new.jellyfin_id
+      AND e.kind = 'Episode'
+      AND series_aggregates.series_id = e.series_id;
+END;
+
+CREATE TRIGGER series_aggregates_user_data_update AFTER UPDATE OF played, playback_position_ticks, last_played_date ON user_data
+    WHEN EXISTS (SELECT 1 FROM items e WHERE e.jellyfin_id = new.jellyfin_id AND e.kind = 'Episode' AND e.series_id IS NOT NULL)
+BEGIN
+    UPDATE series_aggregates
+    SET
+        latest_episode_played = CASE
+            WHEN new.last_played_date IS NOT NULL
+             AND (series_aggregates.latest_episode_played IS NULL OR new.last_played_date >= series_aggregates.latest_episode_played)
+                THEN new.last_played_date
+            WHEN old.last_played_date IS NOT NULL
+             AND series_aggregates.latest_episode_played = old.last_played_date
+             AND (new.last_played_date IS NULL OR new.last_played_date < old.last_played_date)
+                THEN (
+                    SELECT max(ue.last_played_date)
+                    FROM items ep
+                    JOIN user_data ue ON ue.jellyfin_id = ep.jellyfin_id
+                    WHERE ep.kind = 'Episode' AND ep.series_id = e.series_id
+                )
+            ELSE series_aggregates.latest_episode_played
+        END,
+        unplayed_present_count = max(
+            0,
+            series_aggregates.unplayed_present_count
+            + CASE WHEN e.is_virtual = 0 AND COALESCE(new.played, 0) = 0 THEN 1 ELSE 0 END
+            - CASE WHEN e.is_virtual = 0 AND COALESCE(old.played, 0) = 0 THEN 1 ELSE 0 END
+        ),
+        started_episode_count = max(
+            0,
+            series_aggregates.started_episode_count
+            + CASE WHEN COALESCE(new.played, 0) <> 0 OR COALESCE(new.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END
+            - CASE WHEN COALESCE(old.played, 0) <> 0 OR COALESCE(old.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END
+        )
+    FROM items e
+    WHERE e.jellyfin_id = new.jellyfin_id
+      AND e.kind = 'Episode'
+      AND series_aggregates.series_id = e.series_id;
+END;
+
+CREATE TRIGGER series_aggregates_user_data_delete AFTER DELETE ON user_data
+    WHEN EXISTS (SELECT 1 FROM items e WHERE e.jellyfin_id = old.jellyfin_id AND e.kind = 'Episode' AND e.series_id IS NOT NULL)
+BEGIN
+    DELETE FROM series_aggregates
+    WHERE series_id = (SELECT ep.series_id FROM items ep WHERE ep.jellyfin_id = old.jellyfin_id);
+    INSERT INTO series_aggregates (
+        series_id,
+        latest_episode_created,
+        latest_episode_played,
+        unplayed_present_count,
+        started_episode_count
+    )
+    SELECT
+        e.series_id,
+        max(CASE WHEN e.is_virtual = 0 THEN e.date_created END),
+        max(ue.last_played_date),
+        sum(CASE WHEN e.is_virtual = 0 AND COALESCE(ue.played, 0) = 0 THEN 1 ELSE 0 END),
+        sum(CASE WHEN COALESCE(ue.played, 0) = 1 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END)
+    FROM items e
+    LEFT JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
+    WHERE e.series_id = (SELECT ep.series_id FROM items ep WHERE ep.jellyfin_id = old.jellyfin_id)
+      AND e.kind = 'Episode'
+    GROUP BY e.series_id;
+END;
+
+CREATE VIRTUAL TABLE catalog_search_fts USING fts5(
+    name,
+    original_title,
+    search_genres,
+    content='items',
+    content_rowid='id',
+    prefix='1 2 3',
+    tokenize='unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER catalog_search_fts_insert AFTER INSERT ON items
+    WHEN new.kind IN ('Movie', 'Series')
+BEGIN
+    INSERT INTO catalog_search_fts(rowid, name, original_title, search_genres)
+    VALUES (new.id, new.name, new.original_title, new.search_genres);
+END;
+CREATE TRIGGER catalog_search_fts_delete AFTER DELETE ON items
+    WHEN old.kind IN ('Movie', 'Series')
+BEGIN
+    INSERT INTO catalog_search_fts(catalog_search_fts, rowid, name, original_title, search_genres)
+    VALUES ('delete', old.id, old.name, old.original_title, old.search_genres);
+END;
+CREATE TRIGGER catalog_search_fts_update AFTER UPDATE OF kind, name, original_title, search_genres ON items
+    WHEN old.kind IN ('Movie', 'Series') OR new.kind IN ('Movie', 'Series')
+BEGIN
+    INSERT INTO catalog_search_fts(catalog_search_fts, rowid, name, original_title, search_genres)
+    SELECT 'delete', old.id, old.name, old.original_title, old.search_genres
+    WHERE old.kind IN ('Movie', 'Series');
+    INSERT INTO catalog_search_fts(rowid, name, original_title, search_genres)
+    SELECT new.id, new.name, new.original_title, new.search_genres
+    WHERE new.kind IN ('Movie', 'Series');
+END;
+
+CREATE INDEX items_browse_cover
+    ON items (kind, sort_name COLLATE NOCASE ASC, name COLLATE NOCASE ASC, id, jellyfin_id)
+    WHERE kind IN ('Movie', 'Series');
+CREATE INDEX items_browse_added_cover
+    ON items (kind, date_created DESC, sort_name COLLATE NOCASE ASC, id, jellyfin_id)
+    WHERE kind IN ('Movie', 'Series');
+CREATE INDEX items_browse_official_rating
+    ON items (kind, official_rating, jellyfin_id)
+    WHERE kind IN ('Movie', 'Series') AND official_rating IS NOT NULL AND official_rating <> '';
+CREATE INDEX items_browse_backdrop
+    ON items (id)
+    WHERE kind IN ('Movie', 'Series') AND backdrop_image_tag IS NOT NULL AND backdrop_image_tag <> '';
+CREATE INDEX items_top_kind_id_backdrop
+    ON items (kind, id)
+    WHERE backdrop_image_tag IS NOT NULL AND backdrop_image_tag <> '';
+CREATE INDEX items_movie_id_cover
+    ON items (id, jellyfin_id)
+    WHERE kind = 'Movie';
+CREATE INDEX user_data_favorite_id
+    ON user_data (jellyfin_id)
+    WHERE is_favorite = 1;
+CREATE INDEX user_data_played_id
+    ON user_data (jellyfin_id)
+    WHERE played = 1;
+CREATE INDEX user_data_play_count_id
+    ON user_data (jellyfin_id, play_count, last_played_date);
+CREATE INDEX items_top_letter_cover
+    ON items (kind, upper(substr(COALESCE(sort_name, name), 1, 1)), jellyfin_id)
+    WHERE kind IN ('Movie', 'Series');
+CREATE INDEX items_top_jellyfin_kind_id
+    ON items (jellyfin_id, kind, id)
+    WHERE kind IN ('Movie', 'Series');
+CREATE INDEX user_data_play_count_desc
+    ON user_data (play_count DESC, jellyfin_id)
+    WHERE play_count > 0;
+CREATE INDEX items_jellyfin_cover
+    ON items (jellyfin_id, kind, id, sort_name COLLATE NOCASE, name COLLATE NOCASE, date_created, official_rating);
+"#;
+
+pub(super) const V24_BACKFILL_SQL: &str = "
+INSERT INTO series_aggregates (
+    series_id,
+    latest_episode_created,
+    latest_episode_played,
+    unplayed_present_count,
+    started_episode_count
+)
+SELECT
+    e.series_id,
+    max(CASE WHEN e.is_virtual = 0 THEN e.date_created END),
+    max(ue.last_played_date),
+    sum(CASE WHEN e.is_virtual = 0 AND COALESCE(ue.played, 0) = 0 THEN 1 ELSE 0 END),
+    sum(CASE WHEN COALESCE(ue.played, 0) = 1 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END)
+FROM items e
+LEFT JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
+WHERE e.kind = 'Episode' AND e.series_id IS NOT NULL
+GROUP BY e.series_id;
+INSERT INTO catalog_search_fts(rowid, name, original_title, search_genres)
+SELECT id, name, original_title, search_genres
+FROM items
+WHERE kind IN ('Movie', 'Series');
+ANALYZE;
+";

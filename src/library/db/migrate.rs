@@ -2,15 +2,15 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use super::OpenError;
 use super::development;
-use super::schema::SCHEMA;
+use super::schema::{SCHEMA, SCHEMA_V24_ADDITIONS};
 
-pub const SCHEMA_VERSION: i32 = 23;
+pub const SCHEMA_VERSION: i32 = 24;
 
 pub(super) const FIRST_RELEASED_SCHEMA: i32 = 23;
 
 pub(super) type Migration = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
-pub(super) const MIGRATIONS: &[Migration] = &[];
+pub(super) const MIGRATIONS: &[Migration] = &[migrate_23_to_24];
 
 const _: () = assert!(
     MIGRATIONS.len() as i32 == SCHEMA_VERSION - FIRST_RELEASED_SCHEMA,
@@ -102,7 +102,13 @@ fn upgrade(
 
 pub(super) fn create(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
     transaction.execute_batch(SCHEMA)?;
+    transaction.execute_batch(SCHEMA_V24_ADDITIONS)?;
     transaction.execute_batch(&super::super::sort_indexes())
+}
+
+fn migrate_23_to_24(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch(SCHEMA_V24_ADDITIONS)?;
+    transaction.execute_batch(super::schema::V24_BACKFILL_SQL)
 }
 
 fn change_schema(

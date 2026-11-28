@@ -60,12 +60,16 @@ unimplemented = "forbid"
 unwrap_used = "forbid"
 
 [dev-dependencies]
+proptest = "1"
 sha2 = "0.11"
 syn = { version = "3", features = ["full", "visit"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 sevenz-rust2 = { version = "0.25", default-features = false, features = ["util"] }
 windows = { version = "0.62", features = [
+    "Foundation",
+    "Media",
+    "Media_Playback",
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",
@@ -76,9 +80,11 @@ windows = { version = "0.62", features = [
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_System_Com",
     "Win32_System_Environment",
     "Win32_System_JobObjects",
     "Win32_System_LibraryLoader",
+    "Win32_System_Power",
     "Win32_System_Registry",
     "Win32_System_Threading",
     "Win32_Storage_FileSystem",
@@ -107,7 +113,10 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "0.14", features = ["xkb", "resource_manager"] }
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+wayland-server = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "server", "staging", "unstable"] }
+xkbcommon-dl = "0.4"
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
 
 [profile.release]
 opt-level = 3

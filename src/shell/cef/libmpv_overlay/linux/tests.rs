@@ -1,9 +1,11 @@
+use super::x11::{X11Surface, update_regions};
 use super::*;
 use crate::playback::{
     NativeOverlayFrame, NativeOverlayReply, PlaybackRequest, PlayerBackend as PlaybackBackend,
-    PlayerSnapshot,
+    PlayerCommand, PlayerSnapshot,
 };
-use crate::preferences::{FullscreenBehavior, PlayerPreferences};
+use crate::preferences::{FullscreenBehavior, PlayerBackend, PlayerPreferences};
+use cef::Rect;
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Sender};
 use std::time::Duration;
@@ -43,7 +45,7 @@ impl PlaybackBackend for BlockingOverlayBackend {
     fn shutdown(&self) {}
 }
 
-fn test_surface() -> (Rc<LibmpvOverlaySurface>, mpsc::Receiver<OverlayRequest>) {
+fn test_surface() -> (Rc<X11Surface>, mpsc::Receiver<OverlayRequest>) {
     let (submissions_tx, submissions_rx) = mpsc::channel();
     let (events_tx, _events_rx) = mpsc::channel();
     let playback = Arc::new(PlaybackCoordinator::new(events_tx, move |_| {
@@ -56,14 +58,13 @@ fn test_surface() -> (Rc<LibmpvOverlaySurface>, mpsc::Receiver<OverlayRequest>) 
         ..AppSettings::default()
     };
     let state = crate::shell::cef::test_browser_state(Arc::clone(&playback));
-    let surface =
-        LibmpvOverlaySurface::select(&settings, playback, state).expect("libmpv surface selected");
+    let surface = X11Surface::new(&settings, playback, state);
     (surface, submissions_rx)
 }
 
 const TEST_PRESENT_TIMEOUT: Duration = Duration::from_millis(25);
 
-fn set_frame(surface: &LibmpvOverlaySurface, fill: u8) {
+fn set_frame(surface: &X11Surface, fill: u8) {
     surface.frame_size.set((2, 2));
     *surface.frame.borrow_mut() = vec![fill; 2 * 2 * 4];
 }

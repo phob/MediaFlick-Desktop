@@ -16,6 +16,7 @@ export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWri
     defaultFullscreen: settings.defaultFullscreen,
     markWatchedNext: settings.markWatchedNext,
     comfort: settings.playerBackend === "libmpv" ? settings.comfort : null,
+    audioPassthrough: settings.audioPassthrough,
   }
 }
 

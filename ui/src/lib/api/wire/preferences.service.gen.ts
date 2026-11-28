@@ -34,6 +34,7 @@ export type PlayerSettingsPatch = {
   mpvPath: string | null,
   defaultFullscreen: FullscreenBehavior | null,
   markWatchedNext: string | null,
+  audioPassthrough: boolean | null,
 };
 
 export type RestartRequired = {

@@ -42,16 +42,16 @@ impl PlaystateCapture {
                     Ok((mut stream, _)) => {
                         let _ = stream.set_nonblocking(false);
                         let request = read_test_http_request(&mut stream);
-                        let _ = stream.write_all(
-                            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                        );
-                        let _ = stream.flush();
                         if let Ok(parsed) = serde_json::from_str::<Value>(&request.body) {
                             server_entries
                                 .lock()
                                 .expect("captured entries")
                                 .push((request.request_line, parsed));
                         }
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                        let _ = stream.flush();
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));

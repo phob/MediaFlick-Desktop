@@ -70,6 +70,18 @@ export function personImageUrl(person: Person, maxWidth = HEADSHOT_WIDTH) {
   return imageUrl({ id: person.id, primaryImageTag: person.imageTag }, "Primary", maxWidth)
 }
 
+export function trickplayTileUrl(
+  itemId: string,
+  width: number,
+  tileIndex: number,
+  mediaSourceId?: string | null,
+) {
+  return link("GET /api/trickplay/{id}/{width}/{tile}", {
+    params: { id: itemId, width, tile: tileIndex },
+    query: { mediaSourceId },
+  })
+}
+
 export function seerrImageUrl(path: string | null | undefined, size = "w300") {
   if (!path) return null
   return link("GET /api/seerr/image/{size}/{file}", {

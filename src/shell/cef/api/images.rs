@@ -6,12 +6,19 @@ routes! {
     |services, request|
     GET ["image", id, image_type] -> Binary =
         image(services, &percent_decode(id), &percent_decode(image_type), request),
+    GET ["trickplay", id, width, tile] -> Binary =
+        trickplay_tile(services, &percent_decode(id), width, tile, request),
 }
 
 static IMAGE_WRITES: AtomicUsize = AtomicUsize::new(0);
 static IMAGE_TEMPORARIES: AtomicUsize = AtomicUsize::new(0);
 const IMAGE_CACHE_MAX_FILES: usize = 4_000;
 const IMAGE_CACHE_PRUNE_EVERY: usize = 200;
+
+fn cached_image_response(cache_path: &std::path::Path) -> Option<BinaryAnswer> {
+    let bytes = std::fs::read(cache_path).ok()?;
+    (!bytes.is_empty()).then(|| BinaryAnswer::bytes(mime_for_image(&bytes), bytes, IMMUTABLE_CACHE))
+}
 
 fn image(
     services: &Arc<Services>,
@@ -28,14 +35,8 @@ fn image(
     let key = cache_key(item_id, image_type, &tag, max_width);
     let cache_path = crate::app::paths::image_cache_dir().join(&key);
 
-    if let Ok(bytes) = std::fs::read(&cache_path)
-        && !bytes.is_empty()
-    {
-        return Ok(BinaryAnswer::bytes(
-            mime_for_image(&bytes),
-            bytes,
-            IMMUTABLE_CACHE,
-        ));
+    if let Some(cached) = cached_image_response(&cache_path) {
+        return Ok(cached);
     }
 
     let scope = session_scope(services)?;
@@ -64,6 +65,77 @@ fn image(
     }
 }
 
+fn parse_trickplay_params(
+    width: &str,
+    tile: &str,
+    media_source_id: Option<&str>,
+) -> Result<(u32, u32, Option<String>), ApiResponse> {
+    let width_val = width
+        .parse::<u32>()
+        .ok()
+        .filter(|value| (16..=1920).contains(value))
+        .ok_or_else(|| ApiResponse::error(400, "invalid trickplay width"))?;
+    let tile_val = tile
+        .parse::<u32>()
+        .ok()
+        .filter(|value| *value <= 100_000)
+        .ok_or_else(|| ApiResponse::error(400, "invalid trickplay tile index"))?;
+    let validated_source = match media_source_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => {
+            if value.len() > 128
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            {
+                return Err(ApiResponse::error(400, "invalid mediaSourceId"));
+            }
+            Some(value.to_string())
+        }
+        None => None,
+    };
+    Ok((width_val, tile_val, validated_source))
+}
+
+fn trickplay_tile(
+    services: &Arc<Services>,
+    item_id: &str,
+    width: &str,
+    tile: &str,
+    request: &ApiRequest,
+) -> Result<BinaryAnswer, ApiResponse> {
+    let (width_val, tile_val, media_source_id) =
+        parse_trickplay_params(width, tile, request.param("mediaSourceId").as_deref())?;
+    let key = cache_key(
+        item_id,
+        &format!("Trickplay-{width_val}-{tile_val}"),
+        media_source_id.as_deref().unwrap_or(""),
+        width_val,
+    );
+    let cache_path = crate::app::paths::image_cache_dir().join(&key);
+
+    if let Some(cached) = cached_image_response(&cache_path) {
+        return Ok(cached);
+    }
+
+    let scope = session_scope(services)?;
+    let mut query = Vec::new();
+    if let Some(source_id) = media_source_id {
+        query.push(("mediaSourceId", source_id));
+    }
+    let path = items::trickplay_tile_path(item_id, width_val, tile_val);
+    match scope.fetch(|client, _| client.get_bytes(&path, &query)) {
+        Ok(fetched) => {
+            let (bytes, content_type) = confirmed(services, fetched)?;
+            store_image(&cache_path, &bytes);
+            Ok(BinaryAnswer::bytes(content_type, bytes, IMMUTABLE_CACHE))
+        }
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
+    }
+}
+
 fn forget_if_server_disowns(services: &Arc<Services>, scope: &SessionScope, item_id: &str) {
     let item = scope
         .fetch(|client, user_id| items::fetch_item(client, user_id, item_id))
@@ -80,7 +152,7 @@ fn forget_if_server_disowns(services: &Arc<Services>, scope: &SessionScope, item
     }
 }
 
-pub(super) fn cache_key(item_id: &str, image_type: &str, tag: &str, max_width: u32) -> String {
+pub(crate) fn cache_key(item_id: &str, image_type: &str, tag: &str, max_width: u32) -> String {
     let sanitize = |value: &str| -> String {
         value
             .chars()
@@ -176,5 +248,41 @@ mod tests {
         let key = cache_key("../../etc/passwd", r"..\..\Primary", "tag", 400);
         assert!(!key.contains(['/', '\\', ':']), "{key}");
         assert!(!key.contains(".."), "{key}");
+    }
+
+    #[test]
+    fn trickplay_params_reject_invalid_bounds_and_source_ids() {
+        assert_eq!(
+            parse_trickplay_params("320", "0", Some("src-1")).map_err(|r| r.status),
+            Ok((320, 0, Some("src-1".to_string())))
+        );
+        assert_eq!(
+            parse_trickplay_params("16", "100000", None).map_err(|r| r.status),
+            Ok((16, 100_000, None))
+        );
+        assert_eq!(
+            parse_trickplay_params("15", "0", None).map_err(|r| r.status),
+            Err(400)
+        );
+        assert_eq!(
+            parse_trickplay_params("1921", "0", None).map_err(|r| r.status),
+            Err(400)
+        );
+        assert_eq!(
+            parse_trickplay_params("abc", "0", None).map_err(|r| r.status),
+            Err(400)
+        );
+        assert_eq!(
+            parse_trickplay_params("320", "100001", None).map_err(|r| r.status),
+            Err(400)
+        );
+        assert_eq!(
+            parse_trickplay_params("320", "-1", None).map_err(|r| r.status),
+            Err(400)
+        );
+        assert_eq!(
+            parse_trickplay_params("320", "0", Some("../secret")).map_err(|r| r.status),
+            Err(400)
+        );
     }
 }

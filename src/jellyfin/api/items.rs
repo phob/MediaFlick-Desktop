@@ -8,11 +8,12 @@ use crate::library::{CatalogKind, MAX_CHILD_PAGE_LIMIT, SortDirection};
 use crate::preferences::StreamingQuality;
 
 use super::client::{ApiError, ByteResponse, JellyfinClient};
-use super::device_profile::device_profile;
+use super::device_profile::{device_profile, device_profile_for};
 use super::model::{
     BaseItemDto, IdentityPage, ItemsResponse, MediaSourceInfo, MediaUrl, PlaybackInfoResponse,
     UserViewDto, UserViewsResponse,
 };
+use crate::players::capabilities::HostCapabilities;
 
 pub const CATALOG_FIELDS: &str = "ProviderIds,Genres,Studios,Tags,DateCreated,OriginalTitle,\
 SortName,PremiereDate,OfficialRating,CommunityRating,ChildCount,ParentId";
@@ -539,27 +540,47 @@ pub fn fetch_people(
     )
 }
 
-pub fn fetch_media_sources(
+pub struct ItemMediaSources {
+    pub sources: Vec<MediaSourceInfo>,
+    pub trickplay: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, crate::jellyfin::api::model::TrickplayInfoDto>,
+    >,
+}
+
+pub fn fetch_media_sources_and_trickplay(
     client: &JellyfinClient,
     user_id: &str,
     item_id: &str,
-) -> Result<Vec<MediaSourceInfo>, ApiError> {
+) -> Result<ItemMediaSources, ApiError> {
     let response: ItemsResponse = client.get_json(
         "/Items",
         &[
             user_query(user_id),
             ("ids", item_id.to_string()),
-            ("Fields", "MediaSources,MediaStreams".to_string()),
+            ("Fields", "MediaSources,MediaStreams,Trickplay".to_string()),
             ("EnableUserData", "false".to_string()),
             ("EnableImages", "false".to_string()),
         ],
     )?;
-    Ok(response
-        .items
-        .into_iter()
-        .next()
-        .map(|item| item.media_sources)
-        .unwrap_or_default())
+    let Some(item) = response.items.into_iter().next() else {
+        return Ok(ItemMediaSources {
+            sources: Vec::new(),
+            trickplay: std::collections::BTreeMap::new(),
+        });
+    };
+    Ok(ItemMediaSources {
+        sources: item.media_sources,
+        trickplay: item.trickplay,
+    })
+}
+
+pub fn fetch_media_sources(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+) -> Result<Vec<MediaSourceInfo>, ApiError> {
+    Ok(fetch_media_sources_and_trickplay(client, user_id, item_id)?.sources)
 }
 
 pub fn fetch_local_trailers(
@@ -769,9 +790,25 @@ pub fn playback_info(
     quality: StreamingQuality,
     request: &PlaybackInfoRequest,
 ) -> Result<PlaybackInfoResponse, ApiError> {
+    playback_info_with_profile(client, user_id, item_id, quality, request, false)
+}
+
+pub fn playback_info_with_profile(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+    quality: StreamingQuality,
+    request: &PlaybackInfoRequest,
+    audio_passthrough: bool,
+) -> Result<PlaybackInfoResponse, ApiError> {
+    let profile = if audio_passthrough {
+        device_profile_for(quality, HostCapabilities::detect(), true)
+    } else {
+        device_profile(quality)
+    };
     let mut body = json!({
         "UserId": user_id,
-        "DeviceProfile": device_profile(quality),
+        "DeviceProfile": profile,
         "EnableDirectPlay": true,
         "EnableDirectStream": true,
         "EnableTranscoding": quality.allows_transcoding(),
@@ -811,6 +848,13 @@ pub fn image_path(item_id: &str, image_type: &str) -> String {
         "/Items/{}/Images/{}",
         encode_path_segment(item_id),
         encode_path_segment(image_type)
+    )
+}
+
+pub fn trickplay_tile_path(item_id: &str, width: u32, tile_index: u32) -> String {
+    format!(
+        "/Videos/{}/Trickplay/{width}/{tile_index}.jpg",
+        encode_path_segment(item_id)
     )
 }
 

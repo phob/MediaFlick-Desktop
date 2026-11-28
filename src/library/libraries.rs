@@ -23,6 +23,11 @@ impl LibraryId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(raw: &str) -> Self {
+        Self(raw.to_string())
+    }
 }
 
 impl TryFrom<String> for LibraryId {

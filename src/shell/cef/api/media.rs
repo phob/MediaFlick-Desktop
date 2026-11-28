@@ -84,6 +84,17 @@ pub(super) struct PlaybackPreferenceSaved {
     playback_preference: Option<ResolvedPlaybackPreference>,
 }
 
+#[derive(Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct TrickplayInfoView {
+    width: u32,
+    height: u32,
+    tile_width: u32,
+    tile_height: u32,
+    thumbnail_count: u32,
+    interval_ms: u32,
+}
+
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 struct MediaSourceView {
@@ -95,6 +106,7 @@ struct MediaSourceView {
     bitrate: Option<i64>,
     default_audio_stream_index: Option<i64>,
     default_subtitle_stream_index: Option<i64>,
+    trickplay: Option<TrickplayInfoView>,
     video: Vec<MediaStreamView>,
     audio: Vec<MediaStreamView>,
     subtitles: Vec<MediaStreamView>,
@@ -250,13 +262,21 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> Result<MediaInfoRespon
         });
     }
     let scope = session_scope(services)?;
-    let sources = fetch_current(services, &scope, |client, user_id| {
-        items::fetch_media_sources(client, user_id, item_id)
+    let data = fetch_current(services, &scope, |client, user_id| {
+        items::fetch_media_sources_and_trickplay(client, user_id, item_id)
     })?;
     let preference = services.playback_preferences.get(scope.account(), item_id);
+    let sources = data
+        .sources
+        .iter()
+        .map(|source| {
+            let trickplay = trickplay_for_source(&data.trickplay, source.id.as_deref());
+            MediaSourceView::of(source, trickplay)
+        })
+        .collect();
     Ok(MediaInfoResponse {
-        sources: sources.iter().map(MediaSourceView::of).collect(),
-        playback_preference: resolve_playback_preference(preference.as_ref(), &sources),
+        sources,
+        playback_preference: resolve_playback_preference(preference.as_ref(), &data.sources),
     })
 }
 
@@ -454,8 +474,21 @@ fn trailer_stream(
     ))
 }
 
+impl TrickplayInfoView {
+    fn of(dto: &crate::jellyfin::api::model::TrickplayInfoDto) -> Self {
+        Self {
+            width: dto.width,
+            height: dto.height,
+            tile_width: dto.tile_width,
+            tile_height: dto.tile_height,
+            thumbnail_count: dto.thumbnail_count,
+            interval_ms: dto.interval,
+        }
+    }
+}
+
 impl MediaSourceView {
-    fn of(source: &MediaSourceInfo) -> Self {
+    fn of(source: &MediaSourceInfo, trickplay: Option<TrickplayInfoView>) -> Self {
         let streams = |kind: &str| {
             source
                 .streams_of_type(kind)
@@ -475,6 +508,7 @@ impl MediaSourceView {
             bitrate: source.bitrate,
             default_audio_stream_index: source.default_audio_stream_index,
             default_subtitle_stream_index: source.default_subtitle_stream_index,
+            trickplay,
             video: streams("video"),
             audio: streams("audio"),
             subtitles: streams("subtitle"),
@@ -639,6 +673,41 @@ fn user_data_write(
     Ok((scope, written))
 }
 
+fn select_trickplay_variant(
+    by_width: &std::collections::BTreeMap<String, crate::jellyfin::api::model::TrickplayInfoDto>,
+    target_width: u32,
+) -> Option<&crate::jellyfin::api::model::TrickplayInfoDto> {
+    by_width
+        .values()
+        .filter(|variant| {
+            variant.width > 0
+                && variant.height > 0
+                && variant.tile_width > 0
+                && variant.tile_height > 0
+                && variant.thumbnail_count > 0
+                && variant.interval > 0
+        })
+        .min_by(|a, b| {
+            a.width
+                .abs_diff(target_width)
+                .cmp(&b.width.abs_diff(target_width))
+                .then_with(|| b.width.cmp(&a.width))
+        })
+}
+
+fn trickplay_for_source(
+    map: &std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, crate::jellyfin::api::model::TrickplayInfoDto>,
+    >,
+    source_id: Option<&str>,
+) -> Option<TrickplayInfoView> {
+    let by_width = source_id
+        .and_then(|id| map.get(id))
+        .or_else(|| (map.len() == 1).then(|| map.values().next()).flatten())?;
+    select_trickplay_variant(by_width, 320).map(TrickplayInfoView::of)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -690,5 +759,43 @@ mod tests {
         assert_eq!(file_name_of("6967c5ef-2daf-4951-9d03-38db9a7f5351"), None);
         assert_eq!(file_name_of("/mnt/media/Movies/The Matrix (1999)"), None);
         assert_eq!(file_name_of(""), None);
+    }
+
+    #[test]
+    fn select_trickplay_variant_picks_closest_valid_width_to_target() {
+        use crate::jellyfin::api::model::TrickplayInfoDto;
+        let mut by_width = std::collections::BTreeMap::new();
+        by_width.insert(
+            "320".to_string(),
+            TrickplayInfoDto {
+                width: 320,
+                height: 180,
+                tile_width: 10,
+                tile_height: 10,
+                thumbnail_count: 100,
+                interval: 10_000,
+            },
+        );
+        by_width.insert(
+            "640".to_string(),
+            TrickplayInfoDto {
+                width: 640,
+                height: 360,
+                tile_width: 5,
+                tile_height: 5,
+                thumbnail_count: 100,
+                interval: 10_000,
+            },
+        );
+        by_width.insert("0".to_string(), TrickplayInfoDto::default());
+        let picked = super::select_trickplay_variant(&by_width, 320).expect("valid variant");
+        assert_eq!(picked.width, 320);
+
+        let near = super::select_trickplay_variant(&by_width, 520).expect("640 closest");
+        assert_eq!(near.width, 640);
+
+        let empty =
+            std::collections::BTreeMap::from([("bad".to_string(), TrickplayInfoDto::default())]);
+        assert!(super::select_trickplay_variant(&empty, 320).is_none());
     }
 }

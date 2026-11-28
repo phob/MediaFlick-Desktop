@@ -25,6 +25,7 @@ use crate::windows::set_window_icon;
 
 pub mod api;
 pub mod app_scheme;
+mod os_media;
 
 const PLAYSTATE_CACHE_REFRESH_TIMEOUT: Duration = Duration::from_secs(11);
 
@@ -52,6 +53,11 @@ fn guarded_post(shutting_down: &AtomicBool, post: impl FnOnce() -> bool) -> Post
 
 pub(super) fn mark_cef_shutting_down() {
     CEF_SHUTTING_DOWN.store(true, Ordering::SeqCst);
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn is_cef_shutting_down() -> bool {
+    CEF_SHUTTING_DOWN.load(Ordering::Acquire)
 }
 
 pub(super) fn post_ui_task(task: &mut Task) -> PostOutcome {
@@ -175,6 +181,9 @@ pub fn run(config: &AppConfig) -> i32 {
         eprintln!("CEF initialization failed");
         return 1;
     }
+
+    #[cfg(target_os = "linux")]
+    bridge::install_linux_signal_handlers();
 
     run_message_loop();
     mark_cef_shutting_down();
@@ -727,6 +736,15 @@ fn configured_player_native_window(
 ) -> Option<crate::playback::NativeWindowHandle> {
     let playback = state.lock().ok().map(|state| state.playback.clone())?;
     playback.native_window(timeout)
+}
+
+#[cfg(target_os = "linux")]
+fn configured_player_wayland_ui(
+    state: &BrowserState,
+    timeout: Duration,
+) -> Option<crate::players::mpv::WaylandUiHandle> {
+    let playback = state.lock().ok().map(|state| state.playback.clone())?;
+    playback.wayland_ui(timeout)
 }
 
 #[cfg(all(test, target_os = "linux"))]

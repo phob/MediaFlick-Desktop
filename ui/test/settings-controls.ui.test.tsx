@@ -306,6 +306,7 @@ test("switching to External mpv ignores hidden built-in shortcut conflicts and i
         defaultFullscreen: player.defaultFullscreen ?? settings.client.player.defaultFullscreen,
         markWatchedNext: player.markWatchedNext,
         comfort: player.comfort ?? settings.client.player.comfort,
+        audioPassthrough: player.audioPassthrough ?? settings.client.player.audioPassthrough,
       },
     },
   }))

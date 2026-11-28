@@ -1,7 +1,6 @@
 # 0002. mpv presents video natively; CEF is composited over it per platform
 
-Status: Accepted (2026-11-22). Decided in `09f3c18d` (Windows, 2026-08-29) and
-`7621a928` (Linux gpu-next, 2026-09-13).
+Status: Accepted on Windows (2026-11-22); superseded on Linux by [0018](0018-native-wayland-zero-copy-composition.md). Decided in `09f3c18d` (Windows, 2026-08-29) and `7621a928` (Linux gpu-next, 2026-09-13).
 
 ## Context
 

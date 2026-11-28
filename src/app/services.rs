@@ -27,6 +27,7 @@ use crate::shell::InitPermit;
 pub struct Services {
     pub library: Arc<Library>,
     pub session: Arc<Session>,
+    pub playstate_outbox: Arc<crate::jellyfin::playstate_outbox::PlaystateOutbox>,
     pub companion: Arc<CompanionSession>,
     pub ratings: Arc<RatingsService>,
     pub letterboxd: Arc<ReviewService>,
@@ -240,6 +241,11 @@ pub fn open(
     if restored {
         warm_restored_session(session.clone(), companion.clone());
     }
+    let playstate_outbox =
+        crate::jellyfin::playstate_outbox::PlaystateOutbox::new(library.clone(), session.clone());
+    if restored && let Some(account) = session.account_key() {
+        playstate_outbox.wake_account(&account);
+    }
     let ratings = Arc::new(RatingsService::new(&library, &session, &companion));
     let letterboxd = Arc::new(ReviewService::default());
     let sync = sync::spawn(library.clone(), session.clone(), shell.clone());
@@ -247,6 +253,7 @@ pub fn open(
         library.clone(),
         session.clone(),
         sync.clone(),
+        playstate_outbox.clone(),
         shell.clone(),
     );
     tracing::info!(
@@ -257,6 +264,7 @@ pub fn open(
     let services = Arc::new(Services {
         library,
         session,
+        playstate_outbox,
         companion,
         ratings,
         letterboxd,
@@ -470,6 +478,10 @@ fn complete_pending_deletion(
     crate::collections::snapshots::SnapshotRepository::new(&services.library)
         .remove_account(&deletion.account)
         .map_err(|error| format!("could not remove collection cache rows: {error}"))?;
+    services
+        .playstate_outbox
+        .delete_account(&deletion.account)
+        .map_err(|error| format!("could not clear queued playstate reports: {error}"))?;
     for artwork_id in &deletion.artwork_ids {
         services
             .artwork
@@ -555,7 +567,12 @@ pub(crate) mod test_support {
                 library.clone(),
                 shell.clone(),
             ));
+            let playstate_outbox = crate::jellyfin::playstate_outbox::PlaystateOutbox::new(
+                library.clone(),
+                session.clone(),
+            );
             let services = Services {
+                playstate_outbox,
                 ratings: Arc::new(RatingsService::new(&library, &session, &companion)),
                 letterboxd: Arc::new(ReviewService::default()),
                 sync: SyncHandle::detached(),

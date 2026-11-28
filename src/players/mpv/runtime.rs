@@ -16,7 +16,14 @@ use super::ExternalMpv;
 #[cfg(target_os = "linux")]
 mod gpu_next;
 #[cfg(target_os = "linux")]
-mod linux_window;
+pub(crate) mod helper;
+#[cfg(target_os = "linux")]
+pub(super) mod linux_window;
+#[cfg(target_os = "linux")]
+pub(crate) mod wayland;
+
+#[cfg(target_os = "linux")]
+pub(crate) use helper::{is_player_helper_invocation, run_player_helper};
 
 const MPV_EVENT_NONE: c_int = 0;
 const MPV_EVENT_SHUTDOWN: c_int = 1;
@@ -35,7 +42,7 @@ pub enum MpvRuntimeKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum LibmpvProfile {
+pub(crate) enum LibmpvProfile {
     Standard,
     Svp,
 }
@@ -53,6 +60,8 @@ impl LibmpvProfile {
 pub(super) enum MpvRuntime {
     External(Child),
     Library(Box<LibMpvRuntime>),
+    #[cfg(target_os = "linux")]
+    LibraryHelper(Box<helper::HelperRuntime>),
     #[cfg(test)]
     TestRuntime {
         alive: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -63,41 +72,47 @@ pub(super) enum MpvRuntime {
 
 impl MpvRuntime {
     #[cfg(target_os = "linux")]
-    pub(super) fn poll_window_events(&self) {
-        if let Self::Library(runtime) = self {
-            runtime.window.poll_events();
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    pub(super) fn set_fullscreen(&self, mode: FullscreenBehavior) -> io::Result<()> {
-        match self {
-            Self::Library(runtime) => runtime.window.set_fullscreen(mode),
-            Self::External(_) => Ok(()),
-            #[cfg(test)]
-            Self::TestRuntime { .. } => Ok(()),
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    pub(super) fn fullscreen(&self) -> io::Result<bool> {
-        match self {
-            Self::Library(runtime) => runtime.window.fullscreen(),
-            Self::External(_) => Ok(false),
-            #[cfg(test)]
-            Self::TestRuntime { .. } => Ok(false),
-        }
-    }
-    #[cfg(target_os = "linux")]
     pub(super) fn ui_exposes_video(&self) -> bool {
         match self {
             Self::Library(runtime) => runtime.ui_exposes_video,
+            Self::LibraryHelper(runtime) => runtime.ui_exposes_video,
             Self::External(_) => false,
             #[cfg(test)]
             Self::TestRuntime { .. } => false,
         }
     }
+
     #[cfg(target_os = "linux")]
+    pub(super) fn present_helper_overlay(
+        &mut self,
+        frame: crate::playback::NativeOverlayFrame,
+        display: (u16, u16),
+    ) -> Result<crate::playback::NativeOverlayFrame, helper::HelperOverlayError> {
+        match self {
+            Self::LibraryHelper(runtime) => runtime.present_overlay(frame, display),
+            Self::Library(runtime) => {
+                runtime
+                    .renderer
+                    .as_ref()
+                    .ok_or_else(|| {
+                        helper::HelperOverlayError::Composition(
+                            "native renderer is unavailable".into(),
+                        )
+                    })?
+                    .submit(runtime.handle, &frame, display)
+                    .map_err(helper::HelperOverlayError::Composition)?;
+                runtime.ui_exposes_video = frame.exposes_video();
+                Ok(frame)
+            }
+            Self::External(_) => Err(helper::HelperOverlayError::Composition(
+                "UI composition requires built-in libmpv".into(),
+            )),
+            #[cfg(test)]
+            Self::TestRuntime { .. } => Ok(frame),
+        }
+    }
+
+    #[cfg(all(target_os = "linux", test))]
     pub(super) fn present_overlay(
         &mut self,
         frame: crate::playback::NativeOverlayFrame,
@@ -105,23 +120,60 @@ impl MpvRuntime {
         frame.validate()?;
         match self {
             Self::Library(runtime) => {
+                let display = runtime
+                    ._window
+                    .as_ref()
+                    .ok_or("native host window is unavailable")?
+                    .content_size()
+                    .map_err(|e| e.to_string())?;
                 runtime
                     .renderer
                     .as_ref()
                     .ok_or("native renderer is unavailable")?
-                    .submit(
-                        runtime.handle,
-                        &frame,
-                        runtime.window.content_size().map_err(|e| e.to_string())?,
-                    )?;
+                    .submit(runtime.handle, &frame, display)?;
                 runtime.ui_exposes_video = frame.exposes_video();
                 Ok(frame)
             }
+            Self::LibraryHelper(runtime) => runtime
+                .present_overlay(frame, (1280, 720))
+                .map_err(|e| format!("{e:?}")),
             Self::External(_) => Err("UI composition requires built-in libmpv".into()),
-            #[cfg(test)]
             Self::TestRuntime { .. } => Ok(frame),
         }
     }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn start_linux_helper(
+        path: &Path,
+        ipc_path: &str,
+        wid: usize,
+        fullscreen: FullscreenBehavior,
+        libmpv_profile: LibmpvProfile,
+    ) -> io::Result<Self> {
+        helper::HelperRuntime::start(path, ipc_path, wid, fullscreen, libmpv_profile)
+            .map(Box::new)
+            .map(Self::LibraryHelper)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn start_linux_wayland_helper(
+        path: &Path,
+        ipc_path: &str,
+        wayland_socket: std::os::fd::OwnedFd,
+        fullscreen: FullscreenBehavior,
+        libmpv_profile: LibmpvProfile,
+    ) -> io::Result<Self> {
+        helper::HelperRuntime::start_wayland(
+            path,
+            ipc_path,
+            wayland_socket,
+            fullscreen,
+            libmpv_profile,
+        )
+        .map(Box::new)
+        .map(Self::LibraryHelper)
+    }
+
     pub(super) fn start(
         kind: MpvRuntimeKind,
         libmpv_profile: LibmpvProfile,
@@ -150,6 +202,8 @@ impl MpvRuntime {
         match self {
             Self::External(_) => None,
             Self::Library(runtime) => runtime.native_window,
+            #[cfg(target_os = "linux")]
+            Self::LibraryHelper(_) => None,
             #[cfg(test)]
             Self::TestRuntime { native_window, .. } => *native_window,
         }
@@ -159,6 +213,8 @@ impl MpvRuntime {
         match self {
             Self::External(child) => child.try_wait().map(|status| status.is_none()),
             Self::Library(runtime) => Ok(runtime.is_alive()),
+            #[cfg(target_os = "linux")]
+            Self::LibraryHelper(runtime) => runtime.is_alive(),
             #[cfg(test)]
             Self::TestRuntime { alive, .. } => Ok(alive.load(std::sync::atomic::Ordering::SeqCst)),
         }
@@ -174,6 +230,13 @@ impl MpvRuntime {
         }
     }
 
+    pub(super) fn request_graceful_stop(&mut self) {
+        #[cfg(target_os = "linux")]
+        if let Self::LibraryHelper(runtime) = self {
+            runtime.request_graceful_stop();
+        }
+    }
+
     pub(super) fn stop(&mut self) {
         match self {
             Self::External(child) => {
@@ -183,6 +246,8 @@ impl MpvRuntime {
                 let _ = child.wait();
             }
             Self::Library(runtime) => runtime.terminate(),
+            #[cfg(target_os = "linux")]
+            Self::LibraryHelper(runtime) => runtime.stop(),
             #[cfg(test)]
             Self::TestRuntime { alive, stopped, .. } => {
                 alive.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -217,6 +282,48 @@ struct RawMpvEvent {
     data: *mut c_void,
 }
 
+#[derive(Clone, Copy)]
+struct LibMpvStartSpec<'a> {
+    path: &'a Path,
+    ipc_path: &'a str,
+    fullscreen: FullscreenBehavior,
+    libmpv_profile: LibmpvProfile,
+    #[cfg(target_os = "linux")]
+    linux_wid: Option<usize>,
+    #[cfg(target_os = "linux")]
+    use_wayland: bool,
+    #[cfg(target_os = "linux")]
+    native_window: Option<NativeWindowHandle>,
+}
+
+struct MpvSymbols {
+    create: MpvCreate,
+    set_option_string: MpvSetOptionString,
+    initialize: MpvInitialize,
+    #[cfg(target_os = "windows")]
+    get_property: MpvGetProperty,
+    wait_event: MpvWaitEvent,
+    terminate_destroy: MpvTerminateDestroy,
+    client_api_version: MpvClientApiVersion,
+    error_string: MpvErrorString,
+}
+
+impl MpvSymbols {
+    fn load(library: &Library) -> io::Result<Self> {
+        Ok(Self {
+            create: load_symbol(library, b"mpv_create\0")?,
+            set_option_string: load_symbol(library, b"mpv_set_option_string\0")?,
+            initialize: load_symbol(library, b"mpv_initialize\0")?,
+            #[cfg(target_os = "windows")]
+            get_property: load_symbol(library, b"mpv_get_property\0")?,
+            wait_event: load_symbol(library, b"mpv_wait_event\0")?,
+            terminate_destroy: load_symbol(library, b"mpv_terminate_destroy\0")?,
+            client_api_version: load_symbol(library, b"mpv_client_api_version\0")?,
+            error_string: load_symbol(library, b"mpv_error_string\0")?,
+        })
+    }
+}
+
 pub(super) struct LibMpvRuntime {
     handle: *mut MpvHandle,
     wait_event: MpvWaitEvent,
@@ -226,12 +333,57 @@ pub(super) struct LibMpvRuntime {
     #[cfg(target_os = "linux")]
     ui_exposes_video: bool,
     #[cfg(target_os = "linux")]
-    window: linux_window::HostWindow,
+    _window: Option<linux_window::HostWindow>,
     #[cfg(target_os = "linux")]
     renderer: Option<gpu_next::Compositor>,
-    _library: Library,
+    library: Option<Library>,
     #[cfg(target_os = "windows")]
     _svp_environment: Option<super::svp::RuntimeEnvironment>,
+}
+
+fn default_platform_options(
+    target_windows: bool,
+    target_linux: bool,
+) -> &'static [(&'static str, &'static str)] {
+    if target_windows {
+        &[
+            ("vo", "gpu-next"),
+            ("gpu-api", "d3d11,vulkan"),
+            ("gpu-context", "d3d11,winvk"),
+            ("d3d11-flip", "yes"),
+            ("target-colorspace-hint", "auto"),
+            ("osd-level", "0"),
+            ("osc", "no"),
+        ]
+    } else if target_linux {
+        &[
+            ("vo", "gpu-next"),
+            ("gpu-api", "vulkan,opengl"),
+            ("gpu-context", "x11vk,x11egl"),
+            ("gpu-sw", "yes"),
+            ("osd-level", "0"),
+            ("x11-name", "io.github.phob.MediaFlickDesktop"),
+            ("osc", "no"),
+        ]
+    } else {
+        &[]
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+const fn wayland_platform_options() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("vo", "gpu-next"),
+        ("gpu-api", "vulkan,opengl"),
+        ("gpu-context", "waylandvk,wayland"),
+        ("ao", "pipewire,pulse,alsa"),
+        ("target-colorspace-hint", "auto"),
+        ("gpu-sw", "yes"),
+        ("osd-level", "0"),
+        ("osc", "no"),
+        ("clipboard-backends", "none"),
+        ("clipboard-monitor", "no"),
+    ]
 }
 
 fn configure_libmpv_options(
@@ -241,6 +393,7 @@ fn configure_libmpv_options(
     ipc_path: &str,
     fullscreen: FullscreenBehavior,
     libmpv_profile: LibmpvProfile,
+    #[cfg(target_os = "linux")] use_wayland: bool,
 ) -> io::Result<()> {
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     let force_window = "yes";
@@ -269,15 +422,14 @@ fn configure_libmpv_options(
         ("border", "yes"),
     ];
     #[cfg(target_os = "linux")]
-    options.extend([
-        ("vo", "gpu-next"),
-        ("gpu-api", "vulkan,opengl"),
-        ("gpu-context", "x11vk,x11egl"),
-        ("gpu-sw", "yes"),
-        ("osd-level", "0"),
-        ("x11-name", "io.github.phob.MediaFlickDesktop"),
-        ("osc", "no"),
-    ]);
+    let platform = if use_wayland {
+        wayland_platform_options()
+    } else {
+        default_platform_options(false, true)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let platform = default_platform_options(cfg!(target_os = "windows"), false);
+    options.extend_from_slice(platform);
     if libmpv_profile == LibmpvProfile::Svp {
         options.extend([
             ("hwdec-codecs", "all"),
@@ -298,90 +450,179 @@ impl LibMpvRuntime {
         fullscreen: FullscreenBehavior,
         libmpv_profile: LibmpvProfile,
     ) -> io::Result<Self> {
-        #[cfg(target_os = "windows")]
-        let svp_environment = if libmpv_profile == LibmpvProfile::Svp {
-            super::svp::prepare_runtime_environment()?
-        } else {
-            None
-        };
-
-        // SAFETY: the resolved symbols below use libmpv's published C ABI,
-        // and `_library` keeps the DLL loaded for every copied function pointer.
-        let library = unsafe { Library::new(path) }.map_err(io::Error::other)?;
-        let create: MpvCreate = load_symbol(&library, b"mpv_create\0")?;
-        let set_option_string: MpvSetOptionString =
-            load_symbol(&library, b"mpv_set_option_string\0")?;
-        let initialize: MpvInitialize = load_symbol(&library, b"mpv_initialize\0")?;
-        let wait_event: MpvWaitEvent = load_symbol(&library, b"mpv_wait_event\0")?;
-        let terminate_destroy: MpvTerminateDestroy =
-            load_symbol(&library, b"mpv_terminate_destroy\0")?;
-        let client_api_version: MpvClientApiVersion =
-            load_symbol(&library, b"mpv_client_api_version\0")?;
-        let error_string: MpvErrorString = load_symbol(&library, b"mpv_error_string\0")?;
-        #[cfg(target_os = "windows")]
-        let get_property: MpvGetProperty = load_symbol(&library, b"mpv_get_property\0")?;
-
-        // SAFETY: mpv_client_api_version takes no arguments and only returns a value.
-        let (major, minor) = validate_client_api(unsafe { client_api_version() })?;
-
         #[cfg(target_os = "linux")]
-        let window = linux_window::HostWindow::new()?;
+        let window = Some(linux_window::HostWindow::new()?);
         #[cfg(target_os = "linux")]
-        let host_handle = window.handle()?;
+        let host_handle = window
+            .as_ref()
+            .ok_or_else(|| io::Error::other("native host window missing"))?
+            .handle()?;
         #[cfg(target_os = "linux")]
-        let window_id = host_handle.content().to_string();
+        let wid = host_handle.content();
+        #[cfg(target_os = "linux")]
+        let native_window = Some(host_handle);
+
+        Self::start_with_linux_spec(
+            &LibMpvStartSpec {
+                path,
+                ipc_path,
+                fullscreen,
+                libmpv_profile,
+                #[cfg(target_os = "linux")]
+                linux_wid: Some(wid),
+                #[cfg(target_os = "linux")]
+                use_wayland: false,
+                #[cfg(target_os = "linux")]
+                native_window,
+            },
+            #[cfg(target_os = "linux")]
+            window,
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn start_embedded_linux(
+        path: &Path,
+        ipc_path: &str,
+        wid: usize,
+        fullscreen: FullscreenBehavior,
+        libmpv_profile: LibmpvProfile,
+    ) -> io::Result<Self> {
+        Self::start_with_linux_spec(
+            &LibMpvStartSpec {
+                path,
+                ipc_path,
+                fullscreen,
+                libmpv_profile,
+                linux_wid: Some(wid),
+                use_wayland: false,
+                native_window: None,
+            },
+            None,
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn start_wayland_linux(
+        path: &Path,
+        ipc_path: &str,
+        fullscreen: FullscreenBehavior,
+        libmpv_profile: LibmpvProfile,
+    ) -> io::Result<Self> {
+        Self::start_with_linux_spec(
+            &LibMpvStartSpec {
+                path,
+                ipc_path,
+                fullscreen,
+                libmpv_profile,
+                linux_wid: None,
+                use_wayland: true,
+                native_window: None,
+            },
+            None,
+        )
+    }
+
+    fn create_and_init_handle(
+        spec: &LibMpvStartSpec<'_>,
+        syms: &MpvSymbols,
+        #[cfg(target_os = "linux")] window_id: Option<&str>,
+    ) -> io::Result<*mut MpvHandle> {
         // SAFETY: mpv_create takes no arguments; a null result is handled below.
-        let handle = unsafe { create() };
+        let handle = unsafe { (syms.create)() };
         if handle.is_null() {
             return Err(io::Error::other("libmpv could not create a client handle"));
         }
-
         let configured = configure_libmpv_options(
             handle,
-            set_option_string,
-            error_string,
-            ipc_path,
-            fullscreen,
-            libmpv_profile,
+            syms.set_option_string,
+            syms.error_string,
+            spec.ipc_path,
+            spec.fullscreen,
+            spec.libmpv_profile,
+            #[cfg(target_os = "linux")]
+            spec.use_wayland,
         );
         #[cfg(target_os = "linux")]
-        let configured = configured
-            .and_then(|()| set_option(handle, set_option_string, error_string, "wid", &window_id));
+        let configured = configured.and_then(|()| {
+            if let Some(wid) = window_id {
+                set_option(
+                    handle,
+                    syms.set_option_string,
+                    syms.error_string,
+                    "wid",
+                    wid,
+                )
+            } else {
+                Ok(())
+            }
+        });
         if let Err(error) = configured {
-            // SAFETY: `handle` is the live handle created above, destroyed once
-            // before it is dropped on this error path.
-            unsafe { terminate_destroy(handle) };
+            // SAFETY: `handle` is live and destroyed once on this error path.
+            unsafe { (syms.terminate_destroy)(handle) };
             return Err(error);
         }
-
         // SAFETY: `handle` is the live, configured handle created above.
-        let status = unsafe { initialize(handle) };
+        let status = unsafe { (syms.initialize)(handle) };
         if status < 0 {
-            let message = mpv_error(error_string, status);
+            let message = mpv_error(syms.error_string, status);
             // SAFETY: `handle` is live and destroyed once on this error path.
-            unsafe { terminate_destroy(handle) };
+            unsafe { (syms.terminate_destroy)(handle) };
             return Err(io::Error::other(format!(
                 "libmpv initialization failed: {message}"
             )));
         }
+        Ok(handle)
+    }
 
+    fn start_with_linux_spec(
+        spec: &LibMpvStartSpec<'_>,
+        #[cfg(target_os = "linux")] window: Option<linux_window::HostWindow>,
+    ) -> io::Result<Self> {
+        #[cfg(target_os = "windows")]
+        let svp_environment = if spec.libmpv_profile == LibmpvProfile::Svp {
+            super::svp::prepare_runtime_environment()?
+        } else {
+            None
+        };
+        // SAFETY: the resolved symbols below use libmpv's published C ABI,
+        // and `library` keeps the DLL loaded for every copied function pointer.
+        let library = unsafe { Library::new(spec.path) }.map_err(io::Error::other)?;
+        let syms = MpvSymbols::load(&library)?;
+        // SAFETY: mpv_client_api_version takes no arguments and only returns a value.
+        let (major, minor) = validate_client_api(unsafe { (syms.client_api_version)() })?;
         #[cfg(target_os = "linux")]
-        let renderer = match gpu_next::Compositor::new(&library, handle) {
-            Ok(renderer) => Some(renderer),
+        let window_id = if spec.use_wayland {
+            None
+        } else {
+            Some(
+                spec.linux_wid
+                    .ok_or_else(|| io::Error::other("missing X11 content window id"))?
+                    .to_string(),
+            )
+        };
+
+        let handle = Self::create_and_init_handle(
+            spec,
+            &syms,
+            #[cfg(target_os = "linux")]
+            window_id.as_deref(),
+        )?;
+        #[cfg(target_os = "linux")]
+        let (renderer, native_window) = match gpu_next::Compositor::new(&library, handle) {
+            Ok(renderer) => (Some(renderer), spec.native_window),
             Err(error) => {
                 // SAFETY: `handle` is live and destroyed once on this error path.
-                unsafe { terminate_destroy(handle) };
+                unsafe { (syms.terminate_destroy)(handle) };
                 return Err(error);
             }
         };
-        #[cfg(target_os = "linux")]
-        let native_window = Some(host_handle);
         #[cfg(target_os = "windows")]
-        let native_window = match wait_for_native_window(handle, get_property) {
+        let native_window = match wait_for_native_window(handle, syms.get_property) {
             Ok(player_window) => Some(player_window),
             Err(error) => {
                 // SAFETY: `handle` is live and destroyed once on this error path.
-                unsafe { terminate_destroy(handle) };
+                unsafe { (syms.terminate_destroy)(handle) };
                 return Err(error);
             }
         };
@@ -390,29 +631,29 @@ impl LibMpvRuntime {
 
         tracing::info!(
             target: "mpv.library",
-            path = %path.display(),
+            path = %spec.path.display(),
             client_api = %format_args!("{major}.{minor}"),
             "initialized libmpv"
         );
         Ok(Self {
             handle,
-            wait_event,
-            terminate_destroy,
+            wait_event: syms.wait_event,
+            terminate_destroy: syms.terminate_destroy,
             alive: true,
             native_window,
             #[cfg(target_os = "linux")]
             ui_exposes_video: false,
             #[cfg(target_os = "linux")]
-            window,
+            _window: window,
             #[cfg(target_os = "linux")]
             renderer,
-            _library: library,
+            library: Some(library),
             #[cfg(target_os = "windows")]
             _svp_environment: svp_environment,
         })
     }
 
-    fn is_alive(&mut self) -> bool {
+    pub(crate) fn is_alive(&mut self) -> bool {
         if !self.alive || self.handle.is_null() {
             return false;
         }
@@ -438,7 +679,35 @@ impl LibMpvRuntime {
         self.alive
     }
 
-    fn terminate(&mut self) {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn submit_overlay_pixels(
+        &mut self,
+        pixels: &[u8],
+        width: u16,
+        height: u16,
+        display: (u16, u16),
+    ) -> Result<(), String> {
+        self.renderer
+            .as_ref()
+            .ok_or_else(|| "native renderer is unavailable".to_string())?
+            .submit_pixels(self.handle, pixels, width, height, display)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn current_vo(&self) -> String {
+        self.renderer
+            .as_ref()
+            .map_or_else(String::new, |r| r.current_vo(self.handle))
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn current_gpu_context(&self) -> String {
+        self.renderer
+            .as_ref()
+            .map_or_else(String::new, |r| r.current_gpu_context(self.handle))
+    }
+
+    pub(crate) fn terminate(&mut self) {
         if self.handle.is_null() {
             return;
         }
@@ -446,9 +715,46 @@ impl LibMpvRuntime {
         self.renderer.take();
         let handle = std::mem::replace(&mut self.handle, std::ptr::null_mut());
         self.alive = false;
+        #[cfg(target_os = "windows")]
+        {
+            struct SendHandle(*mut MpvHandle);
+            // SAFETY: `LibMpvRuntime` cleared `self.handle` and exclusively transfers ownership to `mpv-destroy`.
+            unsafe impl Send for SendHandle {}
+
+            let destroy = self.terminate_destroy;
+            let raw = SendHandle(handle);
+            let (tx, rx) = std::sync::mpsc::channel();
+            if let Ok(join) = thread::Builder::new()
+                .name("mpv-destroy".to_string())
+                .spawn(move || {
+                    let send = raw;
+                    // SAFETY: `send.0` is exclusively owned by this thread and destroyed once.
+                    unsafe { (destroy)(send.0) };
+                    let _ = tx.send(());
+                })
+            {
+                match rx.recv_timeout(Duration::from_millis(1500)) {
+                    Ok(()) => {
+                        let _ = join.join();
+                        self.library.take();
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            target: "mpv.library",
+                            "libmpv terminate_destroy exceeded 1500ms shutdown budget; detaching destructor thread"
+                        );
+                        if let Some(lib) = self.library.take() {
+                            std::mem::forget(lib);
+                        }
+                    }
+                }
+                return;
+            }
+        }
         // SAFETY: `handle` was taken out of the runtime, which now holds null,
         // so it is destroyed exactly once.
         unsafe { (self.terminate_destroy)(handle) };
+        self.library.take();
     }
 }
 
@@ -568,167 +874,4 @@ pub(crate) fn take_window_close_request() -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-    use std::sync::atomic::AtomicBool;
-    use std::sync::mpsc::{Receiver, RecvTimeoutError};
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn client_api_accepts_supported_major_with_any_minor() {
-        for minor in [0, 1, 0xffff] {
-            let version = (2 << 16) | minor;
-            assert_eq!(
-                validate_client_api(version).expect("supported API"),
-                (2, minor)
-            );
-        }
-    }
-
-    #[test]
-    fn client_api_rejects_incompatible_majors() {
-        for major in [0, 1, 3, 0xffff] {
-            let version = (major << 16) | 42;
-            assert!(validate_client_api(version).is_err(), "major {major}");
-        }
-    }
-
-    unsafe extern "C" fn no_scripting_options(
-        _handle: *mut MpvHandle,
-        name: *const c_char,
-        _value: *const c_char,
-    ) -> c_int {
-        // SAFETY: configure_libmpv_options passes a live, terminated CString.
-        match unsafe { CStr::from_ptr(name) }.to_bytes() {
-            b"load-scripts" | b"osc" => MPV_ERROR_OPTION_NOT_FOUND,
-            _ => 0,
-        }
-    }
-
-    unsafe extern "C" fn test_error(_status: c_int) -> *const c_char {
-        c"test option error".as_ptr()
-    }
-
-    #[test]
-    fn standard_profile_initializes_without_scripting_but_svp_requires_it() {
-        let configure = |profile| {
-            configure_libmpv_options(
-                std::ptr::null_mut(),
-                no_scripting_options,
-                test_error,
-                "test-ipc",
-                FullscreenBehavior::Windowed,
-                profile,
-            )
-        };
-        assert!(configure(LibmpvProfile::Standard).is_ok());
-        assert!(configure(LibmpvProfile::Svp).is_err());
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    #[ignore = "requires MEDIAFLICK_DESKTOP_LIBMPV_PATH"]
-    fn configured_svp_library_initializes_the_svp_pipe() {
-        let path = std::env::var_os("MEDIAFLICK_DESKTOP_LIBMPV_PATH")
-            .expect("MEDIAFLICK_DESKTOP_LIBMPV_PATH must point to libmpv");
-        let ipc_path = r"\\.\pipe\mpvpipe";
-        let mut runtime = MpvRuntime::start(
-            MpvRuntimeKind::Library,
-            LibmpvProfile::Svp,
-            Path::new(&path),
-            ipc_path,
-            FullscreenBehavior::Windowed,
-        )
-        .expect("initialize SVP-compatible libmpv");
-        let shutdown = AtomicBool::new(false);
-        let (worker, _) = crate::players::mpv::ipc::start_ipc_worker(
-            ipc_path,
-            Duration::from_secs(5),
-            &shutdown,
-            || runtime.is_alive(),
-        )
-        .expect("connect to the SVP mpv pipe");
-
-        assert!(runtime.is_alive().expect("poll SVP-compatible libmpv"));
-        runtime.stop();
-        worker.shutdown();
-    }
-
-    #[test]
-    #[ignore = "requires MEDIAFLICK_DESKTOP_LIBMPV_PATH"]
-    fn configured_library_initializes_its_ipc_server() {
-        let path = std::env::var_os("MEDIAFLICK_DESKTOP_LIBMPV_PATH")
-            .expect("MEDIAFLICK_DESKTOP_LIBMPV_PATH must point to libmpv");
-        let ipc_path = crate::players::mpv::ipc::make_ipc_path();
-        let mut runtime = MpvRuntime::start(
-            MpvRuntimeKind::Library,
-            LibmpvProfile::Standard,
-            Path::new(&path),
-            &ipc_path,
-            FullscreenBehavior::Windowed,
-        )
-        .expect("initialize configured libmpv");
-        let shutdown = AtomicBool::new(false);
-        let (worker, events) = crate::players::mpv::ipc::start_ipc_worker(
-            &ipc_path,
-            Duration::from_secs(5),
-            &shutdown,
-            || runtime.is_alive(),
-        )
-        .expect("connect to libmpv IPC");
-
-        assert!(runtime.is_alive().expect("poll libmpv"));
-        if let Some(media_path) = std::env::var_os("MEDIAFLICK_DESKTOP_LIBMPV_MEDIA_PATH") {
-            assert_media_playback(&mut runtime, &worker, &events, Path::new(&media_path));
-        }
-        runtime.stop();
-        worker.shutdown();
-    }
-
-    fn assert_media_playback(
-        runtime: &mut MpvRuntime,
-        worker: &crate::players::mpv::ipc::IpcWorker,
-        events: &Receiver<crate::players::mpv::ipc::MpvEvent>,
-        media_path: &Path,
-    ) {
-        worker
-            .send_with_timeout(
-                json!({
-                    "command": ["loadfile", media_path.to_string_lossy()],
-                    "request_id": 9_001,
-                }),
-                Duration::from_secs(5),
-            )
-            .expect("load smoke-test media");
-
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let mut loaded = false;
-        let mut advanced = false;
-        while Instant::now() < deadline && !(loaded && advanced) {
-            assert!(runtime.is_alive().expect("poll libmpv during playback"));
-            match events.recv_timeout(Duration::from_millis(250)) {
-                Ok(event) if event.name == "file-loaded" => loaded = true,
-                Ok(event)
-                    if event.name == "property-change"
-                        && matches!(
-                            event.property.as_deref(),
-                            Some("time-pos" | "playback-time")
-                        ) =>
-                {
-                    advanced = event
-                        .data
-                        .as_ref()
-                        .and_then(serde_json::Value::as_f64)
-                        .is_some_and(|position| position > 0.05);
-                }
-                Ok(_) | Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => {
-                    panic!("libmpv IPC events disconnected during playback")
-                }
-            }
-        }
-        assert!(loaded, "libmpv did not report file-loaded");
-        assert!(advanced, "libmpv playback time did not advance");
-    }
-}
+mod tests;

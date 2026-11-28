@@ -416,7 +416,8 @@ jobs:
             ninja-build \
             git meson nasm pkg-config python3-jinja2 patchelf zstd \
             libass-dev liblcms2-dev libdav1d-dev libgnutls28-dev zlib1g-dev \
-            libpulse-dev libegl1-mesa-dev libgl-dev libva-dev libdrm-dev libxpresent-dev libxss-dev \
+            libpulse-dev libpipewire-0.3-dev libegl1-mesa-dev libgl-dev libva-dev libdrm-dev libxpresent-dev libxss-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
             libvulkan-dev glslang-dev spirv-tools libffmpeg-nvenc-dev \
             xvfb xauth mesa-vulkan-drivers
 

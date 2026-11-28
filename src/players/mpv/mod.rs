@@ -9,6 +9,14 @@ mod svp;
 
 pub use controller::MpvController;
 pub use external::ExternalMpv;
+#[cfg(target_os = "linux")]
+pub(crate) use runtime::wayland::{
+    WaylandDmaBufPlane, WaylandFramePayload, WaylandModifiers, WaylandSurfaceRole,
+    WaylandUiCommand, WaylandUiEvent, WaylandUiHandle, drm_fourcc_for_cef_color, physical_extent,
+    use_native_wayland,
+};
+#[cfg(target_os = "linux")]
+pub(crate) use runtime::{is_player_helper_invocation, run_player_helper};
 
 use crate::playback::{
     NativeWindowHandle, PlaybackRequest, PlayerBackend, PlayerCommand, PlayerSnapshot,
@@ -23,6 +31,11 @@ impl PlayerBackend for MpvController {
 
     fn native_window(&self, timeout: Duration) -> Option<NativeWindowHandle> {
         self.native_window(timeout)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wayland_ui(&self, timeout: Duration) -> Option<WaylandUiHandle> {
+        self.wayland_ui(timeout)
     }
 
     #[cfg(target_os = "linux")]

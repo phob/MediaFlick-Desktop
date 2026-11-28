@@ -9,8 +9,8 @@ import sys
 HOST_LIBRARIES = re.compile(
     r"^(?:ld-linux[^/]*|lib(?:c|m|pthread|dl|rt|resolv|util|gcc_s|stdc\+\+)\.so.*"
     r"|lib(?:EGL|GL|GLX|OpenGL|GLdispatch|glapi|drm[^/]*|va[^/]*|vdpau|vulkan|cuda|nvcuvid|nvidia-[^/]*)\.so.*"
-    r"|lib(?:X[^/]*|xcb[^/]*|wayland[^/]*)\.so.*"
-    r"|lib(?:asound|pulse|pulse-simple|pulsecommon-[^/]*)\.so.*)$"
+    r"|lib(?:X[^/]*|xcb[^/]*|wayland[^/]*|xkbcommon[^/]*)\.so.*"
+    r"|lib(?:asound|pulse|pulse-simple|pulsecommon-[^/]*|pipewire-0\.3)\.so.*)$"
 )
 
 
