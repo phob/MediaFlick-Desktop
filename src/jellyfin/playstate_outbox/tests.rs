@@ -244,7 +244,7 @@ proptest! {
                 Op::DeliverSuccess(acc) => {
                     let a = account(acc);
                     if let Some(due) = outbox.next_due_row_for_test(&a, clock).expect("due") {
-                        outbox.record_outcome_for_test(&a, due.id, due.revision, Ok(()), clock).expect("ok");
+                        outbox.record_outcome_for_test(&a, due.id, due.revision, due.kind, Ok(()), clock).expect("ok");
                         model.remove(&(acc, due.item_id, due.play_session_id, due.kind.as_str().to_string()));
                     }
                 }
@@ -252,7 +252,7 @@ proptest! {
                     let a = account(acc);
                     if let Some(due) = outbox.next_due_row_for_test(&a, clock).expect("due") {
                         outbox
-                            .record_outcome_for_test(&a, due.id, due.revision, Err(ApiError::Status { status: 500 }), clock)
+                            .record_outcome_for_test(&a, due.id, due.revision, due.kind, Err(ApiError::Status { status: 500 }), clock)
                             .expect("err");
                     }
                 }
@@ -260,7 +260,7 @@ proptest! {
                     let a = account(acc);
                     if let Some(due) = outbox.next_due_row_for_test(&a, clock).expect("due") {
                         outbox
-                            .record_outcome_for_test(&a, due.id, due.revision, Err(ApiError::Status { status: 400 }), clock)
+                            .record_outcome_for_test(&a, due.id, due.revision, due.kind, Err(ApiError::Status { status: 400 }), clock)
                             .expect("perm");
                         model.remove(&(acc, due.item_id, due.play_session_id, due.kind.as_str().to_string()));
                     }
@@ -673,6 +673,7 @@ fn retry_classification_and_zero_secret_persistence() {
             &acc,
             row1.id,
             row1.revision,
+            row1.kind,
             Err(ApiError::Status { status: 500 }),
             1000,
         )
@@ -694,6 +695,7 @@ fn retry_classification_and_zero_secret_persistence() {
             &acc,
             row1.id,
             row1.revision,
+            row1.kind,
             Err(ApiError::Unauthorized),
             2000,
         )
@@ -718,6 +720,7 @@ fn retry_classification_and_zero_secret_persistence() {
             &acc,
             due_after_wake.id,
             due_after_wake.revision,
+            due_after_wake.kind,
             Err(ApiError::Status { status: 400 }),
             2001,
         )
@@ -751,13 +754,21 @@ fn stale_progress_ack_does_not_delete_or_clobber_newer_queued_progress() {
     );
 
     outbox
-        .record_outcome_for_test(&acc, in_flight.id, in_flight.revision, Ok(()), 1001)
+        .record_outcome_for_test(
+            &acc,
+            in_flight.id,
+            in_flight.revision,
+            in_flight.kind,
+            Ok(()),
+            1001,
+        )
         .expect("stale ok");
     outbox
         .record_outcome_for_test(
             &acc,
             in_flight.id,
             in_flight.revision,
+            in_flight.kind,
             Err(ApiError::Status { status: 400 }),
             1002,
         )
@@ -767,6 +778,7 @@ fn stale_progress_ack_does_not_delete_or_clobber_newer_queued_progress() {
             &acc,
             in_flight.id,
             in_flight.revision,
+            in_flight.kind,
             Err(ApiError::Status { status: 500 }),
             1003,
         )
@@ -782,7 +794,14 @@ fn stale_progress_ack_does_not_delete_or_clobber_newer_queued_progress() {
     assert_eq!(body["PositionTicks"], 250_000);
 
     outbox
-        .record_outcome_for_test(&acc, current.id, current.revision, Ok(()), 1005)
+        .record_outcome_for_test(
+            &acc,
+            current.id,
+            current.revision,
+            current.kind,
+            Ok(()),
+            1005,
+        )
         .expect("current ack");
     assert_eq!(row_count(&library), 0);
 }
@@ -821,6 +840,7 @@ fn retrying_start_blocks_stopped_and_same_second_transitions_keep_fifo_order() {
             &acc,
             first.id,
             first.revision,
+            first.kind,
             Err(ApiError::Status { status: 503 }),
             5000,
         )
@@ -840,7 +860,14 @@ fn retrying_start_blocks_stopped_and_same_second_transitions_keep_fifo_order() {
     assert_eq!(after_backoff.item_id, "ep-1");
     assert_eq!(after_backoff.kind, OutboxKind::Start);
     outbox
-        .record_outcome_for_test(&acc, after_backoff.id, after_backoff.revision, Ok(()), 5100)
+        .record_outcome_for_test(
+            &acc,
+            after_backoff.id,
+            after_backoff.revision,
+            after_backoff.kind,
+            Ok(()),
+            5100,
+        )
         .expect("start ack");
 
     let second = outbox
@@ -850,7 +877,7 @@ fn retrying_start_blocks_stopped_and_same_second_transitions_keep_fifo_order() {
     assert_eq!(second.item_id, "ep-1");
     assert_eq!(second.kind, OutboxKind::Stopped);
     outbox
-        .record_outcome_for_test(&acc, second.id, second.revision, Ok(()), 5100)
+        .record_outcome_for_test(&acc, second.id, second.revision, second.kind, Ok(()), 5100)
         .expect("stopped ack");
 
     let third = outbox
@@ -872,15 +899,93 @@ fn empty_play_session_id_does_not_poison_future_plays_of_same_item() {
     let acc = AccountKey::new("srv-empty", "usr-empty").expect("acc");
 
     outbox.enqueue_stopped(&acc, &entry("item-x", "", "DirectPlay", 10_000, false));
-    let stopped = outbox
-        .next_due_row_for_test(&acc, 1000)
-        .expect("due")
-        .expect("stopped");
-    outbox
-        .record_outcome_for_test(&acc, stopped.id, stopped.revision, Ok(()), 1000)
-        .expect("ack");
-
     outbox.enqueue_start(&acc, &entry("item-x", "", "DirectPlay", 20_000, false));
     outbox.enqueue_progress(&acc, &entry("item-x", "", "DirectPlay", 30_000, false));
-    assert_eq!(row_count(&library), 2);
+    assert_eq!(row_count(&library), 3);
+
+    let first = outbox
+        .next_due_row_for_test(&acc, 1000)
+        .expect("due")
+        .expect("older empty-session stopped must drain before newer start");
+    assert_eq!(first.kind, OutboxKind::Stopped);
+    outbox
+        .record_outcome_for_test(&acc, first.id, first.revision, first.kind, Ok(()), 1000)
+        .expect("ack");
+
+    let second = outbox
+        .next_due_row_for_test(&acc, 1001)
+        .expect("due")
+        .expect("newer empty-session start");
+    assert_eq!(second.kind, OutboxKind::Start);
+}
+
+#[test]
+fn in_flight_progress_ack_never_deletes_stopped_report() {
+    let tmp = TempDbDir::new("inflight-stop");
+    let library = Arc::new(Library::open(&tmp.db_path()).expect("open"));
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let server_url = format!("http://{}", listener.local_addr().expect("addr"));
+    let acc = AccountKey::new("srv-race", "usr-race").expect("acc");
+    library
+        .save_credentials(&StoredCredentials {
+            server_url: Some(server_url),
+            user_id: Some(acc.user_id().to_string()),
+            user_name: Some("Tester".to_string()),
+            server_id: Some(acc.server_id().to_string()),
+            device_id: "dev-race".to_string(),
+            token: Some(SECRET_TOKEN.to_string()),
+        })
+        .expect("creds");
+
+    let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let delivered = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+    let delivered_srv = Arc::clone(&delivered);
+    let server = thread::spawn(move || {
+        for idx in 0..2 {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
+            let req = crate::jellyfin::playback_reporter::read_test_http_request(&mut stream);
+            let parsed: Value = serde_json::from_str(&req.body).unwrap_or(Value::Null);
+            delivered_srv
+                .lock()
+                .expect("lock")
+                .push((req.request_line, parsed));
+            if idx == 0 {
+                let _ = seen_tx.send(());
+                let _ = release_rx.recv();
+            }
+            let _ = stream.write_all(
+                b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+            let _ = stream.flush();
+        }
+    });
+
+    let session = Arc::new(Session::restore(
+        library.clone(),
+        Arc::new(ShellBridge::default()),
+    ));
+    let outbox = PlaystateOutbox::new(library.clone(), session);
+    assert!(outbox.enqueue_progress(&acc, &entry("item-r", "ps-r", "DirectPlay", 100_000, false)));
+    seen_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("progress reached server");
+    assert!(outbox.enqueue_stopped(&acc, &entry("item-r", "ps-r", "DirectPlay", 250_000, false)));
+    release_tx.send(()).expect("release");
+
+    assert!(outbox.flush_active(Duration::from_secs(5)));
+    outbox.shutdown();
+    server.join().expect("server");
+
+    let entries = delivered.lock().expect("lock");
+    assert_eq!(
+        entries.len(),
+        2,
+        "both progress and stopped must be delivered"
+    );
+    assert!(entries[1].0.starts_with("POST /Sessions/Playing/Stopped"));
+    assert_eq!(entries[1].1["PositionTicks"], 250_000);
+    assert_eq!(row_count(&library), 0);
 }

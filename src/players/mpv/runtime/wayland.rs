@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -283,6 +283,7 @@ pub struct WaylandUiHandle {
     wake_tx: Arc<Mutex<UnixStream>>,
     waker: UiWakerSlot,
     ui_frame_committed: Arc<AtomicBool>,
+    main_device_rdev: Arc<AtomicU64>,
     closing: Arc<AtomicBool>,
 }
 
@@ -322,6 +323,19 @@ impl WaylandUiHandle {
         self.ui_frame_committed.load(Ordering::Acquire)
     }
 
+    pub fn main_device_rdev(&self) -> Option<u64> {
+        match self.main_device_rdev.load(Ordering::Acquire) {
+            0 => None,
+            rdev => Some(rdev),
+        }
+    }
+
+    pub(super) fn set_main_device_rdev(&self, rdev: u64) {
+        if rdev != 0 {
+            self.main_device_rdev.store(rdev, Ordering::Release);
+        }
+    }
+
     pub(super) fn push_event(&self, event: WaylandUiEvent) {
         if let Ok(mut queue) = self.events.lock() {
             queue.push_back(event);
@@ -344,6 +358,21 @@ pub(in crate::players::mpv) struct WaylandHost {
 
 impl WaylandHost {
     pub fn new() -> io::Result<Self> {
+        Self::spawn_host(|| {
+            Connection::connect_to_env().map_err(|err| io::Error::other(err.to_string()))
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn new_on_socket(stream: UnixStream) -> io::Result<Self> {
+        Self::spawn_host(move || {
+            Connection::from_socket(stream).map_err(|err| io::Error::other(err.to_string()))
+        })
+    }
+
+    fn spawn_host(
+        connect: impl FnOnce() -> io::Result<Connection> + Send + 'static,
+    ) -> io::Result<Self> {
         let (wake_rx, wake_tx) = UnixStream::pair()?;
         wake_rx.set_nonblocking(true)?;
         wake_tx.set_nonblocking(true)?;
@@ -353,12 +382,14 @@ impl WaylandHost {
         let fullscreen = Arc::new(AtomicBool::new(false));
         let closing = Arc::new(AtomicBool::new(false));
         let ui_frame_committed = Arc::new(AtomicBool::new(false));
+        let main_device_rdev = Arc::new(AtomicU64::new(0));
         let ui = WaylandUiHandle {
             cmd_tx: ui_cmd_tx,
             events: Arc::new(Mutex::new(VecDeque::new())),
             wake_tx: Arc::clone(&wake_tx),
             waker: Arc::new(Mutex::new(None)),
             ui_frame_committed: Arc::clone(&ui_frame_committed),
+            main_device_rdev,
             closing: Arc::clone(&closing),
         };
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -368,9 +399,12 @@ impl WaylandHost {
             .name("wayland-host".to_string())
             .spawn(move || {
                 bridge::run_host_loop(
-                    wake_rx,
-                    &ui_cmd_rx,
-                    &ctl_rx,
+                    connect,
+                    bridge::HostChannels {
+                        wake_rx,
+                        ui_cmd_rx,
+                        ctl_rx,
+                    },
                     ui_for_thread,
                     fullscreen_for_thread,
                     ui_frame_committed,
@@ -529,3 +563,6 @@ mod tests {
         assert!(!in_use.load(Ordering::Acquire));
     }
 }
+
+#[cfg(test)]
+mod protocol_tests;

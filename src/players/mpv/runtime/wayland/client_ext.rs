@@ -128,9 +128,17 @@ impl HostState {
     }
 
     pub fn hide_popup(&mut self) {
+        self.pending_ui_dmabufs
+            .retain(|_, pending| pending.role != super::WaylandSurfaceRole::Popup);
+        let fence = self.next_ui_buffer_id;
+        self.next_ui_buffer_id = self.next_ui_buffer_id.saturating_add(1);
+        self.last_popup_commit_seq = self.last_popup_commit_seq.max(fence);
         if let Some(popup) = self.popup.as_ref() {
             popup.surface.attach(None, 0, 0);
             popup.surface.commit();
+            if let Some(s) = self.surfaces.as_ref() {
+                s.ui_surface.commit();
+            }
         }
     }
 

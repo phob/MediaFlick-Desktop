@@ -46,6 +46,15 @@ pub(super) fn create_windowless_browser(
     parent: u64,
     shared_texture_enabled: bool,
 ) -> Option<Browser> {
+    create_windowless_browser_at(client, parent, shared_texture_enabled, app_scheme::APP_URL)
+}
+
+pub(super) fn create_windowless_browser_at(
+    client: &mut Client,
+    parent: u64,
+    shared_texture_enabled: bool,
+    url: &str,
+) -> Option<Browser> {
     let mut info = WindowInfo::default().set_as_windowless(parent);
     info.shared_texture_enabled = i32::from(shared_texture_enabled);
     let settings = BrowserSettings {
@@ -56,7 +65,7 @@ pub(super) fn create_windowless_browser(
     browser_host_create_browser_sync(
         Some(&info),
         Some(client),
-        Some(&CefString::from(app_scheme::APP_URL)),
+        Some(&CefString::from(url)),
         Some(&settings),
         None,
         None,

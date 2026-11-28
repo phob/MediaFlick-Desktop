@@ -286,11 +286,46 @@ impl GlesApi {
     }
 }
 
-fn render_node_paths() -> Vec<PathBuf> {
+fn linux_major_minor(rdev: u64) -> (u64, u64) {
+    let major = ((rdev >> 8) & 0xfff) | ((rdev >> 32) & !0xfff);
+    let minor = (rdev & 0xff) | ((rdev >> 12) & 0x000f_ff00);
+    (major, minor)
+}
+
+fn sysfs_pci_device_for_rdev(rdev: u64) -> Option<PathBuf> {
+    let (major, minor) = linux_major_minor(rdev);
+    fs::canonicalize(format!("/sys/dev/char/{major}:{minor}/device")).ok()
+}
+
+fn order_render_nodes(
+    mut candidates: Vec<(PathBuf, u64, Option<PathBuf>)>,
+    preferred_rdev: Option<u64>,
+    preferred_pci: Option<&std::path::Path>,
+) -> Vec<PathBuf> {
+    candidates.sort_by(|(path_a, rdev_a, pci_a), (path_b, rdev_b, pci_b)| {
+        let rank = |rdev: u64, pci: Option<&std::path::Path>| -> u8 {
+            if preferred_rdev == Some(rdev) {
+                0
+            } else if preferred_pci.zip(pci).is_some_and(|(a, b)| a == b) {
+                1
+            } else {
+                2
+            }
+        };
+        rank(*rdev_a, pci_a.as_deref())
+            .cmp(&rank(*rdev_b, pci_b.as_deref()))
+            .then_with(|| path_a.cmp(path_b))
+    });
+    candidates.into_iter().map(|(path, _, _)| path).collect()
+}
+
+fn render_node_paths(preferred_rdev: Option<u64>) -> Vec<PathBuf> {
+    use std::os::linux::fs::MetadataExt;
+
     let Ok(entries) = fs::read_dir("/dev/dri") else {
         return Vec::new();
     };
-    let mut nodes: Vec<PathBuf> = entries
+    let candidates: Vec<(PathBuf, u64, Option<PathBuf>)> = entries
         .filter_map(Result::ok)
         .filter(|entry| {
             entry
@@ -298,17 +333,25 @@ fn render_node_paths() -> Vec<PathBuf> {
                 .to_str()
                 .is_some_and(|name| name.starts_with("renderD"))
         })
-        .map(|entry| entry.path())
+        .map(|entry| {
+            let path = entry.path();
+            let rdev = fs::metadata(&path).map(|meta| meta.st_rdev()).unwrap_or(0);
+            let pci = (rdev != 0)
+                .then(|| sysfs_pci_device_for_rdev(rdev))
+                .flatten();
+            (path, rdev, pci)
+        })
         .collect();
-    nodes.sort();
-    nodes
+    let preferred_pci = preferred_rdev.and_then(sysfs_pci_device_for_rdev);
+    order_render_nodes(candidates, preferred_rdev, preferred_pci.as_deref())
 }
 
 pub(super) fn open_gbm_display(
     gbm: &GbmApi,
     egl: &EglApi,
+    preferred_rdev: Option<u64>,
 ) -> Result<(File, *mut c_void, *mut c_void), String> {
-    for path in render_node_paths() {
+    for path in render_node_paths(preferred_rdev) {
         let Ok(file) = OpenOptions::new().read(true).write(true).open(&path) else {
             continue;
         };
@@ -592,5 +635,62 @@ impl Drop for CurrentContextGuard {
         unsafe {
             (self.make_current)(self.dpy, ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn order_render_nodes_prefers_exact_rdev_then_matching_pci_then_path_order() {
+        let pci_igpu = PathBuf::from("/sys/devices/pci0000:00/0000:00:02.0");
+        let pci_nvidia = PathBuf::from("/sys/devices/pci0000:00/0000:01:00.0");
+        let nodes = vec![
+            (
+                PathBuf::from("/dev/dri/renderD128"),
+                (226 << 8) | 128,
+                Some(pci_igpu.clone()),
+            ),
+            (
+                PathBuf::from("/dev/dri/renderD129"),
+                (226 << 8) | 129,
+                Some(pci_nvidia.clone()),
+            ),
+        ];
+
+        let exact = order_render_nodes(nodes.clone(), Some((226 << 8) | 129), Some(&pci_igpu));
+        assert_eq!(
+            exact,
+            vec![
+                PathBuf::from("/dev/dri/renderD129"),
+                PathBuf::from("/dev/dri/renderD128"),
+            ]
+        );
+
+        let via_pci = order_render_nodes(nodes.clone(), Some((226 << 8) | 1), Some(&pci_nvidia));
+        assert_eq!(
+            via_pci,
+            vec![
+                PathBuf::from("/dev/dri/renderD129"),
+                PathBuf::from("/dev/dri/renderD128"),
+            ]
+        );
+
+        let fallback = order_render_nodes(nodes, None, None);
+        assert_eq!(
+            fallback,
+            vec![
+                PathBuf::from("/dev/dri/renderD128"),
+                PathBuf::from("/dev/dri/renderD129"),
+            ]
+        );
+    }
+
+    #[test]
+    fn linux_major_minor_decodes_standard_and_extended_rdev() {
+        assert_eq!(linux_major_minor((226 << 8) | 129), (226, 129));
+        let ext = (226 << 8) | 5 | (1 << 20);
+        assert_eq!(linux_major_minor(ext), (226, 261));
     }
 }

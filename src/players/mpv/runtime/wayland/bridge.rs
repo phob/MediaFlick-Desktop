@@ -225,16 +225,27 @@ impl BridgeState {
     }
 }
 
+pub(super) struct HostChannels {
+    pub wake_rx: UnixStream,
+    pub ui_cmd_rx: Receiver<WaylandUiCommand>,
+    pub ctl_rx: Receiver<HostControlCommand>,
+}
+
 pub(super) fn run_host_loop(
-    mut wake_rx: UnixStream,
-    ui_cmd_rx: &Receiver<WaylandUiCommand>,
-    ctl_rx: &Receiver<HostControlCommand>,
+    connect: impl FnOnce() -> io::Result<wayland_client::Connection>,
+    channels: HostChannels,
     ui: WaylandUiHandle,
     fullscreen_flag: Arc<AtomicBool>,
     ui_frame_committed: Arc<AtomicBool>,
     ready_tx: &Sender<io::Result<()>>,
 ) {
-    let Ok((mut queue, mut app)) = connect_host(ui, fullscreen_flag, ui_frame_committed) else {
+    let HostChannels {
+        mut wake_rx,
+        ui_cmd_rx,
+        ctl_rx,
+    } = channels;
+    let Ok((mut queue, mut app)) = connect_host(connect, ui, fullscreen_flag, ui_frame_committed)
+    else {
         let _ = ready_tx.send(Err(io::Error::other(
             "failed to initialize Wayland host connection",
         )));

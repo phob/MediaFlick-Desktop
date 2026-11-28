@@ -226,7 +226,7 @@ export default function PlayerSettings() {
         <SettingsRow
           controlId="settings-audio-passthrough"
           title="Audio passthrough"
-          description="Send AC3, EAC3, DTS, and TrueHD bitstreams directly to your receiver instead of decoding to PCM."
+          description="Send AC3, EAC3, DTS, and TrueHD bitstreams directly to your receiver in the built-in player and prefer compatible streams on server transcodes. External mpv keeps your mpv.conf audio-spdif setting."
         >
           <Switch
             id="settings-audio-passthrough"

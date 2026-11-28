@@ -79,7 +79,7 @@ fn transcoding_profiles(
     let audio_codec = if audio_passthrough {
         "ac3,eac3,dts,aac,mp3"
     } else {
-        "aac,opus,flac,mp3,ac3,eac3"
+        "aac,mp3,ac3,eac3"
     };
     json!([
         {
@@ -166,7 +166,7 @@ mod tests {
         assert_eq!(stereo["TranscodingProfiles"][0]["MaxAudioChannels"], "2");
         assert_eq!(
             stereo["TranscodingProfiles"][0]["AudioCodec"],
-            "aac,opus,flac,mp3,ac3,eac3"
+            "aac,mp3,ac3,eac3"
         );
         assert_eq!(stereo["TranscodingProfiles"][0]["VideoCodec"], "h264,hevc");
         assert_eq!(stereo["CodecProfiles"], serde_json::json!([]));

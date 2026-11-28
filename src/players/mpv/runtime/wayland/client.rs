@@ -202,7 +202,8 @@ pub(super) struct HostState {
     pub ui_buffers: HashMap<u64, UiBufferCleanup>,
     pub pending_ui_dmabufs: HashMap<u64, PendingUiDmaBuf>,
     pub ui_dmabuf_buffers: HashMap<ObjectId, UiBufferCleanup>,
-    pub last_ui_commit_seq: u64,
+    pub last_view_commit_seq: u64,
+    pub last_popup_commit_seq: u64,
     pub dmabuf_rejected: bool,
     pub next_ui_buffer_id: u64,
     pub logical_w: u16,
@@ -346,11 +347,12 @@ impl HostState {
 }
 
 pub(super) fn connect_host(
+    connect: impl FnOnce() -> io::Result<Connection>,
     ui: WaylandUiHandle,
     fullscreen_flag: Arc<AtomicBool>,
     ui_frame_committed: Arc<AtomicBool>,
 ) -> io::Result<(wayland_client::EventQueue<AppState>, AppState)> {
-    let conn = Connection::connect_to_env().map_err(|err| io::Error::other(err.to_string()))?;
+    let conn = connect()?;
     let mut queue = conn.new_event_queue::<AppState>();
     let qh = queue.handle();
     let bridge = BridgeState::new()?;
@@ -383,7 +385,8 @@ pub(super) fn connect_host(
         ui_buffers: HashMap::new(),
         pending_ui_dmabufs: HashMap::new(),
         ui_dmabuf_buffers: HashMap::new(),
-        last_ui_commit_seq: 0,
+        last_view_commit_seq: 0,
+        last_popup_commit_seq: 0,
         dmabuf_rejected: false,
         next_ui_buffer_id: 1,
         logical_w: 1280,
@@ -803,6 +806,17 @@ impl Dispatch<zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1, DmabufFeed
         }
         match event {
             zwp_linux_dmabuf_feedback_v1::Event::MainDevice { device } => {
+                let rdev = <[u8; 8]>::try_from(device.as_slice())
+                    .ok()
+                    .map(u64::from_ne_bytes)
+                    .or_else(|| {
+                        <[u8; 4]>::try_from(device.as_slice())
+                            .ok()
+                            .map(|bytes| u64::from(u32::from_ne_bytes(bytes)))
+                    });
+                if let Some(rdev) = rdev {
+                    state.host.ui.set_main_device_rdev(rdev);
+                }
                 state
                     .host
                     .dmabuf_feedback

@@ -205,6 +205,9 @@ impl ControllerState {
     }
 
     pub(super) fn apply_audio_passthrough(&self) {
+        if self.runtime_kind != crate::players::mpv::runtime::MpvRuntimeKind::Library {
+            return;
+        }
         let codecs = if self.audio_passthrough {
             "ac3,eac3,dts,dts-hd,truehd"
         } else {

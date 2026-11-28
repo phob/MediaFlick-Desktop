@@ -165,14 +165,28 @@ impl LinuxInhibitorWorker {
 
     fn system_conn(&mut self) -> Option<&zbus::blocking::Connection> {
         if self.system.is_none() {
-            self.system = zbus::blocking::Connection::system().ok();
+            self.system = zbus::blocking::connection::Builder::system()
+                .ok()
+                .and_then(|builder| {
+                    builder
+                        .method_timeout(std::time::Duration::from_secs(2))
+                        .build()
+                        .ok()
+                });
         }
         self.system.as_ref()
     }
 
     fn session_conn(&mut self) -> Option<&zbus::blocking::Connection> {
         if self.session.is_none() {
-            self.session = zbus::blocking::Connection::session().ok();
+            self.session = zbus::blocking::connection::Builder::session()
+                .ok()
+                .and_then(|builder| {
+                    builder
+                        .method_timeout(std::time::Duration::from_secs(2))
+                        .build()
+                        .ok()
+                });
         }
         self.session.as_ref()
     }

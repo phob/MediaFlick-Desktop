@@ -165,9 +165,12 @@ fn trickplay_tile(
         tile_val,
         media_source_id.as_deref(),
     );
-    let cache_path = crate::app::paths::image_cache_dir().join(&key);
+    let cache_path = crate::app::paths::trickplay_cache_dir().join(&key);
 
     if let Some(cached) = cached_trickplay_response(&cache_path, TRICKPLAY_CACHE_MAX_AGE) {
+        if !services.session.scope_is_current(&scope) {
+            return Err(stale_account_response());
+        }
         return Ok(cached);
     }
 
@@ -347,15 +350,16 @@ mod tests {
         let png_alice = b"\x89PNG\r\n\x1a\nALICE_TILE_BYTES";
         let png_bob = b"\x89PNG\r\n\x1a\nBOB_TILE_BYTES";
 
+        let trickplay_image_type = format!("tp{}-320-0", account_hash_hex(&alice));
         let legacy_path = crate::app::paths::image_cache_dir().join(cache_key(
             &item_id,
             "Trickplay-320-0",
             "",
             320,
         ));
-        let alice_path = crate::app::paths::image_cache_dir()
+        let alice_path = crate::app::paths::trickplay_cache_dir()
             .join(trickplay_cache_key(&alice, &item_id, 320, 0, None));
-        let bob_path = crate::app::paths::image_cache_dir()
+        let bob_path = crate::app::paths::trickplay_cache_dir()
             .join(trickplay_cache_key(&bob, &item_id, 320, 0, None));
         let _guards = [
             CacheFileGuard(legacy_path.clone()),
@@ -374,6 +378,14 @@ mod tests {
             range: None,
             cancelled: Default::default(),
         };
+        let poster_probe = crate::shell::cef::api::ApiRequest {
+            method: "GET".to_string(),
+            path: format!("/api/image/{item_id}/{trickplay_image_type}"),
+            query: "maxWidth=320".to_string(),
+            body: crate::shell::cef::api::RawBody::new(Vec::new()),
+            range: None,
+            cancelled: Default::default(),
+        };
 
         let signed_out = crate::app::services::test_support::TestServices::signed_out();
         let unauth_resp =
@@ -381,11 +393,20 @@ mod tests {
         assert_ne!(unauth_resp.status, 200);
         assert_ne!(unauth_resp.body.as_slice(), png_alice);
 
+        let unauth_poster_resp =
+            crate::shell::cef::api::dispatch(&poster_probe, || Ok(signed_out.services.clone()));
+        assert_ne!(unauth_poster_resp.status, 200);
+        assert_ne!(unauth_poster_resp.body.as_slice(), png_alice);
+
         let cross_resp =
             crate::shell::cef::api::dispatch(&request, || Ok(bob_fixture.services.clone()));
+        let cross_poster_resp =
+            crate::shell::cef::api::dispatch(&poster_probe, || Ok(bob_fixture.services.clone()));
         let _ = server_handle.join();
         assert_ne!(cross_resp.status, 200);
         assert_ne!(cross_resp.body.as_slice(), png_alice);
+        assert_ne!(cross_poster_resp.status, 200);
+        assert_ne!(cross_poster_resp.body.as_slice(), png_alice);
 
         store_image(&bob_path, png_bob);
         let bob_resp =

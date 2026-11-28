@@ -365,7 +365,7 @@ CREATE INDEX provider_identity_tmdb
 
 pub(super) const SCHEMA_V24_ADDITIONS: &str = r#"
 CREATE TABLE playstate_outbox (
-    id              INTEGER PRIMARY KEY,
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
     server_id       TEXT NOT NULL,
     user_id         TEXT NOT NULL,
     item_id         TEXT NOT NULL,

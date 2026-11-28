@@ -35,6 +35,7 @@ pub(super) struct WaylandSurface {
     state: BrowserState,
     playback: Arc<PlaybackCoordinator>,
     ui: RefCell<Option<WaylandUiHandle>>,
+    client: RefCell<Option<Client>>,
     browser: RefCell<Option<Browser>>,
     logical_width: Cell<u16>,
     logical_height: Cell<u16>,
@@ -50,6 +51,7 @@ pub(super) struct WaylandSurface {
     dmabuf_logged: Cell<bool>,
     shm_logged: Cell<bool>,
     dmabuf_rejected: Cell<bool>,
+    software_fallback_started: Cell<bool>,
     dmabuf_copier: RefCell<Option<DmaBufCopier>>,
     wake_queued: Arc<AtomicBool>,
 }
@@ -65,6 +67,7 @@ impl WaylandSurface {
             state,
             playback,
             ui: RefCell::new(None),
+            client: RefCell::new(None),
             browser: RefCell::new(None),
             logical_width: Cell::new(width.clamp(320, 16384) as u16),
             logical_height: Cell::new(height.clamp(240, 16384) as u16),
@@ -80,6 +83,7 @@ impl WaylandSurface {
             dmabuf_logged: Cell::new(false),
             shm_logged: Cell::new(false),
             dmabuf_rejected: Cell::new(false),
+            software_fallback_started: Cell::new(false),
             dmabuf_copier: RefCell::new(None),
             wake_queued: Arc::new(AtomicBool::new(false)),
         })
@@ -114,7 +118,12 @@ impl WaylandSurface {
     }
 
     pub(super) fn create_browser(self: &Rc<Self>, client: &mut Client) -> Option<Browser> {
-        let copier = match DmaBufCopier::new() {
+        let preferred_rdev = self
+            .ui
+            .borrow()
+            .as_ref()
+            .and_then(WaylandUiHandle::main_device_rdev);
+        let copier = match DmaBufCopier::new(preferred_rdev) {
             Ok(copier) => Some(copier),
             Err(err) => {
                 tracing::warn!(
@@ -127,10 +136,20 @@ impl WaylandSurface {
         };
         let browser = super::create_windowless_browser(client, 0, copier.is_some())?;
         *self.dmabuf_copier.borrow_mut() = copier;
+        *self.client.borrow_mut() = Some(client.clone());
         *self.browser.borrow_mut() = Some(browser.clone());
         WAYLAND_SURFACE.with(|slot| *slot.borrow_mut() = Rc::downgrade(self));
         self.drain_events();
         Some(browser)
+    }
+
+    fn is_current_browser(&self, browser: Option<&mut Browser>) -> bool {
+        let current = self.browser.borrow();
+        match (current.as_ref(), browser) {
+            (Some(active), Some(incoming)) => active.is_same(Some(incoming)) != 0,
+            (None, _) => true,
+            (Some(_), None) => false,
+        }
     }
 
     pub(super) fn show(&self) {
@@ -181,6 +200,8 @@ impl WaylandSurface {
             ui.clear_waker();
         }
         self.browser.borrow_mut().take();
+        self.client.borrow_mut().take();
+        *self.dmabuf_copier.borrow_mut() = None;
         super::save_window_bounds(self.window_settings.get());
         super::ACTIVE.store(false, Ordering::Release);
     }
@@ -399,7 +420,7 @@ impl WaylandSurface {
     }
 
     fn paint_accelerated(&self, kind: PaintElementType, info: Option<&AcceleratedPaintInfo>) {
-        if self.closing.get() {
+        if self.closing.get() || self.software_fallback_started.get() {
             return;
         }
         let Some(info) = info else {
@@ -446,11 +467,12 @@ impl WaylandSurface {
             );
         }
         let fourcc = drm_fourcc_for_cef_color(info.format == ColorType::RGBA_8888);
-        let Some(payload) = self.copy_accelerated_payload(w, h, fourcc, info.modifier, &planes)
+        let (role, logical_width, logical_height, x, y) = self.target_surface_geometry(kind, w, h);
+        let Some(payload) =
+            self.copy_accelerated_payload(role, w, h, fourcc, info.modifier, &planes)
         else {
             return;
         };
-        let (role, logical_width, logical_height, x, y) = self.target_surface_geometry(kind, w, h);
         if let Some(ui) = self.ui.borrow().as_ref() {
             ui.send(WaylandUiCommand::Present {
                 role,
@@ -465,38 +487,42 @@ impl WaylandSurface {
 
     fn copy_accelerated_payload(
         &self,
+        role: WaylandSurfaceRole,
         width: u16,
         height: u16,
         fourcc: u32,
         modifier: u64,
         planes: &[SourcePlane],
     ) -> Option<WaylandFramePayload> {
-        let Ok(mut copier_guard) = self.dmabuf_copier.try_borrow_mut() else {
-            return None;
-        };
-        let copier = copier_guard.as_mut()?;
-        if !self.dmabuf_rejected.get() {
-            match copier.copy_dmabuf(width, height, fourcc, modifier, planes) {
-                Ok(copied) => {
-                    return Some(WaylandFramePayload::DmaBuf {
-                        width: copied.width,
-                        height: copied.height,
-                        fourcc: copied.fourcc,
-                        modifier: copied.modifier,
-                        planes: copied.planes,
-                        lease: copied.lease,
-                    });
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        target: "cef.osr",
-                        error = %err,
-                        "failed to copy CEF DMA-BUF into GBM slot; trying wl_shm fallback"
-                    );
+        let shm_result = {
+            let Ok(mut copier_guard) = self.dmabuf_copier.try_borrow_mut() else {
+                return None;
+            };
+            let copier = copier_guard.as_mut()?;
+            if !self.dmabuf_rejected.get() {
+                match copier.copy_dmabuf(role, width, height, fourcc, modifier, planes) {
+                    Ok(copied) => {
+                        return Some(WaylandFramePayload::DmaBuf {
+                            width: copied.width,
+                            height: copied.height,
+                            fourcc: copied.fourcc,
+                            modifier: copied.modifier,
+                            planes: copied.planes,
+                            lease: copied.lease,
+                        });
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "cef.osr",
+                            error = %err,
+                            "failed to copy CEF DMA-BUF into GBM slot; trying wl_shm fallback"
+                        );
+                    }
                 }
             }
-        }
-        match copier.copy_to_shm(width, height, fourcc, modifier, planes) {
+            copier.copy_to_shm(width, height, fourcc, modifier, planes)
+        };
+        match shm_result {
             Ok(pixels) => Some(WaylandFramePayload::Shm {
                 width,
                 height,
@@ -506,11 +532,63 @@ impl WaylandSurface {
                 tracing::warn!(
                     target: "cef.osr",
                     error = %err,
-                    "failed to copy accelerated CEF frame into wl_shm buffer"
+                    "failed to copy accelerated CEF frame into wl_shm buffer; switching browser to software painting"
                 );
+                self.request_software_browser_fallback();
                 None
             }
         }
+    }
+
+    fn request_software_browser_fallback(&self) {
+        if self.closing.get() || self.software_fallback_started.replace(true) {
+            return;
+        }
+        *self.dmabuf_copier.borrow_mut() = None;
+        let mut task = WaylandSoftwareFallbackTask::new();
+        if crate::shell::cef::post_ui_task(&mut task) == crate::shell::cef::PostOutcome::Failed {
+            tracing::warn!(
+                target: "cef.osr",
+                "failed to queue Wayland software-paint browser recreation"
+            );
+        }
+    }
+
+    fn complete_software_fallback(&self) {
+        if self.closing.get() {
+            return;
+        }
+        let Some(mut client) = self.client.borrow_mut().take() else {
+            return;
+        };
+        let old_browser = self.browser.borrow().clone();
+        let url = old_browser
+            .as_ref()
+            .and_then(|browser| browser.main_frame())
+            .map(|frame| CefString::from(&frame.url()).to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| crate::shell::cef::app_scheme::APP_URL.to_string());
+        let Some(new_browser) = super::create_windowless_browser_at(&mut client, 0, false, &url)
+        else {
+            tracing::warn!(
+                target: "cef.osr",
+                "failed to create Wayland software-paint fallback browser"
+            );
+            return;
+        };
+        if let Some(ui) = self.ui.borrow().as_ref() {
+            ui.send(WaylandUiCommand::HidePopup);
+        }
+        self.popup_visible.set(false);
+        *self.browser.borrow_mut() = Some(new_browser.clone());
+        if let Some(host) = new_browser.host() {
+            host.was_resized();
+            host.set_focus(1);
+        }
+        if let Some(old_host) = old_browser.and_then(|browser| browser.host()) {
+            old_host.close_browser(1);
+        }
+        self.drain_events();
     }
 
     fn paint_shm(&self, kind: PaintElementType, buffer: *const u8, width: i32, height: i32) {
@@ -598,6 +676,19 @@ wrap_task! {
     }
 }
 
+wrap_task! {
+    struct WaylandSoftwareFallbackTask;
+
+    impl Task {
+        fn execute(&self) {
+            let surface = WAYLAND_SURFACE.with(|slot| slot.borrow().upgrade());
+            if let Some(surface) = surface {
+                surface.complete_software_fallback();
+            }
+        }
+    }
+}
+
 wrap_render_handler! {
     struct WaylandRenderHandler {
         surface: Rc<WaylandSurface>,
@@ -650,27 +741,36 @@ wrap_render_handler! {
 
         fn on_paint(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             type_: PaintElementType,
             _dirty_rects: Option<&[Rect]>,
             buffer: *const u8,
             width: i32,
             height: i32,
         ) {
+            if !self.surface.is_current_browser(browser) {
+                return;
+            }
             self.surface.paint_shm(type_, buffer, width, height);
         }
 
         fn on_accelerated_paint(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             type_: PaintElementType,
             _dirty_rects: Option<&[Rect]>,
             info: Option<&AcceleratedPaintInfo>,
         ) {
+            if !self.surface.is_current_browser(browser) {
+                return;
+            }
             self.surface.paint_accelerated(type_, info);
         }
 
-        fn on_popup_show(&self, _browser: Option<&mut Browser>, show: i32) {
+        fn on_popup_show(&self, browser: Option<&mut Browser>, show: i32) {
+            if !self.surface.is_current_browser(browser) {
+                return;
+            }
             self.surface.popup_visible.set(show != 0);
             if show == 0
                 && let Some(ui) = self.surface.ui.borrow().as_ref()
@@ -679,7 +779,10 @@ wrap_render_handler! {
             }
         }
 
-        fn on_popup_size(&self, _browser: Option<&mut Browser>, rect: Option<&Rect>) {
+        fn on_popup_size(&self, browser: Option<&mut Browser>, rect: Option<&Rect>) {
+            if !self.surface.is_current_browser(browser) {
+                return;
+            }
             if let Some(rect) = rect {
                 *self.surface.popup_rect.borrow_mut() = rect.clone();
             }

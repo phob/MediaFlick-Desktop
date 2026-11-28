@@ -247,7 +247,7 @@ impl HostState {
             target.y,
             &buffer,
         ) {
-            self.last_ui_commit_seq = buf_id;
+            self.record_ui_commit(target.role, buf_id);
             self.ui_buffers.insert(
                 buf_id,
                 UiBufferCleanup {
@@ -262,6 +262,20 @@ impl HostState {
         }
     }
 
+    fn last_commit_seq_for_role(&self, role: WaylandSurfaceRole) -> u64 {
+        match role {
+            WaylandSurfaceRole::View => self.last_view_commit_seq,
+            WaylandSurfaceRole::Popup => self.last_popup_commit_seq,
+        }
+    }
+
+    fn record_ui_commit(&mut self, role: WaylandSurfaceRole, seq: u64) {
+        match role {
+            WaylandSurfaceRole::View => self.last_view_commit_seq = seq,
+            WaylandSurfaceRole::Popup => self.last_popup_commit_seq = seq,
+        }
+    }
+
     pub(super) fn handle_ui_dmabuf_params_event(
         &mut self,
         req_id: u64,
@@ -272,7 +286,8 @@ impl HostState {
         match event {
             zwp_linux_buffer_params_v1::Event::Created { buffer } => {
                 if let Some(pending) = pending {
-                    let stale = req_id < self.last_ui_commit_seq || self.dmabuf_rejected;
+                    let stale = req_id < self.last_commit_seq_for_role(pending.role)
+                        || self.dmabuf_rejected;
                     if !stale
                         && self.attach_ui_buffer(
                             pending.role,
@@ -283,7 +298,7 @@ impl HostState {
                             &buffer,
                         )
                     {
-                        self.last_ui_commit_seq = req_id;
+                        self.record_ui_commit(pending.role, req_id);
                         self.ui_dmabuf_buffers.insert(
                             buffer.id(),
                             UiBufferCleanup {
@@ -340,6 +355,10 @@ impl HostState {
                 true
             }
             WaylandSurfaceRole::Popup => {
+                let Some(s) = self.surfaces.as_ref() else {
+                    return false;
+                };
+                let ui_surface = s.ui_surface.clone();
                 let Some(popup) = self.ensure_popup_surface() else {
                     return false;
                 };
@@ -352,6 +371,7 @@ impl HostState {
                 popup.surface.attach(Some(buffer), 0, 0);
                 popup.surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
                 popup.surface.commit();
+                ui_surface.commit();
                 true
             }
         }

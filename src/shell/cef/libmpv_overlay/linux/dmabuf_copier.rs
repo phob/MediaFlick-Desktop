@@ -5,7 +5,7 @@ use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::players::mpv::{WaylandDmaBufPlane, WaylandSlotLease};
+use crate::players::mpv::{WaylandDmaBufPlane, WaylandSlotLease, WaylandSurfaceRole};
 
 pub(super) use super::dmabuf_gl::SourcePlane;
 use super::dmabuf_gl::{
@@ -39,6 +39,13 @@ struct GbmSlot {
     in_use: Arc<AtomicBool>,
 }
 
+#[derive(Default)]
+struct SlotPool {
+    width: u16,
+    height: u16,
+    slots: Vec<GbmSlot>,
+}
+
 #[derive(Clone, Copy)]
 struct ShmScratch {
     width: u16,
@@ -60,9 +67,8 @@ pub(super) struct DmaBufCopier {
     a_uv: c_uint,
     u_tex: i32,
     src_tex: c_uint,
-    width: u16,
-    height: u16,
-    slots: Vec<GbmSlot>,
+    view_pool: SlotPool,
+    popup_pool: SlotPool,
     retired: Vec<GbmSlot>,
     shm_scratch: Option<ShmScratch>,
 }
@@ -111,11 +117,11 @@ fn destroy_shm_scratch_raw(gles: &GlesApi, scratch: &ShmScratch) {
 }
 
 impl DmaBufCopier {
-    pub(super) fn new() -> Result<Self, String> {
+    pub(super) fn new(preferred_rdev: Option<u64>) -> Result<Self, String> {
         let gbm = GbmApi::load()?;
         let (egl, get_proc) = EglApi::load()?;
         let gles = GlesApi::load(get_proc)?;
-        let (drm_file, gbm_device, egl_display) = open_gbm_display(&gbm, &egl)?;
+        let (drm_file, gbm_device, egl_display) = open_gbm_display(&gbm, &egl, preferred_rdev)?;
         let egl_context = match create_gles_context(&egl, egl_display) {
             Ok(ctx) => ctx,
             Err(err) => {
@@ -153,16 +159,23 @@ impl DmaBufCopier {
             a_uv,
             u_tex,
             src_tex,
-            width: 0,
-            height: 0,
-            slots: Vec::new(),
+            view_pool: SlotPool::default(),
+            popup_pool: SlotPool::default(),
             retired: Vec::new(),
             shm_scratch: None,
         })
     }
 
+    fn pool_mut(&mut self, role: WaylandSurfaceRole) -> &mut SlotPool {
+        match role {
+            WaylandSurfaceRole::View => &mut self.view_pool,
+            WaylandSurfaceRole::Popup => &mut self.popup_pool,
+        }
+    }
+
     pub(super) fn copy_dmabuf(
         &mut self,
+        role: WaylandSurfaceRole,
         width: u16,
         height: u16,
         fourcc: u32,
@@ -170,16 +183,22 @@ impl DmaBufCopier {
         planes: &[SourcePlane],
     ) -> Result<CopiedDmaBuf, String> {
         let _ctx = CurrentContextGuard::acquire(&self.egl, self.egl_display, self.egl_context)?;
-        if self.width != width || self.height != height {
-            self.retired.append(&mut self.slots);
-            self.width = width;
-            self.height = height;
-        }
+        let mut stale = {
+            let pool = self.pool_mut(role);
+            if pool.width == width && pool.height == height {
+                Vec::new()
+            } else {
+                pool.width = width;
+                pool.height = height;
+                std::mem::take(&mut pool.slots)
+            }
+        };
+        self.retired.append(&mut stale);
         self.sweep_retired();
-        let slot_idx = self.acquire_slot_index(width, height)?;
-        let fbo = self.slots[slot_idx].fbo;
+        let slot_idx = self.acquire_slot_index(role, width, height)?;
+        let fbo = self.pool_mut(role).slots[slot_idx].fbo;
         self.render_source_into_fbo(fbo, width, height, fourcc, modifier, planes)?;
-        let slot = &self.slots[slot_idx];
+        let slot = &self.pool_mut(role).slots[slot_idx];
         let mut cloned_planes = Vec::with_capacity(slot.planes.len());
         for plane in &slot.planes {
             let fd = plane
@@ -239,20 +258,29 @@ impl DmaBufCopier {
         Ok(pixels)
     }
 
-    fn acquire_slot_index(&mut self, width: u16, height: u16) -> Result<usize, String> {
-        if let Some(idx) = self
-            .slots
-            .iter()
-            .position(|slot| !slot.in_use.load(Ordering::Acquire))
+    fn acquire_slot_index(
+        &mut self,
+        role: WaylandSurfaceRole,
+        width: u16,
+        height: u16,
+    ) -> Result<usize, String> {
         {
-            return Ok(idx);
-        }
-        if self.slots.len() >= MAX_GBM_SLOTS {
-            return Err("all GBM UI buffer slots are in use".to_string());
+            let pool = self.pool_mut(role);
+            if let Some(idx) = pool
+                .slots
+                .iter()
+                .position(|slot| !slot.in_use.load(Ordering::Acquire))
+            {
+                return Ok(idx);
+            }
+            if pool.slots.len() >= MAX_GBM_SLOTS {
+                return Err("all GBM UI buffer slots are in use".to_string());
+            }
         }
         let slot = self.create_gbm_slot(width, height)?;
-        self.slots.push(slot);
-        Ok(self.slots.len() - 1)
+        let pool = self.pool_mut(role);
+        pool.slots.push(slot);
+        Ok(pool.slots.len() - 1)
     }
 
     fn create_gbm_slot(&self, width: u16, height: u16) -> Result<GbmSlot, String> {
@@ -517,7 +545,13 @@ impl Drop for DmaBufCopier {
         let current =
             CurrentContextGuard::acquire(&self.egl, self.egl_display, self.egl_context).ok();
         if current.is_some() {
-            for slot in self.slots.drain(..).chain(self.retired.drain(..)) {
+            for slot in self
+                .view_pool
+                .slots
+                .drain(..)
+                .chain(self.popup_pool.slots.drain(..))
+                .chain(self.retired.drain(..))
+            {
                 destroy_slot_raw(&self.gles, &self.egl, &self.gbm, self.egl_display, &slot);
             }
             if let Some(scratch) = self.shm_scratch.take() {
@@ -529,7 +563,13 @@ impl Drop for DmaBufCopier {
                 (self.gles.delete_program)(self.program);
             }
         } else {
-            for slot in self.slots.drain(..).chain(self.retired.drain(..)) {
+            for slot in self
+                .view_pool
+                .slots
+                .drain(..)
+                .chain(self.popup_pool.slots.drain(..))
+                .chain(self.retired.drain(..))
+            {
                 // SAFETY: Without a current GLES context, free EGLImage and GBM BO cleanly.
                 unsafe {
                     (self.egl.destroy_image_khr)(self.egl_display, slot.egl_image);
@@ -626,9 +666,34 @@ mod tests {
         (bo, modifier, planes)
     }
 
+    fn assert_popup_pool_isolation(
+        copier: &mut DmaBufCopier,
+        modifier: u64,
+        src_refs: &[SourcePlane],
+    ) {
+        let popup_copy = copier
+            .copy_dmabuf(
+                WaylandSurfaceRole::Popup,
+                2,
+                2,
+                GBM_FORMAT_ARGB8888,
+                modifier,
+                src_refs,
+            )
+            .expect("popup copy_dmabuf");
+        assert_eq!(copier.popup_pool.slots.len(), 1);
+        assert_eq!(
+            copier.view_pool.slots.len(),
+            2,
+            "popup frames must not retire view slots"
+        );
+        assert!(copier.retired.is_empty());
+        drop(popup_copy);
+    }
+
     #[test]
     fn dmabuf_copier_preserves_orientation_channels_and_slot_leases_on_gpu() {
-        let Ok(mut copier) = DmaBufCopier::new() else {
+        let Ok(mut copier) = DmaBufCopier::new(None) else {
             return;
         };
         let (w, h) = (4u16, 4u16);
@@ -655,24 +720,51 @@ mod tests {
         );
 
         let copied1 = copier
-            .copy_dmabuf(w, h, GBM_FORMAT_ARGB8888, modifier, &src_refs)
+            .copy_dmabuf(
+                WaylandSurfaceRole::View,
+                w,
+                h,
+                GBM_FORMAT_ARGB8888,
+                modifier,
+                &src_refs,
+            )
             .expect("copy_dmabuf 1");
-        assert_eq!(copier.slots.len(), 1);
-        assert!(copier.slots[0].in_use.load(Ordering::Acquire));
+        assert_eq!(copier.view_pool.slots.len(), 1);
+        assert!(copier.view_pool.slots[0].in_use.load(Ordering::Acquire));
 
         let copied2 = copier
-            .copy_dmabuf(w, h, GBM_FORMAT_ARGB8888, modifier, &src_refs)
+            .copy_dmabuf(
+                WaylandSurfaceRole::View,
+                w,
+                h,
+                GBM_FORMAT_ARGB8888,
+                modifier,
+                &src_refs,
+            )
             .expect("copy_dmabuf 2");
-        assert_eq!(copier.slots.len(), 2);
-        assert!(copier.slots[1].in_use.load(Ordering::Acquire));
+        assert_eq!(copier.view_pool.slots.len(), 2);
+        assert!(copier.view_pool.slots[1].in_use.load(Ordering::Acquire));
 
         drop(copied1);
-        assert!(!copier.slots[0].in_use.load(Ordering::Acquire));
+        assert!(!copier.view_pool.slots[0].in_use.load(Ordering::Acquire));
 
         let copied3 = copier
-            .copy_dmabuf(w, h, GBM_FORMAT_ARGB8888, modifier, &src_refs)
+            .copy_dmabuf(
+                WaylandSurfaceRole::View,
+                w,
+                h,
+                GBM_FORMAT_ARGB8888,
+                modifier,
+                &src_refs,
+            )
             .expect("copy_dmabuf 3");
-        assert_eq!(copier.slots.len(), 2, "released slot 0 should be reused");
+        assert_eq!(
+            copier.view_pool.slots.len(),
+            2,
+            "released slot 0 should be reused"
+        );
+
+        assert_popup_pool_isolation(&mut copier, modifier, &src_refs);
 
         let roundtrip_refs: Vec<SourcePlane> = copied3
             .planes

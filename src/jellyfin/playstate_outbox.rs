@@ -463,21 +463,22 @@ impl PlaystateOutbox {
                             o.device_id, o.payload_json, o.next_retry_at
                      FROM playstate_outbox o
                      WHERE o.server_id = ?1 AND o.user_id = ?2
-                     ORDER BY (
-                         SELECT min(s.id)
-                         FROM playstate_outbox s
-                         WHERE s.server_id = o.server_id
-                           AND s.user_id = o.user_id
-                           AND s.item_id = o.item_id
-                           AND s.play_session_id = o.play_session_id
-                     ) ASC,
-                     CASE o.kind
-                         WHEN 'start' THEN 0
-                         WHEN 'progress' THEN 1
-                         WHEN 'stopped' THEN 2
-                         ELSE 3
-                     END ASC,
-                     o.id ASC
+                     ORDER BY
+                         CASE WHEN o.play_session_id = '' THEN o.id ELSE (
+                             SELECT min(s.id)
+                             FROM playstate_outbox s
+                             WHERE s.server_id = o.server_id
+                               AND s.user_id = o.user_id
+                               AND s.item_id = o.item_id
+                               AND s.play_session_id = o.play_session_id
+                         ) END ASC,
+                         CASE WHEN o.play_session_id = '' THEN 0 ELSE CASE o.kind
+                             WHEN 'start' THEN 0
+                             WHEN 'progress' THEN 1
+                             WHEN 'stopped' THEN 2
+                             ELSE 3
+                         END END ASC,
+                         o.id ASC
                      LIMIT 1",
                     params![account.server_id(), account.user_id()],
                     |row| {
@@ -514,14 +515,15 @@ impl PlaystateOutbox {
         account: &AccountKey,
         row_id: i64,
         row_revision: i64,
+        row_kind: OutboxKind,
         outcome: Result<(), ApiError>,
         now: i64,
     ) -> rusqlite::Result<()> {
         match outcome {
             Ok(()) => self.library.with_connection(|connection| {
                 connection.execute(
-                    "DELETE FROM playstate_outbox WHERE id = ?1 AND revision = ?2",
-                    params![row_id, row_revision],
+                    "DELETE FROM playstate_outbox WHERE id = ?1 AND revision = ?2 AND kind = ?3",
+                    params![row_id, row_revision, row_kind.as_str()],
                 )?;
                 Ok(())
             }),
@@ -538,8 +540,8 @@ impl PlaystateOutbox {
             {
                 self.library.with_connection(|connection| {
                     connection.execute(
-                        "DELETE FROM playstate_outbox WHERE id = ?1 AND revision = ?2",
-                        params![row_id, row_revision],
+                        "DELETE FROM playstate_outbox WHERE id = ?1 AND revision = ?2 AND kind = ?3",
+                        params![row_id, row_revision, row_kind.as_str()],
                     )?;
                     Ok(())
                 })
@@ -551,8 +553,8 @@ impl PlaystateOutbox {
                 self.library.with_connection(|connection| {
                     let attempts: Option<i64> = connection
                         .query_row(
-                            "SELECT attempts FROM playstate_outbox WHERE id = ?1 AND revision = ?2",
-                            params![row_id, row_revision],
+                            "SELECT attempts FROM playstate_outbox WHERE id = ?1 AND revision = ?2 AND kind = ?3",
+                            params![row_id, row_revision, row_kind.as_str()],
                             |row| row.get(0),
                         )
                         .optional()?;
@@ -563,9 +565,16 @@ impl PlaystateOutbox {
                     let delay = retry_after.map_or(exp_backoff, |secs| secs.max(exp_backoff));
                     connection.execute(
                         "UPDATE playstate_outbox
-                         SET attempts = ?3, next_retry_at = ?4, updated_at = ?5
-                         WHERE id = ?1 AND revision = ?2",
-                        params![row_id, row_revision, attempts + 1, now + delay, now],
+                         SET attempts = ?4, next_retry_at = ?5, updated_at = ?6
+                         WHERE id = ?1 AND revision = ?2 AND kind = ?3",
+                        params![
+                            row_id,
+                            row_revision,
+                            row_kind.as_str(),
+                            attempts + 1,
+                            now + delay,
+                            now
+                        ],
                     )?;
                     Ok(())
                 })
@@ -606,10 +615,11 @@ impl PlaystateOutbox {
         account: &AccountKey,
         row_id: i64,
         row_revision: i64,
+        row_kind: OutboxKind,
         outcome: Result<(), ApiError>,
         now: i64,
     ) -> rusqlite::Result<()> {
-        self.record_outcome(account, row_id, row_revision, outcome, now)
+        self.record_outcome(account, row_id, row_revision, row_kind, outcome, now)
     }
 }
 
@@ -761,6 +771,7 @@ fn drain_cycle(outbox: &PlaystateOutbox) -> u64 {
             scope.account(),
             row.id,
             row.revision,
+            row.kind,
             outcome,
             now_unix_secs(),
         ) {
