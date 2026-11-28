@@ -19,8 +19,8 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_DBLCLKS, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
-    GetWindowLongPtrW, HTCLIENT, HWND_TOP, IDC_ARROW, IsIconic, IsWindow, LoadCursorW,
-    PostMessageW, RegisterClassW, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    GetWindowLongPtrW, HTCLIENT, IDC_ARROW, IsIconic, IsWindow, LoadCursorW, PostMessageW,
+    RegisterClassW, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOREDRAW, SWP_NOZORDER,
     SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_APP, WM_CHAR, WM_CLOSE,
     WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
     WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
@@ -350,19 +350,19 @@ impl LibmpvOverlaySurface {
             return true;
         };
         let previous = self.metrics.replace(metrics);
-        // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
-        unsafe {
-            SetWindowPos(
-                input,
-                HWND_TOP,
-                0,
-                0,
-                metrics.physical_width,
-                metrics.physical_height,
-                SWP_NOACTIVATE | SWP_SHOWWINDOW,
-            );
-        }
         if previous != metrics {
+            // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
+            unsafe {
+                SetWindowPos(
+                    input,
+                    null_mut(),
+                    0,
+                    0,
+                    metrics.physical_width,
+                    metrics.physical_height,
+                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW,
+                );
+            }
             self.with_browser_host(|browser_host| {
                 browser_host.notify_screen_info_changed();
                 if previous.logical_width != metrics.logical_width

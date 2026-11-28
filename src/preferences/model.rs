@@ -62,6 +62,8 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "AppearanceSettings::is_default")]
     pub appearance: AppearanceSettings,
     #[serde(default, skip_serializing_if = "is_false")]
+    pub audio_passthrough: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
     pub whats_new_seen: bool,
 }
 
@@ -262,6 +264,7 @@ pub struct PlayerPreferences {
     pub segment_skip: SegmentSkipConfig,
     pub subtitles: SubtitleAppearance,
     pub mark_watched_next: Option<String>,
+    pub audio_passthrough: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -474,6 +477,7 @@ impl Default for AppSettings {
             skip_commercial: SegmentSkipMode::default(),
             mark_watched_next: default_mark_watched_next(),
             appearance: AppearanceSettings::default(),
+            audio_passthrough: false,
             whats_new_seen: false,
         }
     }
@@ -517,6 +521,7 @@ impl AppSettings {
                 position: self.comfort.subtitle_position,
             },
             mark_watched_next: self.mark_watched_next.clone(),
+            audio_passthrough: self.audio_passthrough,
         }
     }
 

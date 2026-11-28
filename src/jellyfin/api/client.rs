@@ -12,6 +12,7 @@ use crate::jellyfin::version::ServerTooOld;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(120);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const PLAYSTATE_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_ATTEMPTS: u32 = 3;
 const RETRY_BUDGET: Duration = HTTP_TIMEOUT;
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -125,6 +126,7 @@ impl From<rusqlite::Error> for ApiError {
 pub struct JellyfinClient {
     agent: ureq::Agent,
     companion_agent: ureq::Agent,
+    playstate_agent: ureq::Agent,
     base_url: String,
     device_id: String,
     device_name: String,
@@ -135,21 +137,23 @@ pub struct JellyfinClient {
 struct SharedAgents {
     core: ureq::Agent,
     companion: ureq::Agent,
+    playstate: ureq::Agent,
 }
 
 static SHARED_AGENTS: LazyLock<SharedAgents> = LazyLock::new(|| {
-    let build_agent = || -> ureq::Agent {
+    let build_agent = |global: Duration, connect: Duration| -> ureq::Agent {
         ureq::Agent::config_builder()
-            .timeout_global(Some(HTTP_TIMEOUT))
-            .timeout_connect(Some(CONNECT_TIMEOUT))
+            .timeout_global(Some(global))
+            .timeout_connect(Some(connect))
             .http_status_as_error(false)
             .user_agent(format!("mediaflick-desktop/{}", build_info::APP_VERSION))
             .build()
             .into()
     };
     SharedAgents {
-        core: build_agent(),
-        companion: build_agent(),
+        core: build_agent(HTTP_TIMEOUT, CONNECT_TIMEOUT),
+        companion: build_agent(HTTP_TIMEOUT, CONNECT_TIMEOUT),
+        playstate: build_agent(PLAYSTATE_TIMEOUT, PLAYSTATE_TIMEOUT),
     }
 });
 
@@ -158,6 +162,7 @@ impl JellyfinClient {
         Self {
             agent: SHARED_AGENTS.core.clone(),
             companion_agent: SHARED_AGENTS.companion.clone(),
+            playstate_agent: SHARED_AGENTS.playstate.clone(),
             base_url: base_url.trim_end_matches('/').to_string(),
             device_id: device_id.to_string(),
             device_name: device_name(),
@@ -312,6 +317,38 @@ impl JellyfinClient {
         let url = self.url(path, query);
         self.core_send(path, || self.json(self.agent.delete(url.as_str())).call())
             .map(|_| ())
+    }
+
+    pub fn post_playstate_once(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<u16, ApiError> {
+        if self.is_cancelled() {
+            return Err(ApiError::Cancelled);
+        }
+        let url = self.url(path, &[]);
+        let response = self
+            .json(self.playstate_agent.post(url.as_str()))
+            .send_json(body)
+            .map_err(|error| transport_error(&error))?;
+        core_response(response).map(|ok| ok.status().as_u16())
+    }
+
+    pub fn delete_playstate_once(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<u16, ApiError> {
+        if self.is_cancelled() {
+            return Err(ApiError::Cancelled);
+        }
+        let url = self.url(path, query);
+        let response = self
+            .json(self.playstate_agent.delete(url.as_str()))
+            .call()
+            .map_err(|error| transport_error(&error))?;
+        core_response(response).map(|ok| ok.status().as_u16())
     }
 
     pub fn companion_get_json<T: DeserializeOwned>(

@@ -221,6 +221,7 @@ fn activate_account_preferences(services: &Arc<Services>) -> Result<(), ApiRespo
             "the signed-in account has no stable identity",
         ));
     };
+    services.playstate_outbox.wake_account(&account);
     services
         .preferences
         .activate_account(Some(account))

@@ -1,7 +1,19 @@
 import { useState, type PointerEvent } from "react"
 import { Slider } from "@/components/ui/slider"
-import { TICKS_PER_MS, type PlayerChapter, type PlayerSkipSegment } from "@/lib/api"
-import { currentChapter, formatClock } from "@/components/player/format"
+import {
+  TICKS_PER_MS,
+  trickplayTileUrl,
+  type PlayerChapter,
+  type PlayerSkipSegment,
+  type TrickplayInfo,
+} from "@/lib/api"
+import { currentChapter, formatClock, trickplayFrameAt } from "@/components/player/format"
+
+type TimelineTrickplay = {
+  itemId: string
+  mediaSourceId: string | null
+  info: TrickplayInfo
+}
 
 export function Timeline({
   position,
@@ -9,6 +21,7 @@ export function Timeline({
   chapters,
   segments,
   bufferedUntil,
+  trickplay = null,
   onScrub,
   onSeek,
 }: {
@@ -17,14 +30,29 @@ export function Timeline({
   chapters: PlayerChapter[]
   segments: PlayerSkipSegment[]
   bufferedUntil: number | null
+  trickplay?: TimelineTrickplay | null
   onScrub: (value: number | null) => void
   onSeek: (value: number) => void
 }) {
   const [hoverMs, setHoverMs] = useState<number | null>(null)
+  const [failedTileUrl, setFailedTileUrl] = useState<string | null>(null)
   const previewChapter = hoverMs === null ? null : currentChapter(chapters, hoverMs)
+  const trickplayFrame =
+    hoverMs !== null && trickplay ? trickplayFrameAt(trickplay.info, hoverMs) : null
+  const tileUrl =
+    trickplayFrame && trickplay
+      ? trickplayTileUrl(
+          trickplay.itemId,
+          trickplay.info.width,
+          trickplayFrame.tileIndex,
+          trickplay.mediaSourceId,
+        )
+      : null
+  const showPreview = Boolean(trickplayFrame && tileUrl && failedTileUrl !== tileUrl)
   const updateHover = (event: PointerEvent<HTMLDivElement>) => {
     if (!duration) return
     const bounds = event.currentTarget.getBoundingClientRect()
+    if (bounds.width <= 0) return
     const fraction = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width))
     const value = fraction * duration
     setHoverMs(value)
@@ -42,6 +70,27 @@ export function Timeline({
           className="pointer-events-none absolute bottom-full z-30 mb-2 -translate-x-1/2 rounded border bg-popover px-2 py-1 text-center text-xs shadow-lg"
           style={{ left: `${Math.max(4, Math.min(96, (hoverMs / duration) * 100))}%` }}
         >
+          {showPreview && trickplayFrame && tileUrl && (
+            <div
+              data-testid="trickplay-preview"
+              className="mb-1 overflow-hidden rounded bg-muted"
+              style={{
+                width: `${trickplayFrame.previewWidth}px`,
+                height: `${trickplayFrame.previewHeight}px`,
+                backgroundImage: `url("${tileUrl}")`,
+                backgroundPosition: `-${trickplayFrame.offsetX}px -${trickplayFrame.offsetY}px`,
+                backgroundSize: `${trickplayFrame.sheetWidth}px ${trickplayFrame.sheetHeight}px`,
+                backgroundRepeat: "no-repeat",
+              }}
+            >
+              <img
+                src={tileUrl}
+                alt=""
+                className="pointer-events-none size-px opacity-0"
+                onError={() => setFailedTileUrl(tileUrl)}
+              />
+            </div>
+          )}
           <div className="font-medium tabular-nums">{formatClock(hoverMs)}</div>
           {previewChapter && (
             <div className="max-w-48 truncate text-muted-foreground">{previewChapter.title}</div>

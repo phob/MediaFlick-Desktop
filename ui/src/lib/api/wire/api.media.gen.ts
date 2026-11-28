@@ -39,6 +39,7 @@ export type MediaSourceView = {
   bitrate: number | null,
   defaultAudioStreamIndex: number | null,
   defaultSubtitleStreamIndex: number | null,
+  trickplay: TrickplayInfoView | null,
   video: Array<MediaStreamView>,
   audio: Array<MediaStreamView>,
   subtitles: Array<MediaStreamView>,
@@ -108,6 +109,15 @@ export type TrailerSummary = {
   id: string | null,
   name: string,
   embedUrl: string | null,
+};
+
+export type TrickplayInfoView = {
+  width: number,
+  height: number,
+  tileWidth: number,
+  tileHeight: number,
+  thumbnailCount: number,
+  intervalMs: number,
 };
 
 export type ApiMediaRoutes = {

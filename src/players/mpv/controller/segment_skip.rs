@@ -102,18 +102,6 @@ impl ControllerState {
         self.chapter_markers = ChapterMarkers::default();
     }
 
-    pub(super) fn read_chapter_list(&mut self) {
-        match self.get_mpv_property("chapter-list") {
-            Ok(Value::Array(chapters)) => self.handle_chapter_list(chapters),
-            Ok(other) => {
-                tracing::warn!(target: "mpv.ipc", data = %other, "mpv chapter-list is not a list");
-            }
-            Err(error) => {
-                tracing::warn!(target: "mpv.ipc", "failed to read mpv chapter-list: {error}");
-            }
-        }
-    }
-
     pub(super) fn handle_chapter_list(&mut self, chapters: Vec<Value>) {
         if !self.chapter_markers.injected.is_empty()
             && self

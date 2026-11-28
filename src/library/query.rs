@@ -1,5 +1,4 @@
 use rusqlite::functions::FunctionFlags;
-use std::cmp::Ordering;
 
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, Row, params, params_from_iter};
@@ -7,9 +6,14 @@ use serde_json::{Value, json};
 
 use super::libraries::LibraryId;
 use super::{
-    CatalogKind, ItemDetail, ItemPage, ItemQuery, ItemSummary, Library, LibraryStats, ProviderIds,
-    TmdbCandidate, WatchFilter,
+    CatalogKind, ItemDetail, ItemPage, ItemQuery, ItemSort, ItemSummary, Library, LibraryStats,
+    ProviderIds, TmdbCandidate, WatchFilter,
 };
+
+mod fast;
+mod sql;
+
+use sql::{ItemSql, QueryPlan, fts_match_expression, natural_order, query_base};
 
 const TMDB_CANDIDATE_CHUNK: usize = 400;
 const ITEM_ID_CHUNK: usize = 400;
@@ -22,7 +26,7 @@ pub enum Facet {
 }
 
 impl Facet {
-    const fn table(self) -> (&'static str, &'static str) {
+    pub(super) const fn table(self) -> (&'static str, &'static str) {
         match self {
             Self::Genre => ("item_genres", "genre"),
             Self::Studio => ("item_studios", "studio"),
@@ -59,6 +63,9 @@ impl Library {
 
     pub fn query(&self, query: &ItemQuery) -> rusqlite::Result<ItemPage> {
         self.db.with_connection(|connection| {
+            if fast::uses_single_pass_query(query) {
+                return fast::query_and_count_single_pass(connection, query);
+            }
             let total = count_items(connection, query)?;
             let items = page_items(connection, query)?;
             Ok(ItemPage { items, total })
@@ -66,12 +73,25 @@ impl Library {
     }
 
     pub fn letter_index(&self, query: &ItemQuery) -> rusqlite::Result<Vec<(String, i64)>> {
+        if matches!(query.sort, ItemSort::Name) && query.search.is_none() {
+            return self.letter_index_grouped(query);
+        }
+        let plan = QueryPlan {
+            user_data: query.watched.is_some()
+                || query.favorite.is_some()
+                || matches!(query.sort, ItemSort::DatePlayed | ItemSort::PlayCount),
+            series_aggregates: matches!(query.watched, Some(WatchFilter::InProgress))
+                || matches!(query.sort, ItemSort::EpisodeAdded | ItemSort::DatePlayed),
+            drive_by_library: true,
+            letter_cover: false,
+        };
         let ItemSql {
             from_clause,
             where_clause,
             order,
             arguments,
-        } = query_base(query, true);
+            ..
+        } = query_base(query, plan);
         let sql = format!(
             "SELECT letter, min(position) FROM (
                  SELECT CASE WHEN initial BETWEEN 'A' AND 'Z' THEN initial ELSE '#' END AS letter,
@@ -92,6 +112,67 @@ impl Library {
                 })?
                 .collect()
         })
+    }
+
+    fn letter_index_grouped(&self, query: &ItemQuery) -> rusqlite::Result<Vec<(String, i64)>> {
+        let kinds = query.kinds.kinds();
+        let unfiltered_single_top_kind = kinds.len() == 1
+            && matches!(kinds[0], CatalogKind::Movie | CatalogKind::Series)
+            && query.watched.is_none()
+            && query.favorite.is_none()
+            && query.genre.is_none()
+            && query.studio.is_none()
+            && query.tag.is_none()
+            && query.official_rating.is_none()
+            && query.release_decade.is_none()
+            && query.series_status.is_none();
+        let plan = QueryPlan {
+            user_data: query.watched.is_some() || query.favorite.is_some(),
+            series_aggregates: matches!(query.watched, Some(WatchFilter::InProgress)),
+            drive_by_library: !unfiltered_single_top_kind,
+            letter_cover: unfiltered_single_top_kind,
+        };
+        let ItemSql {
+            from_clause,
+            where_clause,
+            arguments,
+            ..
+        } = query_base(query, plan);
+        let sql = format!(
+            "SELECT upper(substr(COALESCE(i.sort_name, i.name), 1, 1)) AS initial, count(*)
+             {from_clause}{where_clause}
+             GROUP BY initial"
+        );
+        let mut counts = self.db.with_connection(|connection| {
+            let mut statement = connection.prepare_cached(&sql)?;
+            statement
+                .query_map(params_from_iter(arguments.iter()), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })?;
+        let descending = matches!(
+            query
+                .direction
+                .unwrap_or_else(|| query.sort.natural_direction()),
+            super::SortDirection::Descending
+        );
+        counts.sort_by(|(left, _), (right, _)| {
+            let order = left.cmp(right);
+            if descending { order.reverse() } else { order }
+        });
+        let mut letters: std::collections::BTreeMap<String, i64> =
+            std::collections::BTreeMap::new();
+        let mut offset = 0_i64;
+        for (initial, count) in counts {
+            let bucket = match initial.as_bytes() {
+                [ch @ b'A'..=b'Z'] => String::from(*ch as char),
+                _ => "#".to_string(),
+            };
+            letters.entry(bucket).or_insert(offset);
+            offset += count;
+        }
+        Ok(letters.into_iter().collect())
     }
 
     pub fn query_page(&self, query: &ItemQuery) -> rusqlite::Result<Vec<ItemSummary>> {
@@ -141,6 +222,7 @@ impl Library {
             let mut statement = connection.prepare(&format!(
                 "SELECT {DETAIL_COLUMNS} FROM items i
                  LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
                  WHERE i.jellyfin_id = ?1"
             ))?;
             let mut rows = statement.query(params![item_id])?;
@@ -167,6 +249,7 @@ impl Library {
                 let sql = format!(
                     "SELECT {SUMMARY_COLUMNS} FROM items i
                      LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                     LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
                      WHERE i.jellyfin_id IN ({placeholders})"
                 );
                 let mut statement = connection.prepare(&sql)?;
@@ -182,6 +265,7 @@ impl Library {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
                  LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
                  WHERE i.parent_id = ?1 OR (i.season_id = ?1 AND i.kind = 'Episode')
                  ORDER BY i.parent_index_number ASC NULLS LAST,
                           i.index_number ASC NULLS LAST,
@@ -199,6 +283,7 @@ impl Library {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
                  JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
                  WHERE u.playback_position_ticks > 0 AND u.played = 0
                    AND i.kind IN ('Movie', 'Episode')
                  ORDER BY u.last_played_date DESC NULLS LAST, u.updated_at DESC
@@ -213,16 +298,42 @@ impl Library {
 
     pub fn random_played_movie_with_genre(&self) -> rusqlite::Result<Option<ItemDetail>> {
         self.db.with_connection(|connection| {
-            let mut statement = connection.prepare(&format!(
+            let (min_id, max_id): (Option<i64>, Option<i64>) = connection.query_row(
+                "SELECT
+                     (SELECT id FROM items WHERE kind = 'Movie' ORDER BY id ASC LIMIT 1),
+                     (SELECT id FROM items WHERE kind = 'Movie' ORDER BY id DESC LIMIT 1)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let (Some(min_id), Some(max_id)) = (min_id, max_id) else {
+                return Ok(None);
+            };
+            let mut seed = [0u8; 8];
+            let _ = getrandom::fill(&mut seed);
+            let span = (max_id - min_id + 1).max(1).cast_unsigned();
+            let cursor = min_id + (u64::from_le_bytes(seed) % span).cast_signed();
+            let mut upper = connection.prepare_cached(&format!(
                 "SELECT {DETAIL_COLUMNS} FROM items i
-                 JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
-                 WHERE i.kind = 'Movie' AND u.played = 1
+                 CROSS JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
+                 WHERE i.kind = 'Movie' AND i.id >= ?1 AND u.played = 1
                    AND EXISTS (SELECT 1 FROM item_genres g WHERE g.item_id = i.id)
-                 ORDER BY random()
+                 ORDER BY i.id ASC
                  LIMIT 1"
             ))?;
-            let mut rows = statement.query([])?;
-            match rows.next()? {
+            if let Some(row) = upper.query(params![cursor])?.next()? {
+                return Ok(Some(detail_row(row)?));
+            }
+            let mut lower = connection.prepare_cached(&format!(
+                "SELECT {DETAIL_COLUMNS} FROM items i
+                 CROSS JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
+                 WHERE i.kind = 'Movie' AND i.id < ?1 AND u.played = 1
+                   AND EXISTS (SELECT 1 FROM item_genres g WHERE g.item_id = i.id)
+                 ORDER BY i.id ASC
+                 LIMIT 1"
+            ))?;
+            match lower.query(params![cursor])?.next()? {
                 Some(row) => Ok(Some(detail_row(row)?)),
                 None => Ok(None),
             }
@@ -234,6 +345,7 @@ impl Library {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
                  LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
                  WHERE i.kind = 'Episode'
                  ORDER BY i.date_created DESC NULLS LAST, i.id DESC"
             ))?;
@@ -253,26 +365,89 @@ impl Library {
     }
 
     pub fn random_billboard_titles(&self, limit: i64) -> rusqlite::Result<Vec<ItemSummary>> {
+        let limit = limit.clamp(1, 50);
         self.db.with_connection(|connection| {
-            let mut statement = connection.prepare(&format!(
-                "SELECT {SUMMARY_COLUMNS} FROM items i
-                 LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
-                 WHERE i.kind IN ('Movie', 'Series')
-                   AND (
-                       COALESCE(i.backdrop_image_tag, '') <> ''
-                       OR EXISTS (
+            let (m_min, m_max, s_min, s_max): (
+                Option<i64>,
+                Option<i64>,
+                Option<i64>,
+                Option<i64>,
+            ) = connection.query_row(
+                "SELECT
+                     (SELECT id FROM items WHERE kind = 'Movie' AND backdrop_image_tag IS NOT NULL AND backdrop_image_tag <> '' ORDER BY id ASC LIMIT 1),
+                     (SELECT id FROM items WHERE kind = 'Movie' AND backdrop_image_tag IS NOT NULL AND backdrop_image_tag <> '' ORDER BY id DESC LIMIT 1),
+                     (SELECT id FROM items WHERE kind = 'Series' AND backdrop_image_tag IS NOT NULL AND backdrop_image_tag <> '' ORDER BY id ASC LIMIT 1),
+                     (SELECT id FROM items WHERE kind = 'Series' AND backdrop_image_tag IS NOT NULL AND backdrop_image_tag <> '' ORDER BY id DESC LIMIT 1)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+            let min_id = [m_min, s_min].into_iter().flatten().min();
+            let max_id = [m_max, s_max].into_iter().flatten().max();
+            let mut items = Vec::new();
+            if let (Some(min_id), Some(max_id)) = (min_id, max_id) {
+                let mut seed = [0u8; 8];
+                let _ = getrandom::fill(&mut seed);
+                let span = (max_id - min_id + 1).max(1).cast_unsigned();
+                let start_id = min_id + (u64::from_le_bytes(seed) % span).cast_signed();
+                let mut upper = connection.prepare_cached(&format!(
+                    "SELECT {SUMMARY_COLUMNS} FROM items i
+                     LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                     LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
+                     WHERE i.kind IN ('Movie', 'Series')
+                       AND i.backdrop_image_tag IS NOT NULL AND i.backdrop_image_tag <> ''
+                       AND i.id >= ?1
+                     ORDER BY i.id ASC
+                     LIMIT ?2"
+                ))?;
+                items.extend(
+                    upper
+                        .query_map(params![start_id, limit], summary_row)?
+                        .collect::<rusqlite::Result<Vec<_>>>()?,
+                );
+                let remaining = limit - i64::try_from(items.len()).unwrap_or(limit);
+                if remaining > 0 {
+                    let mut lower = connection.prepare_cached(&format!(
+                        "SELECT {SUMMARY_COLUMNS} FROM items i
+                         LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                         LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
+                         WHERE i.kind IN ('Movie', 'Series')
+                           AND i.backdrop_image_tag IS NOT NULL AND i.backdrop_image_tag <> ''
+                           AND i.id < ?1
+                         ORDER BY i.id ASC
+                         LIMIT ?2"
+                    ))?;
+                    items.extend(
+                        lower
+                            .query_map(params![start_id, remaining], summary_row)?
+                            .collect::<rusqlite::Result<Vec<_>>>()?,
+                    );
+                }
+            }
+            if i64::try_from(items.len()).unwrap_or(limit) < limit {
+                let remaining = limit - i64::try_from(items.len()).unwrap_or(limit);
+                let mut seen: std::collections::HashSet<String> =
+                    items.iter().map(|entry| entry.id.clone()).collect();
+                let mut thumb_stmt = connection.prepare_cached(&format!(
+                    "SELECT {SUMMARY_COLUMNS} FROM items i
+                     LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                     LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
+                     WHERE i.kind IN ('Movie', 'Series')
+                       AND COALESCE(i.backdrop_image_tag, '') = ''
+                       AND EXISTS (
                            SELECT 1 FROM json_each(i.image_tags) image
                            WHERE lower(image.key) = 'thumb'
                              AND COALESCE(image.value, '') <> ''
                        )
-                   )
-                 ORDER BY random()
-                 LIMIT ?1"
-            ))?;
-            let rows = statement
-                .query_map(params![limit.clamp(1, 50)], summary_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(rows)
+                     LIMIT ?1"
+                ))?;
+                for row in thumb_stmt.query_map(params![remaining], summary_row)? {
+                    let item = row?;
+                    if seen.insert(item.id.clone()) {
+                        items.push(item);
+                    }
+                }
+            }
+            Ok(items)
         })
     }
 
@@ -294,11 +469,21 @@ impl Library {
                  ORDER BY value COLLATE NOCASE ASC"
             ),
             Some(_) => format!(
-                "SELECT DISTINCT f.{column} FROM item_libraries l
-                 JOIN items i ON i.jellyfin_id = l.item_id
-                 JOIN {table} f ON f.item_id = i.id
-                 WHERE l.library_id = ?1
-                 ORDER BY f.{column} COLLATE NOCASE ASC"
+                "WITH RECURSIVE distinct_values(value) AS (
+                     SELECT min({column}) FROM {table}
+                     UNION ALL
+                     SELECT (SELECT min({column}) FROM {table} WHERE {column} > previous.value)
+                     FROM distinct_values previous WHERE previous.value IS NOT NULL
+                 )
+                 SELECT value FROM distinct_values
+                 WHERE value IS NOT NULL
+                   AND EXISTS (
+                       SELECT 1 FROM {table} f
+                       JOIN items i ON i.id = f.item_id
+                       JOIN item_libraries l ON l.item_id = i.jellyfin_id
+                       WHERE f.{column} = distinct_values.value AND l.library_id = ?1
+                   )
+                 ORDER BY value COLLATE NOCASE ASC"
             ),
         };
         self.db.with_connection(|connection| {
@@ -317,23 +502,29 @@ impl Library {
         library: Option<&LibraryId>,
     ) -> rusqlite::Result<Vec<String>> {
         let mut ratings = self.db.with_connection(|connection| {
-            let placeholders = vec!["?"; kinds.len()].join(", ");
-            let in_library = if library.is_some() {
-                " AND EXISTS (SELECT 1 FROM item_libraries l
-                     WHERE l.library_id = ? AND l.item_id = items.jellyfin_id)"
-            } else {
-                ""
-            };
-            let mut statement = connection.prepare(&format!(
-                "SELECT DISTINCT official_rating FROM items
-                 WHERE official_rating <> '' AND kind IN ({placeholders}){in_library}"
-            ))?;
-            let arguments = kinds
+            let kind_list = kinds
                 .iter()
-                .map(|kind| kind.as_str())
-                .chain(library.map(LibraryId::as_str));
+                .map(|kind| format!("'{}'", kind.as_str()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let (from_clause, lib_filter) = if library.is_some() {
+                (
+                    "FROM item_libraries l JOIN items i ON i.jellyfin_id = l.item_id",
+                    " AND l.library_id = ?1",
+                )
+            } else {
+                ("FROM items i", "")
+            };
+            let mut statement = connection.prepare_cached(&format!(
+                "SELECT DISTINCT i.official_rating {from_clause}
+                 WHERE i.kind IN ({kind_list})
+                   AND i.official_rating IS NOT NULL
+                   AND i.official_rating <> ''{lib_filter}"
+            ))?;
             let rows = statement
-                .query_map(params_from_iter(arguments), |row| row.get::<_, String>(0))?
+                .query_map(params_from_iter(library.map(LibraryId::as_str)), |row| {
+                    row.get::<_, String>(0)
+                })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })?;
@@ -346,6 +537,7 @@ impl Library {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
                  LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
                  WHERE i.kind = 'Episode' AND i.series_id = ?1
                  ORDER BY i.parent_index_number ASC NULLS LAST,
                           i.index_number ASC NULLS LAST,
@@ -365,6 +557,7 @@ impl Library {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
                  LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
                  JOIN items current ON current.jellyfin_id = ?1
                  WHERE i.kind = 'Episode'
                    AND i.series_id = current.series_id
@@ -386,6 +579,7 @@ impl Library {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
                  LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
                  JOIN items current ON current.jellyfin_id = ?1
                  WHERE i.kind = 'Episode'
                    AND i.series_id = current.series_id
@@ -410,16 +604,11 @@ i.community_rating, i.official_rating, i.series_id, i.series_name, i.index_numbe
 i.parent_index_number, i.primary_image_tag, i.child_count, i.premiere_date, i.season_id, \
 COALESCE(u.played, 0), COALESCE(u.play_count, 0), COALESCE(u.playback_position_ticks, 0), \
 COALESCE(u.is_favorite, 0), i.image_tags, i.backdrop_image_tag, \
-CASE WHEN i.kind = 'Series' THEN (
-    SELECT count(*) FROM items e
-    LEFT JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
-    WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id AND e.is_virtual = 0
-      AND COALESCE(ue.played, 0) = 0
-) END"
+CASE WHEN i.kind = 'Series' THEN COALESCE(sa.unplayed_present_count, 0) END"
     };
 }
 
-const SUMMARY_COLUMNS: &str = summary_columns!();
+pub(super) const SUMMARY_COLUMNS: &str = summary_columns!();
 
 const DETAIL_COLUMNS: &str = concat!(
     summary_columns!(),
@@ -435,31 +624,35 @@ fn cached_image_tag<'a>(image_tags: &'a Value, image_type: &str) -> Option<&'a s
 }
 
 fn summary_row(row: &Row<'_>) -> rusqlite::Result<ItemSummary> {
-    let image_tags = parsed_json(&row.get::<_, String>(19)?);
+    summary_row_at(row, 0)
+}
+
+pub(super) fn summary_row_at(row: &Row<'_>, offset: usize) -> rusqlite::Result<ItemSummary> {
+    let image_tags = parsed_json(&row.get::<_, String>(offset + 19)?);
     Ok(ItemSummary {
-        id: row.get(0)?,
-        kind: row.get(1)?,
-        name: row.get(2)?,
-        year: row.get(3)?,
-        runtime_ticks: row.get(4)?,
-        community_rating: row.get(5)?,
-        official_rating: row.get(6)?,
-        series_id: row.get(7)?,
-        series_name: row.get(8)?,
-        index_number: row.get(9)?,
-        parent_index_number: row.get(10)?,
-        primary_image_tag: row.get(11)?,
-        child_count: row.get(12)?,
-        premiere_date: row.get(13)?,
-        season_id: row.get(14)?,
-        played: row.get::<_, i64>(15)? != 0,
-        play_count: row.get(16)?,
-        position_ticks: row.get(17)?,
-        favorite: row.get::<_, i64>(18)? != 0,
+        id: row.get(offset)?,
+        kind: row.get(offset + 1)?,
+        name: row.get(offset + 2)?,
+        year: row.get(offset + 3)?,
+        runtime_ticks: row.get(offset + 4)?,
+        community_rating: row.get(offset + 5)?,
+        official_rating: row.get(offset + 6)?,
+        series_id: row.get(offset + 7)?,
+        series_name: row.get(offset + 8)?,
+        index_number: row.get(offset + 9)?,
+        parent_index_number: row.get(offset + 10)?,
+        primary_image_tag: row.get(offset + 11)?,
+        child_count: row.get(offset + 12)?,
+        premiere_date: row.get(offset + 13)?,
+        season_id: row.get(offset + 14)?,
+        played: row.get::<_, i64>(offset + 15)? != 0,
+        play_count: row.get(offset + 16)?,
+        position_ticks: row.get(offset + 17)?,
+        favorite: row.get::<_, i64>(offset + 18)? != 0,
         thumb_image_tag: cached_image_tag(&image_tags, "Thumb").map(str::to_string),
         logo_image_tag: cached_image_tag(&image_tags, "Logo").map(str::to_string),
-        backdrop_image_tag: row.get(20)?,
-        unplayed_count: row.get(21)?,
+        backdrop_image_tag: row.get(offset + 20)?,
+        unplayed_count: row.get(offset + 21)?,
         primary_aspect: None,
         overview: None,
         playlist_index: None,
@@ -495,20 +688,54 @@ fn parsed_json(raw: &str) -> Value {
     serde_json::from_str(raw).unwrap_or_else(|_| json!([]))
 }
 
-fn count_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<i64> {
-    let needs_user_data = query.watched.is_some() || query.favorite.is_some();
+pub(super) fn page_query_plan(query: &ItemQuery) -> QueryPlan {
+    QueryPlan {
+        user_data: query.watched.is_some()
+            || query.favorite.is_some()
+            || matches!(query.sort, ItemSort::DatePlayed | ItemSort::PlayCount),
+        series_aggregates: matches!(query.watched, Some(WatchFilter::InProgress))
+            || matches!(query.sort, ItemSort::EpisodeAdded | ItemSort::DatePlayed),
+        drive_by_library: !matches!(
+            query.sort,
+            ItemSort::Name
+                | ItemSort::DateAdded
+                | ItemSort::ReleaseDate
+                | ItemSort::CommunityRating
+                | ItemSort::Runtime
+        ) || query.genre.is_some()
+            || query.studio.is_some()
+            || query.tag.is_some()
+            || query.official_rating.is_some()
+            || query.watched.is_some()
+            || query.favorite.is_some()
+            || query.release_decade.is_some()
+            || query.series_status.is_some(),
+        letter_cover: false,
+    }
+}
+
+pub(super) fn count_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<i64> {
+    let plan = QueryPlan {
+        user_data: query.watched.is_some() || query.favorite.is_some(),
+        series_aggregates: matches!(query.watched, Some(WatchFilter::InProgress)),
+        drive_by_library: true,
+        letter_cover: false,
+    };
     let ItemSql {
         from_clause,
         where_clause,
         arguments,
         ..
-    } = query_base(query, needs_user_data);
+    } = query_base(query, plan);
     connection
         .prepare_cached(&format!("SELECT count(*) {from_clause}{where_clause}"))?
         .query_row(params_from_iter(arguments.iter()), |row| row.get(0))
 }
 
 fn page_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<Vec<ItemSummary>> {
+    if let Some(items) = fast::try_play_count_desc_fast(connection, query)? {
+        return Ok(items);
+    }
     let (sql, arguments) = page_sql(query);
     let mut statement = connection.prepare_cached(&sql)?;
     statement
@@ -516,18 +743,87 @@ fn page_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<Ve
         .collect()
 }
 
+pub(super) fn paged_query_base(query: &ItemQuery, limit: i64, offset: i64) -> (QueryPlan, ItemSql) {
+    let plan = page_query_plan(query);
+    let mut base = query_base(query, plan);
+    base.arguments.push(SqlValue::Integer(limit));
+    base.arguments.push(SqlValue::Integer(offset));
+    (plan, base)
+}
+
 fn page_sql(query: &ItemQuery) -> (String, Vec<SqlValue>) {
-    let ItemSql {
-        from_clause,
-        where_clause,
-        order,
-        mut arguments,
-    } = query_base(query, true);
-    arguments.push(SqlValue::Integer(query.limit.clamp(1, 500)));
-    arguments.push(SqlValue::Integer(query.offset.max(0)));
+    let limit = query.limit.clamp(1, 500);
+    let offset = query.offset.max(0);
+    if let Some(search) = query.search.as_deref().and_then(fts_match_expression)
+        && fast::is_unfiltered_top_level_all(query)
+    {
+        return (
+            format!(
+                "WITH page AS (
+                     SELECT rowid AS page_id, bm25(catalog_search_fts) AS score
+                     FROM catalog_search_fts
+                     WHERE catalog_search_fts MATCH ?1
+                     ORDER BY score ASC, page_id ASC
+                     LIMIT ?2 OFFSET ?3
+                 )
+                 SELECT {SUMMARY_COLUMNS}
+                 FROM page
+                 JOIN items i ON i.id = page.page_id
+                 LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
+                 ORDER BY page.score ASC, page.page_id ASC"
+            ),
+            vec![
+                SqlValue::Text(search),
+                SqlValue::Integer(limit),
+                SqlValue::Integer(offset),
+            ],
+        );
+    }
+    let (
+        _,
+        ItemSql {
+            from_clause,
+            where_clause,
+            order,
+            has_search,
+            arguments,
+        },
+    ) = paged_query_base(query, limit, offset);
+    if has_search {
+        let fts = fast::fts_table_for(query);
+        return (
+            format!(
+                "WITH page AS (
+                     SELECT i.id AS page_id, bm25({fts}) AS score
+                     {from_clause}{where_clause}
+                     ORDER BY score ASC, page_id ASC
+                     LIMIT ? OFFSET ?
+                 )
+                 SELECT {SUMMARY_COLUMNS}
+                 FROM page
+                 JOIN items i ON i.id = page.page_id
+                 LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
+                 ORDER BY page.score ASC, page.page_id ASC"
+            ),
+            arguments,
+        );
+    }
     (
         format!(
-            "SELECT {SUMMARY_COLUMNS} {from_clause}{where_clause} ORDER BY {order} LIMIT ? OFFSET ?"
+            "WITH page AS (
+                 SELECT i.id AS page_id
+                 {from_clause}{where_clause}
+                 ORDER BY {order}
+                 LIMIT ? OFFSET ?
+             )
+             SELECT {SUMMARY_COLUMNS}
+             FROM page
+             JOIN items i ON i.id = page.page_id
+             LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+             LEFT JOIN series_aggregates sa ON sa.series_id = i.jellyfin_id
+             ORDER BY {order}"
         ),
         arguments,
     )
@@ -555,177 +851,7 @@ fn splitmix64_finalize(value: u64) -> u64 {
     mixed ^ (mixed >> 31)
 }
 
-const SERIES_HAS_STARTED_EPISODE: &str = "EXISTS (SELECT 1 FROM items e
-    JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
-    WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id
-      AND (ue.played = 1 OR ue.playback_position_ticks > 0))";
-
-const SERIES_HAS_UNWATCHED_PRESENT_EPISODE: &str = "EXISTS (SELECT 1 FROM items e
-    LEFT JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
-    WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id AND e.is_virtual = 0
-      AND COALESCE(ue.played, 0) = 0)";
-
-const MOVIE_IN_PROGRESS: &str =
-    "COALESCE(u.playback_position_ticks, 0) > 0 AND COALESCE(u.played, 0) = 0";
-
-fn in_progress() -> String {
-    format!(
-        "CASE WHEN i.kind = 'Series' THEN {SERIES_HAS_STARTED_EPISODE} \
-        AND {SERIES_HAS_UNWATCHED_PRESENT_EPISODE} ELSE {MOVIE_IN_PROGRESS} END"
-    )
-}
-
-struct ItemSql {
-    from_clause: String,
-    where_clause: String,
-    order: String,
-    arguments: Vec<SqlValue>,
-}
-
-fn query_base(query: &ItemQuery, with_user_data: bool) -> ItemSql {
-    let mut conditions = Vec::new();
-    let mut arguments = Vec::new();
-
-    let search = query.search.as_deref().and_then(fts_match_expression);
-    let (mut from_clause, order) = if search.is_some() {
-        (
-            "FROM items_fts JOIN items i ON i.id = items_fts.rowid".to_string(),
-            "bm25(items_fts), i.id ASC".to_string(),
-        )
-    } else {
-        (
-            "FROM items i".to_string(),
-            query.sort.order_clause(
-                query
-                    .direction
-                    .unwrap_or_else(|| query.sort.natural_direction()),
-            ),
-        )
-    };
-    if with_user_data {
-        from_clause.push_str(" LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id");
-    }
-    if let Some(search) = search {
-        conditions.push("items_fts MATCH ?".to_string());
-        arguments.push(SqlValue::Text(search));
-    } else if query.search.is_some() {
-        conditions.push("0".to_string());
-    }
-
-    let kinds = query.kinds.kinds();
-    let placeholders = vec!["?"; kinds.len()].join(", ");
-    conditions.push(format!("i.kind IN ({placeholders})"));
-    arguments.extend(
-        kinds
-            .iter()
-            .map(|kind| SqlValue::Text(kind.as_str().to_string())),
-    );
-    if let Some(library) = &query.library {
-        conditions.push(
-            "EXISTS (SELECT 1 FROM item_libraries l
-                 WHERE l.library_id = ? AND l.item_id = i.jellyfin_id)"
-                .to_string(),
-        );
-        arguments.push(SqlValue::Text(library.as_str().to_string()));
-    }
-    for (facet, value) in [
-        (Facet::Genre, &query.genre),
-        (Facet::Studio, &query.studio),
-        (Facet::Tag, &query.tag),
-    ] {
-        if let Some(value) = value {
-            let (table, column) = facet.table();
-            conditions.push(format!(
-                "i.id IN (SELECT item_id FROM {table} WHERE {column} = ?)"
-            ));
-            arguments.push(SqlValue::Text(value.clone()));
-        }
-    }
-    if let Some(decade) = query.release_decade {
-        conditions.push("i.year >= ? AND i.year < ?".to_string());
-        arguments.push(SqlValue::Integer(decade));
-        arguments.push(SqlValue::Integer(decade.saturating_add(10)));
-    }
-    if let Some(watched) = query.watched {
-        conditions.push(match watched {
-            WatchFilter::Unwatched => "COALESCE(u.played, 0) = 0".to_string(),
-            WatchFilter::Watched => "COALESCE(u.played, 0) = 1".to_string(),
-            WatchFilter::InProgress => in_progress(),
-        });
-    }
-    if let Some(rating) = &query.official_rating {
-        conditions.push("i.official_rating = ?".to_string());
-        arguments.push(SqlValue::Text(rating.clone()));
-    }
-    if let Some(status) = query.series_status {
-        conditions.push("i.series_status = ?".to_string());
-        arguments.push(SqlValue::Text(status.as_str().to_string()));
-    }
-    if let Some(favorite) = query.favorite {
-        conditions.push(if favorite {
-            "COALESCE(u.is_favorite, 0) = 1".to_string()
-        } else {
-            "COALESCE(u.is_favorite, 0) = 0".to_string()
-        });
-    }
-
-    let where_clause = format!(" WHERE {}", conditions.join(" AND "));
-    ItemSql {
-        from_clause,
-        where_clause,
-        order,
-        arguments,
-    }
-}
-
-fn natural_order(left: &str, right: &str) -> Ordering {
-    fn chunks(text: &str) -> impl Iterator<Item = (bool, String)> + '_ {
-        let mut rest = text;
-        std::iter::from_fn(move || {
-            let first = rest.chars().next()?;
-            let digits = first.is_ascii_digit();
-            let end = rest
-                .find(|ch: char| ch.is_ascii_digit() != digits)
-                .unwrap_or(rest.len());
-            let (chunk, tail) = rest.split_at(end);
-            rest = tail;
-            Some((digits, chunk.to_lowercase()))
-        })
-    }
-    let compare = |(left_digits, left): (bool, String), (right_digits, right): (bool, String)| {
-        if left_digits && right_digits {
-            let left = left.trim_start_matches('0');
-            let right = right.trim_start_matches('0');
-            left.len().cmp(&right.len()).then_with(|| left.cmp(right))
-        } else {
-            left.cmp(&right)
-        }
-    };
-    let mut left_chunks = chunks(left);
-    let mut right_chunks = chunks(right);
-    loop {
-        match (left_chunks.next(), right_chunks.next()) {
-            (None, None) => return left.cmp(right),
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-            (Some(left_chunk), Some(right_chunk)) => {
-                let order = compare(left_chunk, right_chunk);
-                if order != Ordering::Equal {
-                    return order;
-                }
-            }
-        }
-    }
-}
-
-fn fts_match_expression(input: &str) -> Option<String> {
-    let tokens = input
-        .split(|ch: char| !ch.is_alphanumeric())
-        .filter(|token| !token.is_empty())
-        .map(|token| format!("\"{token}\"*"))
-        .collect::<Vec<_>>();
-    (!tokens.is_empty()).then(|| tokens.join(" AND "))
-}
-
+#[cfg(test)]
+mod scale_tests;
 #[cfg(test)]
 mod tests;

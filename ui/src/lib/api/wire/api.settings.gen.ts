@@ -66,6 +66,7 @@ export type PlayerDefaults = {
   defaultFullscreen: FullscreenBehavior,
   markWatchedNext: string | null,
   comfort: PlayerComfort,
+  audioPassthrough: boolean,
 };
 
 export type PlayerView = {
@@ -74,6 +75,7 @@ export type PlayerView = {
   defaultFullscreen: FullscreenBehavior,
   markWatchedNext: string | null,
   comfort: PlayerComfort,
+  audioPassthrough: boolean,
   playerConfigured: boolean,
 };
 

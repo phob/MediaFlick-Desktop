@@ -14,6 +14,31 @@ use super::controller::IPC_COMMAND_CONNECT_TIMEOUT;
 
 static IPC_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn short_unix_path(
+    preferred_dir: &std::path::Path,
+    file_name: &str,
+) -> std::path::PathBuf {
+    let candidate = preferred_dir.join(file_name);
+    if candidate.to_string_lossy().len() < 96 {
+        return candidate;
+    }
+    std::path::Path::new("/tmp").join(file_name)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn build_unix_ipc_path(
+    preferred_dir: &std::path::Path,
+    pid: u32,
+    nanos: u128,
+    counter: u64,
+) -> String {
+    let name = format!("mf-mpv-{pid:x}-{nanos:x}-{counter:x}.sock");
+    short_unix_path(preferred_dir, &name)
+        .to_string_lossy()
+        .into_owned()
+}
+
 pub fn make_ipc_path() -> String {
     let counter = IPC_COUNTER.fetch_add(1, Ordering::Relaxed);
     let timestamp = crate::app::clock::since_epoch().as_nanos();
@@ -28,13 +53,12 @@ pub fn make_ipc_path() -> String {
 
     #[cfg(not(target_os = "windows"))]
     {
-        std::env::temp_dir()
-            .join(format!(
-                "mediaflick-desktop-{}-{timestamp}-{counter}.sock",
-                std::process::id()
-            ))
-            .to_string_lossy()
-            .into_owned()
+        build_unix_ipc_path(
+            &std::env::temp_dir(),
+            std::process::id(),
+            timestamp,
+            counter,
+        )
     }
 }
 
@@ -282,15 +306,20 @@ impl IpcWorker {
             #[cfg(all(unix, not(target_os = "windows")))]
             reader_closer,
             #[cfg(all(unix, not(target_os = "windows")))]
-                writer_closer: _,
+            writer_closer,
         } = self;
         tracing::trace!(target: "mpv.ipc", ipc_path = %path, "joining mpv IPC reader thread");
         stop.store(true, Ordering::SeqCst);
         writer_alive.store(false, Ordering::SeqCst);
         drop(command_tx);
         #[cfg(all(unix, not(target_os = "windows")))]
-        if let Some(closer) = reader_closer {
-            closer.close();
+        {
+            if let Some(closer) = reader_closer {
+                closer.close();
+            }
+            if let Some(closer) = writer_closer {
+                closer.close();
+            }
         }
         let _ = writer_thread.join();
         let _ = reader_thread.join();
@@ -409,24 +438,36 @@ fn command_reply_result(reply: &Value, request_id: i64) -> io::Result<Value> {
     }
 }
 
+pub(super) const OBSERVED_PROPERTIES: &[&str] = &[
+    "pause",
+    "time-pos",
+    "playback-time",
+    "duration",
+    "volume",
+    "mute",
+    "track-list",
+    "eof-reached",
+    "seeking",
+    "playback-abort",
+    "chapter-list",
+    "paused-for-cache",
+    "demuxer-cache-time",
+    "estimated-vf-fps",
+    "frame-drop-count",
+    "decoder-frame-drop-count",
+    "mistimed-frame-count",
+    "hwdec-current",
+    "hwdec-interop",
+    "current-vo",
+    "current-gpu-context",
+    "vsync-jitter",
+    "avsync",
+    "video-out-params",
+    "audio-out-params",
+];
+
 fn write_observe_commands<W: Write>(stream: &mut W) -> io::Result<()> {
-    for property in [
-        "pause",
-        "time-pos",
-        "playback-time",
-        "duration",
-        "volume",
-        "mute",
-        "track-list",
-        "eof-reached",
-        "seeking",
-        "playback-abort",
-        "chapter-list",
-        "paused-for-cache",
-        "demuxer-cache-time",
-        "vo-drop-frame-count",
-        "estimated-vf-fps",
-    ] {
+    for property in OBSERVED_PROPERTIES {
         let command = json!({
             "command": ["observe_property", next_request_id(), property],
             "request_id": next_request_id(),

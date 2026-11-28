@@ -31,7 +31,7 @@ Both modes default to original-quality direct playback. You can also choose Jell
 
 ## Library, browsing & media
 
-Browsing does not wait on Jellyfin for every keystroke. MediaFlick mirrors your catalog into a local SQLite database kept current by live server updates and background sync. Type-ahead search runs locally across titles, overviews, genres, and cast, and cached posters stay responsive even when the server is slow.
+Browsing does not wait on Jellyfin for every keystroke. MediaFlick mirrors your catalog into a local SQLite database kept current by live server updates and background sync. Type-ahead search runs locally across titles, original titles, and genres, and cached posters stay responsive even when the server is slow.
 
 - **Home & libraries.** Sign in with a password or Quick Connect. Home pairs a rotating billboard with Continue Watching / Next Up, Recently Added and Latest rows for Movies and Shows, per-library shelves, Favorites, Releases, and custom collection shelves. Libraries use virtualized poster grids with Jellyfin-style sorting, remembered filters, hover previews, and an A–Z jump rail. Title pages show cast, crew, seasons, episodes, and full stream details.
 - **Releases.** Agenda and month views track upcoming episodes and films, backed by a Home **Releases** shelf centered on today. It works from Jellyfin metadata alone. With the [Companion](#mediaflick-companion), Sonarr and Radarr add monitored and on-disk status, and the Home shelf leads with the past 30 days marked downloaded or missing.

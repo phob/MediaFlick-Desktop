@@ -47,6 +47,7 @@ pub struct PlayerSettingsPatch {
     #[serde(default)]
     #[ts(as = "Option<String>")]
     pub mark_watched_next: NullablePatch<String>,
+    pub audio_passthrough: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, ts_rs::TS)]
@@ -296,6 +297,9 @@ impl PreferencesService {
                 NullablePatch::Unchanged => {}
                 NullablePatch::Clear => next.mark_watched_next = None,
                 NullablePatch::Set(value) => next.mark_watched_next = clean_binding(Some(&value)),
+            }
+            if let Some(enabled) = patch.audio_passthrough {
+                next.audio_passthrough = enabled;
             }
             if next.effective_backend() == PlayerBackend::Libmpv {
                 next.comfort

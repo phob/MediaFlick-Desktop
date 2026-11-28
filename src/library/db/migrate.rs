@@ -2,15 +2,15 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use super::OpenError;
 use super::development;
-use super::schema::SCHEMA;
+use super::schema::{SCHEMA, SCHEMA_V24_ADDITIONS};
 
-pub const SCHEMA_VERSION: i32 = 23;
+pub const SCHEMA_VERSION: i32 = 24;
 
 pub(super) const FIRST_RELEASED_SCHEMA: i32 = 23;
 
 pub(super) type Migration = fn(&Transaction<'_>) -> rusqlite::Result<()>;
 
-pub(super) const MIGRATIONS: &[Migration] = &[];
+pub(super) const MIGRATIONS: &[Migration] = &[migrate_23_to_24];
 
 const _: () = assert!(
     MIGRATIONS.len() as i32 == SCHEMA_VERSION - FIRST_RELEASED_SCHEMA,
@@ -63,13 +63,19 @@ pub(super) fn migrate_with(
             development::recreate(transaction, version)
         }
     })
-    .map_err(|error| OpenError::Migration {
-        from: version,
-        step: version..target,
-        error,
-    })?;
+    .map_err(|error| migration_error(version, version..target, error))?;
     tracing::debug!(target: "library.db", version = target, "library schema ready");
     Ok(())
+}
+
+fn migration_error(from: i32, step: std::ops::Range<i32>, error: rusqlite::Error) -> OpenError {
+    if matches!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+    ) {
+        return OpenError::Sqlite(error);
+    }
+    OpenError::Migration { from, step, error }
 }
 
 fn upgrade(
@@ -91,18 +97,20 @@ fn upgrade(
         running = from..to;
         Ok(())
     })
-    .map_err(|error| OpenError::Migration {
-        from,
-        step: running,
-        error,
-    })?;
+    .map_err(|error| migration_error(from, running, error))?;
     tracing::info!(target: "library.db", from, to, "library schema migrated {from} → {to}");
     Ok(())
 }
 
 pub(super) fn create(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
     transaction.execute_batch(SCHEMA)?;
+    transaction.execute_batch(SCHEMA_V24_ADDITIONS)?;
     transaction.execute_batch(&super::super::sort_indexes())
+}
+
+fn migrate_23_to_24(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch(SCHEMA_V24_ADDITIONS)?;
+    transaction.execute_batch(super::schema::V24_BACKFILL_SQL)
 }
 
 fn change_schema(

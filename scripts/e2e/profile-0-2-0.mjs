@@ -24,7 +24,13 @@ async function openShelf(ctx, name) {
   if (!(await ctx.exists({ role: "navigation", name: "Settings navigation" }))) await ctx.press({ role: "link", name: "Settings" })
   await ctx.press({ role: "link", name, within: { role: "navigation", name: "Settings navigation" } })
 }
+async function dismissUpdateToast(ctx) {
+  const dismiss = { role: "button", name: "Dismiss update notification" }
+  if (await ctx.exists(dismiss)) await ctx.press(dismiss)
+  else await ctx.app.evaluate(`document.getElementById("__mediaFlickDesktopUpdateToast")?.remove()`)
+}
 async function saveShelf(ctx) {
+  await dismissUpdateToast(ctx)
   await ctx.press({ role: "button", name: "Save" })
   await ctx.until(async () => (await ctx.state({ role: "button", name: "Save" })).disabled === true, "the shelf to be clean after Save", 60000)
 }
@@ -72,6 +78,7 @@ export default async function makeFixture(ctx) {
   await openShelf(ctx, "Letterboxd")
   await ctx.fill({ role: "textbox", name: "Letterboxd username or profile URL" }, LETTERBOXD_USER)
   await ctx.press({ role: "button", name: "Add profile" })
+  await dismissUpdateToast(ctx)
   await ctx.press({ role: "button", name: "Save" })
   await ctx.until(() => account(ctx)?.letterboxd_profiles?.length > 0, "accounts.json to hold the Letterboxd profile", 60000)
   await ctx.until(async () => (await ctx.state({ role: "button", name: "Save" })).disabled === true, "the Letterboxd shelf to be clean", 60000)

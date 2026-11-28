@@ -8,6 +8,7 @@ import { ShortcutRecorder } from "@/components/ShortcutRecorder"
 import { SubtitlePreview } from "@/components/SubtitlePreview"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { useSourceDraft } from "@/hooks/use-source-draft"
 import { api, playerSettingsWrite, type ClientSettings, type PlayerComfort } from "@/lib/api"
 import { toastFailure } from "@/lib/failure-toast"
@@ -186,7 +187,7 @@ export default function PlayerSettings() {
       <PageTitle title="Player" />
       <Section
         title="Playback backend"
-        description="The built-in player uses bundled libmpv on Windows and system libmpv on Linux."
+        description="The built-in player uses bundled libmpv in Windows and Linux packages, with system libmpv fallback on Linux."
       >
         <SettingsRow
           controlId="settings-player"
@@ -220,6 +221,19 @@ export default function PlayerSettings() {
               { value: "fullscreen", label: "Fullscreen" },
               { value: "windowed", label: "Windowed" },
             ]}
+          />
+        </SettingsRow>
+        <SettingsRow
+          controlId="settings-audio-passthrough"
+          title="Audio passthrough"
+          description="Send AC3, EAC3, DTS, and TrueHD bitstreams directly to your receiver in the built-in player and prefer compatible streams on server transcodes. External mpv keeps your mpv.conf audio-spdif setting."
+        >
+          <Switch
+            id="settings-audio-passthrough"
+            aria-describedby="settings-audio-passthrough-help"
+            aria-label="Audio passthrough"
+            checked={draft.audioPassthrough}
+            onCheckedChange={(audioPassthrough) => update("audioPassthrough", audioPassthrough)}
           />
         </SettingsRow>
       </Section>

@@ -25,6 +25,7 @@ export function clientSettingsFixture(): ClientSettings {
     defaultFullscreen: "fullscreen" as const,
     markWatchedNext: "w",
     comfort: { ...DEFAULT_COMFORT },
+    audioPassthrough: false,
   }
   const playback = {
     streamingQuality: "original" as const,

@@ -26,6 +26,11 @@ fn main() {
 }
 
 fn run() -> i32 {
+    #[cfg(target_os = "linux")]
+    if players::mpv::is_player_helper_invocation() {
+        return players::mpv::run_player_helper();
+    }
+
     if let Some(exit_code) = windows::run_command_processor_shim() {
         return exit_code;
     }
@@ -33,6 +38,8 @@ fn run() -> i32 {
     jellyfin::bridge::ensure_session_token();
 
     if is_cef_subprocess() {
+        #[cfg(target_os = "linux")]
+        configure_linux_cef_gpu_env();
         #[expect(
             clippy::disallowed_methods,
             reason = "a CEF subprocess reads settings.json once; it never opens the services"
@@ -116,6 +123,39 @@ fn run() -> i32 {
 
 fn is_cef_subprocess() -> bool {
     std::env::args().any(|arg| arg == "--type" || arg.starts_with("--type="))
+}
+
+#[cfg(target_os = "linux")]
+fn configure_linux_cef_gpu_env() {
+    let is_gpu_process =
+        std::env::args().any(|arg| arg == "--type=gpu-process" || arg == "--type=zygote");
+    let has_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some_and(|val| !val.is_empty());
+    let force_x11 = std::env::var_os("MEDIAFLICK_FORCE_X11")
+        .is_some_and(|val| val == "1" || val.eq_ignore_ascii_case("true"));
+    if !is_gpu_process || !has_wayland || force_x11 {
+        return;
+    }
+    append_mesa_debug_token("INTEL_DEBUG", "noccs");
+    append_mesa_debug_token("AMD_DEBUG", "nodcc");
+}
+
+#[cfg(target_os = "linux")]
+fn append_mesa_debug_token(var: &str, token: &str) {
+    let existing =
+        std::env::var_os(var).map_or_else(String::new, |val| val.to_string_lossy().into_owned());
+    if existing
+        .split(',')
+        .any(|part| part.trim().eq_ignore_ascii_case(token))
+    {
+        return;
+    }
+    let updated = if existing.trim().is_empty() {
+        token.to_string()
+    } else {
+        format!("{existing},{token}")
+    };
+    // SAFETY: called at process entry in the single-threaded CEF zygote or GPU subprocess before CEF or Mesa starts threads.
+    unsafe { std::env::set_var(var, updated) };
 }
 
 fn default_mpv_path() -> Option<std::path::PathBuf> {

@@ -115,3 +115,38 @@ fn disconnect_returns_promptly_while_server_keeps_streams_open() {
     );
     fake.stop();
 }
+
+#[cfg(unix)]
+#[test]
+fn unix_ipc_path_stays_under_sun_len_for_long_temp_dirs_and_preserves_short_dirs() {
+    let short_dir = std::path::PathBuf::from("/tmp/mf-short");
+    let short_path = super::build_unix_ipc_path(&short_dir, 42, 123_456, 7);
+    assert!(
+        short_path.starts_with("/tmp/mf-short/"),
+        "expected short path to stay in preferred_dir, got {short_path}"
+    );
+    assert!(
+        short_path.len() < 96,
+        "short path too long: {}",
+        short_path.len()
+    );
+
+    let long_segment = "a".repeat(85);
+    let long_dir = std::path::PathBuf::from(format!("/tmp/{long_segment}"));
+    let bounded = super::build_unix_ipc_path(&long_dir, 999_999, u128::MAX / 2, 12345);
+    assert!(
+        bounded.len() < 96,
+        "IPC socket path {} bytes exceeds 96-byte SUN_LEN margin: {bounded}",
+        bounded.len()
+    );
+    assert!(
+        bounded.starts_with("/tmp/"),
+        "expected /tmp fallback for long dir, got {bounded}"
+    );
+
+    let listener = std::os::unix::net::UnixListener::bind(&bounded)
+        .expect("bind UnixListener on bounded IPC socket path");
+    drop(listener);
+    super::cleanup_ipc_path(&bounded);
+    assert!(!std::path::Path::new(&bounded).exists());
+}

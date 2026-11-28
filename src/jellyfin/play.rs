@@ -14,7 +14,7 @@ use crate::preferences::StreamingQuality;
 use super::api::items::{self, PlaybackInfoRequest};
 use super::api::model::{MediaSourceInfo, MediaStream, PlaybackInfoResponse};
 use super::api::{ApiError, JellyfinClient};
-use super::session::{Session, SessionScope};
+use super::session::SessionScope;
 
 #[derive(Debug, Clone, Default)]
 pub struct PlayOptions {
@@ -27,6 +27,7 @@ pub struct PlayOptions {
     pub subtitle_stream_index: Option<i64>,
     pub quality: Option<StreamingQuality>,
     pub viewing: crate::preferences::ViewingSettings,
+    pub audio_passthrough: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -65,8 +66,8 @@ pub fn start(
 
     let mut options = options.clone();
     options.viewing = services.accounts.viewing(scope.account());
+    options.audio_passthrough = settings.audio_passthrough;
     let prepared = prepare(
-        &services.session,
         scope,
         &services.library,
         services
@@ -95,10 +96,13 @@ pub fn start(
                 origin,
                 "starting playback"
             );
+            let mut launch = prepared.request.clone();
+            launch.account = Some(scope.account().clone());
+            launch.playstate_outbox = Some(Arc::clone(&services.playstate_outbox));
             playback.open(
                 player_path,
                 settings.default_fullscreen,
-                prepared.request.clone(),
+                launch,
                 Arc::new(AccountOwner::new(services, scope)),
             );
             Ok(())
@@ -130,7 +134,6 @@ impl PlaybackOwner for AccountOwner {
 }
 
 pub fn prepare(
-    session: &Session,
     scope: &SessionScope,
     library: &Library,
     saved_preference: Option<&crate::library::ItemPlaybackPreference>,
@@ -148,27 +151,31 @@ pub fn prepare(
     let position = cached.as_ref().map_or(0, |item| item.position_ticks);
     let start_ticks = resume_start_ticks(options, position);
 
+    let initial_request = PlaybackInfoRequest {
+        media_source_id: options.media_source_id.clone(),
+        start_time_ticks: Some(start_ticks),
+        audio_stream_index: options.audio_stream_index,
+        subtitle_stream_index: options.subtitle_stream_index,
+    };
+    let mut info = items::playback_info_with_profile(
+        client,
+        user_id,
+        &options.item_id,
+        quality,
+        &initial_request,
+        options.audio_passthrough,
+    )?;
+
     let mut effective_options = options.clone();
     let has_explicit_track_options = options.media_source_id.is_some()
         || options.media_source_index.is_some()
         || options.audio_stream_index.is_some()
         || options.subtitle_stream_index.is_some();
-    if !has_explicit_track_options && let Some(preference) = saved_preference {
-        match items::fetch_media_sources(client, user_id, &options.item_id) {
-            Ok(sources) => {
-                if let Some(resolved) = resolve_playback_preference(Some(preference), &sources) {
-                    apply_saved_preference(&mut effective_options, resolved);
-                }
-            }
-            Err(error) => {
-                session.note_scoped_error(scope, &error);
-                tracing::warn!(
-                    target: "playback",
-                    item_id = %options.item_id,
-                    "could not validate saved track preference; using server defaults: {error}"
-                );
-            }
-        }
+    if !has_explicit_track_options
+        && let Some(preference) = saved_preference
+        && let Some(resolved) = resolve_playback_preference(Some(preference), &info.media_sources)
+    {
+        apply_saved_preference(&mut effective_options, resolved);
     }
 
     if !has_explicit_track_options
@@ -177,24 +184,41 @@ pub fn prepare(
         && (!options.viewing.audio_languages.is_empty()
             || options.viewing.prefer_original_audio
             || options.viewing.subtitle_mode != crate::preferences::SubtitleMode::Server)
+        && let Some(source) = select_source(
+            &info,
+            effective_options.media_source_id.as_deref(),
+            effective_options.media_source_index,
+        )
     {
-        match items::fetch_media_sources(client, user_id, &options.item_id) {
-            Ok(sources) => {
-                if let Some(source) = sources.first() {
-                    apply_language_defaults(&mut effective_options, source);
-                }
-            }
-            Err(error) => session.note_scoped_error(scope, &error),
-        }
+        apply_language_defaults(&mut effective_options, source);
     }
 
-    let info_request = PlaybackInfoRequest {
-        media_source_id: effective_options.media_source_id.clone(),
-        start_time_ticks: Some(start_ticks),
-        audio_stream_index: effective_options.audio_stream_index,
-        subtitle_stream_index: effective_options.subtitle_stream_index,
-    };
-    let info = items::playback_info(client, user_id, &options.item_id, quality, &info_request)?;
+    let track_selection_changed = effective_options.media_source_id
+        != initial_request.media_source_id
+        || effective_options.audio_stream_index != initial_request.audio_stream_index
+        || effective_options.subtitle_stream_index != initial_request.subtitle_stream_index;
+    let chosen_is_transcode = select_source(
+        &info,
+        effective_options.media_source_id.as_deref(),
+        effective_options.media_source_index,
+    )
+    .is_some_and(|source| !(source.supports_direct_play || source.supports_direct_stream));
+    if track_selection_changed && chosen_is_transcode {
+        let updated_request = PlaybackInfoRequest {
+            media_source_id: effective_options.media_source_id.clone(),
+            start_time_ticks: Some(start_ticks),
+            audio_stream_index: effective_options.audio_stream_index,
+            subtitle_stream_index: effective_options.subtitle_stream_index,
+        };
+        info = items::playback_info_with_profile(
+            client,
+            user_id,
+            &options.item_id,
+            quality,
+            &updated_request,
+            options.audio_passthrough,
+        )?;
+    }
 
     build(
         client,
@@ -537,309 +561,4 @@ fn display_title(item: &ItemSummary) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        PlayOptions, apply_saved_preference, build, choose_stream, embedded_ordinal, select_source,
-    };
-    use crate::jellyfin::api::JellyfinClient;
-    use crate::jellyfin::api::model::{MediaSourceInfo, PlaybackInfoResponse};
-    use crate::library::model::ResolvedPlaybackPreference;
-    use crate::preferences::StreamingQuality;
-
-    #[test]
-    fn resume_rewind_never_changes_explicit_positions_or_seeks_before_zero() {
-        let mut options = PlayOptions {
-            resume: true,
-            ..Default::default()
-        };
-        options.viewing.resume_rewind_seconds = 10;
-        assert_eq!(super::resume_start_ticks(&options, 150_000_000), 50_000_000);
-        assert_eq!(super::resume_start_ticks(&options, 50_000_000), 0);
-        options.start_ticks = Some(150_000_000);
-        assert_eq!(
-            super::resume_start_ticks(&options, 500_000_000),
-            150_000_000
-        );
-        options.start_ticks = None;
-        options.resume = false;
-        assert_eq!(super::resume_start_ticks(&options, 500_000_000), 0);
-    }
-
-    #[test]
-    fn language_defaults_choose_ranked_audio_and_forced_subtitles() {
-        let source = media_source(
-            r#"{"Id":"source", "MediaStreams":[
-            {"Type":"Audio","Index":1,"Language":"eng"},
-            {"Type":"Audio","Index":2,"Language":"jpn","Title":"Original"},
-            {"Type":"Subtitle","Index":3,"Language":"eng"},
-            {"Type":"Subtitle","Index":4,"Language":"eng","IsForced":true}
-        ]}"#,
-        );
-        let mut options = PlayOptions::default();
-        options.viewing.audio_languages = vec!["de".into(), "en".into()];
-        options.viewing.subtitle_languages = vec!["en".into()];
-        options.viewing.subtitle_mode = crate::preferences::SubtitleMode::Forced;
-        super::apply_language_defaults(&mut options, &source);
-        assert_eq!(options.audio_stream_index, Some(1));
-        assert_eq!(options.subtitle_stream_index, Some(4));
-        options.viewing.prefer_original_audio = true;
-        super::apply_language_defaults(&mut options, &source);
-        assert_eq!(options.audio_stream_index, Some(2));
-        options.viewing.prefer_original_audio = false;
-        options.viewing.subtitle_mode = crate::preferences::SubtitleMode::ForeignAudio;
-        super::apply_language_defaults(&mut options, &source);
-        assert_eq!(options.subtitle_stream_index, Some(-1));
-    }
-
-    fn client() -> JellyfinClient {
-        JellyfinClient::new("http://server:8096", "device-1", Some("secret"))
-    }
-
-    fn info(json: &str) -> PlaybackInfoResponse {
-        serde_json::from_str(json).expect("playback info")
-    }
-
-    fn media_source(json: &str) -> MediaSourceInfo {
-        serde_json::from_str(json).expect("media source")
-    }
-
-    fn options() -> PlayOptions {
-        PlayOptions {
-            item_id: "item-1".to_string(),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn direct_stream_urls_carry_the_session_but_not_the_token() {
-        let response = info(
-            r#"{"PlaySessionId":"session","MediaSources":[{"Id":"src","Container":"mkv",
-                "SupportsDirectStream":true,"ETag":"etag","RunTimeTicks":120000000}]}"#,
-        );
-        let prepared = build(
-            &client(),
-            &response,
-            StreamingQuality::Original,
-            &options(),
-            0,
-            None,
-        )
-        .expect("prepared");
-        assert_eq!(prepared.play_method, "DirectStream");
-        assert!(!prepared.request.media_url.contains("api_key"));
-        assert!(prepared.request.media_url.contains("mediaSourceId=src"));
-        assert!(prepared.request.media_url.contains("playSessionId=session"));
-        assert!(
-            prepared
-                .request
-                .headers
-                .iter()
-                .any(|header| header.name == "X-Emby-Token")
-        );
-    }
-
-    #[test]
-    fn direct_play_is_reported_separately_from_direct_stream() {
-        let response =
-            info(r#"{"MediaSources":[{"Id":"src","Container":"mp4","SupportsDirectPlay":true}]}"#);
-        let prepared = build(
-            &client(),
-            &response,
-            StreamingQuality::Original,
-            &options(),
-            0,
-            None,
-        )
-        .expect("prepared");
-        assert_eq!(prepared.play_method, "DirectPlay");
-    }
-
-    #[test]
-    fn transcoding_urls_are_resolved_against_the_server_root_without_the_token() {
-        let response = info(
-            r#"{"MediaSources":[{"Id":"src","SupportsTranscoding":true,
-                "TranscodingUrl":"/videos/item-1/master.m3u8?DeviceId=d&ApiKey=secret&MediaSourceId=src&api_key=secret&PlaySessionId=p&X-Emby-Token=secret&ApiKeyHint=kept"}]}"#,
-        );
-        let prepared = build(
-            &client(),
-            &response,
-            StreamingQuality::Mbps10,
-            &options(),
-            0,
-            None,
-        )
-        .expect("prepared");
-        assert_eq!(prepared.play_method, "Transcode");
-        assert_eq!(
-            prepared.request.media_url,
-            "http://server:8096/videos/item-1/master.m3u8?DeviceId=d&MediaSourceId=src&PlaySessionId=p&ApiKeyHint=kept"
-        );
-        assert!(prepared.request.headers.iter().any(|header| {
-            header.name.eq_ignore_ascii_case("X-Emby-Token") && header.value == "secret"
-        }));
-    }
-
-    #[test]
-    fn the_requested_media_source_wins_over_the_first_playable_one() {
-        let response = info(
-            r#"{"MediaSources":[{"Id":"a","SupportsDirectStream":true},
-                                {"Id":"b","SupportsDirectStream":true}]}"#,
-        );
-        assert_eq!(
-            select_source(&response, Some("b"), None).and_then(|source| source.id.clone()),
-            Some("b".to_string())
-        );
-        assert_eq!(
-            select_source(&response, Some("missing"), None).and_then(|source| source.id.clone()),
-            Some("a".to_string())
-        );
-    }
-
-    #[test]
-    fn transcode_only_sources_are_used_when_nothing_direct_plays() {
-        let response =
-            info(r#"{"MediaSources":[{"Id":"a"},{"Id":"b","TranscodingUrl":"/x.m3u8"}]}"#);
-        assert_eq!(
-            select_source(&response, None, None).and_then(|source| source.id.clone()),
-            Some("b".to_string())
-        );
-    }
-
-    #[test]
-    fn saved_preferences_map_to_play_options_including_subtitles_off() {
-        let mut selected = options();
-        apply_saved_preference(
-            &mut selected,
-            ResolvedPlaybackPreference {
-                media_source_id: Some("source-b".to_string()),
-                media_source_index: 1,
-                audio_stream_index: Some(7),
-                subtitle_stream_index: None,
-            },
-        );
-        assert_eq!(selected.subtitle_stream_index, Some(-1));
-    }
-
-    #[test]
-    fn source_index_selects_a_source_without_a_stable_id() {
-        let response = info(
-            r#"{"MediaSources":[{"Name":"A","SupportsDirectStream":true},
-                                {"Name":"B","SupportsDirectStream":true}]}"#,
-        );
-        assert_eq!(
-            select_source(&response, None, Some(1)).map(MediaSourceInfo::display_name),
-            Some("B")
-        );
-        assert_eq!(
-            select_source(&response, Some("gone"), Some(1)).map(MediaSourceInfo::display_name),
-            Some("A")
-        );
-    }
-
-    #[test]
-    fn track_selection_prefers_the_server_default_then_the_first_audio_track() {
-        let source = media_source(
-            r#"{"Id":"src","DefaultAudioStreamIndex":3,"MediaStreams":[
-                {"Index":1,"Type":"Video"},
-                {"Index":2,"Type":"Audio","Language":"eng"},
-                {"Index":3,"Type":"Audio","Language":"deu"}]}"#,
-        );
-        assert_eq!(
-            choose_stream(&source, "Audio", None).map(|stream| stream.index),
-            Some(3)
-        );
-        assert_eq!(
-            choose_stream(&source, "Audio", Some(2)).map(|stream| stream.index),
-            Some(2)
-        );
-        assert!(choose_stream(&source, "Audio", Some(99)).is_none());
-        assert!(choose_stream(&source, "Audio", Some(-1)).is_none());
-
-        let without_default = media_source(
-            r#"{"Id":"src","MediaStreams":[{"Index":5,"Type":"Audio"},{"Index":6,"Type":"Audio"}]}"#,
-        );
-        assert_eq!(
-            choose_stream(&without_default, "Audio", None).map(|stream| stream.index),
-            Some(5)
-        );
-    }
-
-    #[test]
-    fn subtitles_are_off_unless_the_server_or_the_user_picks_one() {
-        let source = media_source(
-            r#"{"Id":"src","MediaStreams":[{"Index":3,"Type":"Subtitle","Language":"eng"}]}"#,
-        );
-        assert!(choose_stream(&source, "Subtitle", None).is_none());
-        assert_eq!(
-            choose_stream(&source, "Subtitle", Some(3)).map(|stream| stream.index),
-            Some(3)
-        );
-    }
-
-    #[test]
-    fn explicit_subtitles_off_is_mapped_to_player_off_sentinels() {
-        let response = info(
-            r#"{"MediaSources":[{"Id":"src","Container":"mkv","SupportsDirectStream":true,
-                "DefaultSubtitleStreamIndex":3,
-                "MediaStreams":[{"Index":3,"Type":"Subtitle","Language":"eng"}]}]}"#,
-        );
-        let prepared = build(
-            &client(),
-            &response,
-            StreamingQuality::Original,
-            &PlayOptions {
-                subtitle_stream_index: Some(-1),
-                ..options()
-            },
-            0,
-            None,
-        )
-        .expect("prepared");
-        assert_eq!(prepared.request.subtitle_stream_index, Some(-1));
-        assert_eq!(prepared.request.subtitle_mpv_id, Some(-1));
-        assert_eq!(prepared.request.subtitle_url, None);
-    }
-
-    #[test]
-    fn embedded_ordinals_count_only_internal_tracks_of_the_same_type() {
-        let source = media_source(
-            r#"{"Id":"src","MediaStreams":[
-                {"Index":0,"Type":"Video"},
-                {"Index":1,"Type":"Audio"},
-                {"Index":2,"Type":"Audio"},
-                {"Index":3,"Type":"Subtitle","IsExternal":true},
-                {"Index":4,"Type":"Subtitle"}]}"#,
-        );
-        assert_eq!(embedded_ordinal(&source, "Audio", 1), Some(1));
-        assert_eq!(embedded_ordinal(&source, "Audio", 2), Some(2));
-        assert_eq!(embedded_ordinal(&source, "Subtitle", 4), Some(1));
-        assert_eq!(embedded_ordinal(&source, "Subtitle", 3), None);
-    }
-
-    #[test]
-    fn external_subtitles_are_handed_to_the_player_as_an_absolute_url() {
-        let response = info(
-            r#"{"MediaSources":[{"Id":"src","Container":"mkv","SupportsDirectStream":true,
-                "MediaStreams":[{"Index":3,"Type":"Subtitle","IsExternal":true,
-                                 "DeliveryUrl":"/Videos/item-1/subs.srt"}]}]}"#,
-        );
-        let prepared = build(
-            &client(),
-            &response,
-            StreamingQuality::Original,
-            &PlayOptions {
-                subtitle_stream_index: Some(3),
-                ..options()
-            },
-            0,
-            None,
-        )
-        .expect("prepared");
-        assert_eq!(
-            prepared.request.subtitle_url.as_deref(),
-            Some("http://server:8096/Videos/item-1/subs.srt")
-        );
-        assert_eq!(prepared.request.subtitle_stream_index, Some(3));
-        assert_eq!(prepared.request.subtitle_mpv_id, None);
-    }
-}
+mod tests;

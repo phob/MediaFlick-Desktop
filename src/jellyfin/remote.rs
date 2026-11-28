@@ -286,7 +286,7 @@ fn handle_playstate(services: &Arc<Services>, data: &Value, scope: &SessionScope
     }
 }
 
-fn skip(services: &Arc<Services>, scope: &SessionScope, next: bool) {
+pub(crate) fn skip(services: &Arc<Services>, scope: &SessionScope, next: bool) {
     let Some(playback) = services.playback() else {
         return;
     };

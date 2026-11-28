@@ -206,7 +206,7 @@ mod auth;
 mod books;
 mod catalog;
 mod collections;
-mod images;
+pub(super) mod images;
 mod letterboxd;
 mod libraries;
 mod media;

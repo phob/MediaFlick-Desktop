@@ -24,6 +24,8 @@ impl ControllerState {
                     return false;
                 }
                 self.install_input_bindings();
+                self.apply_subtitle_appearance();
+                self.apply_audio_passthrough();
             }
             tracing::trace!(target: "mpv.ipc", "reusing existing mpv process");
             return true;
@@ -171,6 +173,8 @@ impl ControllerState {
             return false;
         }
         self.install_input_bindings();
+        self.apply_subtitle_appearance();
+        self.apply_audio_passthrough();
         if !self
             .ipc
             .worker

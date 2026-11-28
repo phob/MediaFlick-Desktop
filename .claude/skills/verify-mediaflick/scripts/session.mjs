@@ -254,7 +254,8 @@ async function doctor(port, file = "doctor.json") {
   const expectedStatus = options["services-down"] ? 503 : 200
   if (status.status !== expectedStatus) problems.push(`/api/status answered ${status.status}, expected ${expectedStatus}`)
   if (!existsSync(path.join(configDir, "mediaflick-desktop.log"))) problems.push("the app did not create mediaflick-desktop.log in the disposable config dir")
-  if (process.platform !== "win32" && !existsSync(path.join(dataDir, "instance.lock"))) problems.push("the app did not create instance.lock in the disposable data dir")
+  const hasInstanceMarker = existsSync(path.join(dataDir, "instance.lock")) || (Boolean(process.env.MEDIAFLICK_DESKTOP_EXE) && existsSync(path.join(configDir, "instance.json")))
+  if (process.platform !== "win32" && !hasInstanceMarker) problems.push("the app did not create instance.lock in the disposable data dir")
   if (!processes.some((row) => row.pid === child.pid) && !listProcesses().some((row) => row.pid === child.pid && isAppProcess(row))) problems.push(`pid ${child.pid} is not a running app process`)
   if (problems.length) throw new Error(`doctor: ${problems.join("; ")}`)
   log(`doctor ok: ${version.Browser}, ${processes.length} app processes on this profile, signed in: ${status.body?.authenticated === true}`)

@@ -372,6 +372,7 @@ wrap_life_span_handler! {
                 if let Some(services) = locator::services() {
                     services.sync.stop();
                     services.socket.stop();
+                    services.playstate_outbox.shutdown();
                 }
                 mark_cef_shutting_down();
                 quit_message_loop();

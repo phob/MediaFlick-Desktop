@@ -347,6 +347,9 @@ impl JellyfinAudioSource {
             format!("{} · {}", display.title, display.artists.join(", "))
         });
         request.runtime_ticks = request.runtime_ticks.or(display.runtime_ticks);
+        request.account = Some(self.owner.scope.account().clone());
+        request.device_id = Some(self.owner.scope.client().device_id().to_string());
+        request.playstate_outbox = Some(Arc::clone(&services.playstate_outbox));
         tracing::info!(
             target: "playback",
             item_id = track.item_id(),

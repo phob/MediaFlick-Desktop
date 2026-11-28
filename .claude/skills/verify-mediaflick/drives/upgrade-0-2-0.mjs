@@ -125,7 +125,7 @@ async function steps(ctx, { before, presync, phase, schema, report, record }) {
   const relaunched = await database()
   record(relaunched.userVersion === schema && relaunched.deviceId === before.credentials.device_id, "after a relaunch library.db keeps its schema and device", { userVersion: relaunched.userVersion, deviceId: relaunched.deviceId })
   const relaunchLog = ctx.appLog()
-  record((relaunchLog.match(/library schema migrated/g) ?? []).length === migrated.length && !/recreating the .*library database/.test(relaunchLog), "the relaunch migrates and recreates nothing")
+  record((relaunchLog.match(/library schema migrated/g) ?? []).length === 0 && !/recreating the .*library database/.test(relaunchLog), "the relaunch migrates and recreates nothing")
   await ctx.screenshot("06-after-relaunch")
   report.customArt = readdirSync(path.join(configDir, "custom-art")).sort()
 }

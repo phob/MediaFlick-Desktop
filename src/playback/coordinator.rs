@@ -163,6 +163,7 @@ impl PlaybackCoordinator {
             live: None,
             ending: None,
             ticket: 0,
+            inhibitor: super::inhibit::SleepInhibitor::new(),
         };
         spawn_named("playback-coordinator", move || actor.run(&inbox));
         Self {
@@ -213,6 +214,11 @@ impl PlaybackCoordinator {
 
     pub fn native_window(&self, timeout: Duration) -> Option<NativeWindowHandle> {
         self.shared.backend().native_window(timeout)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn wayland_ui(&self, timeout: Duration) -> Option<crate::players::mpv::WaylandUiHandle> {
+        self.shared.backend().wayland_ui(timeout)
     }
 
     #[cfg(target_os = "linux")]
@@ -386,6 +392,7 @@ struct Actor {
     live: Option<i64>,
     ending: Option<Ending>,
     ticket: u64,
+    inhibitor: super::inhibit::SleepInhibitor,
 }
 
 impl Actor {
@@ -630,9 +637,9 @@ impl Actor {
     fn backend_event(&mut self, event: BackendEvent) {
         match event {
             BackendEvent::StateChanged(snapshot) => {
-                let _ = self
-                    .shell
-                    .send(PlaybackEvent::StateChanged(self.shared.project(snapshot)));
+                let projected = self.shared.project(snapshot);
+                self.inhibitor.update(&projected);
+                let _ = self.shell.send(PlaybackEvent::StateChanged(projected));
             }
             BackendEvent::Started { playback_id } => {
                 if let Session::Audio { queue, phase, .. } = &mut self.session
@@ -730,6 +737,7 @@ impl Actor {
             Session::Idle => {}
         }
         let _ = self.shared.backend().stop_and_wait(timeout);
+        self.inhibitor.clear();
         let _ = ack.send(());
     }
 
@@ -761,13 +769,21 @@ impl Actor {
         self.shared.publish(Published::Video);
     }
 
-    fn emit_state(&self) {
+    fn emit_state(&mut self) {
         let snapshot = self.shared.project(self.shared.backend().snapshot());
+        self.inhibitor.update(&snapshot);
         let _ = self.shell.send(PlaybackEvent::StateChanged(snapshot));
     }
 
-    fn emit_stopped(&self, snapshot: PlayerSnapshot) {
+    fn emit_stopped(&mut self, snapshot: PlayerSnapshot) {
+        self.inhibitor.update(&snapshot);
         let _ = self.shell.send(PlaybackEvent::Stopped(snapshot));
+    }
+}
+
+impl Drop for Actor {
+    fn drop(&mut self) {
+        self.inhibitor.clear();
     }
 }
 

@@ -72,7 +72,7 @@ fn configure_hidden_child_window(command: &mut Command) {
 fn configure_hidden_child_window(_command: &mut Command) {}
 
 #[cfg(target_os = "linux")]
-fn remove_packaged_cef_preload(command: &mut Command) {
+pub(super) fn remove_packaged_cef_preload(command: &mut Command) {
     remove_packaged_cef_preload_from(
         command,
         std::env::var_os("MEDIAFLICK_DESKTOP_CEF_PRELOAD").as_deref(),

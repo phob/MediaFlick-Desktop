@@ -402,11 +402,18 @@ fn pushed_watch_state_reaches_the_library_cache() {
         )
         .expect("ingest");
     let session = Arc::new(Session::restore(library.clone(), Arc::default()));
+    let outbox = Arc::new(
+        crate::jellyfin::playstate_outbox::PlaystateOutbox::new_manual(
+            library.clone(),
+            session.clone(),
+        ),
+    );
 
     let handle = spawn(
         library.clone(),
         session,
         SyncHandle::detached(),
+        outbox,
         Arc::default(),
     );
     let deadline = Instant::now() + Duration::from_secs(15);

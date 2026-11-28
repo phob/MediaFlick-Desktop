@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 
-use windows::Win32::Foundation::{HANDLE, HMODULE, HWND};
+use windows::Win32::Foundation::{HANDLE, HMODULE, HWND, S_OK};
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL};
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11CreateDevice,
@@ -10,14 +10,18 @@ use windows::Win32::Graphics::DirectComposition::{
     DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_TYPELESS,
-    DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_FORMAT_R8G8B8A8_TYPELESS,
-    DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_SAMPLE_DESC,
+    DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709,
+    DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020,
+    DXGI_COLOR_SPACE_TYPE, DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_TYPELESS, DXGI_FORMAT_B8G8R8A8_UNORM,
+    DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_FORMAT_R8G8B8A8_TYPELESS, DXGI_FORMAT_R8G8B8A8_UNORM,
+    DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_R10G10B10A2_TYPELESS,
+    DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory1, DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1,
+    CreateDXGIFactory1, DXGI_ERROR_DEVICE_REMOVED, DXGI_ERROR_DEVICE_RESET, DXGI_PRESENT,
+    DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
     DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIAdapter, IDXGIDevice,
-    IDXGIFactory1, IDXGIFactory2, IDXGISwapChain1,
+    IDXGIFactory1, IDXGIFactory2, IDXGIKeyedMutex, IDXGISwapChain1, IDXGISwapChain3,
 };
 use windows::core::Interface;
 
@@ -64,6 +68,18 @@ impl Compositor {
         popup: bool,
         shared_handle: *mut c_void,
     ) -> windows::core::Result<()> {
+        let result = self.present_shared_inner(popup, shared_handle);
+        if let Err(ref error) = result {
+            self.handle_present_error(error);
+        }
+        result
+    }
+
+    fn present_shared_inner(
+        &mut self,
+        popup: bool,
+        shared_handle: *mut c_void,
+    ) -> windows::core::Result<()> {
         if shared_handle.is_null() {
             return Ok(());
         }
@@ -99,6 +115,20 @@ impl Compositor {
         width: i32,
         height: i32,
     ) -> windows::core::Result<()> {
+        let result = self.present_software_inner(popup, pixels, width, height);
+        if let Err(ref error) = result {
+            self.handle_present_error(error);
+        }
+        result
+    }
+
+    fn present_software_inner(
+        &mut self,
+        popup: bool,
+        pixels: &[u8],
+        width: i32,
+        height: i32,
+    ) -> windows::core::Result<()> {
         if pixels.is_empty() || width <= 0 || height <= 0 {
             return Ok(());
         }
@@ -121,6 +151,21 @@ impl Compositor {
             unsafe { self.composition.Commit()? };
         }
         Ok(())
+    }
+
+    fn handle_present_error(&mut self, error: &windows::core::Error) {
+        if matches!(
+            error.code(),
+            DXGI_ERROR_DEVICE_REMOVED | DXGI_ERROR_DEVICE_RESET
+        ) {
+            tracing::warn!(
+                target: "cef.osr",
+                "DXGI device lost or reset ({error}); dropping composition device for recovery"
+            );
+            self.gpu = None;
+            self.content.reset_swap_chain();
+            self.popup.reset_swap_chain();
+        }
     }
 
     pub(super) fn set_popup_visible(&mut self, visible: bool) {
@@ -221,21 +266,28 @@ impl GpuDevice {
         &self,
         shared_handle: *mut c_void,
     ) -> windows::core::Result<ID3D11Texture2D> {
-        let mut texture = None;
-        // SAFETY: CEF keeps `shared_handle` open for the paint callback that
-        // calls this; `texture` is a live local the call writes.
-        let legacy_result = unsafe {
-            self.device
-                .OpenSharedResource(HANDLE(shared_handle), &mut texture)
-        };
-        if legacy_result.is_ok()
-            && let Some(texture) = texture
-        {
-            return Ok(texture);
+        if let Ok(device1) = self.device.cast::<ID3D11Device1>() {
+            // SAFETY: CEF keeps `shared_handle` open for the paint callback that calls this.
+            if let Ok(texture) = unsafe { device1.OpenSharedResource1(HANDLE(shared_handle)) } {
+                return Ok(texture);
+            }
         }
-        let device: ID3D11Device1 = self.device.cast()?;
-        // SAFETY: as above; CEF keeps `shared_handle` open for this callback.
-        unsafe { device.OpenSharedResource1(HANDLE(shared_handle)) }
+        let mut texture = None;
+        // SAFETY: fallback to legacy global shared handle when `OpenSharedResource1` fails; `texture` is a live local.
+        unsafe {
+            self.device
+                .OpenSharedResource(HANDLE(shared_handle), &mut texture)?;
+        }
+        texture.ok_or_else(|| unexpected_error("D3D11 OpenSharedResource returned no texture"))
+    }
+}
+
+struct KeyedMutexGuard(IDXGIKeyedMutex);
+
+impl Drop for KeyedMutexGuard {
+    fn drop(&mut self) {
+        // SAFETY: `AcquireSync(0, ...)` succeeded when this guard was constructed.
+        let _ = unsafe { self.0.ReleaseSync(0) };
     }
 }
 
@@ -258,6 +310,16 @@ impl Layer {
         }
     }
 
+    fn reset_swap_chain(&mut self) {
+        if self.attached {
+            // SAFETY: COM call on an owned interface; clearing content detaches the stale swap chain.
+            let _ = unsafe { self.visual.SetContent(None::<&windows::core::IUnknown>) };
+            self.attached = false;
+        }
+        self.swap_chain = None;
+        self.swap_chain_key = None;
+    }
+
     fn present_shared(
         &mut self,
         gpu: &GpuDevice,
@@ -267,6 +329,24 @@ impl Layer {
         if !self.visible {
             return Ok(false);
         }
+        let _mutex_guard = if let Ok(mutex) = source.cast::<IDXGIKeyedMutex>() {
+            // SAFETY: `mutex` is a live `IDXGIKeyedMutex` COM interface; checking the raw
+            // `HRESULT` prevents `WAIT_TIMEOUT`/`WAIT_ABANDONED` from presenting an unacquired frame.
+            let hr = unsafe { (Interface::vtable(&mutex).AcquireSync)(mutex.as_raw(), 0, 100) };
+            if hr == S_OK {
+                Some(KeyedMutexGuard(mutex))
+            } else {
+                hr.ok()?;
+                tracing::debug!(
+                    target: "cef.osr",
+                    hresult = hr.0,
+                    "skipped shared texture frame because AcquireSync returned non-S_OK"
+                );
+                return Ok(false);
+            }
+        } else {
+            None
+        };
         let rebound = self.ensure_swap_chain(
             gpu,
             SwapChainKey {
@@ -280,12 +360,11 @@ impl Layer {
         };
         // SAFETY: COM call on an owned swap chain; buffer 0 always exists.
         let back_buffer = unsafe { swap_chain.GetBuffer::<ID3D11Texture2D>(0)? };
-        // SAFETY: both textures belong to `gpu.device`, and the swap chain was
-        // sized and formatted from `source_desc`, so the copy matches.
-        unsafe {
-            gpu.context.CopyResource(&back_buffer, source);
-            swap_chain.Present(1, DXGI_PRESENT(0)).ok()?;
-        }
+        // SAFETY: both textures belong to `gpu.device`, any keyed mutex is acquired with `S_OK`,
+        // and the swap chain was sized and formatted from `source_desc`, so the copy matches.
+        unsafe { gpu.context.CopyResource(&back_buffer, source) };
+        // SAFETY: swap chain is owned and ready for non-blocking present.
+        unsafe { swap_chain.Present(0, DXGI_PRESENT(0)).ok()? };
         Ok(rebound)
     }
 
@@ -323,7 +402,7 @@ impl Layer {
                 width.saturating_mul(4),
                 0,
             );
-            swap_chain.Present(1, DXGI_PRESENT(0)).ok()?;
+            swap_chain.Present(0, DXGI_PRESENT(0)).ok()?;
         }
         Ok(rebound)
     }
@@ -333,47 +412,76 @@ impl Layer {
         gpu: &GpuDevice,
         key: SwapChainKey,
     ) -> windows::core::Result<bool> {
-        if self.swap_chain_key != Some(key) {
-            let description = DXGI_SWAP_CHAIN_DESC1 {
-                Width: key.width,
-                Height: key.height,
-                Format: key.format,
-                SampleDesc: DXGI_SAMPLE_DESC {
-                    Count: 1,
-                    Quality: 0,
-                },
-                BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-                BufferCount: 2,
-                Scaling: DXGI_SCALING_STRETCH,
-                SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-                AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
-                ..DXGI_SWAP_CHAIN_DESC1::default()
-            };
-            // SAFETY: `description` is a live, fully initialized local, and the
-            // device and factory come from the same adapter.
-            let swap_chain = unsafe {
-                gpu.factory.CreateSwapChainForComposition(
-                    &gpu.device,
-                    &description,
-                    None::<&windows::Win32::Graphics::Dxgi::IDXGIOutput>,
-                )?
-            };
-            // SAFETY: COM call on owned interfaces.
-            unsafe { self.visual.SetContent(&swap_chain)? };
-            self.swap_chain = Some(swap_chain);
-            self.swap_chain_key = Some(key);
-            self.attached = true;
-            return Ok(true);
-        }
-        if !self.attached
-            && let Some(swap_chain) = self.swap_chain.as_ref()
+        if let Some(prev) = self.swap_chain_key
+            && prev == key
         {
-            // SAFETY: COM call on owned interfaces.
-            unsafe { self.visual.SetContent(swap_chain)? };
-            self.attached = true;
-            return Ok(true);
+            if !self.attached
+                && let Some(swap_chain) = self.swap_chain.as_ref()
+            {
+                // SAFETY: COM call on owned interfaces.
+                unsafe { self.visual.SetContent(swap_chain)? };
+                self.attached = true;
+                return Ok(true);
+            }
+            return Ok(false);
         }
-        Ok(false)
+        if let (Some(prev), Some(swap_chain)) = (self.swap_chain_key, self.swap_chain.as_ref())
+            && prev.format == key.format
+        {
+            // SAFETY: COM call on owned swap chain resizing buffers with matching format.
+            if unsafe {
+                swap_chain.ResizeBuffers(
+                    0,
+                    key.width,
+                    key.height,
+                    key.format,
+                    DXGI_SWAP_CHAIN_FLAG(0),
+                )
+            }
+            .is_ok()
+            {
+                apply_swap_chain_color_space(swap_chain, key.format);
+                self.swap_chain_key = Some(key);
+                if !self.attached {
+                    // SAFETY: COM call on owned interfaces.
+                    unsafe { self.visual.SetContent(swap_chain)? };
+                    self.attached = true;
+                    return Ok(true);
+                }
+                return Ok(false);
+            }
+        }
+        let description = DXGI_SWAP_CHAIN_DESC1 {
+            Width: key.width,
+            Height: key.height,
+            Format: key.format,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
+            BufferCount: 2,
+            Scaling: DXGI_SCALING_STRETCH,
+            SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+            AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
+            ..DXGI_SWAP_CHAIN_DESC1::default()
+        };
+        // SAFETY: `description` is a live, fully initialized local, and the
+        // device and factory come from the same adapter.
+        let swap_chain = unsafe {
+            gpu.factory.CreateSwapChainForComposition(
+                &gpu.device,
+                &description,
+                None::<&windows::Win32::Graphics::Dxgi::IDXGIOutput>,
+            )?
+        };
+        apply_swap_chain_color_space(&swap_chain, key.format);
+        // SAFETY: COM call on owned interfaces.
+        unsafe { self.visual.SetContent(&swap_chain)? };
+        self.swap_chain = Some(swap_chain);
+        self.swap_chain_key = Some(key);
+        self.attached = true;
+        Ok(true)
     }
 
     fn set_visible(&mut self, visible: bool) -> bool {
@@ -405,10 +513,59 @@ fn swap_chain_format(format: DXGI_FORMAT) -> DXGI_FORMAT {
         DXGI_FORMAT_R8G8B8A8_TYPELESS | DXGI_FORMAT_R8G8B8A8_UNORM_SRGB => {
             DXGI_FORMAT_R8G8B8A8_UNORM
         }
+        DXGI_FORMAT_R10G10B10A2_TYPELESS => DXGI_FORMAT_R10G10B10A2_UNORM,
         other => other,
+    }
+}
+
+fn color_space_for_format(format: DXGI_FORMAT) -> DXGI_COLOR_SPACE_TYPE {
+    match format {
+        DXGI_FORMAT_R16G16B16A16_FLOAT => DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709,
+        DXGI_FORMAT_R10G10B10A2_UNORM => DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020,
+        _ => DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709,
+    }
+}
+
+fn apply_swap_chain_color_space(swap_chain: &IDXGISwapChain1, format: DXGI_FORMAT) {
+    let Ok(chain3) = swap_chain.cast::<IDXGISwapChain3>() else {
+        return;
+    };
+    let color_space = color_space_for_format(format);
+    // SAFETY: `chain3` is a live swap chain interface and `color_space` is a valid `DXGI_COLOR_SPACE_TYPE`.
+    if let Err(error) = unsafe { chain3.SetColorSpace1(color_space) } {
+        tracing::debug!(target: "cef.osr", ?format, ?color_space, "swap chain SetColorSpace1 unsupported: {error}");
     }
 }
 
 fn unexpected_error(message: &str) -> windows::core::Error {
     windows::core::Error::new(windows::core::HRESULT(0x8000_4005_u32 as i32), message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn swap_chain_format_and_color_space_preserve_hdr_and_sdr_formats() {
+        assert_eq!(
+            swap_chain_format(DXGI_FORMAT_R16G16B16A16_FLOAT),
+            DXGI_FORMAT_R16G16B16A16_FLOAT
+        );
+        assert_eq!(
+            swap_chain_format(DXGI_FORMAT_R10G10B10A2_TYPELESS),
+            DXGI_FORMAT_R10G10B10A2_UNORM
+        );
+        assert_eq!(
+            color_space_for_format(DXGI_FORMAT_R16G16B16A16_FLOAT),
+            DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709
+        );
+        assert_eq!(
+            color_space_for_format(DXGI_FORMAT_R10G10B10A2_UNORM),
+            DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020
+        );
+        assert_eq!(
+            color_space_for_format(DXGI_FORMAT_B8G8R8A8_UNORM),
+            DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709
+        );
+    }
 }

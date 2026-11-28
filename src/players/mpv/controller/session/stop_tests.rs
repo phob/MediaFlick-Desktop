@@ -42,16 +42,16 @@ impl PlaystateCapture {
                     Ok((mut stream, _)) => {
                         let _ = stream.set_nonblocking(false);
                         let request = read_test_http_request(&mut stream);
-                        let _ = stream.write_all(
-                            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                        );
-                        let _ = stream.flush();
                         if let Ok(parsed) = serde_json::from_str::<Value>(&request.body) {
                             server_entries
                                 .lock()
                                 .expect("captured entries")
                                 .push((request.request_line, parsed));
                         }
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                        let _ = stream.flush();
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
@@ -323,4 +323,59 @@ fn stop_sync_bounds_hung_libmpv_ipc_and_still_queues_stopped_report() {
     } else {
         fake.stop();
     }
+}
+
+#[test]
+fn apply_audio_passthrough_skips_external_mpv_and_configures_libmpv() {
+    let capture = PlaystateCapture::start();
+    let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let seen_cb = Arc::clone(&seen);
+    let fake = FakeMpv::start(move |command| {
+        seen_cb.lock().expect("lock").push(command.clone());
+        vec![json!({
+            "request_id": command["request_id"].clone(),
+            "error": "success",
+        })]
+    });
+
+    let (mut external_state, _, _) =
+        active_controller(MpvRuntimeKind::External, &capture.url, Some(&fake));
+    external_state.audio_passthrough = false;
+    external_state.apply_audio_passthrough();
+    external_state.audio_passthrough = true;
+    external_state.apply_audio_passthrough();
+
+    let (mut lib_state, _, _) =
+        active_controller(MpvRuntimeKind::Library, &capture.url, Some(&fake));
+    lib_state.audio_passthrough = false;
+    lib_state.apply_audio_passthrough();
+    lib_state.audio_passthrough = true;
+    lib_state.apply_audio_passthrough();
+
+    if let Some(worker) = external_state.ipc.worker.take() {
+        worker.shutdown();
+    }
+    if let Some(worker) = lib_state.ipc.worker.take() {
+        fake.finish(worker);
+    } else {
+        fake.stop();
+    }
+
+    let spdif_values: Vec<String> = {
+        let commands = seen.lock().expect("lock");
+        commands
+            .iter()
+            .filter(|cmd| {
+                cmd["command"].as_array().is_some_and(|args| {
+                    args.first().and_then(Value::as_str) == Some("set_property")
+                        && args.get(1).and_then(Value::as_str) == Some("audio-spdif")
+                })
+            })
+            .filter_map(|cmd| cmd["command"][2].as_str().map(str::to_string))
+            .collect()
+    };
+    assert_eq!(
+        spdif_values,
+        vec!["".to_string(), "ac3,eac3,dts,dts-hd,truehd".to_string()]
+    );
 }

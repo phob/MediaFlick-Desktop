@@ -14,13 +14,13 @@ work_dir="${MEDIAFLICK_LIBMPV_WORK_DIR:-$cache_root/libmpv-linux-$arch}"
 output_dir="${1:-$repo_root/build/libmpv-linux-$arch}"
 jobs="${MEDIAFLICK_LIBMPV_JOBS:-$(nproc)}"
 
-for command_name in git meson ninja make cc c++ pkg-config nasm python3 patchelf strip tar zstd dpkg-query apt-get; do
+for command_name in git meson ninja make cc c++ pkg-config nasm python3 patchelf strip tar zstd dpkg-query apt-get wayland-scanner; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Missing required build command: $command_name (see $script_dir/README.md)" >&2
         exit 1
     fi
 done
-pkg-config --exists libass lcms2 dav1d gnutls zlib alsa libpulse egl gl libva libva-x11 x11 xext xpresent xrandr xscrnsaver vulkan glslang ffnvcodec
+pkg-config --exists libass lcms2 dav1d gnutls zlib alsa libpulse egl gl libva libva-x11 libva-wayland x11 xext xpresent xrandr xscrnsaver wayland-client wayland-egl wayland-cursor wayland-protocols xkbcommon vulkan glslang ffnvcodec
 
 mkdir -p "$work_dir" "$output_dir"
 work_dir="$(realpath "$work_dir")"
@@ -93,9 +93,10 @@ meson setup --wipe "$work_dir/mpv-build" "$sources/mpv" \
     -Dlua=disabled -Djavascript=disabled -Dvapoursynth=disabled \
     -Ddvdnav=disabled -Dlibbluray=disabled -Dcdda=disabled \
     -Dgl=enabled -Dplain-gl=enabled -Degl=enabled -Degl-x11=enabled -Dx11=enabled \
+    -Dwayland=enabled -Degl-wayland=enabled -Dvaapi-wayland=enabled -Ddmabuf-wayland=enabled \
     -Dvulkan=enabled -Dvaapi=enabled -Dvaapi-x11=enabled \
     -Dcuda-hwaccel=enabled -Dcuda-interop=enabled \
-    -Dalsa=enabled -Dpulse=enabled -Dlcms2=enabled -Diconv=enabled \
+    -Dalsa=enabled -Dpulse=enabled -Dpipewire=disabled -Dlcms2=enabled -Diconv=enabled \
     -Dzlib=enabled -Dvector=enabled
 ninja -C "$work_dir/mpv-build" -j "$jobs"
 meson install -C "$work_dir/mpv-build" --strip

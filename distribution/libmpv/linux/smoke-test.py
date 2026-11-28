@@ -1,8 +1,9 @@
 import argparse
 import ctypes as c
 from pathlib import Path
-import struct
 import re
+import struct
+import subprocess
 import tempfile
 import time
 import wave
@@ -13,6 +14,9 @@ def smoke_test(path, placebo_config, gpu_api=None):
     for feature in ("OPENGL", "VULKAN", "GLSLANG"):
         if not re.search(rf"^#define PL_HAVE_{feature} 1$", configuration_header, re.MULTILINE):
             raise RuntimeError(f"libplacebo was built without {feature}")
+    needed = subprocess.check_output(["patchelf", "--print-needed", str(path.resolve())], text=True)
+    if "libpipewire" in needed:
+        raise RuntimeError(f"Packaged libmpv unexpectedly links PipeWire:\n{needed}")
     lib = c.CDLL(str(path.resolve()))
     lib.mpv_client_api_version.restype = c.c_ulong
     if lib.mpv_client_api_version() >> 16 != 2:
@@ -61,8 +65,9 @@ def smoke_test(path, placebo_config, gpu_api=None):
             "-Dlua=disabled", "-Djavascript=disabled", "-Dvapoursynth=disabled",
             "-Ddvdnav=disabled", "-Dlibbluray=disabled", "-Dcdda=disabled",
             "-Dgl=enabled", "-Dplain-gl=enabled", "-Dvaapi=enabled",
+            "-Dwayland=enabled", "-Degl-wayland=enabled", "-Dvaapi-wayland=enabled", "-Ddmabuf-wayland=enabled",
             "-Dvulkan=enabled", "-Dcuda-hwaccel=enabled", "-Dcuda-interop=enabled",
-            "-Dalsa=enabled", "-Dpulse=enabled", "-Dlcms2=enabled",
+            "-Dalsa=enabled", "-Dpulse=enabled", "-Dpipewire=disabled", "-Dlcms2=enabled",
         ):
             if option not in configuration.split():
                 raise RuntimeError(f"Packaged libmpv lacks required build option: {option}")

@@ -38,6 +38,7 @@ const source: MediaSource = {
   bitrate: null,
   defaultAudioStreamIndex: 1,
   defaultSubtitleStreamIndex: null,
+  trickplay: null,
   video: [],
   audio: [
     stream({ index: 1, language: "eng", codec: "aac", channels: 2, isDefault: true }),

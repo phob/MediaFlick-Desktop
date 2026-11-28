@@ -80,6 +80,10 @@ pub fn image_cache_dir() -> PathBuf {
     app_data_dir().join("image-cache")
 }
 
+pub fn trickplay_cache_dir() -> PathBuf {
+    app_data_dir().join("trickplay-cache")
+}
+
 #[cfg(test)]
 mod tests {
     use super::trusted_root;

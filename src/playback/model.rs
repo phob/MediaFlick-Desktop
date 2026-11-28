@@ -127,6 +127,9 @@ pub struct PlaybackRequest {
     pub subtitle_url: Option<String>,
     pub play_method: Option<String>,
     pub queue: Option<QueueReport>,
+    pub account: Option<crate::preferences::AccountKey>,
+    pub playstate_outbox:
+        Option<std::sync::Arc<crate::jellyfin::playstate_outbox::PlaystateOutbox>>,
 }
 
 impl PlaybackRequest {
@@ -236,13 +239,31 @@ pub enum ToneMapping {
     Bt2390,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, ts_rs::TS)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaybackDiagnostics {
     pub buffered_until_ms: Option<f64>,
     pub buffering: bool,
     pub dropped_frames: Option<i64>,
     pub frame_rate: Option<f64>,
+    pub decoder_dropped_frames: Option<i64>,
+    pub mistimed_frames: Option<i64>,
+    pub hwdec_current: Option<String>,
+    pub hwdec_interop: Option<String>,
+    pub current_vo: Option<String>,
+    pub gpu_context: Option<String>,
+    pub vsync_jitter: Option<f64>,
+    pub avsync_ms: Option<f64>,
+    pub video_pixel_format: Option<String>,
+    pub video_colormatrix: Option<String>,
+    pub video_primaries: Option<String>,
+    pub video_gamma: Option<String>,
+    pub video_sig_peak: Option<f64>,
+    pub video_width: Option<i64>,
+    pub video_height: Option<i64>,
+    pub audio_format: Option<String>,
+    pub audio_sample_rate: Option<i64>,
+    pub audio_channels: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]

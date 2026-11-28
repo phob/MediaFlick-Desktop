@@ -193,6 +193,8 @@ pub struct BaseItemDto {
     pub media_streams: Vec<MediaStream>,
     pub media_sources: Vec<MediaSourceInfo>,
     pub remote_trailers: Vec<MediaUrl>,
+    #[serde(default)]
+    pub trickplay: BTreeMap<String, BTreeMap<String, TrickplayInfoDto>>,
     pub artists: Vec<String>,
     pub album_artist: Option<String>,
     pub album: Option<String>,
@@ -304,6 +306,17 @@ impl MediaSourceInfo {
                 .is_some_and(|value| value.eq_ignore_ascii_case(kind))
         })
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, rename_all = "PascalCase")]
+pub struct TrickplayInfoDto {
+    pub width: u32,
+    pub height: u32,
+    pub tile_width: u32,
+    pub tile_height: u32,
+    pub thumbnail_count: u32,
+    pub interval: u32,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

@@ -9,10 +9,9 @@ and FFmpeg 8.0.1 revisions as Windows. The Linux profile keeps:
   Little CMS color management, and mpv's OpenGL render API.
 - OpenGL and Vulkan rendering backends, including libplacebo's `gpu-next`
   backends and its glslang shader compiler.
-- X11/EGL rendering (including XWayland), VA-API for AMD/Intel and NVDEC with
+- Native Wayland (`waylandvk` / `waylandegl`, DMA-BUF, `vaapi-wayland`), X11/EGL rendering (including XWayland), VA-API for AMD/Intel and NVDEC with
   CUDA interoperability for NVIDIA decoding, and
-  ALSA/PulseAudio output. PipeWire desktops use their PulseAudio compatibility
-  service. Hardware decoding requires a compatible GPU, codec, and host driver;
+  PulseAudio/ALSA audio output (PipeWire desktops route through `pipewire-pulse` so `libpipewire-0.3.so.0` is never required on older or non-PipeWire hosts). Hardware decoding requires a compatible GPU, codec, and host driver;
   software decoding remains available.
 
 It disables DVD, Blu-ray, CD audio, Lua, JavaScript, VapourSynth/SVP,
@@ -28,8 +27,7 @@ against Ubuntu 24.04's older Vulkan headers. Older headers retain the existing
 Vulkan 1.3 and earlier selection paths. The patch checksum and patched source
 are included in the build records/archive.
 libplacebo 7.351.0 retains both OpenGL and Vulkan backends. MediaFlick's
-embedded player uses `vo=gpu-next`, preferring the X11 Vulkan context and falling
-back to X11/EGL. CEF bitmaps are composited by mpv through `overlay-add`.
+embedded player uses `vo=gpu-next`, preferring native Wayland Vulkan (`waylandvk` / `waylandegl`) when running on a Wayland compositor and falling back to X11 Vulkan/EGL (`x11vk` / `x11egl`).
 FFmpeg's Vulkan Video decoding and
 NVENC encoding are not enabled; NVIDIA video decoding uses NVDEC.
 
@@ -50,6 +48,7 @@ sudo apt-get install -y build-essential git meson ninja-build nasm pkg-config \
   python3 python3-jinja2 patchelf zstd libass-dev liblcms2-dev libdav1d-dev \
   libgnutls28-dev zlib1g-dev libasound2-dev libpulse-dev libegl1-mesa-dev \
   libgl-dev libva-dev libdrm-dev libx11-dev libxext-dev libxpresent-dev libxrandr-dev libxss-dev \
+  libwayland-dev wayland-protocols libxkbcommon-dev \
   libvulkan-dev glslang-dev spirv-tools libffmpeg-nvenc-dev
 just libmpv
 ```

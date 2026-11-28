@@ -25,6 +25,7 @@ use super::{
 };
 
 mod events;
+pub(super) mod host;
 mod library_ipc;
 
 impl ControllerState {
@@ -100,22 +101,7 @@ impl ControllerState {
     }
 
     #[cfg(target_os = "linux")]
-    pub(super) fn present_overlay(
-        &mut self,
-        frame: crate::playback::NativeOverlayFrame,
-    ) -> Result<crate::playback::NativeOverlayFrame, String> {
-        let background_exposed = frame.exposes_video();
-        let frame = self
-            .runtime
-            .as_mut()
-            .ok_or_else(|| "native video renderer is unavailable".to_string())?
-            .present_overlay(frame)?;
-        self.finish_library_fullscreen(background_exposed);
-        Ok(frame)
-    }
-
-    #[cfg(target_os = "linux")]
-    fn finish_library_fullscreen(&mut self, background_exposed: bool) {
+    pub(super) fn finish_library_fullscreen(&mut self, background_exposed: bool) {
         if !self.mpv_playback_active {
             self.fullscreen_gate.pending = false;
         }
@@ -135,7 +121,11 @@ impl ControllerState {
         let background_exposed = self
             .runtime
             .as_ref()
-            .is_some_and(super::MpvRuntime::ui_exposes_video);
+            .is_some_and(super::MpvRuntime::ui_exposes_video)
+            || self
+                .host_window
+                .as_ref()
+                .is_some_and(host::LinuxHostWindow::ui_exposes_video);
         self.finish_library_fullscreen(background_exposed);
     }
 
@@ -149,10 +139,10 @@ impl ControllerState {
         timeout: Duration,
     ) {
         #[cfg(target_os = "linux")]
-        if let Some(runtime) = &self.runtime
-            && let Err(error) = runtime.set_fullscreen(fullscreen)
-        {
-            tracing::warn!(target: "mpv.window", "could not change native fullscreen state: {error}");
+        if let Some(window) = &self.host_window {
+            if let Err(error) = window.set_fullscreen(fullscreen) {
+                tracing::warn!(target: "mpv.window", "could not change native fullscreen state: {error}");
+            }
             return;
         }
         let command = json!({
@@ -166,8 +156,8 @@ impl ControllerState {
 
     #[cfg(target_os = "linux")]
     fn leave_native_fullscreen(&self) {
-        if let Some(runtime) = &self.runtime
-            && let Err(error) = runtime.set_fullscreen(FullscreenBehavior::Windowed)
+        if let Some(window) = &self.host_window
+            && let Err(error) = window.set_fullscreen(FullscreenBehavior::Windowed)
         {
             tracing::warn!(target: "mpv.window", "could not change native fullscreen state: {error}");
         }
@@ -240,8 +230,8 @@ impl ControllerState {
         if self.runtime_kind != super::MpvRuntimeKind::Library {
             return false;
         }
-        if let Some(runtime) = &self.runtime {
-            match runtime.fullscreen() {
+        if let Some(window) = &self.host_window {
+            match window.fullscreen() {
                 Ok(fullscreen) => self.set_fullscreen(if fullscreen {
                     FullscreenBehavior::Windowed
                 } else {
@@ -371,13 +361,27 @@ impl ControllerState {
             super::MpvRuntimeKind::External => fullscreen,
             super::MpvRuntimeKind::Library => FullscreenBehavior::Windowed,
         };
-        let mut runtime = match crate::players::mpv::runtime::MpvRuntime::start(
+        #[cfg(target_os = "linux")]
+        let start_result = if self.runtime_kind == super::MpvRuntimeKind::Library {
+            self.start_linux_helper_runtime(&PathBuf::from(mpv_path), &ipc_path, runtime_fullscreen)
+        } else {
+            crate::players::mpv::runtime::MpvRuntime::start(
+                self.runtime_kind,
+                self.libmpv_profile,
+                &PathBuf::from(mpv_path),
+                &ipc_path,
+                runtime_fullscreen,
+            )
+        };
+        #[cfg(not(target_os = "linux"))]
+        let start_result = crate::players::mpv::runtime::MpvRuntime::start(
             self.runtime_kind,
             self.libmpv_profile,
             &PathBuf::from(mpv_path),
             &ipc_path,
             runtime_fullscreen,
-        ) {
+        );
+        let mut runtime = match start_result {
             Ok(runtime) => runtime,
             Err(error) => {
                 tracing::warn!(
@@ -423,6 +427,8 @@ impl ControllerState {
         self.ipc.active_id = Some(session_id);
         tracing::info!(target: "mpv.ipc", ipc_path = %ipc_path, session_id, "mpv IPC connected");
         self.install_input_bindings();
+        self.apply_subtitle_appearance();
+        self.apply_audio_passthrough();
         true
     }
 
@@ -529,6 +535,11 @@ impl ControllerState {
         match runtime.is_alive() {
             Ok(false) => {
                 tracing::info!(target: "mpv.ipc", "mpv runtime stopped");
+                #[cfg(target_os = "linux")]
+                if self.runtime_kind == super::MpvRuntimeKind::Library {
+                    self.recover_crashed_library_helper("mpv runtime stopped");
+                    return;
+                }
                 self.finish_active(Some(StopReason::Quit));
                 self.reset_mpv();
                 self.restart_configured_mpv("mpv runtime stopped");
@@ -590,9 +601,9 @@ impl ControllerState {
     }
 
     pub(super) fn handle_mpv_session_lost(&mut self, reason: &'static str) {
-        let had_playback = self.mpv_playback_active || !self.phase.is_idle();
-        self.finish_active(Some(StopReason::Quit));
         if self.can_recycle_library_ipc() {
+            let had_playback = self.mpv_playback_active || !self.phase.is_idle();
+            self.finish_active(Some(StopReason::Quit));
             tracing::warn!(
                 target: "mpv.ipc",
                 reason,
@@ -609,11 +620,17 @@ impl ControllerState {
             }
             return;
         }
+        #[cfg(target_os = "linux")]
+        if self.runtime_kind == super::MpvRuntimeKind::Library {
+            self.recover_crashed_library_helper(reason);
+            return;
+        }
+        self.finish_active(Some(StopReason::Quit));
         self.reset_mpv();
         self.restart_configured_mpv(reason);
     }
 
-    fn restart_configured_mpv(&mut self, reason: &'static str) {
+    pub(super) fn restart_configured_mpv(&mut self, reason: &'static str) {
         if self.shutdown_requested.load(Ordering::SeqCst) {
             tracing::debug!(target: "mpv.ipc", reason, "not restarting mpv because shutdown is requested");
             return;
@@ -754,15 +771,24 @@ impl ControllerState {
     }
 
     fn stop_runtime_gracefully(&mut self) {
-        if let Err(error) = self.send_mpv_command(json!({ "command": ["quit"] })) {
+        let quit_command = json!({
+            "command": ["quit"],
+            "request_id": next_request_id(),
+        });
+        if let Err(error) =
+            self.send_mpv_command_with_timeout(quit_command, Duration::from_millis(150))
+        {
             tracing::debug!(target: "mpv.ipc", "failed to send mpv quit during shutdown: {error}");
+        }
+        if let Some(runtime) = &mut self.runtime {
+            runtime.request_graceful_stop();
         }
         let deadline = Instant::now() + SHUTDOWN_WAIT;
         while Instant::now() < deadline {
             if !self.runtime_is_alive() {
                 break;
             }
-            thread::sleep(Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(25));
         }
         if self.runtime_is_alive()
             && let Some(runtime) = &mut self.runtime
@@ -788,6 +814,10 @@ impl ControllerState {
         self.finish_active(Some(StopReason::Quit));
         self.stop_runtime_gracefully();
         self.reset_mpv();
+        #[cfg(target_os = "linux")]
+        {
+            self.host_window = None;
+        }
         if !flush_playstate_reports(PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT) {
             tracing::warn!(target: "jellyfin.playstate", "timed out flushing queued Jellyfin playback state during shutdown");
         }
@@ -819,6 +849,7 @@ impl ControllerState {
     pub(super) fn reset_mpv(&mut self) {
         tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
         self.clear_playback_session_state();
+        self.playback_diagnostics = crate::playback::PlaybackDiagnostics::default();
         if let Some(mut runtime) = self.runtime.take() {
             tracing::debug!(target: "mpv.ipc", "stopping live mpv runtime during reset");
             runtime.stop();
@@ -863,14 +894,6 @@ impl ControllerState {
     pub(super) fn send_mpv_command(&self, command: Value) -> Result<(), IpcCommandFailure> {
         self.send_mpv_command_with_timeout(command, self.ipc_command_timeout())
             .map(drop)
-    }
-
-    pub(super) fn get_mpv_property(&self, name: &str) -> Result<Value, IpcCommandFailure> {
-        let command = json!({
-            "command": ["get_property", name],
-            "request_id": next_request_id(),
-        });
-        self.send_mpv_command_with_timeout(command, self.ipc_command_timeout())
     }
 
     fn send_mpv_command_with_timeout(

@@ -60,7 +60,7 @@ const COMPANION_FEATURES: readonly CompanionEntry[] = [
 const MEDIAFLICK_FEATURES: readonly Entry[] = [
   {
     title: "Instant search",
-    text: "Your library is kept on this device, so search answers as you type, across titles, cast and genres.",
+    text: "Your library is kept on this device, so search answers as you type, across titles, original titles and genres.",
   },
   {
     title: "Spoiler protection",

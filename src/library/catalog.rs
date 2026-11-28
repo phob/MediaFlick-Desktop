@@ -323,14 +323,7 @@ impl Library {
     ) -> rusqlite::Result<()> {
         self.db.with_connection(|connection| {
             connection.execute(
-                "INSERT INTO user_data (jellyfin_id, played, play_count, playback_position_ticks, updated_at)
-                 VALUES (?1, ?2, ?3, 0, ?4)
-                 ON CONFLICT(jellyfin_id) DO UPDATE SET
-                     played = excluded.played,
-                     play_count = CASE WHEN excluded.played = 1
-                         THEN max(user_data.play_count, 1) ELSE 0 END,
-                     playback_position_ticks = 0,
-                     updated_at = excluded.updated_at",
+                SET_LOCAL_PLAYED_SQL,
                 params![item_id, played, i64::from(played), now_unix()],
             )?;
             Ok(())
@@ -419,7 +412,35 @@ fn delete_items_from_transaction(
     Ok(())
 }
 
-const UPSERT_ITEM_SQL: &str = "INSERT INTO items (
+pub(crate) const SET_LOCAL_PLAYED_SQL: &str =
+    "INSERT INTO user_data (jellyfin_id, played, play_count, playback_position_ticks, updated_at)
+     VALUES (?1, ?2, ?3, 0, ?4)
+     ON CONFLICT(jellyfin_id) DO UPDATE SET
+         played = excluded.played,
+         play_count = CASE WHEN excluded.played = 1
+             THEN max(user_data.play_count, 1) ELSE 0 END,
+         playback_position_ticks = 0,
+         updated_at = excluded.updated_at";
+
+pub(crate) const UPSERT_USER_DATA_SQL: &str =
+    "INSERT INTO user_data (jellyfin_id, played, play_count, playback_position_ticks,
+         is_favorite, played_percentage, last_played_date, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+     ON CONFLICT(jellyfin_id) DO UPDATE SET
+         played = excluded.played, play_count = excluded.play_count,
+         playback_position_ticks = excluded.playback_position_ticks,
+         is_favorite = excluded.is_favorite,
+         played_percentage = excluded.played_percentage,
+         last_played_date = excluded.last_played_date,
+         updated_at = excluded.updated_at
+     WHERE played IS NOT excluded.played
+         OR play_count IS NOT excluded.play_count
+         OR playback_position_ticks IS NOT excluded.playback_position_ticks
+         OR is_favorite IS NOT excluded.is_favorite
+         OR played_percentage IS NOT excluded.played_percentage
+         OR last_played_date IS NOT excluded.last_played_date";
+
+pub(crate) const UPSERT_ITEM_SQL: &str = "INSERT INTO items (
         jellyfin_id, kind, name, original_title, sort_name, year, premiere_date,
         runtime_ticks, community_rating, official_rating, parent_id, series_id,
         series_name, season_id, index_number, parent_index_number, child_count,
@@ -535,24 +556,7 @@ fn upsert_item_if_changed(connection: &Connection, record: &ItemRecord) -> rusql
 
 fn upsert_user_data(connection: &Connection, record: &UserDataRecord) -> rusqlite::Result<bool> {
     let written = connection
-        .prepare_cached(
-            "INSERT INTO user_data (jellyfin_id, played, play_count, playback_position_ticks,
-             is_favorite, played_percentage, last_played_date, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-         ON CONFLICT(jellyfin_id) DO UPDATE SET
-             played = excluded.played, play_count = excluded.play_count,
-             playback_position_ticks = excluded.playback_position_ticks,
-             is_favorite = excluded.is_favorite,
-             played_percentage = excluded.played_percentage,
-             last_played_date = excluded.last_played_date,
-             updated_at = excluded.updated_at
-         WHERE played IS NOT excluded.played
-             OR play_count IS NOT excluded.play_count
-             OR playback_position_ticks IS NOT excluded.playback_position_ticks
-             OR is_favorite IS NOT excluded.is_favorite
-             OR played_percentage IS NOT excluded.played_percentage
-             OR last_played_date IS NOT excluded.last_played_date",
-        )?
+        .prepare_cached(UPSERT_USER_DATA_SQL)?
         .execute(params![
             record.jellyfin_id,
             record.played,

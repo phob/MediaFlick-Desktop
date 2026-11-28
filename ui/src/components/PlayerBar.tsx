@@ -441,6 +441,15 @@ function ActivePlayerBar({
         chapters={chapters}
         segments={segments}
         bufferedUntil={player.diagnostics?.bufferedUntilMs ?? null}
+        trickplay={
+          player.itemId && source?.trickplay
+            ? {
+                itemId: player.itemId,
+                mediaSourceId: source.id ?? null,
+                info: source.trickplay,
+              }
+            : null
+        }
         onScrub={setScrubMs}
         onSeek={seek}
       />
@@ -567,8 +576,53 @@ function ActivePlayerBar({
               </div>
             )}
             {selectedAudio && <div>{trackLabel(selectedAudio, audioTracks.indexOf(selectedAudio))}</div>}
+            {(player.diagnostics?.currentVo || player.diagnostics?.gpuContext || player.diagnostics?.hwdecCurrent) && (
+              <div>
+                {[
+                  [player.diagnostics.currentVo, player.diagnostics.gpuContext].filter(Boolean).join("/"),
+                  player.diagnostics.hwdecCurrent && player.diagnostics.hwdecCurrent !== "no"
+                    ? `hwdec: ${player.diagnostics.hwdecCurrent}${player.diagnostics.hwdecInterop ? ` (${player.diagnostics.hwdecInterop})` : ""}`
+                    : "software decode",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </div>
+            )}
+            {(player.diagnostics?.videoWidth != null || player.diagnostics?.videoPixelFormat || player.diagnostics?.videoPrimaries) && (
+              <div>
+                {[
+                  player.diagnostics.videoWidth != null && player.diagnostics.videoHeight != null
+                    ? `${player.diagnostics.videoWidth}×${player.diagnostics.videoHeight}`
+                    : null,
+                  player.diagnostics.videoPixelFormat,
+                  [player.diagnostics.videoPrimaries, player.diagnostics.videoGamma].filter(Boolean).join("/"),
+                  player.diagnostics.videoSigPeak != null && player.diagnostics.videoSigPeak > 0
+                    ? `${Math.round(player.diagnostics.videoSigPeak * 203)} nits`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </div>
+            )}
+            {(player.diagnostics?.audioChannels || player.diagnostics?.audioSampleRate != null || player.diagnostics?.audioFormat) && (
+              <div>
+                {[
+                  player.diagnostics.audioChannels,
+                  player.diagnostics.audioSampleRate != null
+                    ? `${(player.diagnostics.audioSampleRate / 1000).toFixed(1)} kHz`
+                    : null,
+                  player.diagnostics.audioFormat,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </div>
+            )}
             {(player.diagnostics?.frameRate != null ||
-              player.diagnostics?.droppedFrames != null) && (
+              player.diagnostics?.droppedFrames != null ||
+              player.diagnostics?.decoderDroppedFrames != null ||
+              player.diagnostics?.mistimedFrames != null ||
+              player.diagnostics?.avsyncMs != null ||
+              player.diagnostics?.vsyncJitter != null) && (
               <div>
                 {[
                   player.diagnostics.frameRate == null
@@ -577,6 +631,18 @@ function ActivePlayerBar({
                   player.diagnostics.droppedFrames == null
                     ? null
                     : `${player.diagnostics.droppedFrames} dropped frames`,
+                  player.diagnostics.decoderDroppedFrames
+                    ? `${player.diagnostics.decoderDroppedFrames} dec dropped`
+                    : null,
+                  player.diagnostics.mistimedFrames
+                    ? `${player.diagnostics.mistimedFrames} mistimed`
+                    : null,
+                  player.diagnostics.avsyncMs == null
+                    ? null
+                    : `A/V ${player.diagnostics.avsyncMs.toFixed(1)} ms`,
+                  player.diagnostics.vsyncJitter == null
+                    ? null
+                    : `jitter ${(player.diagnostics.vsyncJitter * 100).toFixed(2)}%`,
                 ]
                   .filter(Boolean)
                   .join(" · ")}
