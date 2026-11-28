@@ -193,13 +193,13 @@ fn default_platform_options_enable_gpu_next_and_colorspace_on_windows_and_linux(
 }
 
 #[test]
-fn wayland_platform_options_use_wayland_vulkan_pipewire_and_hdr_hint() {
+fn wayland_platform_options_use_wayland_vulkan_pulse_and_hdr_hint() {
     let opts = wayland_platform_options();
     for pair in [
         ("vo", "gpu-next"),
         ("gpu-api", "vulkan,opengl"),
         ("gpu-context", "waylandvk,wayland"),
-        ("ao", "pipewire,pulse,alsa"),
+        ("ao", "pulse,alsa"),
         ("target-colorspace-hint", "auto"),
         ("gpu-sw", "yes"),
         ("osd-level", "0"),

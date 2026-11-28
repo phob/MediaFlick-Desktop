@@ -20,7 +20,7 @@ for command_name in git meson ninja make cc c++ pkg-config nasm python3 patchelf
         exit 1
     fi
 done
-pkg-config --exists libass lcms2 dav1d gnutls zlib alsa libpulse libpipewire-0.3 egl gl libva libva-x11 libva-wayland x11 xext xpresent xrandr xscrnsaver wayland-client wayland-egl wayland-cursor wayland-protocols xkbcommon vulkan glslang ffnvcodec
+pkg-config --exists libass lcms2 dav1d gnutls zlib alsa libpulse egl gl libva libva-x11 libva-wayland x11 xext xpresent xrandr xscrnsaver wayland-client wayland-egl wayland-cursor wayland-protocols xkbcommon vulkan glslang ffnvcodec
 
 mkdir -p "$work_dir" "$output_dir"
 work_dir="$(realpath "$work_dir")"
@@ -96,7 +96,7 @@ meson setup --wipe "$work_dir/mpv-build" "$sources/mpv" \
     -Dwayland=enabled -Degl-wayland=enabled -Dvaapi-wayland=enabled -Ddmabuf-wayland=enabled \
     -Dvulkan=enabled -Dvaapi=enabled -Dvaapi-x11=enabled \
     -Dcuda-hwaccel=enabled -Dcuda-interop=enabled \
-    -Dalsa=enabled -Dpulse=enabled -Dpipewire=enabled -Dlcms2=enabled -Diconv=enabled \
+    -Dalsa=enabled -Dpulse=enabled -Dpipewire=disabled -Dlcms2=enabled -Diconv=enabled \
     -Dzlib=enabled -Dvector=enabled
 ninja -C "$work_dir/mpv-build" -j "$jobs"
 meson install -C "$work_dir/mpv-build" --strip

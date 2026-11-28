@@ -241,6 +241,8 @@ fn spawn_exit_failsafe() {
 #[serde(tag = "cmd", rename_all = "snake_case")]
 enum HelperCommand {
     Overlay {
+        #[serde(default)]
+        seq: u64,
         w: u16,
         h: u16,
         dw: u16,
@@ -248,6 +250,40 @@ enum HelperCommand {
         len: usize,
     },
     Quit,
+}
+
+pub(super) fn read_control_json_line(
+    reader: &mut BufReader<UnixStream>,
+    buffer: &mut String,
+) -> io::Result<Option<String>> {
+    match reader.read_line(buffer) {
+        Ok(0) => {
+            if buffer.trim().is_empty() {
+                Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "control channel closed",
+                ))
+            } else {
+                let text = std::mem::take(buffer);
+                Ok(Some(text))
+            }
+        }
+        Ok(_) => {
+            if !buffer.ends_with('\n') {
+                return Ok(None);
+            }
+            Ok(Some(std::mem::take(buffer)))
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn serve_helper_control(
@@ -275,41 +311,46 @@ fn serve_helper_control(
     let mut pixels = Vec::new();
 
     while !stdin_closed.load(Ordering::Acquire) && runtime.is_alive() {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                match serde_json::from_str::<HelperCommand>(trimmed) {
-                    Ok(HelperCommand::Quit) => break,
-                    Ok(HelperCommand::Overlay { w, h, dw, dh, len }) => {
-                        let reply = if let Some(file) = overlay_file.as_mut() {
-                            apply_overlay_frame(runtime, file, &mut pixels, (w, h), (dw, dh), len)
-                        } else {
-                            json!({ "ok": false, "error": "Wayland helper does not accept X11 pixel overlays" })
-                        };
-                        writeln!(stream, "{reply}")?;
-                        stream.flush()?;
-                    }
-                    Err(error) => {
-                        writeln!(
-                            stream,
-                            "{}",
-                            json!({ "ok": false, "error": error.to_string() })
-                        )?;
-                        stream.flush()?;
-                    }
-                }
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) => {}
+        let Some(raw) = (match read_control_json_line(&mut reader, &mut line) {
+            Ok(line) => line,
             Err(_) => break,
+        }) else {
+            continue;
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<HelperCommand>(trimmed) {
+            Ok(HelperCommand::Quit) => break,
+            Ok(HelperCommand::Overlay {
+                seq,
+                w,
+                h,
+                dw,
+                dh,
+                len,
+            }) => {
+                let reply = if let Some(file) = overlay_file.as_mut() {
+                    apply_overlay_frame(runtime, file, &mut pixels, seq, (w, h), (dw, dh), len)
+                } else {
+                    json!({
+                        "seq": seq,
+                        "ok": false,
+                        "error": "Wayland helper does not accept X11 pixel overlays",
+                    })
+                };
+                writeln!(stream, "{reply}")?;
+                stream.flush()?;
+            }
+            Err(error) => {
+                writeln!(
+                    stream,
+                    "{}",
+                    json!({ "ok": false, "error": error.to_string() })
+                )?;
+                stream.flush()?;
+            }
         }
     }
     Ok(())
@@ -319,24 +360,33 @@ fn apply_overlay_frame(
     runtime: &mut LibMpvRuntime,
     overlay_file: &mut File,
     pixels: &mut Vec<u8>,
+    seq: u64,
     size: (u16, u16),
     display: (u16, u16),
     len: usize,
 ) -> serde_json::Value {
     let expected = usize::from(size.0) * usize::from(size.1) * 4;
     if len == 0 || len != expected || len > MAX_OVERLAY_BYTES {
-        return json!({ "ok": false, "error": "invalid overlay dimensions or buffer length" });
+        return json!({
+            "seq": seq,
+            "ok": false,
+            "error": "invalid overlay dimensions or buffer length",
+        });
     }
     pixels.resize(len, 0);
     if let Err(error) = overlay_file
         .seek(SeekFrom::Start(0))
         .and_then(|_| overlay_file.read_exact(pixels))
     {
-        return json!({ "ok": false, "error": format!("overlay read failed: {error}") });
+        return json!({
+            "seq": seq,
+            "ok": false,
+            "error": format!("overlay read failed: {error}"),
+        });
     }
     match runtime.submit_overlay_pixels(pixels, size.0, size.1, display) {
-        Ok(()) => json!({ "ok": true }),
-        Err(error) => json!({ "ok": false, "error": error }),
+        Ok(()) => json!({ "seq": seq, "ok": true }),
+        Err(error) => json!({ "seq": seq, "ok": false, "error": error }),
     }
 }
 
@@ -359,6 +409,9 @@ pub(crate) struct HelperRuntime {
     overlay_file: Option<File>,
     overlay_path: Option<PathBuf>,
     control_path: PathBuf,
+    next_overlay_seq: u64,
+    in_flight_seq: Option<u64>,
+    pending_reply: String,
     pub(crate) ui_exposes_video: bool,
 }
 
@@ -518,6 +571,9 @@ impl HelperRuntime {
                     overlay_file,
                     overlay_path,
                     control_path,
+                    next_overlay_seq: 1,
+                    in_flight_seq: None,
+                    pending_reply: String::new(),
                     ui_exposes_video: false,
                 })
             }
@@ -539,6 +595,77 @@ impl HelperRuntime {
         self.child.try_wait().map(|status| status.is_none())
     }
 
+    fn read_reply_value(
+        &mut self,
+        timeout: Option<Duration>,
+    ) -> io::Result<Option<serde_json::Value>> {
+        self.reader.get_ref().set_read_timeout(timeout)?;
+        let raw = match read_control_json_line(&mut self.reader, &mut self.pending_reply) {
+            Ok(Some(line)) => line,
+            Ok(None) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let value = serde_json::from_str::<serde_json::Value>(raw.trim())
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        Ok(Some(value))
+    }
+
+    fn drain_pending_overlay(&mut self) -> Result<(), String> {
+        let Some(expected) = self.in_flight_seq else {
+            return Ok(());
+        };
+        loop {
+            match self.read_reply_value(Some(Duration::from_millis(5))) {
+                Ok(Some(val)) => {
+                    let seq = val.get("seq").and_then(serde_json::Value::as_u64);
+                    if seq.is_some_and(|seen| seen >= expected) || seq.is_none() {
+                        self.in_flight_seq = None;
+                        return Ok(());
+                    }
+                }
+                Ok(None) => return Err("previous overlay reply still pending".to_string()),
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+    }
+
+    fn await_overlay_reply(
+        &mut self,
+        seq: u64,
+        frame: NativeOverlayFrame,
+    ) -> Result<NativeOverlayFrame, HelperOverlayError> {
+        let deadline = Instant::now() + HELPER_OVERLAY_TIMEOUT;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(HelperOverlayError::TimedOut(frame));
+            }
+            match self.read_reply_value(Some(remaining)) {
+                Ok(None) => return Err(HelperOverlayError::TimedOut(frame)),
+                Ok(Some(val)) => {
+                    let reply_seq = val.get("seq").and_then(serde_json::Value::as_u64);
+                    if reply_seq.is_some_and(|seen| seen < seq) {
+                        continue;
+                    }
+                    self.in_flight_seq = None;
+                    if val.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+                        self.ui_exposes_video = frame.exposes_video();
+                        return Ok(frame);
+                    }
+                    let message = val
+                        .get("error")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("native UI composition failed")
+                        .to_string();
+                    return Err(HelperOverlayError::Composition(message));
+                }
+                Err(error) => {
+                    return Err(self.classify_io_error(frame, &error));
+                }
+            }
+        }
+    }
+
     pub(crate) fn present_overlay(
         &mut self,
         frame: NativeOverlayFrame,
@@ -556,6 +683,12 @@ impl HelperRuntime {
                 "player helper process exited".to_string(),
             ));
         }
+        if let Err(error) = self.drain_pending_overlay() {
+            if !self.is_alive().unwrap_or(false) {
+                return Err(HelperOverlayError::HelperExited(frame, error));
+            }
+            return Err(HelperOverlayError::TimedOut(frame));
+        }
         let Some(overlay_file) = self.overlay_file.as_mut() else {
             return Err(HelperOverlayError::Composition(
                 "Wayland helper does not accept X11 pixel overlays".to_string(),
@@ -569,8 +702,11 @@ impl HelperRuntime {
             return Err(HelperOverlayError::HelperExited(frame, error.to_string()));
         }
 
+        let seq = self.next_overlay_seq;
+        self.next_overlay_seq = self.next_overlay_seq.wrapping_add(1).max(1);
         let cmd = json!({
             "cmd": "overlay",
+            "seq": seq,
             "w": frame.width,
             "h": frame.height,
             "dw": display.0,
@@ -580,29 +716,30 @@ impl HelperRuntime {
         if let Err(error) = writeln!(self.stream, "{cmd}").and_then(|()| self.stream.flush()) {
             return Err(self.classify_io_error(frame, &error));
         }
-        let mut line = String::new();
-        match self.reader.read_line(&mut line) {
-            Ok(0) => Err(HelperOverlayError::HelperExited(
-                frame,
-                "player helper closed control channel".to_string(),
-            )),
-            Ok(_) => {
-                let val: serde_json::Value = serde_json::from_str(line.trim())
-                    .map_err(|error| HelperOverlayError::Composition(error.to_string()))?;
-                if val.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
-                    self.ui_exposes_video = frame.exposes_video();
-                    Ok(frame)
-                } else {
-                    let message = val
-                        .get("error")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("native UI composition failed")
-                        .to_string();
-                    Err(HelperOverlayError::Composition(message))
-                }
-            }
-            Err(error) => Err(self.classify_io_error(frame, &error)),
-        }
+        self.in_flight_seq = Some(seq);
+        self.await_overlay_reply(seq, frame)
+    }
+
+    #[cfg(test)]
+    pub(super) fn new_for_test(
+        child: Child,
+        stream: UnixStream,
+        overlay_file: File,
+    ) -> io::Result<Self> {
+        let reader = BufReader::new(stream.try_clone()?);
+        Ok(Self {
+            child,
+            stdin: None,
+            stream,
+            reader,
+            overlay_file: Some(overlay_file),
+            overlay_path: None,
+            control_path: PathBuf::new(),
+            next_overlay_seq: 1,
+            in_flight_seq: None,
+            pending_reply: String::new(),
+            ui_exposes_video: false,
+        })
     }
 
     fn classify_io_error(
@@ -713,152 +850,4 @@ fn preferred_runtime_dir() -> PathBuf {
         .map(PathBuf::from)
         .filter(|dir| dir.is_dir())
         .unwrap_or_else(std::env::temp_dir)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn helper_restart_budget_caps_restarts_within_window_and_recovers() {
-        let start = Instant::now();
-        let mut budget = HelperRestartBudget::default();
-        for offset in 0..5 {
-            assert!(
-                budget.record_and_allow(start + Duration::from_secs(offset)),
-                "restart #{offset} must be allowed"
-            );
-        }
-        assert!(
-            !budget.record_and_allow(start + Duration::from_secs(10)),
-            "6th restart inside 30s window must trip circuit breaker"
-        );
-        assert!(
-            budget.record_and_allow(start + Duration::from_secs(35)),
-            "window expiry after 30s must allow restarts again"
-        );
-    }
-
-    #[test]
-    fn parse_helper_args_extracts_all_flags_and_rejects_incomplete() {
-        let args = [
-            "mediaflick-desktop",
-            "--player-helper",
-            "--libmpv-path",
-            "/usr/lib/libmpv.so",
-            "--ipc-path",
-            "/tmp/mpv.sock",
-            "--wid",
-            "123456",
-            "--overlay-path",
-            "/tmp/ovr.bgra",
-            "--control-path",
-            "/tmp/ctl.sock",
-            "--parent-pid",
-            "4242",
-            "--fullscreen",
-            "fullscreen",
-            "--profile",
-            "standard",
-        ];
-        let parsed = parse_helper_args(args).expect("valid helper args");
-        assert_eq!(parsed.libmpv_path, PathBuf::from("/usr/lib/libmpv.so"));
-        assert_eq!(parsed.ipc_path, "/tmp/mpv.sock");
-        assert_eq!(parsed.wid, 123_456);
-        assert_eq!(parsed.overlay_path, PathBuf::from("/tmp/ovr.bgra"));
-        assert_eq!(parsed.control_path, PathBuf::from("/tmp/ctl.sock"));
-        assert_eq!(parsed.parent_pid, 4242);
-        assert_eq!(parsed.fullscreen, FullscreenBehavior::Fullscreen);
-        assert_eq!(parsed.profile, LibmpvProfile::Standard);
-
-        let windowed = parse_helper_args([
-            "mediaflick-desktop",
-            "--player-helper",
-            "--libmpv-path",
-            "/usr/lib/libmpv.so",
-            "--ipc-path",
-            "/tmp/mpv.sock",
-            "--wid",
-            "123456",
-            "--overlay-path",
-            "/tmp/ovr.bgra",
-            "--control-path",
-            "/tmp/ctl.sock",
-            "--parent-pid",
-            "4242",
-            "--fullscreen",
-            FullscreenBehavior::Windowed.fullscreen_arg(),
-            "--profile",
-            "standard",
-        ])
-        .expect("windowed fullscreen_arg");
-        assert_eq!(windowed.fullscreen, FullscreenBehavior::Windowed);
-
-        assert!(parse_helper_args(["mediaflick-desktop", "--player-helper"]).is_err());
-        assert!(
-            parse_helper_args([
-                "mediaflick-desktop",
-                "--player-helper",
-                "--libmpv-path",
-                "/x",
-                "--ipc-path",
-                "/y",
-                "--wid",
-                "not-a-number",
-            ])
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn parse_helper_args_handles_wayland_and_x11_backends() {
-        let wayland = parse_helper_args([
-            "mediaflick-desktop",
-            "--player-helper",
-            "--backend",
-            "wayland",
-            "--libmpv-path",
-            "/usr/lib/libmpv.so",
-            "--ipc-path",
-            "/tmp/mpv.sock",
-            "--wid",
-            "0",
-            "--control-path",
-            "/tmp/ctl.sock",
-            "--parent-pid",
-            "4242",
-            "--fullscreen",
-            "no",
-            "--profile",
-            "standard",
-        ])
-        .expect("wayland helper args");
-        assert_eq!(
-            wayland.backend,
-            super::super::wayland::LinuxDisplayBackend::Wayland
-        );
-        assert!(
-            parse_helper_args([
-                "mediaflick-desktop",
-                "--player-helper",
-                "--backend",
-                "invalid",
-                "--libmpv-path",
-                "/x",
-                "--ipc-path",
-                "/y",
-                "--wid",
-                "0",
-                "--control-path",
-                "/c",
-                "--parent-pid",
-                "1",
-                "--fullscreen",
-                "no",
-                "--profile",
-                "standard",
-            ])
-            .is_err()
-        );
-    }
 }

@@ -232,12 +232,9 @@ impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ()> for AppSta
                 let Some(entry) = state.bridge.dmabuf_params.remove(&params.id()) else {
                     return;
                 };
-                let host_params = s.dmabuf.create_params(
-                    &state.host.qh,
-                    DmaBufParamsTag {
-                        client_params: Some(params.downgrade()),
-                    },
-                );
+                let host_params = s
+                    .dmabuf
+                    .create_params(&state.host.qh, DmaBufParamsTag::Video(params.downgrade()));
                 for (fd, plane_idx, offset, stride, mod_hi, mod_lo) in &entry.planes {
                     host_params.add(fd.as_fd(), *plane_idx, *offset, *stride, *mod_hi, *mod_lo);
                 }
@@ -258,12 +255,9 @@ impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ()> for AppSta
                     return;
                 };
                 let client_buf = data_init.init(buffer_id, ());
-                let host_params = s.dmabuf.create_params(
-                    &state.host.qh,
-                    DmaBufParamsTag {
-                        client_params: None,
-                    },
-                );
+                let host_params = s
+                    .dmabuf
+                    .create_params(&state.host.qh, DmaBufParamsTag::VideoImmed);
                 let mut kept_fds = Vec::with_capacity(entry.planes.len());
                 for (fd, plane_idx, offset, stride, mod_hi, mod_lo) in entry.planes {
                     host_params.add(fd.as_fd(), plane_idx, offset, stride, mod_hi, mod_lo);

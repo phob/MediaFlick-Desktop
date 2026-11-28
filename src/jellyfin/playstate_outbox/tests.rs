@@ -244,7 +244,7 @@ proptest! {
                 Op::DeliverSuccess(acc) => {
                     let a = account(acc);
                     if let Some(due) = outbox.next_due_row_for_test(&a, clock).expect("due") {
-                        outbox.record_outcome_for_test(&a, due.id, Ok(()), clock).expect("ok");
+                        outbox.record_outcome_for_test(&a, due.id, due.revision, Ok(()), clock).expect("ok");
                         model.remove(&(acc, due.item_id, due.play_session_id, due.kind.as_str().to_string()));
                     }
                 }
@@ -252,7 +252,7 @@ proptest! {
                     let a = account(acc);
                     if let Some(due) = outbox.next_due_row_for_test(&a, clock).expect("due") {
                         outbox
-                            .record_outcome_for_test(&a, due.id, Err(ApiError::Status { status: 500 }), clock)
+                            .record_outcome_for_test(&a, due.id, due.revision, Err(ApiError::Status { status: 500 }), clock)
                             .expect("err");
                     }
                 }
@@ -260,7 +260,7 @@ proptest! {
                     let a = account(acc);
                     if let Some(due) = outbox.next_due_row_for_test(&a, clock).expect("due") {
                         outbox
-                            .record_outcome_for_test(&a, due.id, Err(ApiError::Status { status: 400 }), clock)
+                            .record_outcome_for_test(&a, due.id, due.revision, Err(ApiError::Status { status: 400 }), clock)
                             .expect("perm");
                         model.remove(&(acc, due.item_id, due.play_session_id, due.kind.as_str().to_string()));
                     }
@@ -669,7 +669,13 @@ fn retry_classification_and_zero_secret_persistence() {
         .expect("some row1");
     assert_eq!(row1.kind, OutboxKind::Stopped);
     outbox
-        .record_outcome_for_test(&acc, row1.id, Err(ApiError::Status { status: 500 }), 1000)
+        .record_outcome_for_test(
+            &acc,
+            row1.id,
+            row1.revision,
+            Err(ApiError::Status { status: 500 }),
+            1000,
+        )
         .expect("500");
     let after_500 = library
         .with_connection(|con| {
@@ -684,7 +690,13 @@ fn retry_classification_and_zero_secret_persistence() {
     assert!(after_500.1 > 1000);
 
     outbox
-        .record_outcome_for_test(&acc, row1.id, Err(ApiError::Unauthorized), 2000)
+        .record_outcome_for_test(
+            &acc,
+            row1.id,
+            row1.revision,
+            Err(ApiError::Unauthorized),
+            2000,
+        )
         .expect("401");
     assert!(outbox.is_account_paused(&acc));
     assert_eq!(row_count(&library), 2);
@@ -705,9 +717,170 @@ fn retry_classification_and_zero_secret_persistence() {
         .record_outcome_for_test(
             &acc,
             due_after_wake.id,
+            due_after_wake.revision,
             Err(ApiError::Status { status: 400 }),
             2001,
         )
         .expect("400");
     assert_eq!(row_count(&library), 1);
+}
+
+#[test]
+fn stale_progress_ack_does_not_delete_or_clobber_newer_queued_progress() {
+    let library = Arc::new(Library::open_in_memory().expect("open"));
+    let session = Arc::new(Session::restore(
+        library.clone(),
+        Arc::new(ShellBridge::default()),
+    ));
+    let outbox = PlaystateOutbox::new_manual(library.clone(), session);
+    let acc = AccountKey::new("srv-cas", "usr-cas").expect("acc");
+
+    outbox.enqueue_progress(
+        &acc,
+        &entry("item-cas", "ps-cas", "DirectPlay", 100_000, false),
+    );
+    let in_flight = outbox
+        .next_due_row_for_test(&acc, 1000)
+        .expect("due")
+        .expect("row");
+    assert_eq!(in_flight.revision, 0);
+
+    outbox.enqueue_progress(
+        &acc,
+        &entry("item-cas", "ps-cas", "DirectPlay", 250_000, false),
+    );
+
+    outbox
+        .record_outcome_for_test(&acc, in_flight.id, in_flight.revision, Ok(()), 1001)
+        .expect("stale ok");
+    outbox
+        .record_outcome_for_test(
+            &acc,
+            in_flight.id,
+            in_flight.revision,
+            Err(ApiError::Status { status: 400 }),
+            1002,
+        )
+        .expect("stale 400");
+    outbox
+        .record_outcome_for_test(
+            &acc,
+            in_flight.id,
+            in_flight.revision,
+            Err(ApiError::Status { status: 500 }),
+            1003,
+        )
+        .expect("stale 500");
+
+    assert_eq!(row_count(&library), 1);
+    let current = outbox
+        .next_due_row_for_test(&acc, 1004)
+        .expect("due")
+        .expect("newer progress survives immediately due");
+    assert_eq!(current.revision, 1);
+    let body: Value = serde_json::from_str(&current.payload_json).expect("json");
+    assert_eq!(body["PositionTicks"], 250_000);
+
+    outbox
+        .record_outcome_for_test(&acc, current.id, current.revision, Ok(()), 1005)
+        .expect("current ack");
+    assert_eq!(row_count(&library), 0);
+}
+
+#[test]
+fn retrying_start_blocks_stopped_and_same_second_transitions_keep_fifo_order() {
+    let library = Arc::new(Library::open_in_memory().expect("open"));
+    let session = Arc::new(Session::restore(
+        library.clone(),
+        Arc::new(ShellBridge::default()),
+    ));
+    let outbox = PlaystateOutbox::new_manual(library.clone(), session);
+    let acc = AccountKey::new("srv-ord", "usr-ord").expect("acc");
+
+    outbox.enqueue_start(&acc, &entry("ep-1", "ps-1", "DirectPlay", 0, false));
+    outbox.enqueue_stopped(&acc, &entry("ep-1", "ps-1", "DirectPlay", 500_000, false));
+    outbox.enqueue_start(&acc, &entry("ep-2", "ps-2", "DirectPlay", 0, false));
+    library
+        .with_connection(|con| {
+            con.execute(
+                "UPDATE playstate_outbox SET created_at = 5000, updated_at = 5000",
+                [],
+            )
+        })
+        .expect("same created_at second");
+
+    let first = outbox
+        .next_due_row_for_test(&acc, 5000)
+        .expect("due")
+        .expect("first");
+    assert_eq!(first.item_id, "ep-1");
+    assert_eq!(first.kind, OutboxKind::Start);
+
+    outbox
+        .record_outcome_for_test(
+            &acc,
+            first.id,
+            first.revision,
+            Err(ApiError::Status { status: 503 }),
+            5000,
+        )
+        .expect("retry start");
+    assert!(
+        outbox
+            .next_due_row_for_test(&acc, 5001)
+            .expect("due")
+            .is_none(),
+        "backing-off start must block ep-1 stopped and ep-2 start"
+    );
+
+    let after_backoff = outbox
+        .next_due_row_for_test(&acc, 5100)
+        .expect("due")
+        .expect("start ready");
+    assert_eq!(after_backoff.item_id, "ep-1");
+    assert_eq!(after_backoff.kind, OutboxKind::Start);
+    outbox
+        .record_outcome_for_test(&acc, after_backoff.id, after_backoff.revision, Ok(()), 5100)
+        .expect("start ack");
+
+    let second = outbox
+        .next_due_row_for_test(&acc, 5100)
+        .expect("due")
+        .expect("ep-1 stopped before ep-2 start even in same created_at second");
+    assert_eq!(second.item_id, "ep-1");
+    assert_eq!(second.kind, OutboxKind::Stopped);
+    outbox
+        .record_outcome_for_test(&acc, second.id, second.revision, Ok(()), 5100)
+        .expect("stopped ack");
+
+    let third = outbox
+        .next_due_row_for_test(&acc, 5100)
+        .expect("due")
+        .expect("ep-2 start");
+    assert_eq!(third.item_id, "ep-2");
+    assert_eq!(third.kind, OutboxKind::Start);
+}
+
+#[test]
+fn empty_play_session_id_does_not_poison_future_plays_of_same_item() {
+    let library = Arc::new(Library::open_in_memory().expect("open"));
+    let session = Arc::new(Session::restore(
+        library.clone(),
+        Arc::new(ShellBridge::default()),
+    ));
+    let outbox = PlaystateOutbox::new_manual(library.clone(), session);
+    let acc = AccountKey::new("srv-empty", "usr-empty").expect("acc");
+
+    outbox.enqueue_stopped(&acc, &entry("item-x", "", "DirectPlay", 10_000, false));
+    let stopped = outbox
+        .next_due_row_for_test(&acc, 1000)
+        .expect("due")
+        .expect("stopped");
+    outbox
+        .record_outcome_for_test(&acc, stopped.id, stopped.revision, Ok(()), 1000)
+        .expect("ack");
+
+    outbox.enqueue_start(&acc, &entry("item-x", "", "DirectPlay", 20_000, false));
+    outbox.enqueue_progress(&acc, &entry("item-x", "", "DirectPlay", 30_000, false));
+    assert_eq!(row_count(&library), 2);
 }

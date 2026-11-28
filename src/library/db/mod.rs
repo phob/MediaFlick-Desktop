@@ -11,6 +11,8 @@ mod set_aside;
 pub use set_aside::{set_aside, set_aside_path};
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod v24_compat_tests;
 
 const MAX_IDLE_CONNECTIONS: usize = 4;
 

@@ -323,7 +323,7 @@ impl JellyfinClient {
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> Result<(), ApiError> {
+    ) -> Result<u16, ApiError> {
         if self.is_cancelled() {
             return Err(ApiError::Cancelled);
         }
@@ -332,14 +332,14 @@ impl JellyfinClient {
             .json(self.playstate_agent.post(url.as_str()))
             .send_json(body)
             .map_err(|error| transport_error(&error))?;
-        core_response(response).map(|_| ())
+        core_response(response).map(|ok| ok.status().as_u16())
     }
 
     pub fn delete_playstate_once(
         &self,
         path: &str,
         query: &[(&str, String)],
-    ) -> Result<(), ApiError> {
+    ) -> Result<u16, ApiError> {
         if self.is_cancelled() {
             return Err(ApiError::Cancelled);
         }
@@ -348,7 +348,7 @@ impl JellyfinClient {
             .json(self.playstate_agent.delete(url.as_str()))
             .call()
             .map_err(|error| transport_error(&error))?;
-        core_response(response).map(|_| ())
+        core_response(response).map(|ok| ok.status().as_u16())
     }
 
     pub fn companion_get_json<T: DeserializeOwned>(

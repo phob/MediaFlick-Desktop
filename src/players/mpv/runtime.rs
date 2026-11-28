@@ -376,7 +376,7 @@ const fn wayland_platform_options() -> &'static [(&'static str, &'static str)] {
         ("vo", "gpu-next"),
         ("gpu-api", "vulkan,opengl"),
         ("gpu-context", "waylandvk,wayland"),
-        ("ao", "pipewire,pulse,alsa"),
+        ("ao", "pulse,alsa"),
         ("target-colorspace-hint", "auto"),
         ("gpu-sw", "yes"),
         ("osd-level", "0"),
@@ -873,5 +873,7 @@ pub(crate) fn take_window_close_request() -> bool {
     WINDOW_CLOSE_REQUESTED.swap(false, std::sync::atomic::Ordering::AcqRel)
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod helper_tests;
 #[cfg(test)]
 mod tests;

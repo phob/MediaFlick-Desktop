@@ -67,7 +67,10 @@ impl PlaybackReporter {
     pub fn report_start(&self, state: &ReportingState) {
         let body = playback_progress_body(&self.session, state);
         if let (Some(outbox), Some(account)) = (&self.session.outbox, &self.session.account) {
-            outbox.enqueue_start(account, &outbox_entry(&self.session, state, false, body));
+            let entry = outbox_entry(&self.session, state, false, body);
+            if outbox.enqueue_start(account, &entry) {
+                self.log_queued_playstate("Sessions/Playing", state, &entry.payload);
+            }
             return;
         }
         self.queue_playstate("Sessions/Playing", body, state);
@@ -76,7 +79,10 @@ impl PlaybackReporter {
     pub fn report_progress(&self, state: &ReportingState) {
         let body = playback_progress_body(&self.session, state);
         if let (Some(outbox), Some(account)) = (&self.session.outbox, &self.session.account) {
-            outbox.enqueue_progress(account, &outbox_entry(&self.session, state, false, body));
+            let entry = outbox_entry(&self.session, state, false, body);
+            if outbox.enqueue_progress(account, &entry) {
+                self.log_queued_playstate("Sessions/Playing/Progress", state, &entry.payload);
+            }
             return;
         }
         self.queue_playstate("Sessions/Playing/Progress", body, state);
@@ -85,13 +91,29 @@ impl PlaybackReporter {
     pub fn report_stopped(&self, state: &ReportingState, failed: bool) {
         let body = playback_stop_body(&self.session, state, failed);
         if let (Some(outbox), Some(account)) = (&self.session.outbox, &self.session.account) {
-            outbox.enqueue_stopped(account, &outbox_entry(&self.session, state, failed, body));
+            let entry = outbox_entry(&self.session, state, failed, body);
+            if outbox.enqueue_stopped(account, &entry) {
+                self.log_queued_playstate("Sessions/Playing/Stopped", state, &entry.payload);
+            }
             return;
         }
         self.queue_playstate("Sessions/Playing/Stopped", body, state);
     }
 
+    fn log_queued_playstate(&self, endpoint: &'static str, state: &ReportingState, body: &Value) {
+        tracing::trace!(
+            target: "jellyfin.playstate",
+            endpoint,
+            item_id = %self.session.item_id,
+            play_session_id = %logger::display_opt(self.session.play_session_id.as_deref()),
+            state = %state,
+            body = %logger::redacted_json(body),
+            "queued Jellyfin playback state"
+        );
+    }
+
     fn queue_playstate(&self, endpoint: &'static str, body: Value, state: &ReportingState) {
+        self.log_queued_playstate(endpoint, state, &body);
         let request = PlaystateRequest {
             endpoint,
             url: urls::join_url(&self.session.base_url, endpoint),
@@ -101,15 +123,6 @@ impl PlaybackReporter {
             body,
             state: *state,
         };
-        tracing::trace!(
-            target: "jellyfin.playstate",
-            endpoint,
-            item_id = %request.item_id,
-            play_session_id = %logger::display_opt(request.play_session_id.as_deref()),
-            state = %state,
-            body = %logger::redacted_json(&request.body),
-            "queued Jellyfin playback state"
-        );
         if playstate_reporter()
             .send(PlaystateMessage::Report(request))
             .is_err()

@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 
-use windows::Win32::Foundation::{HANDLE, HMODULE, HWND};
+use windows::Win32::Foundation::{HANDLE, HMODULE, HWND, S_OK};
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL};
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11CreateDevice,
@@ -20,7 +20,7 @@ use windows::Win32::Graphics::Dxgi::Common::{
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, DXGI_ERROR_DEVICE_REMOVED, DXGI_ERROR_DEVICE_RESET, DXGI_PRESENT,
     DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
-    DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIAdapter, IDXGIDevice,
+    DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIAdapter, IDXGIDevice,
     IDXGIFactory1, IDXGIFactory2, IDXGIKeyedMutex, IDXGISwapChain1, IDXGISwapChain3,
 };
 use windows::core::Interface;
@@ -329,6 +329,24 @@ impl Layer {
         if !self.visible {
             return Ok(false);
         }
+        let _mutex_guard = if let Ok(mutex) = source.cast::<IDXGIKeyedMutex>() {
+            // SAFETY: `mutex` is a live `IDXGIKeyedMutex` COM interface; checking the raw
+            // `HRESULT` prevents `WAIT_TIMEOUT`/`WAIT_ABANDONED` from presenting an unacquired frame.
+            let hr = unsafe { (Interface::vtable(&mutex).AcquireSync)(mutex.as_raw(), 0, 100) };
+            if hr == S_OK {
+                Some(KeyedMutexGuard(mutex))
+            } else {
+                hr.ok()?;
+                tracing::debug!(
+                    target: "cef.osr",
+                    hresult = hr.0,
+                    "skipped shared texture frame because AcquireSync returned non-S_OK"
+                );
+                return Ok(false);
+            }
+        } else {
+            None
+        };
         let rebound = self.ensure_swap_chain(
             gpu,
             SwapChainKey {
@@ -342,18 +360,9 @@ impl Layer {
         };
         // SAFETY: COM call on an owned swap chain; buffer 0 always exists.
         let back_buffer = unsafe { swap_chain.GetBuffer::<ID3D11Texture2D>(0)? };
-        if let Ok(mutex) = source.cast::<IDXGIKeyedMutex>() {
-            // SAFETY: `source` implements `IDXGIKeyedMutex`.
-            unsafe { mutex.AcquireSync(0, 100)? };
-            let _mutex_guard = KeyedMutexGuard(mutex);
-            // SAFETY: both textures belong to `gpu.device`, and the swap chain was
-            // sized and formatted from `source_desc`, so the copy matches.
-            unsafe { gpu.context.CopyResource(&back_buffer, source) };
-        } else {
-            // SAFETY: both textures belong to `gpu.device`, and the swap chain was
-            // sized and formatted from `source_desc`, so the copy matches.
-            unsafe { gpu.context.CopyResource(&back_buffer, source) };
-        }
+        // SAFETY: both textures belong to `gpu.device`, any keyed mutex is acquired with `S_OK`,
+        // and the swap chain was sized and formatted from `source_desc`, so the copy matches.
+        unsafe { gpu.context.CopyResource(&back_buffer, source) };
         // SAFETY: swap chain is owned and ready for non-blocking present.
         unsafe { swap_chain.Present(0, DXGI_PRESENT(0)).ok()? };
         Ok(rebound)
@@ -453,7 +462,7 @@ impl Layer {
             BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
             BufferCount: 2,
             Scaling: DXGI_SCALING_STRETCH,
-            SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
+            SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
             AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
             ..DXGI_SWAP_CHAIN_DESC1::default()
         };

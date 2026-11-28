@@ -417,7 +417,6 @@ fn prepare_direct_play_resolves_saved_and_language_preferences_in_one_playback_i
     let mut opts = options();
     opts.viewing.audio_languages = vec!["en".into()];
     let prepared = super::prepare(
-        &fixture.services.session,
         &scope,
         &fixture.services.library,
         Some(&saved),
@@ -480,7 +479,6 @@ fn prepare_transcode_requeries_playback_info_once_when_saved_preference_changes_
         }),
     };
     let prepared = super::prepare(
-        &fixture.services.session,
         &scope,
         &fixture.services.library,
         Some(&saved),

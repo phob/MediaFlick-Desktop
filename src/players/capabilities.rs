@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,10 +14,23 @@ pub struct HostCapabilities {
     pub passthrough_codecs: Vec<String>,
 }
 
+static WARMED: AtomicBool = AtomicBool::new(false);
+
 impl HostCapabilities {
     pub fn detect() -> &'static Self {
         static DETECTED: OnceLock<HostCapabilities> = OnceLock::new();
         DETECTED.get_or_init(probe_host_capabilities)
+    }
+
+    pub fn warm_up() {
+        if WARMED
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            crate::app::threads::spawn_named("host-capabilities-probe", || {
+                let _ = Self::detect();
+            });
+        }
     }
 
     #[cfg(test)]

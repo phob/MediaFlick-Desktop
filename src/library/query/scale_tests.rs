@@ -540,3 +540,74 @@ fn bench_100k_catalog_under_concurrent_wal() {
         failures
     );
 }
+
+#[test]
+fn single_pass_empty_pages_preserve_non_zero_total_across_all_modes() {
+    let library = Library::open_in_memory().expect("open");
+    let live = crate::jellyfin::session::Live::for_test();
+
+    let items = vec![
+        dto(r#"{"Id":"m1","Type":"Movie","Name":"Alpha Matrix","Genres":["Sci-Fi"]}"#),
+        dto(r#"{"Id":"m2","Type":"Movie","Name":"Beta Matrix","Genres":["Sci-Fi"]}"#),
+        dto(r#"{"Id":"s1","Type":"Series","Name":"Gamma Matrix","Genres":["Drama"]}"#),
+        dto(
+            r#"{"Id":"e1","Type":"Episode","SeriesId":"s1","Name":"Pilot","DateCreated":"2026-01-02T00:00:00Z"}"#,
+        ),
+    ];
+    library.ingest_page(&live, &items).expect("ingest");
+    library
+        .apply_user_data(
+            &live,
+            &[ep_user_data("e1", false, 100, Some("2026-02-01T00:00:00Z"))],
+        )
+        .expect("user data");
+
+    let cases = [
+        ItemQuery {
+            search: Some("matrix".to_string()),
+            kinds: KindFilter::from_kinds(vec![CatalogKind::Movie, CatalogKind::Series]),
+            offset: 50,
+            limit: 10,
+            ..ItemQuery::default()
+        },
+        ItemQuery {
+            search: Some("matrix".to_string()),
+            kinds: KindFilter::one(TitleKind::Movie),
+            genre: Some("Sci-Fi".to_string()),
+            offset: 50,
+            limit: 10,
+            ..ItemQuery::default()
+        },
+        ItemQuery {
+            kinds: KindFilter::one(TitleKind::Movie),
+            sort: ItemSort::Random { seed: 7 },
+            offset: 50,
+            limit: 10,
+            ..ItemQuery::default()
+        },
+        ItemQuery {
+            kinds: KindFilter::one(TitleKind::Series),
+            sort: ItemSort::EpisodeAdded,
+            offset: 50,
+            limit: 10,
+            ..ItemQuery::default()
+        },
+        ItemQuery {
+            kinds: KindFilter::one(TitleKind::Series),
+            sort: ItemSort::DatePlayed,
+            offset: 50,
+            limit: 10,
+            ..ItemQuery::default()
+        },
+    ];
+    let expected_totals = [3, 2, 2, 1, 1];
+
+    for (query, expected_total) in cases.iter().zip(expected_totals) {
+        let page = library.query(query).expect("query past end");
+        assert!(page.items.is_empty(), "expected empty page for {query:?}");
+        assert_eq!(
+            page.total, expected_total,
+            "single-pass empty page lost total for {query:?}"
+        );
+    }
+}

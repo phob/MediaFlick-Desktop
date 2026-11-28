@@ -11,7 +11,7 @@ and FFmpeg 8.0.1 revisions as Windows. The Linux profile keeps:
   backends and its glslang shader compiler.
 - Native Wayland (`waylandvk` / `waylandegl`, DMA-BUF, `vaapi-wayland`), X11/EGL rendering (including XWayland), VA-API for AMD/Intel and NVDEC with
   CUDA interoperability for NVIDIA decoding, and
-  PipeWire/PulseAudio/ALSA audio output. Hardware decoding requires a compatible GPU, codec, and host driver;
+  PulseAudio/ALSA audio output (PipeWire desktops route through `pipewire-pulse` so `libpipewire-0.3.so.0` is never required on older or non-PipeWire hosts). Hardware decoding requires a compatible GPU, codec, and host driver;
   software decoding remains available.
 
 It disables DVD, Blu-ray, CD audio, Lua, JavaScript, VapourSynth/SVP,
@@ -46,7 +46,7 @@ sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.
 sudo apt-get update
 sudo apt-get install -y build-essential git meson ninja-build nasm pkg-config \
   python3 python3-jinja2 patchelf zstd libass-dev liblcms2-dev libdav1d-dev \
-  libgnutls28-dev zlib1g-dev libasound2-dev libpulse-dev libpipewire-0.3-dev libegl1-mesa-dev \
+  libgnutls28-dev zlib1g-dev libasound2-dev libpulse-dev libegl1-mesa-dev \
   libgl-dev libva-dev libdrm-dev libx11-dev libxext-dev libxpresent-dev libxrandr-dev libxss-dev \
   libwayland-dev wayland-protocols libxkbcommon-dev \
   libvulkan-dev glslang-dev spirv-tools libffmpeg-nvenc-dev

@@ -86,8 +86,60 @@ fn platform_backend() -> Box<dyn InhibitBackend> {
 }
 
 #[cfg(target_os = "linux")]
-#[derive(Default)]
 struct LinuxInhibitor {
+    tx: std::sync::mpsc::Sender<Option<InhibitLevel>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(target_os = "linux")]
+impl Default for LinuxInhibitor {
+    fn default() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let thread = std::thread::Builder::new()
+            .name("os-sleep-inhibit".to_string())
+            .spawn(move || run_linux_inhibit_worker(&rx))
+            .ok();
+        Self { tx, thread }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl InhibitBackend for LinuxInhibitor {
+    fn apply(&mut self, level: InhibitLevel) {
+        let _ = self.tx.send(Some(level));
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for LinuxInhibitor {
+    fn drop(&mut self) {
+        let _ = self.tx.send(None);
+        if let Some(handle) = self.thread.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_linux_inhibit_worker(rx: &std::sync::mpsc::Receiver<Option<InhibitLevel>>) {
+    let mut worker = LinuxInhibitorWorker::default();
+    while let Ok(first) = rx.recv() {
+        let mut target = first;
+        while let Ok(newer) = rx.try_recv() {
+            target = newer;
+        }
+        let Some(level) = target else {
+            worker.release();
+            return;
+        };
+        worker.apply(level);
+    }
+    worker.release();
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct LinuxInhibitorWorker {
     system: Option<zbus::blocking::Connection>,
     session: Option<zbus::blocking::Connection>,
     logind_fd: Option<zbus::zvariant::OwnedFd>,
@@ -95,7 +147,7 @@ struct LinuxInhibitor {
 }
 
 #[cfg(target_os = "linux")]
-impl LinuxInhibitor {
+impl LinuxInhibitorWorker {
     fn release(&mut self) {
         self.logind_fd = None;
         if let (Some(cookie), Some(session)) =
@@ -124,10 +176,7 @@ impl LinuxInhibitor {
         }
         self.session.as_ref()
     }
-}
 
-#[cfg(target_os = "linux")]
-impl InhibitBackend for LinuxInhibitor {
     fn apply(&mut self, level: InhibitLevel) {
         self.release();
         let (what, reason, inhibit_screen) = match level {
@@ -180,6 +229,7 @@ struct WindowsInhibitor {
 #[cfg(target_os = "windows")]
 impl WindowsInhibitor {
     fn ensure_request(&mut self) -> Option<windows_sys::Win32::Foundation::HANDLE> {
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
         use windows_sys::Win32::System::Power::PowerCreateRequest;
         use windows_sys::Win32::System::Threading::{
             POWER_REQUEST_CONTEXT_SIMPLE_STRING, REASON_CONTEXT, REASON_CONTEXT_0,
@@ -198,7 +248,7 @@ impl WindowsInhibitor {
         };
         // SAFETY: `context` points to a valid null-terminated UTF-16 string for the duration of `PowerCreateRequest`.
         let handle = unsafe { PowerCreateRequest(&context) };
-        if handle.is_null() {
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
             return None;
         }
         self.handle = handle as usize;

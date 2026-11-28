@@ -22,6 +22,19 @@ pub(super) fn query_and_count_single_pass(
 ) -> rusqlite::Result<ItemPage> {
     let limit = query.limit.clamp(1, 500);
     let offset = query.offset.max(0);
+    let mut page = query_single_pass_inner(connection, query, limit, offset)?;
+    if page.items.is_empty() && offset > 0 {
+        page.total = super::count_items(connection, query)?;
+    }
+    Ok(page)
+}
+
+fn query_single_pass_inner(
+    connection: &Connection,
+    query: &ItemQuery,
+    limit: i64,
+    offset: i64,
+) -> rusqlite::Result<ItemPage> {
     if let Some(search) = query.search.as_deref().and_then(fts_match_expression)
         && let Some(result) =
             try_unfiltered_fts_page_with_count(connection, query, &search, limit, offset)?

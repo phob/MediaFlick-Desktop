@@ -241,6 +241,7 @@ pub fn open(
     if restored {
         warm_restored_session(session.clone(), companion.clone());
     }
+    crate::players::capabilities::HostCapabilities::warm_up();
     let playstate_outbox =
         crate::jellyfin::playstate_outbox::PlaystateOutbox::new(library.clone(), session.clone());
     if restored && let Some(account) = session.account_key() {

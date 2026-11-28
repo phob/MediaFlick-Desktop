@@ -61,7 +61,6 @@ class BundleTests(unittest.TestCase):
             "libcuda.so.1",
             "libnvcuvid.so.1",
             "libwayland-client.so.0",
-            "libpipewire-0.3.so.0",
             "libxkbcommon.so.0",
         ):
             with self.subTest(interface=interface):

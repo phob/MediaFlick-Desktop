@@ -171,9 +171,7 @@ newer with client API major 2, gpu-next, and X11 Vulkan/EGL backends (the runtim
 SONAME is `libmpv.so.2`), plus working X11 and Vulkan or EGL/OpenGL drivers, using
 your distribution's package manager. MediaFlick
 loads it dynamically, so headers and link-time libmpv configuration are not required. Built-in player
-is the Linux default; without a usable libmpv, select External mpv in Settings → Player. Wayland sessions need XWayland and a
-valid `DISPLAY`; [ADR 0002](docs/adr/0002-native-video-composition.md) explains
-why.
+is the Linux default; without a usable libmpv, select External mpv in Settings → Player. Wayland sessions compose natively via `waylandvk`/`waylandegl` ([ADR 0018](docs/adr/0018-native-wayland-zero-copy-composition.md)) and fall back to X11/XWayland ([ADR 0002](docs/adr/0002-native-video-composition.md)) when required Wayland protocols are absent or `MEDIAFLICK_FORCE_X11=1` is set.
 
 An opt-in runtime test can load a local video through libmpv and its IPC server:
 

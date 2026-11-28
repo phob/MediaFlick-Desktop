@@ -5,6 +5,7 @@ use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use wayland_client::{Connection, Dispatch, QueueHandle, protocol::wl_registry};
 
@@ -17,6 +18,7 @@ mod client;
 mod client_boot;
 mod client_ext;
 mod keyboard;
+mod shm;
 
 const POLLIN_EVENT: i16 = 0x0001;
 const POLLERR_EVENT: i16 = 0x0008;
@@ -150,6 +152,22 @@ pub struct WaylandDmaBufPlane {
     pub stride: u32,
 }
 
+#[derive(Debug)]
+pub struct WaylandSlotLease(Arc<AtomicBool>);
+
+impl WaylandSlotLease {
+    pub fn acquire(flag: &Arc<AtomicBool>) -> Self {
+        flag.store(true, Ordering::Release);
+        Self(Arc::clone(flag))
+    }
+}
+
+impl Drop for WaylandSlotLease {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WaylandSurfaceRole {
     View,
@@ -164,6 +182,7 @@ pub enum WaylandFramePayload {
         fourcc: u32,
         modifier: u64,
         planes: Vec<WaylandDmaBufPlane>,
+        lease: WaylandSlotLease,
     },
     Shm {
         width: u16,
@@ -245,6 +264,7 @@ pub enum WaylandUiEvent {
         pressed: bool,
         repeated: bool,
     },
+    DmaBufRejected,
     CloseRequested,
 }
 
@@ -357,7 +377,7 @@ impl WaylandHost {
                     &ready_tx,
                 );
             })?;
-        match ready_rx.recv() {
+        match ready_rx.recv_timeout(Duration::from_secs(10)) {
             Ok(Ok(())) => Ok(Self {
                 ctl_tx,
                 wake_tx,
@@ -370,7 +390,17 @@ impl WaylandHost {
                 let _ = thread.join();
                 Err(error)
             }
-            Err(_) => {
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                closing.store(true, Ordering::Release);
+                let (ack_tx, _) = mpsc::channel();
+                let _ = ctl_tx.send(HostControlCommand::Shutdown(ack_tx));
+                wake_host(&wake_tx);
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "wayland host startup timed out after 10s",
+                ))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
                 let _ = thread.join();
                 Err(io::Error::other(
                     "wayland host thread exited during startup",
@@ -393,11 +423,12 @@ impl WaylandHost {
             .send(HostControlCommand::CreateHelperSocket(tx))
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "wayland host stopped"))?;
         wake_host(&self.wake_tx);
-        rx.recv().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "wayland host dropped helper socket request",
-            )
+        rx.recv_timeout(Duration::from_secs(5)).map_err(|err| {
+            let kind = match err {
+                mpsc::RecvTimeoutError::Timeout => io::ErrorKind::TimedOut,
+                mpsc::RecvTimeoutError::Disconnected => io::ErrorKind::BrokenPipe,
+            };
+            io::Error::new(kind, "wayland host failed helper socket request")
         })?
     }
 
@@ -487,5 +518,14 @@ mod tests {
         assert!(!p.ready());
         p.dmabuf = true;
         assert!(p.ready());
+    }
+
+    #[test]
+    fn wayland_slot_lease_tracks_in_flight_lifetime_until_drop() {
+        let in_use = Arc::new(AtomicBool::new(false));
+        let lease = WaylandSlotLease::acquire(&in_use);
+        assert!(in_use.load(Ordering::Acquire));
+        drop(lease);
+        assert!(!in_use.load(Ordering::Acquire));
     }
 }

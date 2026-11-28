@@ -14,7 +14,7 @@ use crate::preferences::StreamingQuality;
 use super::api::items::{self, PlaybackInfoRequest};
 use super::api::model::{MediaSourceInfo, MediaStream, PlaybackInfoResponse};
 use super::api::{ApiError, JellyfinClient};
-use super::session::{Session, SessionScope};
+use super::session::SessionScope;
 
 #[derive(Debug, Clone, Default)]
 pub struct PlayOptions {
@@ -68,7 +68,6 @@ pub fn start(
     options.viewing = services.accounts.viewing(scope.account());
     options.audio_passthrough = settings.audio_passthrough;
     let prepared = prepare(
-        &services.session,
         scope,
         &services.library,
         services
@@ -135,7 +134,6 @@ impl PlaybackOwner for AccountOwner {
 }
 
 pub fn prepare(
-    session: &Session,
     scope: &SessionScope,
     library: &Library,
     saved_preference: Option<&crate::library::ItemPlaybackPreference>,
@@ -159,7 +157,6 @@ pub fn prepare(
         audio_stream_index: options.audio_stream_index,
         subtitle_stream_index: options.subtitle_stream_index,
     };
-    let _ = session;
     let mut info = items::playback_info_with_profile(
         client,
         user_id,

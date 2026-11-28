@@ -801,8 +801,8 @@ pub fn playback_info_with_profile(
     request: &PlaybackInfoRequest,
     audio_passthrough: bool,
 ) -> Result<PlaybackInfoResponse, ApiError> {
-    let profile = if audio_passthrough {
-        device_profile_for(quality, HostCapabilities::detect(), true)
+    let profile = if quality.allows_transcoding() {
+        device_profile_for(quality, HostCapabilities::detect(), audio_passthrough)
     } else {
         device_profile(quality)
     };

@@ -714,7 +714,7 @@ pub(super) fn page_query_plan(query: &ItemQuery) -> QueryPlan {
     }
 }
 
-fn count_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<i64> {
+pub(super) fn count_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<i64> {
     let plan = QueryPlan {
         user_data: query.watched.is_some() || query.favorite.is_some(),
         series_aggregates: matches!(query.watched, Some(WatchFilter::InProgress)),

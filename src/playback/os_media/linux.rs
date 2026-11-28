@@ -248,7 +248,7 @@ impl Interface for MprisPlayer {
         msg: &'call Message,
         name: MemberName<'call>,
     ) -> DispatchResult2<'call> {
-        dispatch_player_call(&self.handler, connection, msg, name.as_str())
+        dispatch_player_call(&self.shared, &self.handler, connection, msg, name.as_str())
     }
 
     fn call_mut<'call>(
@@ -266,7 +266,20 @@ impl Interface for MprisPlayer {
     }
 }
 
+fn track_matches_current(
+    shared: &Arc<Mutex<SharedPlayerState>>,
+    track_id: &ObjectPath<'_>,
+) -> bool {
+    let guard = shared.lock().unwrap_or_else(PoisonError::into_inner);
+    guard
+        .media
+        .metadata
+        .as_ref()
+        .is_some_and(|meta| safe_track_path(&meta.item_id).as_ref() == *track_id)
+}
+
 fn dispatch_player_call<'call>(
+    shared: &Arc<Mutex<SharedPlayerState>>,
     handler: &ActionHandler,
     connection: &'call zbus::Connection,
     msg: &'call Message,
@@ -288,6 +301,7 @@ fn dispatch_player_call<'call>(
             Ok::<(), fdo::Error>(())
         });
     }
+    let shared = Arc::clone(shared);
     match name {
         "Seek" => DispatchResult2::new_async(connection, msg, async move {
             let offset_us: i64 = msg
@@ -298,11 +312,11 @@ fn dispatch_player_call<'call>(
             Ok::<(), fdo::Error>(())
         }),
         "SetPosition" => DispatchResult2::new_async(connection, msg, async move {
-            let (_track_id, pos_us): (OwnedObjectPath, i64) = msg
+            let (track_id, pos_us): (OwnedObjectPath, i64) = msg
                 .body()
                 .deserialize()
                 .map_err(|err| fdo::Error::InvalidArgs(err.to_string()))?;
-            if pos_us >= 0 {
+            if pos_us >= 0 && track_matches_current(&shared, &track_id) {
                 handler(OsMediaAction::SetPositionMs((pos_us as f64) / 1000.0));
             }
             Ok::<(), fdo::Error>(())
@@ -648,3 +662,45 @@ const PLAYER_INTROSPECT: &str = r#"<interface name="org.mpris.MediaPlayer2.Playe
   <property name="CanSeek" type="b" access="read"/>
   <property name="CanControl" type="b" access="read"/>
 </interface>"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track_state(item_id: Option<&str>) -> Arc<Mutex<SharedPlayerState>> {
+        let state = SharedPlayerState {
+            media: OsMediaState {
+                status: OsPlaybackStatus::Playing,
+                position_us: 0,
+                duration_us: 1000,
+                volume: 1.0,
+                can_seek: true,
+                metadata: item_id.map(|id| OsMediaMetadata {
+                    item_id: id.to_string(),
+                    title: "Title".to_string(),
+                    artist: None,
+                    album: None,
+                    duration_us: 1000,
+                    artwork_path: None,
+                    is_video: true,
+                    can_go_next: false,
+                    can_go_previous: false,
+                }),
+            },
+            updated_at: Instant::now(),
+        };
+        Arc::new(Mutex::new(state))
+    }
+
+    #[test]
+    fn set_position_track_check_accepts_current_track_and_rejects_stale_track() {
+        let shared = track_state(Some("ep-current-2"));
+        let current = safe_track_path("ep-current-2");
+        let stale = safe_track_path("ep-previous-1");
+        assert!(track_matches_current(&shared, &current.as_ref()));
+        assert!(!track_matches_current(&shared, &stale.as_ref()));
+
+        let empty = track_state(None);
+        assert!(!track_matches_current(&empty, &current.as_ref()));
+    }
+}

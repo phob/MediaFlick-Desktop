@@ -629,3 +629,52 @@ it("replacement StateChanged followed by Stopped for the previous playbackId kee
   expect(client.getQueryData<PlayerState>(queryKeys.playerState)?.active).toBe(true)
   unsubscribe()
 })
+
+it("formats HDR sig-peak relative to 203 nits and vsync-jitter as percentage in diagnostics", async () => {
+  const playerState: PlayerState = playerSnapshot({
+    active: true,
+    playbackId: 77,
+    positionMs: 12_000,
+    durationMs: 120_000,
+    diagnostics: {
+      bufferedUntilMs: null,
+      buffering: false,
+      currentVo: "gpu-next",
+      gpuContext: "waylandvk",
+      hwdecCurrent: "vaapi",
+      hwdecInterop: "vaapi-vk",
+      videoWidth: 3840,
+      videoHeight: 2160,
+      videoPixelFormat: "p010",
+      videoColormatrix: "bt.2020-ncl",
+      videoPrimaries: "bt.2020",
+      videoGamma: "pq",
+      videoSigPeak: 4.926108,
+      audioChannels: "5.1",
+      audioSampleRate: 48_000,
+      audioFormat: "floatp",
+      frameRate: 23.976,
+      droppedFrames: 0,
+      decoderDroppedFrames: 0,
+      mistimedFrames: 0,
+      avsyncMs: 0.4,
+      vsyncJitter: 0.0125,
+    },
+  })
+  const client = testQueryClient()
+  client.setQueryData(queryKeys.settings, { client: { player: { playerBackend: "libmpv", comfort: DEFAULT_COMFORT } } })
+  client.setQueryData(queryKeys.playerState, playerState)
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <PlayerBar />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  )
+
+  fireEvent.pointerDown(screen.getByRole("button", { name: "Playback settings" }))
+  await waitFor(() => {
+    expect(screen.getByText(/1000 nits/)).toBeTruthy()
+    expect(screen.getByText(/jitter 1\.25%/)).toBeTruthy()
+  })
+})

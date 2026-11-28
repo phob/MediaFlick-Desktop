@@ -1,11 +1,11 @@
 use std::collections::HashMap;
-use std::ffi::CString;
 use std::io;
-use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use wayland_client::backend::ObjectId;
 use wayland_client::protocol::{
     wl_buffer, wl_callback, wl_compositor, wl_output, wl_registry, wl_seat, wl_shm, wl_shm_pool,
     wl_subcompositor, wl_subsurface, wl_surface,
@@ -16,7 +16,6 @@ use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1, zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1,
 };
-use wayland_protocols::wp::single_pixel_buffer::v1::client::wp_single_pixel_buffer_manager_v1;
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
@@ -25,27 +24,13 @@ use wayland_server::Resource as _;
 use super::bridge::{BridgeState, HelperDisconnect};
 use super::client_boot::{ExtensionManagers, HostGlobals, apply_output_event, bind_global};
 use super::keyboard::WaylandKeymap;
-use super::{WaylandModifiers, WaylandUiEvent, WaylandUiHandle};
+use super::shm::create_black_background_buffer;
+use super::{
+    WaylandModifiers, WaylandSlotLease, WaylandSurfaceRole, WaylandUiEvent, WaylandUiHandle,
+};
 
 const MIN_WINDOW_WIDTH: i32 = 320;
 const MIN_WINDOW_HEIGHT: i32 = 240;
-const MFD_CLOEXEC: u32 = 1;
-const PROT_READ_WRITE: i32 = 3;
-const MAP_SHARED_FLAG: i32 = 1;
-
-unsafe extern "C" {
-    fn memfd_create(name: *const i8, flags: u32) -> i32;
-    fn ftruncate(fd: i32, length: i64) -> i32;
-    fn mmap(
-        addr: *mut std::ffi::c_void,
-        length: usize,
-        prot: i32,
-        flags: i32,
-        fd: i32,
-        offset: i64,
-    ) -> *mut std::ffi::c_void;
-    fn munmap(addr: *mut std::ffi::c_void, length: usize) -> i32;
-}
 
 pub(super) struct AppState {
     pub host: HostState,
@@ -75,17 +60,30 @@ pub(super) enum DmabufFeedbackTag {
     Default,
 }
 
-pub(super) struct DmaBufParamsTag {
-    pub client_params: Option<
+pub(super) enum DmaBufParamsTag {
+    Video(
         wayland_server::Weak<
             wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
         >,
-    >,
+    ),
+    VideoImmed,
+    Ui(u64),
+}
+
+pub(super) struct PendingUiDmaBuf {
+    pub role: WaylandSurfaceRole,
+    pub logical_w: u16,
+    pub logical_h: u16,
+    pub x: i32,
+    pub y: i32,
+    pub _fds: Vec<OwnedFd>,
+    pub _lease: WaylandSlotLease,
 }
 
 pub(super) struct UiBufferCleanup {
     pub pool: Option<wl_shm_pool::WlShmPool>,
     pub _fds: Vec<OwnedFd>,
+    pub _lease: Option<WaylandSlotLease>,
 }
 
 #[derive(Clone, Default)]
@@ -202,6 +200,10 @@ pub(super) struct HostState {
     pub cr_coeffs_ranges: Vec<(u32, u32)>,
     pub cr_done: bool,
     pub ui_buffers: HashMap<u64, UiBufferCleanup>,
+    pub pending_ui_dmabufs: HashMap<u64, PendingUiDmaBuf>,
+    pub ui_dmabuf_buffers: HashMap<ObjectId, UiBufferCleanup>,
+    pub last_ui_commit_seq: u64,
+    pub dmabuf_rejected: bool,
     pub next_ui_buffer_id: u64,
     pub logical_w: u16,
     pub logical_h: u16,
@@ -379,6 +381,10 @@ pub(super) fn connect_host(
         cr_coeffs_ranges: Vec::new(),
         cr_done: false,
         ui_buffers: HashMap::new(),
+        pending_ui_dmabufs: HashMap::new(),
+        ui_dmabuf_buffers: HashMap::new(),
+        last_ui_commit_seq: 0,
+        dmabuf_rejected: false,
         next_ui_buffer_id: 1,
         logical_w: 1280,
         logical_h: 720,
@@ -432,74 +438,6 @@ pub(super) fn connect_host(
         .roundtrip(&mut app)
         .map_err(|err| io::Error::other(err.to_string()))?;
     Ok((queue, app))
-}
-
-fn create_black_background_buffer(
-    spb: Option<&wp_single_pixel_buffer_manager_v1::WpSinglePixelBufferManagerV1>,
-    shm: Option<&wl_shm::WlShm>,
-    qh: &QueueHandle<AppState>,
-) -> (Option<wl_buffer::WlBuffer>, Option<wl_shm_pool::WlShmPool>) {
-    if let Some(mgr) = spb {
-        return (
-            Some(mgr.create_u32_rgba_buffer(0, 0, 0, u32::MAX, qh, HostBufferTag::Static)),
-            None,
-        );
-    }
-    if let Some(shm) = shm
-        && let Ok((fd, _)) = create_shm_memfd(&[0, 0, 0, 255])
-    {
-        let pool = shm.create_pool(fd.as_fd(), 4, qh, ());
-        let buf = pool.create_buffer(
-            0,
-            1,
-            1,
-            4,
-            wl_shm::Format::Xrgb8888,
-            qh,
-            HostBufferTag::Static,
-        );
-        return (Some(buf), Some(pool));
-    }
-    (None, None)
-}
-
-pub(super) fn create_shm_memfd(bytes: &[u8]) -> io::Result<(OwnedFd, usize)> {
-    let size = bytes.len().max(4);
-    let name =
-        CString::new("mediaflick-wl-shm").map_err(|err| io::Error::other(err.to_string()))?;
-    // SAFETY: `name` is a valid NUL-terminated string.
-    let raw = unsafe { memfd_create(name.as_ptr(), MFD_CLOEXEC) };
-    if raw < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: `raw` is a newly created file descriptor owned by this scope.
-    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
-    // SAFETY: `fd` is valid and opened for writing.
-    if unsafe { ftruncate(fd.as_raw_fd(), i64::try_from(size).unwrap_or(i64::MAX)) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: Mapping `size` bytes from the newly sized `memfd`.
-    let ptr = unsafe {
-        mmap(
-            std::ptr::null_mut(),
-            size,
-            PROT_READ_WRITE,
-            MAP_SHARED_FLAG,
-            fd.as_raw_fd(),
-            0,
-        )
-    };
-    if ptr == std::ptr::dangling_mut::<std::ffi::c_void>()
-        || ptr == usize::MAX as *mut std::ffi::c_void
-    {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: `ptr` points to a writable region of `size >= bytes.len()` bytes.
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len());
-        munmap(ptr, size);
-    }
-    Ok((fd, size))
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
@@ -665,7 +603,10 @@ impl Dispatch<wl_buffer::WlBuffer, HostBufferTag> for AppState {
                 }
             }
             HostBufferTag::Video => {
-                if let Some(entry) = state.bridge.video_buffers.get(&buf.id())
+                if let Some(cleanup) = state.host.ui_dmabuf_buffers.remove(&buf.id()) {
+                    buf.destroy();
+                    drop(cleanup);
+                } else if let Some(entry) = state.bridge.video_buffers.get(&buf.id())
                     && let Ok(cbuf) = entry.client_buffer.upgrade()
                 {
                     cbuf.release();
@@ -916,49 +857,57 @@ impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, DmaBufParamsTa
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let Some(weak_cparams) = tag.client_params.as_ref() else {
-            params.destroy();
-            return;
-        };
-        let Ok(cparams) = weak_cparams.upgrade() else {
-            params.destroy();
-            return;
-        };
-        match event {
-            zwp_linux_buffer_params_v1::Event::Created { buffer } => {
-                if let Some(dh) = state.bridge.dhandle.as_ref()
-                    && let Ok(client) = dh.get_client(cparams.id())
-                    && let Ok(cbuf) = client.create_resource::<
-                        wayland_server::protocol::wl_buffer::WlBuffer,
-                        (),
-                        AppState,
-                    >(dh, 1, ())
-                {
-                    let hid = buffer.id();
-                    state
-                        .bridge
-                        .buffer_id_by_client
-                        .insert(cbuf.id(), hid.clone());
-                    state.bridge.video_buffers.insert(
-                        hid,
-                        super::bridge::VideoBufferEntry {
-                            host_buffer: buffer,
-                            client_buffer: cbuf.downgrade(),
-                            _fds: Vec::new(),
-                        },
-                    );
-                    cparams.created(&cbuf);
-                } else {
-                    buffer.destroy();
-                    cparams.failed();
+        match tag {
+            DmaBufParamsTag::VideoImmed => {
+                params.destroy();
+            }
+            DmaBufParamsTag::Ui(req_id) => {
+                state
+                    .host
+                    .handle_ui_dmabuf_params_event(*req_id, params, event);
+            }
+            DmaBufParamsTag::Video(weak_cparams) => {
+                let Ok(cparams) = weak_cparams.upgrade() else {
+                    params.destroy();
+                    return;
+                };
+                match event {
+                    zwp_linux_buffer_params_v1::Event::Created { buffer } => {
+                        if let Some(dh) = state.bridge.dhandle.as_ref()
+                            && let Ok(client) = dh.get_client(cparams.id())
+                            && let Ok(cbuf) = client.create_resource::<
+                                wayland_server::protocol::wl_buffer::WlBuffer,
+                                (),
+                                AppState,
+                            >(dh, 1, ())
+                        {
+                            let hid = buffer.id();
+                            state
+                                .bridge
+                                .buffer_id_by_client
+                                .insert(cbuf.id(), hid.clone());
+                            state.bridge.video_buffers.insert(
+                                hid,
+                                super::bridge::VideoBufferEntry {
+                                    host_buffer: buffer,
+                                    client_buffer: cbuf.downgrade(),
+                                    _fds: Vec::new(),
+                                },
+                            );
+                            cparams.created(&cbuf);
+                        } else {
+                            buffer.destroy();
+                            cparams.failed();
+                        }
+                        params.destroy();
+                    }
+                    zwp_linux_buffer_params_v1::Event::Failed => {
+                        cparams.failed();
+                        params.destroy();
+                    }
+                    _ => {}
                 }
-                params.destroy();
             }
-            zwp_linux_buffer_params_v1::Event::Failed => {
-                cparams.failed();
-                params.destroy();
-            }
-            _ => {}
         }
     }
 }

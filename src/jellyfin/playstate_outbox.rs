@@ -47,6 +47,15 @@ impl OutboxKind {
         }
     }
 
+    pub fn endpoint(self) -> &'static str {
+        match self {
+            Self::Start => "Sessions/Playing",
+            Self::Progress => "Sessions/Playing/Progress",
+            Self::Stopped => "Sessions/Playing/Stopped",
+            Self::StopEncoding => "Videos/ActiveEncodings",
+        }
+    }
+
     fn from_str(raw: &str) -> Option<Self> {
         match raw {
             "start" => Some(Self::Start),
@@ -61,6 +70,7 @@ impl OutboxKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OutboxRow {
     pub(crate) id: i64,
+    pub(crate) revision: i64,
     pub(crate) item_id: String,
     pub(crate) play_session_id: String,
     pub(crate) kind: OutboxKind,
@@ -122,73 +132,85 @@ impl PlaystateOutbox {
         outbox
     }
 
-    pub fn enqueue_start(&self, account: &AccountKey, entry: &OutboxEntry) {
-        if self.is_session_stopped(account, &entry.item_id, &entry.play_session_id) {
-            return;
+    pub fn enqueue_start(&self, account: &AccountKey, entry: &OutboxEntry) -> bool {
+        if !entry.play_session_id.is_empty()
+            && self.is_session_stopped(account, &entry.item_id, &entry.play_session_id)
+        {
+            return false;
         }
         let now = now_unix_secs();
         let payload = entry.payload.to_string();
         let result = self.library.with_connection(|connection| {
-            let stopped_exists: bool = connection.query_row(
-                "SELECT EXISTS(
-                     SELECT 1 FROM playstate_outbox
-                     WHERE server_id = ?1 AND user_id = ?2 AND item_id = ?3
-                       AND play_session_id = ?4 AND kind = 'stopped'
-                 )",
-                params![
-                    account.server_id(),
-                    account.user_id(),
-                    entry.item_id,
-                    entry.play_session_id
-                ],
-                |row| row.get(0),
-            )?;
-            if stopped_exists {
-                return Ok(false);
+            if !entry.play_session_id.is_empty() {
+                let stopped_exists: bool = connection.query_row(
+                    "SELECT EXISTS(
+                         SELECT 1 FROM playstate_outbox
+                         WHERE server_id = ?1 AND user_id = ?2 AND item_id = ?3
+                           AND play_session_id = ?4 AND kind = 'stopped'
+                     )",
+                    params![
+                        account.server_id(),
+                        account.user_id(),
+                        entry.item_id,
+                        entry.play_session_id
+                    ],
+                    |row| row.get(0),
+                )?;
+                if stopped_exists {
+                    return Ok(false);
+                }
             }
             upsert_outbox_row(connection, account, entry, OutboxKind::Start, &payload, now)?;
             Ok(true)
         });
         match result {
-            Ok(true) => self.bump_and_notify(),
-            Ok(false) => {}
+            Ok(true) => {
+                self.bump_and_notify();
+                true
+            }
+            Ok(false) => false,
             Err(error) => {
                 tracing::warn!(target: "jellyfin.playstate", "failed to persist start in outbox: {error}");
+                false
             }
         }
     }
 
-    pub fn enqueue_progress(&self, account: &AccountKey, entry: &OutboxEntry) {
-        if self.is_session_stopped(account, &entry.item_id, &entry.play_session_id) {
-            return;
+    pub fn enqueue_progress(&self, account: &AccountKey, entry: &OutboxEntry) -> bool {
+        if !entry.play_session_id.is_empty()
+            && self.is_session_stopped(account, &entry.item_id, &entry.play_session_id)
+        {
+            return false;
         }
         let now = now_unix_secs();
         let payload = entry.payload.to_string();
         let result = self.library.with_connection(|connection| {
-            let stopped_exists: bool = connection.query_row(
-                "SELECT EXISTS(
-                     SELECT 1 FROM playstate_outbox
-                     WHERE server_id = ?1 AND user_id = ?2 AND item_id = ?3
-                       AND play_session_id = ?4 AND kind = 'stopped'
-                 )",
-                params![
-                    account.server_id(),
-                    account.user_id(),
-                    entry.item_id,
-                    entry.play_session_id
-                ],
-                |row| row.get(0),
-            )?;
-            if stopped_exists {
-                return Ok(false);
+            if !entry.play_session_id.is_empty() {
+                let stopped_exists: bool = connection.query_row(
+                    "SELECT EXISTS(
+                         SELECT 1 FROM playstate_outbox
+                         WHERE server_id = ?1 AND user_id = ?2 AND item_id = ?3
+                           AND play_session_id = ?4 AND kind = 'stopped'
+                     )",
+                    params![
+                        account.server_id(),
+                        account.user_id(),
+                        entry.item_id,
+                        entry.play_session_id
+                    ],
+                    |row| row.get(0),
+                )?;
+                if stopped_exists {
+                    return Ok(false);
+                }
             }
             connection.execute(
                 "INSERT INTO playstate_outbox (
                      server_id, user_id, item_id, play_session_id, kind,
                      position_ticks, is_paused, failed, play_method, device_id,
-                     payload_json, attempts, next_retry_at, created_at, updated_at
+                     payload_json, attempts, next_retry_at, revision, created_at, updated_at
                  )
-                 VALUES (?1, ?2, ?3, ?4, 'progress', ?5, ?6, ?7, ?8, ?9, ?10, 0, 0, ?11, ?11)
+                 VALUES (?1, ?2, ?3, ?4, 'progress', ?5, ?6, ?7, ?8, ?9, ?10, 0, 0, 0, ?11, ?11)
                  ON CONFLICT (server_id, user_id, item_id, play_session_id, kind) DO UPDATE SET
                      position_ticks = excluded.position_ticks,
                      is_paused = excluded.is_paused,
@@ -196,6 +218,9 @@ impl PlaystateOutbox {
                      play_method = excluded.play_method,
                      device_id = excluded.device_id,
                      payload_json = excluded.payload_json,
+                     attempts = 0,
+                     next_retry_at = 0,
+                     revision = playstate_outbox.revision + 1,
                      updated_at = excluded.updated_at",
                 params![
                     account.server_id(),
@@ -214,16 +239,22 @@ impl PlaystateOutbox {
             Ok(true)
         });
         match result {
-            Ok(true) => self.bump_and_notify(),
-            Ok(false) => {}
+            Ok(true) => {
+                self.bump_and_notify();
+                true
+            }
+            Ok(false) => false,
             Err(error) => {
                 tracing::warn!(target: "jellyfin.playstate", "failed to persist progress in outbox: {error}");
+                false
             }
         }
     }
 
-    pub fn enqueue_stopped(&self, account: &AccountKey, entry: &OutboxEntry) {
-        self.mark_session_stopped(account, &entry.item_id, &entry.play_session_id);
+    pub fn enqueue_stopped(&self, account: &AccountKey, entry: &OutboxEntry) -> bool {
+        if !entry.play_session_id.is_empty() {
+            self.mark_session_stopped(account, &entry.item_id, &entry.play_session_id);
+        }
         let now = now_unix_secs();
         let payload = entry.payload.to_string();
         let result = self.library.with_transaction(|tx| {
@@ -265,9 +296,13 @@ impl PlaystateOutbox {
             Ok(())
         });
         match result {
-            Ok(()) => self.bump_and_notify(),
+            Ok(()) => {
+                self.bump_and_notify();
+                true
+            }
             Err(error) => {
                 tracing::warn!(target: "jellyfin.playstate", "failed to persist stop in outbox: {error}");
+                false
             }
         }
     }
@@ -290,13 +325,14 @@ impl PlaystateOutbox {
 
     pub fn flush_active(&self, timeout: Duration) -> bool {
         if !self.has_worker {
-            return self.active_pending_count() == 0;
+            return self.active_pending_count().is_ok_and(|count| count == 0);
         }
         let deadline = Instant::now() + timeout;
         let target_seq = {
             let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             if state.stopped {
-                return false;
+                drop(state);
+                return self.active_pending_count().is_ok_and(|count| count == 0);
             }
             state.wake_seq = state.wake_seq.saturating_add(1);
             state.wake_seq
@@ -311,7 +347,7 @@ impl PlaystateOutbox {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 drop(state);
-                return self.active_pending_count() == 0;
+                return self.active_pending_count().is_ok_and(|count| count == 0);
             }
             let (next_state, wait_result) = self
                 .cvar
@@ -320,11 +356,11 @@ impl PlaystateOutbox {
             state = next_state;
             if wait_result.timed_out() && state.idle_seq < target_seq {
                 drop(state);
-                return self.active_pending_count() == 0;
+                return self.active_pending_count().is_ok_and(|count| count == 0);
             }
         }
         drop(state);
-        self.active_pending_count() == 0
+        self.active_pending_count().is_ok_and(|count| count == 0)
     }
 
     pub fn delete_account(&self, account: &AccountKey) -> rusqlite::Result<()> {
@@ -399,19 +435,17 @@ impl PlaystateOutbox {
         }
     }
 
-    fn active_pending_count(&self) -> i64 {
+    fn active_pending_count(&self) -> rusqlite::Result<i64> {
         let Some(account) = self.session.account_key() else {
-            return 0;
+            return Ok(0);
         };
-        self.library
-            .with_connection(|connection| {
-                connection.query_row(
-                    "SELECT count(*) FROM playstate_outbox WHERE server_id = ?1 AND user_id = ?2",
-                    params![account.server_id(), account.user_id()],
-                    |row| row.get(0),
-                )
-            })
-            .unwrap_or(0)
+        self.library.with_connection(|connection| {
+            connection.query_row(
+                "SELECT count(*) FROM playstate_outbox WHERE server_id = ?1 AND user_id = ?2",
+                params![account.server_id(), account.user_id()],
+                |row| row.get(0),
+            )
+        })
     }
 
     fn next_due_row(&self, account: &AccountKey, now: i64) -> rusqlite::Result<Option<OutboxRow>> {
@@ -423,41 +457,55 @@ impl PlaystateOutbox {
             return Ok(None);
         }
         self.library.with_connection(|connection| {
-            connection
+            let next = connection
                 .query_row(
-                    "SELECT id, item_id, play_session_id, kind, device_id, payload_json
-                     FROM playstate_outbox
-                     WHERE server_id = ?1 AND user_id = ?2 AND next_retry_at <= ?3
-                     ORDER BY created_at ASC,
-                         CASE kind
-                             WHEN 'start' THEN 0
-                             WHEN 'progress' THEN 1
-                             WHEN 'stopped' THEN 2
-                             ELSE 3
-                         END ASC,
-                         id ASC
+                    "SELECT o.id, o.revision, o.item_id, o.play_session_id, o.kind,
+                            o.device_id, o.payload_json, o.next_retry_at
+                     FROM playstate_outbox o
+                     WHERE o.server_id = ?1 AND o.user_id = ?2
+                     ORDER BY (
+                         SELECT min(s.id)
+                         FROM playstate_outbox s
+                         WHERE s.server_id = o.server_id
+                           AND s.user_id = o.user_id
+                           AND s.item_id = o.item_id
+                           AND s.play_session_id = o.play_session_id
+                     ) ASC,
+                     CASE o.kind
+                         WHEN 'start' THEN 0
+                         WHEN 'progress' THEN 1
+                         WHEN 'stopped' THEN 2
+                         ELSE 3
+                     END ASC,
+                     o.id ASC
                      LIMIT 1",
-                    params![account.server_id(), account.user_id(), now],
+                    params![account.server_id(), account.user_id()],
                     |row| {
-                        let kind_str: String = row.get(3)?;
+                        let kind_str: String = row.get(4)?;
                         let kind = OutboxKind::from_str(&kind_str).ok_or_else(|| {
                             rusqlite::Error::FromSqlConversionFailure(
-                                3,
+                                4,
                                 rusqlite::types::Type::Text,
                                 "invalid outbox kind".into(),
                             )
                         })?;
-                        Ok(OutboxRow {
-                            id: row.get(0)?,
-                            item_id: row.get(1)?,
-                            play_session_id: row.get(2)?,
-                            kind,
-                            device_id: row.get(4)?,
-                            payload_json: row.get(5)?,
-                        })
+                        let retry_at: i64 = row.get(7)?;
+                        Ok((
+                            OutboxRow {
+                                id: row.get(0)?,
+                                revision: row.get(1)?,
+                                item_id: row.get(2)?,
+                                play_session_id: row.get(3)?,
+                                kind,
+                                device_id: row.get(5)?,
+                                payload_json: row.get(6)?,
+                            },
+                            retry_at,
+                        ))
                     },
                 )
-                .optional()
+                .optional()?;
+            Ok(next.and_then(|(row, retry_at)| (retry_at <= now).then_some(row)))
         })
     }
 
@@ -465,14 +513,15 @@ impl PlaystateOutbox {
         &self,
         account: &AccountKey,
         row_id: i64,
+        row_revision: i64,
         outcome: Result<(), ApiError>,
         now: i64,
     ) -> rusqlite::Result<()> {
         match outcome {
             Ok(()) => self.library.with_connection(|connection| {
                 connection.execute(
-                    "DELETE FROM playstate_outbox WHERE id = ?1",
-                    params![row_id],
+                    "DELETE FROM playstate_outbox WHERE id = ?1 AND revision = ?2",
+                    params![row_id, row_revision],
                 )?;
                 Ok(())
             }),
@@ -489,8 +538,8 @@ impl PlaystateOutbox {
             {
                 self.library.with_connection(|connection| {
                     connection.execute(
-                        "DELETE FROM playstate_outbox WHERE id = ?1",
-                        params![row_id],
+                        "DELETE FROM playstate_outbox WHERE id = ?1 AND revision = ?2",
+                        params![row_id, row_revision],
                     )?;
                     Ok(())
                 })
@@ -502,8 +551,8 @@ impl PlaystateOutbox {
                 self.library.with_connection(|connection| {
                     let attempts: Option<i64> = connection
                         .query_row(
-                            "SELECT attempts FROM playstate_outbox WHERE id = ?1",
-                            params![row_id],
+                            "SELECT attempts FROM playstate_outbox WHERE id = ?1 AND revision = ?2",
+                            params![row_id, row_revision],
                             |row| row.get(0),
                         )
                         .optional()?;
@@ -514,9 +563,9 @@ impl PlaystateOutbox {
                     let delay = retry_after.map_or(exp_backoff, |secs| secs.max(exp_backoff));
                     connection.execute(
                         "UPDATE playstate_outbox
-                         SET attempts = ?2, next_retry_at = ?3, updated_at = ?4
-                         WHERE id = ?1",
-                        params![row_id, attempts + 1, now + delay, now],
+                         SET attempts = ?3, next_retry_at = ?4, updated_at = ?5
+                         WHERE id = ?1 AND revision = ?2",
+                        params![row_id, row_revision, attempts + 1, now + delay, now],
                     )?;
                     Ok(())
                 })
@@ -556,10 +605,11 @@ impl PlaystateOutbox {
         &self,
         account: &AccountKey,
         row_id: i64,
+        row_revision: i64,
         outcome: Result<(), ApiError>,
         now: i64,
     ) -> rusqlite::Result<()> {
-        self.record_outcome(account, row_id, outcome, now)
+        self.record_outcome(account, row_id, row_revision, outcome, now)
     }
 }
 
@@ -602,9 +652,9 @@ fn upsert_outbox_row(
         "INSERT INTO playstate_outbox (
              server_id, user_id, item_id, play_session_id, kind,
              position_ticks, is_paused, failed, play_method, device_id,
-             payload_json, attempts, next_retry_at, created_at, updated_at
+             payload_json, attempts, next_retry_at, revision, created_at, updated_at
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, 0, ?12, ?12)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, 0, 0, ?12, ?12)
          ON CONFLICT (server_id, user_id, item_id, play_session_id, kind) DO UPDATE SET
              position_ticks = excluded.position_ticks,
              is_paused = excluded.is_paused,
@@ -614,6 +664,7 @@ fn upsert_outbox_row(
              payload_json = excluded.payload_json,
              attempts = 0,
              next_retry_at = 0,
+             revision = playstate_outbox.revision + 1,
              updated_at = excluded.updated_at",
         params![
             account.server_id(),
@@ -677,9 +728,42 @@ fn drain_cycle(outbox: &PlaystateOutbox) -> u64 {
         let Ok(Some(row)) = outbox.next_due_row(scope.account(), now) else {
             break;
         };
-        let outcome = deliver_row(&scope, &row);
-        if let Err(error) = outbox.record_outcome(scope.account(), row.id, outcome, now_unix_secs())
-        {
+        let endpoint = row.kind.endpoint();
+        tracing::trace!(
+            target: "jellyfin.playstate",
+            endpoint,
+            item_id = %row.item_id,
+            play_session_id = %row.play_session_id,
+            "sending queued Jellyfin playback state"
+        );
+        let outcome = match deliver_row(&scope, &row) {
+            Ok(status) => {
+                tracing::trace!(
+                    target: "jellyfin.playstate",
+                    endpoint,
+                    item_id = %row.item_id,
+                    status,
+                    "sent Jellyfin playback state"
+                );
+                Ok(())
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "jellyfin.playstate",
+                    endpoint,
+                    item_id = %row.item_id,
+                    "failed to report Jellyfin playback state: {error}"
+                );
+                Err(error)
+            }
+        };
+        if let Err(error) = outbox.record_outcome(
+            scope.account(),
+            row.id,
+            row.revision,
+            outcome,
+            now_unix_secs(),
+        ) {
             tracing::warn!(target: "jellyfin.playstate", "failed to update playstate outbox row: {error}");
             break;
         }
@@ -694,7 +778,7 @@ fn drain_cycle(outbox: &PlaystateOutbox) -> u64 {
     cycle_seq
 }
 
-fn deliver_row(scope: &super::session::SessionScope, row: &OutboxRow) -> Result<(), ApiError> {
+fn deliver_row(scope: &super::session::SessionScope, row: &OutboxRow) -> Result<u16, ApiError> {
     let payload: Value = serde_json::from_str(&row.payload_json)
         .map_err(|error| ApiError::Decode(error.to_string()))?;
     match row.kind {

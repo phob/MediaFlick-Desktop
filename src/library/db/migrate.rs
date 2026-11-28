@@ -63,13 +63,19 @@ pub(super) fn migrate_with(
             development::recreate(transaction, version)
         }
     })
-    .map_err(|error| OpenError::Migration {
-        from: version,
-        step: version..target,
-        error,
-    })?;
+    .map_err(|error| migration_error(version, version..target, error))?;
     tracing::debug!(target: "library.db", version = target, "library schema ready");
     Ok(())
+}
+
+fn migration_error(from: i32, step: std::ops::Range<i32>, error: rusqlite::Error) -> OpenError {
+    if matches!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+    ) {
+        return OpenError::Sqlite(error);
+    }
+    OpenError::Migration { from, step, error }
 }
 
 fn upgrade(
@@ -91,11 +97,7 @@ fn upgrade(
         running = from..to;
         Ok(())
     })
-    .map_err(|error| OpenError::Migration {
-        from,
-        step: running,
-        error,
-    })?;
+    .map_err(|error| migration_error(from, running, error))?;
     tracing::info!(target: "library.db", from, to, "library schema migrated {from} → {to}");
     Ok(())
 }

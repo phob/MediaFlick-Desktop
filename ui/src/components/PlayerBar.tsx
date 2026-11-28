@@ -596,7 +596,9 @@ function ActivePlayerBar({
                     : null,
                   player.diagnostics.videoPixelFormat,
                   [player.diagnostics.videoPrimaries, player.diagnostics.videoGamma].filter(Boolean).join("/"),
-                  player.diagnostics.videoSigPeak != null ? `${Math.round(player.diagnostics.videoSigPeak)} nits` : null,
+                  player.diagnostics.videoSigPeak != null && player.diagnostics.videoSigPeak > 0
+                    ? `${Math.round(player.diagnostics.videoSigPeak * 203)} nits`
+                    : null,
                 ]
                   .filter(Boolean)
                   .join(" · ")}
@@ -640,7 +642,7 @@ function ActivePlayerBar({
                     : `A/V ${player.diagnostics.avsyncMs.toFixed(1)} ms`,
                   player.diagnostics.vsyncJitter == null
                     ? null
-                    : `jitter ${(player.diagnostics.vsyncJitter * 1000).toFixed(2)} ms`,
+                    : `jitter ${(player.diagnostics.vsyncJitter * 100).toFixed(2)}%`,
                 ]
                   .filter(Boolean)
                   .join(" · ")}

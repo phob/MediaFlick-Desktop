@@ -1,5 +1,4 @@
 use std::cell::{Cell, RefCell};
-use std::os::fd::BorrowedFd;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,12 +8,13 @@ use cef::*;
 
 use crate::playback::{NowPlaying, PlaybackCoordinator, PlayerCommand};
 use crate::players::mpv::{
-    WaylandDmaBufPlane, WaylandFramePayload, WaylandModifiers, WaylandSurfaceRole,
-    WaylandUiCommand, WaylandUiEvent, WaylandUiHandle, drm_fourcc_for_cef_color, physical_extent,
+    WaylandFramePayload, WaylandModifiers, WaylandSurfaceRole, WaylandUiCommand, WaylandUiEvent,
+    WaylandUiHandle, drm_fourcc_for_cef_color, physical_extent,
 };
 use crate::preferences::{AppSettings, WebUiWindowSettings};
 use crate::shell::cef::{BrowserState, request_main_window_close};
 
+use super::dmabuf_copier::{DmaBufCopier, SourcePlane};
 use super::input;
 
 const CLICK_WINDOW: Duration = Duration::from_millis(500);
@@ -49,6 +49,8 @@ pub(super) struct WaylandSurface {
     last_click: Cell<(u32, Instant, i32, i32, i32)>,
     dmabuf_logged: Cell<bool>,
     shm_logged: Cell<bool>,
+    dmabuf_rejected: Cell<bool>,
+    dmabuf_copier: RefCell<Option<DmaBufCopier>>,
     wake_queued: Arc<AtomicBool>,
 }
 
@@ -77,6 +79,8 @@ impl WaylandSurface {
             last_click: Cell::new((0, Instant::now(), 0, 0, 0)),
             dmabuf_logged: Cell::new(false),
             shm_logged: Cell::new(false),
+            dmabuf_rejected: Cell::new(false),
+            dmabuf_copier: RefCell::new(None),
             wake_queued: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -110,7 +114,19 @@ impl WaylandSurface {
     }
 
     pub(super) fn create_browser(self: &Rc<Self>, client: &mut Client) -> Option<Browser> {
-        let browser = super::create_windowless_browser(client, 0, true)?;
+        let copier = match DmaBufCopier::new() {
+            Ok(copier) => Some(copier),
+            Err(err) => {
+                tracing::warn!(
+                    target: "cef.osr",
+                    error = %err,
+                    "Wayland GBM DMA-BUF copier unavailable; falling back to CEF wl_shm painting"
+                );
+                None
+            }
+        };
+        let browser = super::create_windowless_browser(client, 0, copier.is_some())?;
+        *self.dmabuf_copier.borrow_mut() = copier;
         *self.browser.borrow_mut() = Some(browser.clone());
         WAYLAND_SURFACE.with(|slot| *slot.borrow_mut() = Rc::downgrade(self));
         self.drain_events();
@@ -244,6 +260,18 @@ impl WaylandSurface {
             ),
             WaylandUiEvent::KeyboardFocus(focused) => host.set_focus(i32::from(focused)),
             WaylandUiEvent::Key { .. } => self.handle_key(&host, event),
+            WaylandUiEvent::DmaBufRejected => {
+                if !self.dmabuf_rejected.replace(true) {
+                    tracing::warn!(
+                        target: "cef.osr",
+                        "Wayland compositor rejected UI DMA-BUF import; switching overlay to wl_shm fallback"
+                    );
+                    host.invalidate(PaintElementType::VIEW);
+                    if self.popup_visible.get() {
+                        host.invalidate(PaintElementType::POPUP);
+                    }
+                }
+            }
             WaylandUiEvent::CloseRequested => self.request_close(),
         }
     }
@@ -395,13 +423,8 @@ impl WaylandSurface {
             if p.fd < 0 || p.stride == 0 {
                 return;
             }
-            // SAFETY: CEF guarantees `p.fd` is a valid DMA-BUF descriptor during `on_accelerated_paint`.
-            let borrowed = unsafe { BorrowedFd::borrow_raw(p.fd) };
-            let Ok(owned) = borrowed.try_clone_to_owned() else {
-                return;
-            };
-            planes.push(WaylandDmaBufPlane {
-                fd: owned,
+            planes.push(SourcePlane {
+                fd: p.fd,
                 offset: u32::try_from(p.offset).unwrap_or(0),
                 stride: p.stride,
             });
@@ -423,6 +446,10 @@ impl WaylandSurface {
             );
         }
         let fourcc = drm_fourcc_for_cef_color(info.format == ColorType::RGBA_8888);
+        let Some(payload) = self.copy_accelerated_payload(w, h, fourcc, info.modifier, &planes)
+        else {
+            return;
+        };
         let (role, logical_width, logical_height, x, y) = self.target_surface_geometry(kind, w, h);
         if let Some(ui) = self.ui.borrow().as_ref() {
             ui.send(WaylandUiCommand::Present {
@@ -431,14 +458,58 @@ impl WaylandSurface {
                 logical_height,
                 x,
                 y,
-                payload: WaylandFramePayload::DmaBuf {
-                    width: w,
-                    height: h,
-                    fourcc,
-                    modifier: info.modifier,
-                    planes,
-                },
+                payload,
             });
+        }
+    }
+
+    fn copy_accelerated_payload(
+        &self,
+        width: u16,
+        height: u16,
+        fourcc: u32,
+        modifier: u64,
+        planes: &[SourcePlane],
+    ) -> Option<WaylandFramePayload> {
+        let Ok(mut copier_guard) = self.dmabuf_copier.try_borrow_mut() else {
+            return None;
+        };
+        let copier = copier_guard.as_mut()?;
+        if !self.dmabuf_rejected.get() {
+            match copier.copy_dmabuf(width, height, fourcc, modifier, planes) {
+                Ok(copied) => {
+                    return Some(WaylandFramePayload::DmaBuf {
+                        width: copied.width,
+                        height: copied.height,
+                        fourcc: copied.fourcc,
+                        modifier: copied.modifier,
+                        planes: copied.planes,
+                        lease: copied.lease,
+                    });
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        target: "cef.osr",
+                        error = %err,
+                        "failed to copy CEF DMA-BUF into GBM slot; trying wl_shm fallback"
+                    );
+                }
+            }
+        }
+        match copier.copy_to_shm(width, height, fourcc, modifier, planes) {
+            Ok(pixels) => Some(WaylandFramePayload::Shm {
+                width,
+                height,
+                pixels,
+            }),
+            Err(err) => {
+                tracing::warn!(
+                    target: "cef.osr",
+                    error = %err,
+                    "failed to copy accelerated CEF frame into wl_shm buffer"
+                );
+                None
+            }
         }
     }
 

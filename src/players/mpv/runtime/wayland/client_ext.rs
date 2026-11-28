@@ -1,11 +1,10 @@
 use std::os::fd::AsFd;
-use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use wayland_client::Proxy as _;
 use wayland_client::protocol::{
-    wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_seat, wl_shm, wl_shm_pool,
-    wl_subcompositor, wl_subsurface, wl_touch,
+    wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_seat, wl_shm_pool, wl_subcompositor,
+    wl_subsurface, wl_touch,
 };
 use wayland_client::{Connection, Dispatch, QueueHandle, WEnum, delegate_noop};
 use wayland_protocols::wp::color_management::v1::client::{
@@ -25,7 +24,6 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
 };
 use wayland_protocols::wp::fifo::v1::client::{wp_fifo_manager_v1, wp_fifo_v1};
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1;
-use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_buffer_params_v1;
 use wayland_protocols::wp::linux_drm_syncobj::v1::client::{
     wp_linux_drm_syncobj_manager_v1, wp_linux_drm_syncobj_surface_v1,
     wp_linux_drm_syncobj_timeline_v1,
@@ -38,11 +36,8 @@ use wayland_protocols::xdg::shell::client::xdg_toplevel;
 
 use crate::preferences::FullscreenBehavior;
 
-use super::client::{
-    AppState, DmaBufParamsTag, HeldKey, HostBufferTag, HostState, HostSurfaceTag, PopupSurface,
-    UiBufferCleanup, create_shm_memfd,
-};
-use super::{WaylandFramePayload, WaylandSurfaceRole, WaylandUiCommand, WaylandUiEvent};
+use super::client::{AppState, HeldKey, HostState, HostSurfaceTag, PopupSurface};
+use super::{WaylandUiCommand, WaylandUiEvent};
 
 const BTN_LEFT: u32 = 0x110;
 const RESIZE_BORDER_PX: i32 = 6;
@@ -132,133 +127,6 @@ impl HostState {
         }
     }
 
-    pub fn present_ui(
-        &mut self,
-        role: WaylandSurfaceRole,
-        logical_w: u16,
-        logical_h: u16,
-        x: i32,
-        y: i32,
-        payload: WaylandFramePayload,
-    ) {
-        let Some(buffer) = self.import_ui_buffer(payload) else {
-            return;
-        };
-        let (target_w, target_h) = (i32::from(logical_w.max(1)), i32::from(logical_h.max(1)));
-        match role {
-            WaylandSurfaceRole::View => {
-                let Some(s) = self.surfaces.as_ref() else {
-                    return;
-                };
-                s.ui_viewport.set_destination(target_w, target_h);
-                s.ui_surface.attach(Some(&buffer), 0, 0);
-                s.ui_surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
-                s.ui_surface.commit();
-                self.ui_frame_committed.store(true, Ordering::Release);
-            }
-            WaylandSurfaceRole::Popup => {
-                let Some(popup) = self.ensure_popup_surface() else {
-                    return;
-                };
-                popup.x = x;
-                popup.y = y;
-                popup.subsurface.set_position(x, y);
-                if let Some(vp) = popup.viewport.as_ref() {
-                    vp.set_destination(target_w, target_h);
-                }
-                popup.surface.attach(Some(&buffer), 0, 0);
-                popup.surface.damage_buffer(0, 0, i32::MAX, i32::MAX);
-                popup.surface.commit();
-            }
-        }
-    }
-
-    fn import_ui_buffer(&mut self, payload: WaylandFramePayload) -> Option<wl_buffer::WlBuffer> {
-        let buf_id = self.next_ui_buffer_id;
-        self.next_ui_buffer_id = self.next_ui_buffer_id.saturating_add(1);
-        let s = self.surfaces.as_ref()?;
-        match payload {
-            WaylandFramePayload::DmaBuf {
-                width,
-                height,
-                fourcc,
-                modifier,
-                planes,
-            } => {
-                if s.dmabuf_version < 2 || planes.is_empty() {
-                    return None;
-                }
-                let params = s.dmabuf.create_params(
-                    &self.qh,
-                    DmaBufParamsTag {
-                        client_params: None,
-                    },
-                );
-                let mod_hi = (modifier >> 32) as u32;
-                let mod_lo = modifier as u32;
-                let mut kept_fds = Vec::with_capacity(planes.len());
-                for (idx, plane) in planes.into_iter().enumerate() {
-                    params.add(
-                        plane.fd.as_fd(),
-                        u32::try_from(idx).unwrap_or(0),
-                        plane.offset,
-                        plane.stride,
-                        mod_hi,
-                        mod_lo,
-                    );
-                    kept_fds.push(plane.fd);
-                }
-                let buffer = params.create_immed(
-                    i32::from(width),
-                    i32::from(height),
-                    fourcc,
-                    zwp_linux_buffer_params_v1::Flags::empty(),
-                    &self.qh,
-                    HostBufferTag::Ui(buf_id),
-                );
-                params.destroy();
-                self.ui_buffers.insert(
-                    buf_id,
-                    UiBufferCleanup {
-                        pool: None,
-                        _fds: kept_fds,
-                    },
-                );
-                Some(buffer)
-            }
-            WaylandFramePayload::Shm {
-                width,
-                height,
-                pixels,
-            } => {
-                let shm = s.shm.as_ref()?;
-                let Ok((fd, size)) = create_shm_memfd(&pixels) else {
-                    return None;
-                };
-                let size_i32 = i32::try_from(size).ok()?;
-                let pool = shm.create_pool(fd.as_fd(), size_i32, &self.qh, ());
-                let stride = i32::from(width).saturating_mul(4);
-                let buffer = pool.create_buffer(
-                    0,
-                    i32::from(width),
-                    i32::from(height),
-                    stride,
-                    wl_shm::Format::Argb8888,
-                    &self.qh,
-                    HostBufferTag::Ui(buf_id),
-                );
-                self.ui_buffers.insert(
-                    buf_id,
-                    UiBufferCleanup {
-                        pool: Some(pool),
-                        _fds: vec![fd],
-                    },
-                );
-                Some(buffer)
-            }
-        }
-    }
-
     pub fn hide_popup(&mut self) {
         if let Some(popup) = self.popup.as_ref() {
             popup.surface.attach(None, 0, 0);
@@ -266,7 +134,7 @@ impl HostState {
         }
     }
 
-    fn ensure_popup_surface(&mut self) -> Option<&mut PopupSurface> {
+    pub(super) fn ensure_popup_surface(&mut self) -> Option<&mut PopupSurface> {
         if self.popup.is_none() {
             let s = self.surfaces.as_ref()?;
             let surface = s.compositor.create_surface(&self.qh, HostSurfaceTag::Popup);

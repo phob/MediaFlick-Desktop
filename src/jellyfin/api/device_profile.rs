@@ -6,11 +6,10 @@ use crate::preferences::StreamingQuality;
 
 const UNLIMITED_BITRATE: u64 = 1_000_000_000;
 
-const DIRECT_PLAY_VIDEO_CODECS: &str = "h264,hevc,av1,vp9,vp8,mpeg2video,mpeg4,vc1";
-const DIRECT_PLAY_AUDIO_CODECS: &str =
-    "aac,ac3,eac3,dts,truehd,flac,opus,vorbis,mp3,alac,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le";
-
 pub fn device_profile(quality: StreamingQuality) -> Value {
+    if !quality.allows_transcoding() {
+        return build_device_profile(quality, None, false);
+    }
     device_profile_for(quality, HostCapabilities::detect(), false)
 }
 
@@ -19,26 +18,31 @@ pub fn device_profile_for(
     caps: &HostCapabilities,
     audio_passthrough: bool,
 ) -> Value {
+    build_device_profile(quality, Some(caps), audio_passthrough)
+}
+
+fn build_device_profile(
+    quality: StreamingQuality,
+    caps: Option<&HostCapabilities>,
+    audio_passthrough: bool,
+) -> Value {
     let max_bitrate = quality.max_streaming_bitrate().unwrap_or(UNLIMITED_BITRATE);
+    let transcoding = match caps {
+        Some(caps) => transcoding_profiles(quality, caps, audio_passthrough),
+        None => json!([]),
+    };
     json!({
         "Name": build_info::APP_NAME,
         "MaxStreamingBitrate": max_bitrate,
         "MaxStaticBitrate": max_bitrate,
         "MusicStreamingTranscodingBitrate": 1_280_000,
         "DirectPlayProfiles": [
-            {
-                "Type": "Video",
-                "VideoCodec": DIRECT_PLAY_VIDEO_CODECS,
-                "AudioCodec": DIRECT_PLAY_AUDIO_CODECS,
-            },
-            {
-                "Type": "Audio",
-                "AudioCodec": DIRECT_PLAY_AUDIO_CODECS,
-            },
+            { "Type": "Video" },
+            { "Type": "Audio" },
         ],
-        "TranscodingProfiles": transcoding_profiles(quality, caps, audio_passthrough),
+        "TranscodingProfiles": transcoding,
         "ContainerProfiles": [],
-        "CodecProfiles": codec_profiles(caps),
+        "CodecProfiles": [],
         "SubtitleProfiles": subtitle_profiles(),
     })
 }
@@ -56,49 +60,6 @@ fn transcode_video_codecs(caps: &HostCapabilities) -> String {
         }
     }
     codecs.join(",")
-}
-
-fn codec_profiles(caps: &HostCapabilities) -> Value {
-    let hevc_profiles = if caps.supports_10bit_hevc {
-        "Main|Main 10"
-    } else {
-        "Main"
-    };
-    let mut profiles = vec![
-        json!({
-            "Type": "Video",
-            "Codec": "h264",
-            "Conditions": [{
-                "Condition": "LessThanEqual",
-                "Property": "VideoLevel",
-                "Value": "52",
-                "IsRequired": false,
-            }],
-        }),
-        json!({
-            "Type": "Video",
-            "Codec": "hevc",
-            "Conditions": [{
-                "Condition": "EqualsAny",
-                "Property": "VideoProfile",
-                "Value": hevc_profiles,
-                "IsRequired": false,
-            }],
-        }),
-    ];
-    if caps.supports_10bit_av1 {
-        profiles.push(json!({
-            "Type": "Video",
-            "Codec": "av1",
-            "Conditions": [{
-                "Condition": "LessThanEqual",
-                "Property": "VideoBitDepth",
-                "Value": "10",
-                "IsRequired": false,
-            }],
-        }));
-    }
-    Value::Array(profiles)
 }
 
 fn transcoding_profiles(
@@ -184,9 +145,23 @@ mod tests {
     fn device_profile_respects_host_channels_and_audio_passthrough() {
         let mut caps = crate::players::capabilities::HostCapabilities::for_test();
         caps.max_audio_channels = 2;
+        caps.supports_10bit_hevc = false;
         caps.supports_10bit_av1 = false;
-        caps.hw_video_codecs = vec!["h264".into()];
+        caps.hw_video_codecs = vec![];
 
+        let original_no_vainfo =
+            super::device_profile_for(StreamingQuality::Original, &caps, false);
+        assert_eq!(
+            original_no_vainfo["DirectPlayProfiles"],
+            serde_json::json!([{ "Type": "Video" }, { "Type": "Audio" }])
+        );
+        assert_eq!(original_no_vainfo["CodecProfiles"], serde_json::json!([]));
+        assert_eq!(
+            original_no_vainfo["TranscodingProfiles"],
+            serde_json::json!([])
+        );
+
+        caps.hw_video_codecs = vec!["h264".into()];
         let stereo = super::device_profile_for(StreamingQuality::Mbps10, &caps, false);
         assert_eq!(stereo["TranscodingProfiles"][0]["MaxAudioChannels"], "2");
         assert_eq!(
@@ -194,13 +169,7 @@ mod tests {
             "aac,opus,flac,mp3,ac3,eac3"
         );
         assert_eq!(stereo["TranscodingProfiles"][0]["VideoCodec"], "h264,hevc");
-        let audio_codecs = stereo["DirectPlayProfiles"]
-            .as_array()
-            .expect("direct play profiles")[1]["AudioCodec"]
-            .as_str()
-            .expect("audio codecs");
-        assert!(audio_codecs.contains("aac"));
-        assert!(audio_codecs.contains("truehd"));
+        assert_eq!(stereo["CodecProfiles"], serde_json::json!([]));
 
         caps.max_audio_channels = 8;
         caps.supports_10bit_av1 = true;
@@ -218,12 +187,6 @@ mod tests {
             passthrough["TranscodingProfiles"][0]["VideoCodec"],
             "av1,hevc,h264"
         );
-        assert!(
-            passthrough["CodecProfiles"]
-                .as_array()
-                .expect("codec profiles")
-                .iter()
-                .any(|p| p["Codec"] == "av1")
-        );
+        assert_eq!(passthrough["CodecProfiles"], serde_json::json!([]));
     }
 }

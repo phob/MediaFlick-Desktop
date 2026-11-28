@@ -379,12 +379,13 @@ CREATE TABLE playstate_outbox (
     payload_json    TEXT NOT NULL CHECK (json_valid(payload_json)),
     attempts        INTEGER NOT NULL DEFAULT 0,
     next_retry_at   INTEGER NOT NULL DEFAULT 0,
+    revision        INTEGER NOT NULL DEFAULT 0,
     created_at      INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL,
     UNIQUE (server_id, user_id, item_id, play_session_id, kind)
 );
 CREATE INDEX playstate_outbox_due
-    ON playstate_outbox (server_id, user_id, next_retry_at, created_at, id);
+    ON playstate_outbox (server_id, user_id, id);
 
 CREATE TABLE series_aggregates (
     series_id              TEXT PRIMARY KEY,
@@ -413,7 +414,7 @@ BEGIN
         CASE WHEN new.is_virtual = 0 THEN new.date_created END,
         ue.last_played_date,
         CASE WHEN new.is_virtual = 0 AND COALESCE(ue.played, 0) = 0 THEN 1 ELSE 0 END,
-        CASE WHEN COALESCE(ue.played, 0) = 1 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END
+        CASE WHEN COALESCE(ue.played, 0) <> 0 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END
     FROM (SELECT 1)
     LEFT JOIN user_data ue ON ue.jellyfin_id = new.jellyfin_id
     ON CONFLICT(series_id) DO UPDATE SET
@@ -434,8 +435,16 @@ BEGIN
 END;
 
 CREATE TRIGGER series_aggregates_item_update AFTER UPDATE OF kind, series_id, is_virtual, date_created ON items
-    WHEN (old.kind = 'Episode' AND old.series_id IS NOT NULL)
-      OR (new.kind = 'Episode' AND new.series_id IS NOT NULL)
+    WHEN (
+        (old.kind = 'Episode' AND old.series_id IS NOT NULL)
+        OR (new.kind = 'Episode' AND new.series_id IS NOT NULL)
+    )
+    AND (
+        old.kind IS NOT new.kind
+        OR old.series_id IS NOT new.series_id
+        OR old.is_virtual IS NOT new.is_virtual
+        OR old.date_created IS NOT new.date_created
+    )
 BEGIN
     DELETE FROM series_aggregates
     WHERE series_id IN (old.series_id, new.series_id);
@@ -451,7 +460,7 @@ BEGIN
         max(CASE WHEN e.is_virtual = 0 THEN e.date_created END),
         max(ue.last_played_date),
         sum(CASE WHEN e.is_virtual = 0 AND COALESCE(ue.played, 0) = 0 THEN 1 ELSE 0 END),
-        sum(CASE WHEN COALESCE(ue.played, 0) = 1 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END)
+        sum(CASE WHEN COALESCE(ue.played, 0) <> 0 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END)
     FROM items e
     LEFT JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
     WHERE e.series_id IN (old.series_id, new.series_id)
@@ -477,7 +486,7 @@ BEGIN
         max(CASE WHEN e.is_virtual = 0 THEN e.date_created END),
         max(ue.last_played_date),
         sum(CASE WHEN e.is_virtual = 0 AND COALESCE(ue.played, 0) = 0 THEN 1 ELSE 0 END),
-        sum(CASE WHEN COALESCE(ue.played, 0) = 1 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END)
+        sum(CASE WHEN COALESCE(ue.played, 0) <> 0 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END)
     FROM items e
     LEFT JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
     WHERE e.series_id = old.series_id
@@ -565,7 +574,7 @@ BEGIN
         max(CASE WHEN e.is_virtual = 0 THEN e.date_created END),
         max(ue.last_played_date),
         sum(CASE WHEN e.is_virtual = 0 AND COALESCE(ue.played, 0) = 0 THEN 1 ELSE 0 END),
-        sum(CASE WHEN COALESCE(ue.played, 0) = 1 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END)
+        sum(CASE WHEN COALESCE(ue.played, 0) <> 0 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END)
     FROM items e
     LEFT JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
     WHERE e.series_id = (SELECT ep.series_id FROM items ep WHERE ep.jellyfin_id = old.jellyfin_id)
@@ -595,7 +604,13 @@ BEGIN
     VALUES ('delete', old.id, old.name, old.original_title, old.search_genres);
 END;
 CREATE TRIGGER catalog_search_fts_update AFTER UPDATE OF kind, name, original_title, search_genres ON items
-    WHEN old.kind IN ('Movie', 'Series') OR new.kind IN ('Movie', 'Series')
+    WHEN (old.kind IN ('Movie', 'Series') OR new.kind IN ('Movie', 'Series'))
+    AND (
+        old.kind IS NOT new.kind
+        OR old.name IS NOT new.name
+        OR old.original_title IS NOT new.original_title
+        OR old.search_genres IS NOT new.search_genres
+    )
 BEGIN
     INSERT INTO catalog_search_fts(catalog_search_fts, rowid, name, original_title, search_genres)
     SELECT 'delete', old.id, old.name, old.original_title, old.search_genres
@@ -657,7 +672,7 @@ SELECT
     max(CASE WHEN e.is_virtual = 0 THEN e.date_created END),
     max(ue.last_played_date),
     sum(CASE WHEN e.is_virtual = 0 AND COALESCE(ue.played, 0) = 0 THEN 1 ELSE 0 END),
-    sum(CASE WHEN COALESCE(ue.played, 0) = 1 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END)
+    sum(CASE WHEN COALESCE(ue.played, 0) <> 0 OR COALESCE(ue.playback_position_ticks, 0) > 0 THEN 1 ELSE 0 END)
 FROM items e
 LEFT JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
 WHERE e.kind = 'Episode' AND e.series_id IS NOT NULL

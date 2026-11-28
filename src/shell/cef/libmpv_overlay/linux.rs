@@ -1,4 +1,6 @@
 mod display;
+mod dmabuf_copier;
+mod dmabuf_gl;
 mod input;
 mod scale;
 mod wayland_surface;

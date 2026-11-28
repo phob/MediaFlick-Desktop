@@ -24,18 +24,35 @@ export default async function playerShelf(ctx) {
   }
 
   await ctx.choose({ name: "Default fullscreen" }, "Windowed")
+  await ctx.press({ role: "switch", name: "Audio passthrough" })
+  ctx.check((await ctx.state({ role: "switch", name: "Audio passthrough" })).checked === true, "Audio passthrough switch turns on")
   await ctx.press({ role: "button", name: "Save" })
   results.playerToast = await ctx.until(() => toasts(ctx), "the save toast")
   ctx.check(results.playerToast.includes("Player settings saved"), "the Player shelf's own toast")
-  await ctx.until(() => ctx.readConfig("settings.json")?.default_fullscreen === "windowed", "settings.json to record default_fullscreen")
+  await ctx.until(
+    () =>
+      ctx.readConfig("settings.json")?.default_fullscreen === "windowed" &&
+      ctx.readConfig("settings.json")?.audio_passthrough === true,
+    "settings.json to record default_fullscreen and audio_passthrough",
+  )
   results.settingsSaved = ctx.readConfig("settings.json")
+  results.apiAfterSave = (await ctx.api("/api/settings")).body?.client?.player
+  ctx.check(results.apiAfterSave?.audioPassthrough === true, "/api/settings reports audioPassthrough: true")
   await ctx.screenshot("02-player-saved")
 
   await ctx.press({ role: "button", name: "Restore defaults" })
   await ctx.press({ role: "button", name: "Save" })
-  await ctx.until(() => !ctx.readConfig("settings.json")?.default_fullscreen, "default_fullscreen to leave settings.json")
+  await ctx.until(
+    () =>
+      !ctx.readConfig("settings.json")?.default_fullscreen &&
+      !ctx.readConfig("settings.json")?.audio_passthrough,
+    "default_fullscreen and audio_passthrough to leave settings.json",
+  )
   await ctx.until(async () => (await ctx.state({ role: "button", name: "Save" })).disabled === true, "Save to disable once clean")
   results.settingsRestored = ctx.readConfig("settings.json")
+  ctx.check(!("audio_passthrough" in results.settingsRestored), "Restore defaults + Save drops audio_passthrough")
+  results.apiRestored = (await ctx.api("/api/settings")).body?.client?.player
+  ctx.check(results.apiRestored?.audioPassthrough === false, "/api/settings resets audioPassthrough to false")
   for (const key of ["player_backend", "comfort", "mark_watched_next"]) {
     ctx.check(key in results.settingsRestored, `Restore defaults + Save keeps ${key}`)
   }
